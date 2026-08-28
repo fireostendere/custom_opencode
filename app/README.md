@@ -1,36 +1,56 @@
 # OpenCode web client
 
-Минимальный ChatGPT-подобный веб-клиент для OpenCode V2:
+Модульный ChatGPT-подобный web/PWA-клиент для OpenCode V2.
 
-- все корневые сессии сервера в одной левой панели; дочерние subagent-сессии скрыты;
-- поиск и группировка по проектам;
-- удаление сессий с подтверждением;
-- выбор проекта, режима Build/Plan, модели и effort;
-- модели сгруппированы по провайдерам;
-- файлы добавляются кнопкой `+`, изображения — также вставкой из буфера;
-- быстрый вопрос без выбора проекта создаёт отдельный workspace внутри `~/opencode-scratch`;
-- каждая новая быстрая сессия изолирована от остальных на уровне файловой системы;
-- при удалении новой быстрой сессии её workspace очищается безопасно; scratch-root никогда не удаляется;
-- старые сессии, созданные прямо в общем `~/opencode-scratch`, остаются совместимыми и не мигрируются автоматически;
-- модель, effort и Build/Plan можно выбрать до создания быстрой сессии;
-- ответы, рассуждения и вызовы инструментов обновляются через SSE без перезагрузки;
-- открытие истории и отправка сообщений;
-- адаптивный режим и PWA-манифест.
+## Возможности
 
-Запуск:
+- корневые сессии сервера в sidebar; дочерние subagent-сессии скрыты;
+- поиск, стабильная группировка по project ID, pin и archive;
+- rename, delete, Duplicate/Fork и fork от конкретного сообщения;
+- hash deep-links `#/session/<id>`: refresh и Back/Forward сохраняют выбранную сессию;
+- быстрые сессии получают отдельный filesystem workspace внутри `OPENCODE_SCRATCH_DIRECTORY`;
+- quick → project handoff: текущий контекст переносится в новую сессию выбранного проекта;
+- параллельные running-сессии: можно уйти в другой чат, пока агент продолжает работу;
+- во время выполнения доступны Steer и локальная Queue следующего сообщения;
+- Build/Plan, выбор модели, provider grouping, favorites и effort;
+- Markdown, таблицы, ссылки, fenced code, базовая syntax highlighting и Copy;
+- отдельные renderer-ы reasoning/tool calls, shell/file operations, diff и image previews;
+- Git/VCS drawer: branch, tracked file status, session/VCS diff и чтение изменённых файлов;
+- context/token/cost widget с model context limit и Qwen quota probe из существующего title marker;
+- Token Plan Personal Pro caps показываются отдельно от фактического расхода, который probe API не возвращает;
+- browser/PWA notifications о завершении фоновой сессии и permission request;
+- текст draft автоматически сохраняется по session ID в localStorage;
+- файлы добавляются кнопкой `+`, изображения можно вставлять из clipboard;
+- permissions можно принять/отклонить из браузера;
+- SSE обновляет reasoning/tools без перезагрузки; session status дополнительно сверяется polling-ом;
+- pull-down refresh сохранён для мобильного режима.
+
+## Структура
+
+- `index.html` — только application shell;
+- `styles.css` — UI и responsive layout;
+- `api.js` — OpenCode HTTP adapter и compatibility fallbacks;
+- `markdown.js` — безопасный Markdown/code renderer;
+- `app.js` — session store, event stream и UI orchestration;
+- `sw.js` — PWA runtime cache и notification surface;
+- `server.py` — same-origin authenticated proxy и isolated quick workspaces.
+
+## Ограничения beta API
+
+OpenCode V2 остаётся beta. Для rename/fork/diff/status клиент сначала использует текущий V2 HTTP contract; там, где в предыдущей сборке уже существовал другой endpoint, оставлены compatibility fallbacks. Если конкретный установленный OpenCode ещё не реализует native fork, web-клиент создаёт новую сессию в той же директории и передаёт ей ограниченный handoff-контекст.
+
+Pin, Archive и draft — локальные browser preferences и не меняют серверную модель сессии. Queue также хранится в памяти web-клиента: это намеренно предотвращает зависимость от меняющегося beta delivery contract, а Steer отправляется через уже используемый `/api/session/:id/prompt`.
+
+Browser notification работает, пока PWA/browser process жив и получает SSE/status updates. Полноценные push-уведомления после принудительного убийства браузера потребовали бы отдельного push service и здесь намеренно не добавлялись.
+
+## Запуск
 
 ```bash
 python3 server.py
 ```
 
-Адрес, порт и внешние URL задаются только в локальном `.env`. V2 backend
-автоматически обнаруживается через файл регистрации OpenCode.
+Основные env:
 
-Переменные окружения:
-
-- `OPENCODE_WEB_HOST`, `OPENCODE_WEB_PORT` — адрес клиента;
-- `OPENCODE_BACKEND_URL`, `OPENCODE_BACKEND_PASSWORD` — явный V2 backend;
-- `OPENCODE_SCRATCH_DIRECTORY` — корень для изолированных quick-session workspaces.
-
-Клиентская Basic Auth и сетевые адреса берутся из `.env` в корне комплекта.
-При установке веб-сервис запускается прямо из `app/` этого Git-репозитория.
+- `OPENCODE_WEB_HOST`, `OPENCODE_WEB_PORT`;
+- `OPENCODE_BACKEND_URL`, `OPENCODE_BACKEND_PASSWORD`;
+- `OPENCODE_SCRATCH_DIRECTORY` — root изолированных quick-session workspaces.
