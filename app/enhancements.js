@@ -76,6 +76,10 @@ function progress(value, tone = '') {
   return `<div class="quota-progress ${tone}"><i style="width:${remaining}%"></i></div>`
 }
 
+function quotaTone(remaining) {
+  return remaining <= 10 ? 'danger' : remaining <= 25 ? 'warn' : ''
+}
+
 function renderOpenAIQuota(value) {
   if (!value?.available) {
     return `<section class="quota-provider"><div class="quota-provider-head"><strong>OpenAI</strong><span class="quota-muted">недоступно</span></div><div class="quota-note">${escapeHtml(value?.reason === 'codex-not-found' ? 'Codex CLI не найден' : 'Нет rate-limit snapshot')}</div></section>`
@@ -85,21 +89,32 @@ function renderOpenAIQuota(value) {
     <div class="quota-provider-head"><strong>OpenAI</strong><span class="quota-muted">${escapeHtml(value.planType || '')}</span></div>
     ${windows.map((window) => {
       const remaining = Number(window.remainingPercent)
-      const tone = remaining <= 10 ? 'danger' : remaining <= 25 ? 'warn' : ''
-      return `<div class="quota-row"><div class="quota-label"><span>${escapeHtml(windowLabel(window.windowDurationMins))}</span><strong>${Number.isFinite(remaining) ? `${remaining}%` : '—'}</strong></div>${progress(remaining, tone)}<div class="quota-reset">${escapeHtml(resetText(window.resetsAt))}</div></div>`
+      return `<div class="quota-row"><div class="quota-label"><span>${escapeHtml(windowLabel(window.windowDurationMins))}</span><strong>${Number.isFinite(remaining) ? `${remaining}%` : '—'}</strong></div>${progress(remaining, quotaTone(remaining))}<div class="quota-reset">${escapeHtml(resetText(window.resetsAt))}</div></div>`
     }).join('') || '<div class="quota-note">Rate-limit окна не возвращены.</div>'}
   </section>`
+}
+
+function renderQwenWindow(window, fallbackLimit, fallbackMinutes) {
+  const limit = Number(window?.limit || fallbackLimit)
+  const remaining = Number(window?.remainingPercent)
+  const remainingCredits = Number(window?.remainingCredits)
+  if (Number.isFinite(remaining)) {
+    const credits = Number.isFinite(remainingCredits) ? `${remainingCredits.toLocaleString('ru-RU')} / ${limit.toLocaleString('ru-RU')}` : `${remaining}%`
+    return `<div class="quota-row"><div class="quota-label"><span>${escapeHtml(windowLabel(window?.windowDurationMins || fallbackMinutes))}</span><strong>${escapeHtml(credits)}</strong></div>${progress(remaining, quotaTone(remaining))}<div class="quota-reset">${remaining}% осталось${window?.resetsAt ? ` · ${escapeHtml(resetText(window.resetsAt))}` : ''}</div></div>`
+  }
+  return `<div class="quota-cap"><span>${escapeHtml(windowLabel(window?.windowDurationMins || fallbackMinutes))}</span><strong>${limit.toLocaleString('ru-RU')}</strong></div>`
 }
 
 function renderQwenQuota(value) {
   const state = value?.state === 'ok' ? 'OK' : value?.state === 'exhausted' ? 'исчерпан' : 'нет probe'
   const stateClass = value?.state === 'exhausted' ? 'quota-bad' : value?.state === 'ok' ? 'quota-good' : 'quota-muted'
+  const live = value?.source === 'bailian-cli'
   return `<section class="quota-provider">
     <div class="quota-provider-head"><strong>Qwen</strong><span class="${stateClass}">${escapeHtml(state)}</span></div>
-    <div class="quota-cap"><span>Сессия · 5ч</span><strong>${Number(value?.fiveHour?.limit || 12000).toLocaleString('ru-RU')}</strong></div>
-    <div class="quota-cap"><span>Неделя · 7д</span><strong>${Number(value?.sevenDay?.limit || 40000).toLocaleString('ru-RU')}</strong></div>
-    ${value?.resetAt ? `<div class="quota-reset">reset ${escapeHtml(value.resetAt)}</div>` : ''}
-    <div class="quota-note">Alibaba не отдаёт remaining %, поэтому показываются caps + probe.</div>
+    ${renderQwenWindow(value?.fiveHour, 12000, 300)}
+    ${renderQwenWindow(value?.sevenDay, 40000, 10080)}
+    ${!live && value?.resetAt ? `<div class="quota-reset">probe reset ${escapeHtml(value.resetAt)}</div>` : ''}
+    <div class="quota-note">${live ? 'Реальное использование Token Plan через Bailian CLI.' : (value?.reason === 'bailian-cli-not-found' ? 'Bailian CLI не найден; показаны caps + probe.' : 'Token Plan usage недоступен; показаны caps + probe.')}</div>
   </section>`
 }
 
