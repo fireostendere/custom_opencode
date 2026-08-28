@@ -1,15 +1,19 @@
 import { readFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { Plugin } from "@opencode-ai/plugin"
 import { startEvents } from "../events.js"
 
-const CONFIG_PATH = `${process.env.HOME}/.bailian/config.json`
-const BASE = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
-const MODEL = "qwen3.8-max-preview"
+const CONFIG_PATH = process.env.BAILIAN_CONFIG_PATH || join(homedir(), ".bailian", "config.json")
+const BASE = (process.env.TOKEN_PLAN_OPENAI_BASE_URL || "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1").replace(/\/$/, "")
+const MODEL = process.env.TOKEN_PLAN_PROBE_MODEL || "qwen3.8-max"
 const OK_MS = 30 * 60_000
 const EXHAUSTED_MS = 10 * 60_000
 const SUFFIX_RE = / · Qwen[^·]*$/
 
 function loadKey() {
+  const fromEnv = process.env.TOKEN_PLAN_API_KEY
+  if (fromEnv && fromEnv !== "CHANGE_ME") return fromEnv
   try {
     return JSON.parse(readFileSync(CONFIG_PATH, "utf8"))["token-plan"]?.api_key ?? null
   } catch {
