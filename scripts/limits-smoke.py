@@ -15,8 +15,8 @@ os.environ.setdefault("OPENCODE_SCRATCH_DIRECTORY", str(Path(tempfile.gettempdir
 sys.path.insert(0, str(ROOT / "app"))
 
 with tempfile.TemporaryDirectory() as temp:
-    fake = Path(temp) / "codex"
-    fake.write_text(
+    fake_codex = Path(temp) / "codex"
+    fake_codex.write_text(
         "#!/usr/bin/env python3\n"
         "import json,sys\n"
         "for line in sys.stdin:\n"
@@ -25,15 +25,28 @@ with tempfile.TemporaryDirectory() as temp:
         " elif r.get('method')=='account/rateLimits/read': print(json.dumps({'id':r['id'],'result':{'rateLimits':{},'rateLimitsByLimitId':{'codex':{'planType':'plus','primary':{'usedPercent':37,'windowDurationMins':300,'resetsAt':2000000000},'secondary':{'usedPercent':72,'windowDurationMins':10080,'resetsAt':2000100000}}}}}),flush=True)\n",
         encoding="utf-8",
     )
-    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
-    os.environ["CODEX_BIN"] = str(fake)
+    fake_codex.chmod(fake_codex.stat().st_mode | stat.S_IXUSR)
+
+    fake_bl = Path(temp) / "bl"
+    fake_bl.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'per5HourPercentage':0.375,'per5HourResetTime':2000000000000,'per1WeekPercentage':0.72,'per1WeekResetTime':2000100000000}))\n",
+        encoding="utf-8",
+    )
+    fake_bl.chmod(fake_bl.stat().st_mode | stat.S_IXUSR)
+
+    os.environ["CODEX_BIN"] = str(fake_codex)
+    os.environ["BAILIAN_CLI_BIN"] = str(fake_bl)
 
     import server_ext
 
+    # Probe status remains available as fallback, but live CLI windows are authoritative.
     server_ext.base.backend_json = lambda method, target: {
         "data": [{"title": "Smoke · Qwen exhausted→08-29 02:00 UTC"}]
     }
     server_ext._codex_cache.update(at=0.0, value=None)
+    server_ext._bailian_cache.update(at=0.0, value=None)
 
     codex = server_ext.query_codex_rate_limits()
     assert codex["available"] is True
@@ -43,8 +56,14 @@ with tempfile.TemporaryDirectory() as temp:
     assert codex["secondary"]["windowDurationMins"] == 10080
 
     qwen = server_ext.query_qwen_status()
-    assert qwen["state"] == "exhausted"
-    assert qwen["fiveHour"]["limit"] == 12_000
-    assert qwen["sevenDay"]["limit"] == 40_000
+    assert qwen["available"] is True
+    assert qwen["source"] == "bailian-cli"
+    assert qwen["state"] == "ok"
+    assert qwen["fiveHour"]["remainingPercent"] == 62.5
+    assert qwen["fiveHour"]["remainingCredits"] == 7_500
+    assert qwen["fiveHour"]["resetsAt"] == 2_000_000_000
+    assert qwen["sevenDay"]["remainingPercent"] == 28.0
+    assert qwen["sevenDay"]["remainingCredits"] == 11_200
+    assert qwen["sevenDay"]["resetsAt"] == 2_000_100_000
 
-print("Limits smoke passed: Codex app-server RPC + Qwen caps/probe")
+print("Limits smoke passed: Codex app-server + Bailian Token Plan JSON")
