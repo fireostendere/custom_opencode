@@ -139,7 +139,9 @@ export function commandName(command) {
 }
 
 function commandDescription(command) {
-  return command?.description || command?.summary || command?.template || command?.prompt || ''
+  const description = command?.description || command?.summary || ''
+  const hints = Array.isArray(command?.hints) ? command.hints.filter(Boolean).join(' ') : ''
+  return [description, hints].filter(Boolean).join(' · ')
 }
 
 async function loadCommands(force = false) {
