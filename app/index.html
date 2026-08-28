@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#171717">
   <link rel="manifest" href="/site.webmanifest">
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/enhancements.css">
   <title>OpenCode</title>
 </head>
 <body>
@@ -15,6 +16,10 @@
         <button class="primary" id="newSession">+ Новая</button>
         <button class="icon" id="chooseProject" title="Создать в проекте">▣</button>
         <button class="icon" id="refresh" title="Обновить">↻</button>
+      </div>
+      <div class="provider-limits" id="providerLimits" aria-live="polite">
+        <div class="quota-title"><span>Лимиты</span></div>
+        <div class="quota-note">Загрузка…</div>
       </div>
       <div class="side-tools">
         <input class="search" id="search" placeholder="Поиск сессий…" autocomplete="off">
@@ -61,6 +66,7 @@
         </div>
         <div class="attachments" id="attachments" hidden></div>
         <form class="composer" id="form">
+          <div class="slash-palette" id="slashPalette" hidden></div>
           <button class="icon attach" id="attachButton" type="button" title="Файл">＋</button>
           <input id="fileInput" type="file" multiple hidden>
           <textarea id="input" rows="1" placeholder="Сообщение…"></textarea>
@@ -82,5 +88,6 @@
 
   <div class="toast" id="toast" hidden></div>
   <script type="module" src="/app.js"></script>
+  <script type="module" src="/enhancements.js"></script>
 </body>
 </html>
