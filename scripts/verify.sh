@@ -47,6 +47,7 @@ trap - EXIT
 for file in "$ROOT/app/"*.js "$ROOT/config/events.js" "$ROOT/config/plugins/"*.js; do
   "$NODE" --check "$file"
 done
+"$NODE" "$ROOT/scripts/web-smoke.mjs"
 for file in "$ROOT/scripts/"*.sh; do
   bash -n "$file"
 done
