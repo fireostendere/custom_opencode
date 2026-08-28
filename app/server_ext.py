@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Web server extensions: provider rate-limit snapshot for the OpenCode web UI."""
+"""Web server extensions: provider rate-limit snapshots for the OpenCode web UI."""
 
 from __future__ import annotations
 
@@ -25,6 +25,26 @@ except ValueError:
 
 _codex_cache: dict[str, object] = {"at": 0.0, "value": None}
 _codex_lock = threading.Lock()
+_bailian_cache: dict[str, object] = {"at": 0.0, "value": None}
+_bailian_lock = threading.Lock()
+
+
+def _resolve_user_binary(setting_name: str, executable: str) -> str | None:
+    configured = base.setting(setting_name)
+    if configured:
+        return configured
+    found = shutil.which(executable)
+    if found:
+        return found
+    home = base.Path.home()
+    candidates = [
+        home / f".local/bin/{executable}",
+        home / f".npm-global/bin/{executable}",
+        home / f".bun/bin/{executable}",
+        home / f"bin/{executable}",
+    ]
+    candidates.extend(sorted((home / ".nvm/versions/node").glob(f"*/bin/{executable}"), reverse=True))
+    return next((str(path) for path in candidates if path.is_file()), None)
 
 
 def _rpc_write(process: subprocess.Popen[str], payload: dict[str, object]) -> None:
@@ -119,18 +139,7 @@ def query_codex_rate_limits() -> dict[str, object]:
         if isinstance(cached, dict) and now - cached_at < LIMITS_CACHE_SECONDS:
             return cached
 
-        configured = base.setting("CODEX_BIN")
-        codex = configured or shutil.which("codex")
-        if not codex:
-            home = base.Path.home()
-            candidates = [
-                home / ".local/bin/codex",
-                home / ".npm-global/bin/codex",
-                home / ".bun/bin/codex",
-                home / "bin/codex",
-            ]
-            candidates.extend(sorted((home / ".nvm/versions/node").glob("*/bin/codex"), reverse=True))
-            codex = next((str(path) for path in candidates if path.is_file()), None)
+        codex = _resolve_user_binary("CODEX_BIN", "codex")
         if not codex:
             value = {"available": False, "reason": "codex-not-found"}
             _codex_cache.update(at=now, value=value)
@@ -178,9 +187,84 @@ def query_codex_rate_limits() -> dict[str, object]:
         return value
 
 
-def query_qwen_status() -> dict[str, object]:
+def _bailian_window(ratio: object, reset_time_ms: object, limit: int, minutes: int) -> dict[str, object] | None:
+    if not isinstance(ratio, (int, float)):
+        return None
+    used_ratio = min(1.0, max(0.0, float(ratio)))
+    used_percent = round(used_ratio * 100, 1)
+    remaining_percent = round((1.0 - used_ratio) * 100, 1)
+    reset_seconds = None
+    if isinstance(reset_time_ms, (int, float)):
+        # Bailian CLI Token Plan reset times are epoch milliseconds.
+        reset_seconds = int(float(reset_time_ms) / 1000)
+    return {
+        "limit": limit,
+        "usedCredits": int(round(limit * used_ratio)),
+        "remainingCredits": int(round(limit * (1.0 - used_ratio))),
+        "usedPercent": used_percent,
+        "remainingPercent": remaining_percent,
+        "windowDurationMins": minutes,
+        "resetsAt": reset_seconds,
+    }
+
+
+def query_bailian_token_plan() -> dict[str, object]:
+    with _bailian_lock:
+        now = time.monotonic()
+        cached = _bailian_cache.get("value")
+        cached_at = float(_bailian_cache.get("at") or 0.0)
+        if isinstance(cached, dict) and now - cached_at < LIMITS_CACHE_SECONDS:
+            return cached
+
+        bailian = _resolve_user_binary("BAILIAN_CLI_BIN", "bl")
+        if not bailian:
+            value = {"available": False, "reason": "bailian-cli-not-found"}
+            _bailian_cache.update(at=now, value=value)
+            return value
+
+        try:
+            result = subprocess.run(
+                [bailian, "usage", "token-plan", "--output", "json"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=12.0,
+                check=False,
+            )
+            if result.returncode != 0:
+                raise RuntimeError("Bailian Token Plan usage command failed")
+            payload = json.loads(result.stdout)
+            if not isinstance(payload, dict):
+                raise RuntimeError("Invalid Bailian Token Plan usage response")
+            five_hour = _bailian_window(
+                payload.get("per5HourPercentage"),
+                payload.get("per5HourResetTime"),
+                QWEN_FIVE_HOUR_LIMIT,
+                300,
+            )
+            seven_day = _bailian_window(
+                payload.get("per1WeekPercentage"),
+                payload.get("per1WeekResetTime"),
+                QWEN_SEVEN_DAY_LIMIT,
+                10_080,
+            )
+            if five_hour is None and seven_day is None:
+                raise RuntimeError("Bailian Token Plan usage windows missing")
+            value = {
+                "available": True,
+                "source": "bailian-cli",
+                "fiveHour": five_hour or {"limit": QWEN_FIVE_HOUR_LIMIT, "windowDurationMins": 300},
+                "sevenDay": seven_day or {"limit": QWEN_SEVEN_DAY_LIMIT, "windowDurationMins": 10_080},
+            }
+        except (OSError, RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError):
+            value = {"available": False, "reason": "bailian-token-plan-usage-unavailable"}
+
+        _bailian_cache.update(at=now, value=value)
+        return value
+
+
+def _qwen_probe_status() -> tuple[str, str | None]:
     payload = base.backend_json("GET", "/api/session?limit=100&order=desc")
-    sessions: list[object]
     if isinstance(payload, dict) and isinstance(payload.get("data"), list):
         sessions = payload["data"]
     elif isinstance(payload, list):
@@ -188,8 +272,6 @@ def query_qwen_status() -> dict[str, object]:
     else:
         sessions = []
 
-    state = "unknown"
-    reset_at = None
     for session in sessions:
         if not isinstance(session, dict):
             continue
@@ -200,19 +282,37 @@ def query_qwen_status() -> dict[str, object]:
         if not match:
             continue
         if match.group(1) == "OK":
-            state = "ok"
-        else:
-            state = "exhausted"
-            reset_at = (match.group(2) or "").strip() or None
-        break
+            return "ok", None
+        return "exhausted", (match.group(2) or "").strip() or None
+    return "unknown", None
+
+
+def query_qwen_status() -> dict[str, object]:
+    usage = query_bailian_token_plan()
+    probe_state, probe_reset = _qwen_probe_status()
+    if usage.get("available"):
+        five_hour = usage.get("fiveHour") if isinstance(usage.get("fiveHour"), dict) else {}
+        seven_day = usage.get("sevenDay") if isinstance(usage.get("sevenDay"), dict) else {}
+        remaining = [
+            window.get("remainingPercent")
+            for window in (five_hour, seven_day)
+            if isinstance(window.get("remainingPercent"), (int, float))
+        ]
+        state = "exhausted" if remaining and min(remaining) <= 0 else (probe_state if probe_state != "unknown" else "ok")
+        return {
+            **usage,
+            "state": state,
+            "resetAt": probe_reset,
+        }
 
     return {
-        "available": state != "unknown",
-        "state": state,
-        "resetAt": reset_at,
+        "available": probe_state != "unknown",
+        "source": "probe",
+        "reason": usage.get("reason"),
+        "state": probe_state,
+        "resetAt": probe_reset,
         "fiveHour": {"limit": QWEN_FIVE_HOUR_LIMIT, "windowDurationMins": 300},
         "sevenDay": {"limit": QWEN_SEVEN_DAY_LIMIT, "windowDurationMins": 10_080},
-        "remainingPercent": None,
     }
 
 
