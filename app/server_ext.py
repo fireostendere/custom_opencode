@@ -298,11 +298,12 @@ def query_qwen_status() -> dict[str, object]:
             for window in (five_hour, seven_day)
             if isinstance(window.get("remainingPercent"), (int, float))
         ]
-        state = "exhausted" if remaining and min(remaining) <= 0 else (probe_state if probe_state != "unknown" else "ok")
+        # Live Token Plan usage is authoritative; title probes can be stale on old sessions.
+        state = "exhausted" if remaining and min(remaining) <= 0 else ("ok" if remaining else probe_state)
         return {
             **usage,
             "state": state,
-            "resetAt": probe_reset,
+            "resetAt": probe_reset if state == "exhausted" else None,
         }
 
     return {
