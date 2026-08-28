@@ -9,6 +9,48 @@ if [[ -z "$NODE" ]]; then echo "node is required" >&2; exit 1; fi
 
 INLINE_JS="${TMPDIR:-/tmp}/custom-opencode-inline.js"
 "$PYTHON3" -m py_compile "$ROOT/app/server.py"
+
+WORKSPACE_TEST_ROOT=$(mktemp -d)
+trap 'rm -rf "$WORKSPACE_TEST_ROOT"' EXIT
+OPENCODE_SERVER_PASSWORD=test \
+OPENCODE_BACKEND_URL=http://localhost:9 \
+OPENCODE_BACKEND_PASSWORD=test \
+OPENCODE_SCRATCH_DIRECTORY="$WORKSPACE_TEST_ROOT/scratch" \
+"$PYTHON3" - "$ROOT/app/server.py" <<'PY'
+import importlib.util
+import json
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("custom_opencode_server", sys.argv[1])
+server = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(server)
+
+workspace = server.allocate_scratch_directory()
+assert workspace.startswith(str(server.SCRATCH_ROOT) + os.sep)
+assert server.is_scratch_path(workspace)
+
+sessions = {
+    "data": [
+        {"id": "root", "location": {"directory": workspace}},
+        {"id": "child", "parentID": "root", "location": {"directory": workspace}},
+    ]
+}
+filtered = json.loads(server.transform_json_response("GET", "/api/session", json.dumps(sessions).encode()))
+assert [session["id"] for session in filtered["data"]] == ["root"]
+assert filtered["data"][0]["projectID"] == server.SCRATCH_PROJECT_ID
+
+projects = json.loads(server.transform_json_response("GET", "/api/project", b"[]"))
+assert projects[-1]["id"] == server.SCRATCH_PROJECT_ID
+
+server.cleanup_scratch_directory(workspace)
+assert not os.path.exists(workspace)
+assert server.SCRATCH_ROOT.is_dir()
+print("Session workspace self-check passed")
+PY
+rm -rf "$WORKSPACE_TEST_ROOT"
+trap - EXIT
+
 "$PYTHON3" - "$ROOT/app/index.html" "$INLINE_JS" <<'PY'
 from pathlib import Path
 import re, sys
