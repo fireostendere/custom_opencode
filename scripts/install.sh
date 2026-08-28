@@ -24,6 +24,20 @@ BIN_DIR="$HOME/.local/bin"
 SCRATCH_DIR=${OPENCODE_SCRATCH_DIRECTORY:-"$HOME/opencode-scratch"}
 AUTH_FILE=${OPENCODE_AUTH_FILE:-"$HOME/.local/share/opencode/auth.json"}
 
+RAG_ROOT=${MCP_RAG_ROOT:-}
+if [[ -z "$RAG_ROOT" ]]; then
+  for candidate in "$ROOT/../mcp-rag" "$HOME/mcp-rag"; do
+    if [[ -f "$candidate/pyproject.toml" && -x "$candidate/.venv/bin/knowledge-mcp" ]]; then
+      RAG_ROOT=$candidate
+      break
+    fi
+  done
+fi
+RAG_DISABLED=true
+if [[ -n "$RAG_ROOT" && -x "$RAG_ROOT/.venv/bin/knowledge-mcp" ]]; then
+  RAG_DISABLED=false
+fi
+
 install -d "$UNIT_DIR" "$BIN_DIR" "$SCRATCH_DIR" "$(dirname "$AUTH_FILE")"
 "$PYTHON3" - "$ROOT/systemd/opencode-web-client.service" "$UNIT_DIR/opencode-web-client.service" "$ROOT" "$PYTHON3" <<'PY'
 from pathlib import Path
@@ -47,10 +61,13 @@ if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   install -m 0644 "$ROOT/config/events.js" "$CONFIG_DIR/events.js"
   install -m 0644 "$ROOT/config/prompts/"* "$CONFIG_DIR/prompts/"
   install -m 0644 "$ROOT/config/plugins/"* "$CONFIG_DIR/plugins/"
-  "$PYTHON3" - "$ROOT/config/opencode.json.template" "$CONFIG_DIR/opencode.json" "$CONFIG_DIR" <<'PY'
+  "$PYTHON3" - "$ROOT/config/opencode.json.template" "$CONFIG_DIR/opencode.json" "$CONFIG_DIR" "$ROOT" "$RAG_DISABLED" <<'PY'
 import json, sys
-source, target, config_dir = sys.argv[1:]
-text = open(source, encoding="utf-8").read().replace("__CONFIG_DIR__", config_dir)
+source, target, config_dir, root, rag_disabled = sys.argv[1:]
+text = open(source, encoding="utf-8").read()
+text = text.replace("__CONFIG_DIR__", config_dir)
+text = text.replace("__CUSTOM_OPENCODE_ROOT__", root)
+text = text.replace("__RAG_DISABLED__", rag_disabled)
 json.loads(text)
 open(target, "w", encoding="utf-8").write(text)
 PY
@@ -106,3 +123,8 @@ systemctl --user enable --now opencode-web-client.service
 if command -v opencode2 >/dev/null 2>&1; then timeout 45s opencode2 service restart >/dev/null 2>&1 || true; fi
 systemctl --user restart opencode-web-client.service
 echo "Installed. Start OpenCode with: custom-opencode"
+if [[ "$RAG_DISABLED" == false ]]; then
+  echo "RAG MCP: enabled ($RAG_ROOT)"
+else
+  echo "RAG MCP: disabled; set MCP_RAG_ROOT and rerun install/update"
+fi
