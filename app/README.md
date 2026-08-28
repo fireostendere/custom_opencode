@@ -28,4 +28,5 @@ python3 server.py
 - `OPENCODE_WEB_HOST`, `OPENCODE_WEB_PORT` — адрес клиента;
 - `OPENCODE_BACKEND_URL`, `OPENCODE_BACKEND_PASSWORD` — явный V2 backend.
 
-Клиентская Basic Auth и сетевые адреса берутся из `.env`.
+Клиентская Basic Auth и сетевые адреса берутся из `.env` в корне комплекта.
+При установке веб-сервис запускается прямо из `app/` этого Git-репозитория.

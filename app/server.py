@@ -39,7 +39,11 @@ def read_env_file(path: Path) -> dict[str, str]:
     return result
 
 
-FILE_ENV = {**read_env_file(LEGACY_AUTH_FILE), **read_env_file(ROOT / ".env")}
+FILE_ENV = {
+    **read_env_file(LEGACY_AUTH_FILE),
+    **read_env_file(ROOT.parent / ".env"),
+    **read_env_file(ROOT / ".env"),
+}
 
 
 def setting(name: str, default: str | None = None) -> str | None:
