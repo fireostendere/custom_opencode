@@ -8,6 +8,7 @@ import re
 import selectors
 import shutil
 import subprocess
+import threading
 import time
 from urllib.parse import urlsplit
 
@@ -23,6 +24,7 @@ except ValueError:
     LIMITS_CACHE_SECONDS = 60.0
 
 _codex_cache: dict[str, object] = {"at": 0.0, "value": None}
+_codex_lock = threading.Lock()
 
 
 def _rpc_write(process: subprocess.Popen[str], payload: dict[str, object]) -> None:
@@ -110,69 +112,70 @@ def _normalize_codex_result(result: object) -> dict[str, object]:
 
 
 def query_codex_rate_limits() -> dict[str, object]:
-    now = time.monotonic()
-    cached = _codex_cache.get("value")
-    cached_at = float(_codex_cache.get("at") or 0.0)
-    if isinstance(cached, dict) and now - cached_at < LIMITS_CACHE_SECONDS:
-        return cached
+    with _codex_lock:
+        now = time.monotonic()
+        cached = _codex_cache.get("value")
+        cached_at = float(_codex_cache.get("at") or 0.0)
+        if isinstance(cached, dict) and now - cached_at < LIMITS_CACHE_SECONDS:
+            return cached
 
-    configured = base.setting("CODEX_BIN")
-    codex = configured or shutil.which("codex")
-    if not codex:
-        home = base.Path.home()
-        candidates = [
-            home / ".local/bin/codex",
-            home / ".npm-global/bin/codex",
-            home / ".bun/bin/codex",
-            home / "bin/codex",
-        ]
-        candidates.extend(sorted((home / ".nvm/versions/node").glob("*/bin/codex"), reverse=True))
-        codex = next((str(path) for path in candidates if path.is_file()), None)
-    if not codex:
-        value = {"available": False, "reason": "codex-not-found"}
+        configured = base.setting("CODEX_BIN")
+        codex = configured or shutil.which("codex")
+        if not codex:
+            home = base.Path.home()
+            candidates = [
+                home / ".local/bin/codex",
+                home / ".npm-global/bin/codex",
+                home / ".bun/bin/codex",
+                home / "bin/codex",
+            ]
+            candidates.extend(sorted((home / ".nvm/versions/node").glob("*/bin/codex"), reverse=True))
+            codex = next((str(path) for path in candidates if path.is_file()), None)
+        if not codex:
+            value = {"available": False, "reason": "codex-not-found"}
+            _codex_cache.update(at=now, value=value)
+            return value
+
+        process: subprocess.Popen[str] | None = None
+        try:
+            process = subprocess.Popen(
+                [codex, "app-server"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+            )
+            _rpc_write(process, {
+                "method": "initialize",
+                "id": 1,
+                "params": {
+                    "clientInfo": {
+                        "name": "custom_opencode_web",
+                        "title": "custom_opencode web limits",
+                        "version": "1",
+                    }
+                },
+            })
+            _rpc_wait(process, 1, 5.0)
+            _rpc_write(process, {"method": "initialized", "params": {}})
+            _rpc_write(process, {"method": "account/rateLimits/read", "id": 2, "params": {}})
+            value = _normalize_codex_result(_rpc_wait(process, 2, 10.0))
+        except (OSError, RuntimeError, TimeoutError):
+            value = {"available": False, "reason": "codex-rate-limits-unavailable"}
+        finally:
+            if process is not None:
+                try:
+                    process.terminate()
+                    process.wait(timeout=1.0)
+                except (OSError, subprocess.TimeoutExpired):
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass
+
         _codex_cache.update(at=now, value=value)
         return value
-
-    process: subprocess.Popen[str] | None = None
-    try:
-        process = subprocess.Popen(
-            [codex, "app-server"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            bufsize=1,
-        )
-        _rpc_write(process, {
-            "method": "initialize",
-            "id": 1,
-            "params": {
-                "clientInfo": {
-                    "name": "custom_opencode_web",
-                    "title": "custom_opencode web limits",
-                    "version": "1",
-                }
-            },
-        })
-        _rpc_wait(process, 1, 5.0)
-        _rpc_write(process, {"method": "initialized", "params": {}})
-        _rpc_write(process, {"method": "account/rateLimits/read", "id": 2, "params": {}})
-        value = _normalize_codex_result(_rpc_wait(process, 2, 10.0))
-    except (OSError, RuntimeError, TimeoutError):
-        value = {"available": False, "reason": "codex-rate-limits-unavailable"}
-    finally:
-        if process is not None:
-            try:
-                process.terminate()
-                process.wait(timeout=1.0)
-            except (OSError, subprocess.TimeoutExpired):
-                try:
-                    process.kill()
-                except OSError:
-                    pass
-
-    _codex_cache.update(at=now, value=value)
-    return value
 
 
 def query_qwen_status() -> dict[str, object]:
@@ -223,13 +226,12 @@ def limits_snapshot() -> dict[str, object]:
 
 class Handler(base.Handler):
     def do_GET(self) -> None:
-        if not self.authenticated():
-            return
         path = urlsplit(self.path).path
         if path == "/client-limits.json":
+            if not self.authenticated():
+                return
             self.json_response(limits_snapshot())
             return
-        # Parent authenticates again; harmless and keeps all existing routing unchanged.
         super().do_GET()
 
 
