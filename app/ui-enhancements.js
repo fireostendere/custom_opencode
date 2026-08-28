@@ -35,7 +35,7 @@ async function selectedDirectory() {
 }
 
 export function isFreeModel(model) {
-  const costs = Array.isArray(model?.cost) ? model.cost : []
+  const costs = Array.isArray(model?.cost) ? model.cost : (model?.cost && typeof model.cost === 'object' ? [model.cost] : [])
   if (costs.length) {
     return costs.every((cost) => Number(cost?.input || 0) === 0
       && Number(cost?.output || 0) === 0
@@ -47,10 +47,12 @@ export function isFreeModel(model) {
 }
 
 let decoratingModels = false
+let modelObserver = null
 async function decorateModelChoices() {
   const root = $('modelChoices')
   if (!root || decoratingModels || !root.querySelector('[data-model]')) return
   decoratingModels = true
+  modelObserver?.disconnect()
   try {
     const directory = await selectedDirectory()
     const params = new URLSearchParams()
@@ -83,6 +85,7 @@ async function decorateModelChoices() {
     console.warn('free model grouping failed', error)
   } finally {
     decoratingModels = false
+    if (modelObserver && root.isConnected) modelObserver.observe(root, { childList:true })
   }
 }
 
@@ -95,8 +98,10 @@ function installModelPickerEnhancements() {
   }
   const root = $('modelChoices')
   if (root) {
-    const observer = new MutationObserver(() => queueMicrotask(decorateModelChoices))
-    observer.observe(root, { childList: true })
+    modelObserver = new MutationObserver(() => {
+      if (!decoratingModels) queueMicrotask(decorateModelChoices)
+    })
+    modelObserver.observe(root, { childList: true })
   }
   $('modelButton')?.addEventListener('click', () => setTimeout(decorateModelChoices, 0))
 }
