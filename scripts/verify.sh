@@ -70,17 +70,22 @@ if not isinstance(providers, dict):
     providers = {}
 
 provider = providers.get("bailian-cli", {})
+# Current Alibaba Cloud OpenCode allowlist for Token Plan Personal Edition (2026-08-27).
 expected = {
-    "qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus", "qwen3.6-flash",
-    "deepseek-v4-pro", "deepseek-v4-pro-0813", "deepseek-v4-flash", "deepseek-v4-flash-0731", "deepseek-v3.2",
-    "kimi-k2.7-code", "kimi-k2.6", "kimi-k2.5",
-    "glm-5.2", "glm-5.1", "glm-5", "MiniMax-M2.5",
+    "qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash",
+    "glm-5.2", "deepseek-v4-pro", "deepseek-v4-pro-0813", "deepseek-v4-flash-0731",
 }
+compat_ids = {"qwen3.8-max-preview"}
 models_map = provider.get("models", {}) if isinstance(provider, dict) else {}
 models = set(models_map)
 missing = sorted(expected - models)
 if missing:
-    bad.append("Alibaba Token Plan models missing: " + ", ".join(missing))
+    bad.append("Alibaba Token Plan Personal models missing: " + ", ".join(missing))
+unexpected = sorted(models - expected - compat_ids)
+if unexpected:
+    bad.append("Alibaba models not in current Personal allowlist: " + ", ".join(unexpected))
+if provider.get("name") != "Alibaba Cloud Model Studio · Token Plan Personal Pro":
+    bad.append("Alibaba provider must identify Token Plan Personal Pro")
 if provider.get("package") != "aisdk:@ai-sdk/anthropic":
     bad.append("Alibaba V2 provider must use aisdk:@ai-sdk/anthropic")
 settings = provider.get("settings", {})
@@ -106,7 +111,7 @@ for model_id, model in models_map.items():
 
 compat = models_map.get("qwen3.8-max-preview", {})
 if compat.get("modelID") != "qwen3.8-max":
-    bad.append("legacy qwen3.8-max-preview catalog alias must map to qwen3.8-max")
+    bad.append("legacy qwen3.8-max-preview session alias must map to qwen3.8-max")
 
 ollama = providers.get("ollama", {})
 if ollama.get("package") != "aisdk:@ai-sdk/openai-compatible":
@@ -130,5 +135,5 @@ if config.get("default_agent") != "build":
 
 if bad:
     raise SystemExit("\n".join(bad))
-print(f"Verification passed; native V2 config; Alibaba models: {len(expected)} required, {len(models)} configured")
+print(f"Verification passed; native V2 config; Alibaba Personal models: {len(expected)} current + {len(compat_ids)} compatibility ID")
 PY
