@@ -44,4 +44,11 @@ await api.sendPrompt({ id: 'ses_compat' }, { text: 'fallback', files: [], delive
 body = JSON.parse(calls.at(-1).options.body)
 if (body.text !== 'fallback' || body.delivery !== 'steer') throw new Error('Compatibility prompt fallback regression')
 
-console.log('Web smoke passed: Markdown safety/rendering + current/compat prompt contracts')
+const enhancements = await loadSource('app/enhancements.js')
+if (enhancements.parseSlash('/status')?.command !== 'status') throw new Error('Slash parser failed')
+if (enhancements.parseSlash('/review foo bar')?.arguments !== 'foo bar') throw new Error('Slash arguments parser failed')
+if (enhancements.parseSlash('ordinary text') !== null) throw new Error('Slash parser accepted normal text')
+if (enhancements.commandName({ name:'/init' }) !== 'init') throw new Error('Slash command normalization failed')
+if (enhancements.windowLabel(300) !== 'Сессия · 5ч' || enhancements.windowLabel(10080) !== 'Неделя · 7д') throw new Error('Rate-limit window labels failed')
+
+console.log('Web smoke passed: Markdown + prompt contracts + slash command parsing')
