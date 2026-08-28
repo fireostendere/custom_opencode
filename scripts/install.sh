@@ -33,8 +33,12 @@ if [[ -z "$RAG_ROOT" ]]; then
     fi
   done
 fi
+RAG_BIN=${MCP_RAG_BIN:-}
+if [[ -z "$RAG_BIN" && -n "$RAG_ROOT" ]]; then
+  RAG_BIN="$RAG_ROOT/.venv/bin/knowledge-mcp"
+fi
 RAG_DISABLED=true
-if [[ -n "$RAG_ROOT" && -x "$RAG_ROOT/.venv/bin/knowledge-mcp" ]]; then
+if [[ -n "$RAG_ROOT" && -n "$RAG_BIN" && -x "$RAG_BIN" ]]; then
   RAG_DISABLED=false
 fi
 
@@ -126,5 +130,5 @@ echo "Installed. Start OpenCode with: custom-opencode"
 if [[ "$RAG_DISABLED" == false ]]; then
   echo "RAG MCP: enabled ($RAG_ROOT)"
 else
-  echo "RAG MCP: disabled; set MCP_RAG_ROOT and rerun install/update"
+  echo "RAG MCP: disabled; set MCP_RAG_ROOT/MCP_RAG_BIN and rerun install/update"
 fi
