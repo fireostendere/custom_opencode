@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenCode V2 ChatGPT-style web client
+After=opencode.service
+
+[Service]
+WorkingDirectory=%h/.local/share/opencode/oc-web
+EnvironmentFile=-%h/.local/share/opencode/oc-web/.env
+ExecStart=/usr/bin/python3 %h/.local/share/opencode/oc-web/server.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,107 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local Ollama (RX 9070 XT hybrid)",
+      "options": {
+        "baseURL": "{env:OLLAMA_BASE_URL}",
+        "apiKey": "ollama",
+        "timeout": 600000
+      },
+      "models": {
+        "qwen3.8:27b": {
+          "name": "Qwen3.8 27B (stock)",
+          "limit": {
+            "context": 24576,
+            "output": 8192
+          }
+        },
+        "qwen3.8-heretic:27b": {
+          "name": "Qwen3.8 27B Heretic (abliterated)",
+          "limit": {
+            "context": 24576,
+            "output": 8192
+          }
+        }
+      }
+    },
+    "bailian-cli": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Alibaba Cloud Model Studio",
+      "options": {
+        "baseURL": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+        "apiKey": "{env:TOKEN_PLAN_API_KEY}",
+        "setCacheKey": true
+      },
+      "models": {
+        "qwen3.8-max-preview": {
+          "name": "qwen3.8-max-preview",
+          "limit": {
+            "context": 1000000,
+            "output": 32768
+          }
+        }
+      }
+    }
+  },
+  "default_agent": "build",
+  "instructions": [
+    "__CONFIG_DIR__/AGENTS.md"
+  ],
+  "agent": {
+    "build": {
+      "mode": "primary",
+      "prompt": "{file:__CONFIG_DIR__/prompts/orchestrator.md}",
+      "permission": {
+        "task": {
+          "*": "deny",
+          "local-reader": "ask"
+        }
+      }
+    },
+    "plan": {
+      "mode": "primary",
+      "prompt": "{file:__CONFIG_DIR__/prompts/orchestrator.md}",
+      "permission": {
+        "edit": "deny",
+        "bash": "deny",
+        "task": {
+          "*": "deny",
+          "local-reader": "ask"
+        }
+      }
+    },
+    "title": {
+      "mode": "subagent",
+      "hidden": true,
+      "model": "opencode/hy3-free",
+      "temperature": 0.3,
+      "prompt": "You generate session titles. Given the conversation, output ONE short title: 2-5 words, in the same language the user writes in (Russian stays Russian). Plain text only: no quotes, no colons, no markdown, no trailing period."
+    },
+    "local-reader": {
+      "description": "Read-only local worker for repository exploration, log analysis, file and symbol search, error extraction, and short factual summaries. Use it only for bounded mechanical reading tasks.",
+      "mode": "subagent",
+      "model": "opencode/hy3-free",
+      "temperature": 0.1,
+      "steps": 12,
+      "permission": {
+        "*": "deny",
+        "read": {
+          "*": "allow",
+          "*.env": "deny",
+          "*.env.*": "deny",
+          "*.env.example": "allow"
+        },
+        "glob": "allow",
+        "grep": "allow",
+        "list": "allow",
+        "lsp": "allow",
+        "external_directory": {
+          "*": "deny",
+          "~/ai/logs/**": "allow"
+        }
+      }
+    }
+  }
+}
