@@ -27,11 +27,26 @@
 
 ## Alibaba Cloud Model Studio
 
-Провайдер `bailian-cli` сохранён ради совместимости со старыми сессиями, но работает
-через официальный Anthropic-compatible endpoint Token Plan. В шаблон конфигурации
-добавлен полный набор text/vision LLM из официального примера Token Plan Team для
-OpenCode: Qwen 3.8/3.7/3.6, DeepSeek V4/V3.2, Kimi K2.7/K2.6/K2.5, GLM 5.2/5.1/5
-и MiniMax M2.5.
+Этот комплект настроен под личную подписку **Token Plan Personal Pro**, а не Team
+Edition. Provider ID `bailian-cli` сохранён ради совместимости с существующими
+сессиями и web-favorites, но сам каталог соответствует актуальному Personal allowlist
+для OpenCode.
+
+Текущие text/vision модели Personal Edition, опубликованные Alibaba для OpenCode:
+
+- `qwen3.8-max`;
+- `qwen3.8-flash`;
+- `qwen3.7-max`;
+- `qwen3.7-plus`;
+- `qwen3.6-flash`;
+- `glm-5.2`;
+- `deepseek-v4-pro`;
+- `deepseek-v4-pro-0813`;
+- `deepseek-v4-flash-0731`.
+
+Модели, доступные только через Team/Coding Plan, намеренно не показываются в
+Personal model picker: это предотвращает выбор model ID, который Personal key не
+обязан принимать.
 
 Официальный пример Alibaba пока использует синтаксис OpenCode V1. В этом репозитории
 он переведён в нативный V2 по migration contract OpenCode: AI SDK package получает
@@ -39,17 +54,19 @@ OpenCode: Qwen 3.8/3.7/3.6, DeepSeek V4/V3.2, Kimi K2.7/K2.6/K2.5, GLM 5.2/5.1/5
 `capabilities`. Tool capability задана явно для всех моделей, используемых через
 OpenCode.
 
-`qwen3.8-max-preview` оставлен как compatibility catalog ID для старых сессий, но в
-V2 через `modelID` отправляет провайдеру актуальный `qwen3.8-max`. Новые сессии
-следует создавать на `qwen3.8-max` или другой актуальной модели.
+`qwen3.8-max-preview` оставлен только как compatibility catalog ID для старых сессий;
+через V2 `modelID` он отправляет актуальный `qwen3.8-max`. Новые сессии следует
+создавать на `qwen3.8-max` или другой актуальной Personal-модели.
 
 API key хранится только в `TOKEN_PLAN_API_KEY` в приватном `.env`. Плагин проверки
 квоты сначала использует этот env, а при его отсутствии может прочитать Bailian
 config из `BAILIAN_CONFIG_PATH` (по умолчанию `~/.bailian/config.json`). Endpoint и
 probe-модель также настраиваются через `.env`.
 
-Генераторы изображений, видео и аудио Token Plan намеренно не добавлены в обычный
-model picker OpenCode: этот провайдер предназначен для chat/text/vision LLM.
+Personal Token Plan также включает image/video generation и Harness capabilities,
+но Alibaba требует подключать такие генераторы через Skill/extension mechanism, а
+не помещать их в обычный OpenCode chat model picker. Поэтому они не смешиваются с
+LLM provider catalog.
 
 ## Секреты и сетевые адреса
 
@@ -59,7 +76,7 @@ model picker OpenCode: этот провайдер предназначен дл
 
 `./scripts/verify.sh` проверяет синтаксис Python/JavaScript/shell, ищет literal IPv4,
 персональные абсолютные home-пути и распространённые форматы секретов, включая
-Alibaba Token Plan `sk-sp-*`. Также он проверяет обязательный набор моделей Alibaba,
+Alibaba Token Plan `sk-sp-*`. Также он проверяет точный Personal model allowlist,
 переменные endpoint/API key и запрещает возврат к V1-only полям provider/model/agent.
 
 ## Переносимые пути
