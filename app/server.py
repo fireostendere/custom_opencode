@@ -17,8 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 ROOT = Path(__file__).resolve().parent
-SERVICE_FILE = Path.home() / ".local/state/opencode/service.json"
-LEGACY_AUTH_FILE = Path.home() / ".config/opencode/mobile-server.env"
+DEFAULT_SERVICE_FILE = Path.home() / ".local/state/opencode/service.json"
+DEFAULT_LEGACY_AUTH_FILE = Path.home() / ".config/opencode/mobile-server.env"
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -39,15 +39,24 @@ def read_env_file(path: Path) -> dict[str, str]:
     return result
 
 
-FILE_ENV = {
-    **read_env_file(LEGACY_AUTH_FILE),
+BASE_ENV = {
     **read_env_file(ROOT.parent / ".env"),
     **read_env_file(ROOT / ".env"),
+}
+_legacy_auth_value = os.environ.get("OPENCODE_LEGACY_AUTH_FILE") or BASE_ENV.get("OPENCODE_LEGACY_AUTH_FILE")
+LEGACY_AUTH_FILE = Path(_legacy_auth_value).expanduser() if _legacy_auth_value else DEFAULT_LEGACY_AUTH_FILE
+FILE_ENV = {
+    **read_env_file(LEGACY_AUTH_FILE),
+    **BASE_ENV,
 }
 
 
 def setting(name: str, default: str | None = None) -> str | None:
     return os.environ.get(name) or FILE_ENV.get(name) or default
+
+
+_service_file_value = setting("OPENCODE_SERVICE_FILE", str(DEFAULT_SERVICE_FILE))
+SERVICE_FILE = Path(_service_file_value).expanduser()
 
 
 def is_loopback(value: str) -> bool:
@@ -78,6 +87,7 @@ if not CLIENT_PASSWORD:
     raise SystemExit("Не задан OPENCODE_SERVER_PASSWORD в .env")
 
 BACKEND_URL, BACKEND_PASSWORD = load_backend()
+BACKEND_USER = setting("OPENCODE_BACKEND_USERNAME", "opencode")
 BACKEND = urlsplit(BACKEND_URL)
 if BACKEND.scheme != "http" or not BACKEND.hostname or BACKEND.path not in ("", "/"):
     raise SystemExit(f"Поддерживается только простой http backend: {BACKEND_URL}")
@@ -97,7 +107,7 @@ def basic_value(user: str, password: str) -> str:
 
 
 CLIENT_AUTH = basic_value(CLIENT_USER, CLIENT_PASSWORD)
-BACKEND_AUTH = basic_value("opencode", BACKEND_PASSWORD)
+BACKEND_AUTH = basic_value(BACKEND_USER, BACKEND_PASSWORD)
 HOP_BY_HOP = {
     "connection",
     "keep-alive",
