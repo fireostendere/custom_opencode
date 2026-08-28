@@ -8,6 +8,12 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+PYTHON3=$(command -v python3 || true)
+if [[ -z "$PYTHON3" ]]; then
+  echo "python3 is required" >&2
+  exit 1
+fi
+
 set -a
 source "$ENV_FILE"
 set +a
@@ -19,7 +25,16 @@ SCRATCH_DIR=${OPENCODE_SCRATCH_DIRECTORY:-"$HOME/opencode-scratch"}
 AUTH_FILE=${OPENCODE_AUTH_FILE:-"$HOME/.local/share/opencode/auth.json"}
 
 install -d "$UNIT_DIR" "$BIN_DIR" "$SCRATCH_DIR" "$(dirname "$AUTH_FILE")"
-sed "s|__CUSTOM_OPENCODE_ROOT__|$ROOT|g" "$ROOT/systemd/opencode-web-client.service" >"$UNIT_DIR/opencode-web-client.service"
+"$PYTHON3" - "$ROOT/systemd/opencode-web-client.service" "$UNIT_DIR/opencode-web-client.service" "$ROOT" "$PYTHON3" <<'PY'
+from pathlib import Path
+import sys
+source, target, root, python3 = sys.argv[1:]
+text = Path(source).read_text(encoding="utf-8")
+text = text.replace("__CUSTOM_OPENCODE_ROOT__", root).replace("__PYTHON3__", python3)
+if "__CUSTOM_OPENCODE_ROOT__" in text or "__PYTHON3__" in text:
+    raise SystemExit("Unresolved systemd template placeholder")
+Path(target).write_text(text, encoding="utf-8")
+PY
 chmod 0644 "$UNIT_DIR/opencode-web-client.service"
 
 if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
@@ -32,7 +47,7 @@ if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   install -m 0644 "$ROOT/config/events.js" "$CONFIG_DIR/events.js"
   install -m 0644 "$ROOT/config/prompts/"* "$CONFIG_DIR/prompts/"
   install -m 0644 "$ROOT/config/plugins/"* "$CONFIG_DIR/plugins/"
-  python3 - "$ROOT/config/opencode.json.template" "$CONFIG_DIR/opencode.json" "$CONFIG_DIR" <<'PY'
+  "$PYTHON3" - "$ROOT/config/opencode.json.template" "$CONFIG_DIR/opencode.json" "$CONFIG_DIR" <<'PY'
 import json, sys
 source, target, config_dir = sys.argv[1:]
 text = open(source, encoding="utf-8").read().replace("__CONFIG_DIR__", config_dir)
@@ -41,7 +56,7 @@ open(target, "w", encoding="utf-8").write(text)
 PY
 fi
 
-python3 - "$AUTH_FILE" <<'PY'
+"$PYTHON3" - "$AUTH_FILE" <<'PY'
 import json, os, sys
 target = sys.argv[1]
 mapping = {
