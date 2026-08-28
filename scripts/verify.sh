@@ -7,7 +7,7 @@ NODE=$(command -v node || true)
 if [[ -z "$PYTHON3" ]]; then echo "python3 is required" >&2; exit 1; fi
 if [[ -z "$NODE" ]]; then echo "node is required" >&2; exit 1; fi
 
-"$PYTHON3" -m py_compile "$ROOT/app/server.py"
+"$PYTHON3" -m py_compile "$ROOT/app/server.py" "$ROOT/app/server_ext.py"
 
 WORKSPACE_TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$WORKSPACE_TEST_ROOT"' EXIT
@@ -48,6 +48,7 @@ for file in "$ROOT/app/"*.js "$ROOT/config/events.js" "$ROOT/config/plugins/"*.j
   "$NODE" --check "$file"
 done
 "$NODE" "$ROOT/scripts/web-smoke.mjs"
+"$PYTHON3" "$ROOT/scripts/limits-smoke.py"
 for file in "$ROOT/scripts/"*.sh; do
   bash -n "$file"
 done
@@ -61,20 +62,29 @@ bad = []
 
 # Web client must remain modular; do not regress to the old 70+ KB inline monolith.
 index = (root / "app/index.html").read_text(encoding="utf-8")
-required_web = ["styles.css", "api.js", "markdown.js", "app.js", "sw.js"]
+required_web = ["styles.css", "api.js", "markdown.js", "app.js", "enhancements.css", "enhancements.js", "sw.js", "server_ext.py"]
 for name in required_web:
     if not (root / "app" / name).is_file():
         bad.append(f"missing web module: app/{name}")
-if '<script type="module" src="/app.js"></script>' not in index:
-    bad.append("index.html must load /app.js as an external ES module")
+for script in ('<script type="module" src="/app.js"></script>', '<script type="module" src="/enhancements.js"></script>'):
+    if script not in index:
+        bad.append(f"index.html missing module: {script}")
+if '<link rel="stylesheet" href="/enhancements.css">' not in index:
+    bad.append("index.html must load /enhancements.css")
+if 'id="providerLimits"' not in index or 'id="slashPalette"' not in index:
+    bad.append("index.html must expose provider limits and slash palette surfaces")
 inline = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", index, re.S | re.I)
 if any(chunk.strip() for chunk in inline):
     bad.append("index.html must not contain inline application JavaScript")
-if len(index.encode()) > 20_000:
-    bad.append("index.html grew beyond 20 KB; keep application code in modules")
+if len(index.encode()) > 24_000:
+    bad.append("index.html grew beyond 24 KB; keep application code in modules")
+
 app_js = (root / "app/app.js").read_text(encoding="utf-8")
 api_js = (root / "app/api.js").read_text(encoding="utf-8")
 markdown_js = (root / "app/markdown.js").read_text(encoding="utf-8")
+enhancements_js = (root / "app/enhancements.js").read_text(encoding="utf-8")
+server_ext_py = (root / "app/server_ext.py").read_text(encoding="utf-8")
+service = (root / "systemd/opencode-web-client.service").read_text(encoding="utf-8")
 feature_markers = {
     "markdown/code UI": "renderMarkdown",
     "parallel running sessions": "running: new Map()",
@@ -96,6 +106,14 @@ if "highlightCode" not in markdown_js or "copy-code" not in markdown_js:
 for endpoint in ("/session/active", "/session/${encodeURIComponent(sessionID)}/fork", "/session/${encodeURIComponent(sessionID)}/diff", "/vcs/status", "/vcs"):
     if endpoint not in api_js:
         bad.append(f"web API capability missing: {endpoint}")
+for marker in ("/api/command", "/command`", "parseSlash", "slashPalette"):
+    if marker not in enhancements_js:
+        bad.append(f"slash-command capability missing: {marker}")
+for marker in ("account/rateLimits/read", "QWEN_FIVE_HOUR_LIMIT = 12_000", "QWEN_SEVEN_DAY_LIMIT = 40_000", "/client-limits.json"):
+    if marker not in server_ext_py:
+        bad.append(f"provider-limit capability missing: {marker}")
+if "app/server_ext.py" not in service:
+    bad.append("web systemd service must launch server_ext.py")
 
 ipv4 = re.compile(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)")
 secrets = [
@@ -166,5 +184,5 @@ for agent_id, agent in agents.items():
     if rules and not isinstance(rules, list): bad.append(f"agent permissions must be ordered V2 array: {agent_id}")
 if config.get("default_agent") != "build": bad.append("default_agent must remain build")
 if bad: raise SystemExit("\n".join(bad))
-print(f"Verification passed; modular web client; native V2 config; Alibaba Personal models: {len(expected)} current + {len(compat_ids)} compatibility ID")
+print(f"Verification passed; modular web client + provider limits + slash commands; native V2 config; Alibaba Personal models: {len(expected)} current + {len(compat_ids)} compatibility ID")
 PY
