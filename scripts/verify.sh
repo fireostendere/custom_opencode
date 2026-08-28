@@ -56,25 +56,79 @@ for path in root.rglob("*"):
 
 config_path = root / "config/opencode.json.template"
 config = json.loads(config_path.read_text(encoding="utf-8"))
-provider = config["provider"]["bailian-cli"]
+
+# Native OpenCode V2 shape. Do not silently drift back to V1 compatibility syntax.
+for legacy in ("provider", "agent", "permission"):
+    if legacy in config:
+        bad.append(f"legacy V1 top-level field in OpenCode config: {legacy}")
+if "instructions" in config:
+    bad.append("V2 instructions config is currently retained but not loaded; use installed AGENTS.md instead")
+
+providers = config.get("providers")
+if not isinstance(providers, dict):
+    bad.append("OpenCode config must contain native V2 providers map")
+    providers = {}
+
+provider = providers.get("bailian-cli", {})
 expected = {
     "qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus", "qwen3.6-flash",
     "deepseek-v4-pro", "deepseek-v4-pro-0813", "deepseek-v4-flash", "deepseek-v4-flash-0731", "deepseek-v3.2",
     "kimi-k2.7-code", "kimi-k2.6", "kimi-k2.5",
     "glm-5.2", "glm-5.1", "glm-5", "MiniMax-M2.5",
 }
-models = set(provider.get("models", {}))
+models_map = provider.get("models", {}) if isinstance(provider, dict) else {}
+models = set(models_map)
 missing = sorted(expected - models)
 if missing:
     bad.append("Alibaba Token Plan models missing: " + ", ".join(missing))
-if provider.get("npm") != "@ai-sdk/anthropic":
-    bad.append("Alibaba provider must use @ai-sdk/anthropic")
-if provider.get("options", {}).get("baseURL") != "{env:TOKEN_PLAN_ANTHROPIC_BASE_URL}":
+if provider.get("package") != "aisdk:@ai-sdk/anthropic":
+    bad.append("Alibaba V2 provider must use aisdk:@ai-sdk/anthropic")
+settings = provider.get("settings", {})
+if settings.get("baseURL") != "{env:TOKEN_PLAN_ANTHROPIC_BASE_URL}":
     bad.append("Alibaba provider baseURL must come from TOKEN_PLAN_ANTHROPIC_BASE_URL")
-if provider.get("options", {}).get("apiKey") != "{env:TOKEN_PLAN_API_KEY}":
+if settings.get("apiKey") != "{env:TOKEN_PLAN_API_KEY}":
     bad.append("Alibaba provider apiKey must come from TOKEN_PLAN_API_KEY")
+for legacy in ("npm", "options"):
+    if legacy in provider:
+        bad.append(f"legacy V1 Alibaba provider field: {legacy}")
+
+for model_id, model in models_map.items():
+    for legacy in ("modalities", "options", "reasoning", "tool_call"):
+        if legacy in model:
+            bad.append(f"legacy/ignored V1 model field: {model_id}.{legacy}")
+    caps = model.get("capabilities", {})
+    if caps.get("tools") is not True:
+        bad.append(f"Alibaba model missing explicit tool capability: {model_id}")
+    if caps.get("output") != ["text"]:
+        bad.append(f"Alibaba model output capability must be text: {model_id}")
+    if not caps.get("input") or "text" not in caps["input"]:
+        bad.append(f"Alibaba model missing text input capability: {model_id}")
+
+compat = models_map.get("qwen3.8-max-preview", {})
+if compat.get("modelID") != "qwen3.8-max":
+    bad.append("legacy qwen3.8-max-preview catalog alias must map to qwen3.8-max")
+
+ollama = providers.get("ollama", {})
+if ollama.get("package") != "aisdk:@ai-sdk/openai-compatible":
+    bad.append("local Ollama V2 provider must use aisdk:@ai-sdk/openai-compatible")
+
+agents = config.get("agents")
+if not isinstance(agents, dict):
+    bad.append("OpenCode config must contain native V2 agents map")
+    agents = {}
+legacy_agent_fields = {"prompt", "permission", "temperature", "top_p", "options", "maxSteps", "tools", "disable"}
+for agent_id, agent in agents.items():
+    found = sorted(legacy_agent_fields.intersection(agent))
+    if found:
+        bad.append(f"legacy V1 agent fields in {agent_id}: {', '.join(found)}")
+    rules = agent.get("permissions", [])
+    if rules and not isinstance(rules, list):
+        bad.append(f"agent permissions must be ordered V2 array: {agent_id}")
+
+if config.get("default_agent") != "build":
+    bad.append("default_agent must remain build")
 
 if bad:
     raise SystemExit("\n".join(bad))
-print(f"Verification passed; Alibaba models: {len(expected)} required, {len(models)} configured")
+print(f"Verification passed; native V2 config; Alibaba models: {len(expected)} required, {len(models)} configured")
 PY

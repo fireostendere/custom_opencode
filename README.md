@@ -14,6 +14,17 @@
 - конфигурация агентов, CLI-настройки, обработчик событий и плагины;
 - systemd user-service и установщик.
 
+## Native OpenCode V2 config
+
+`config/opencode.json.template` хранится в нативном формате OpenCode V2: `providers`,
+`package`, `settings`, `capabilities`, `agents`, `system` и упорядоченные
+`permissions`. Это важно, потому что `opencode2` умеет читать V1-конфиг, но некоторые
+старые поля модели (например `reasoning`) в V2 намеренно игнорируются.
+
+`AGENTS.md` устанавливается в глобальный каталог OpenCode и обнаруживается V2
+автоматически. Поле `instructions` в JSON не используется: текущий V2 сохраняет его,
+но пока не подмешивает перечисленные файлы в контекст модели.
+
 ## Alibaba Cloud Model Studio
 
 Провайдер `bailian-cli` сохранён ради совместимости со старыми сессиями, но работает
@@ -22,7 +33,14 @@
 OpenCode: Qwen 3.8/3.7/3.6, DeepSeek V4/V3.2, Kimi K2.7/K2.6/K2.5, GLM 5.2/5.1/5
 и MiniMax M2.5.
 
-`qwen3.8-max-preview` оставлен как legacy alias для старых сессий; новые сессии
+Официальный пример Alibaba пока использует синтаксис OpenCode V1. В этом репозитории
+он переведён в нативный V2 по migration contract OpenCode: AI SDK package получает
+префикс `aisdk:`, provider `options` становятся `settings`, а model `modalities` —
+`capabilities`. Tool capability задана явно для всех моделей, используемых через
+OpenCode.
+
+`qwen3.8-max-preview` оставлен как compatibility catalog ID для старых сессий, но в
+V2 через `modelID` отправляет провайдеру актуальный `qwen3.8-max`. Новые сессии
 следует создавать на `qwen3.8-max` или другой актуальной модели.
 
 API key хранится только в `TOKEN_PLAN_API_KEY` в приватном `.env`. Плагин проверки
@@ -41,8 +59,8 @@ model picker OpenCode: этот провайдер предназначен дл
 
 `./scripts/verify.sh` проверяет синтаксис Python/JavaScript/shell, ищет literal IPv4,
 персональные абсолютные home-пути и распространённые форматы секретов, включая
-Alibaba Token Plan `sk-sp-*`. Также он проверяет обязательный набор моделей Alibaba
-и то, что API key/base URL берутся из env.
+Alibaba Token Plan `sk-sp-*`. Также он проверяет обязательный набор моделей Alibaba,
+переменные endpoint/API key и запрещает возврат к V1-only полям provider/model/agent.
 
 ## Переносимые пути
 

@@ -1,10 +1,10 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "provider": {
+  "providers": {
     "ollama": {
-      "npm": "@ai-sdk/openai-compatible",
+      "package": "aisdk:@ai-sdk/openai-compatible",
       "name": "Local Ollama (RX 9070 XT hybrid)",
-      "options": {
+      "settings": {
         "baseURL": "{env:OLLAMA_BASE_URL}",
         "apiKey": "ollama",
         "timeout": 600000
@@ -12,6 +12,11 @@
       "models": {
         "qwen3.8:27b": {
           "name": "Qwen3.8 27B (stock)",
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          },
           "limit": {
             "context": 24576,
             "output": 8192
@@ -19,6 +24,11 @@
         },
         "qwen3.8-heretic:27b": {
           "name": "Qwen3.8 27B Heretic (abliterated)",
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          },
           "limit": {
             "context": 24576,
             "output": 8192
@@ -27,56 +37,51 @@
       }
     },
     "bailian-cli": {
-      "npm": "@ai-sdk/anthropic",
+      "package": "aisdk:@ai-sdk/anthropic",
       "name": "Alibaba Cloud Model Studio · Token Plan",
-      "options": {
+      "settings": {
         "baseURL": "{env:TOKEN_PLAN_ANTHROPIC_BASE_URL}",
         "apiKey": "{env:TOKEN_PLAN_API_KEY}"
       },
       "models": {
         "qwen3.8-max": {
           "name": "Qwen3.8 Max",
-          "reasoning": true,
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "limit": {
             "context": 983616,
             "output": 131072
           },
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "options": {
+          "settings": {
             "effort": "xhigh"
           }
         },
         "qwen3.8-flash": {
           "name": "Qwen3.8 Flash",
-          "reasoning": true,
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "limit": {
             "context": 983616,
             "output": 131072
           },
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "options": {
+          "settings": {
             "effort": "xhigh"
           }
         },
         "qwen3.7-max": {
           "name": "Qwen3.7 Max",
-          "options": {
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "settings": {
             "thinking": {
               "type": "enabled",
               "budgetTokens": 8192
@@ -85,16 +90,12 @@
         },
         "qwen3.7-plus": {
           "name": "Qwen3.7 Plus",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"]
           },
-          "options": {
+          "settings": {
             "thinking": {
               "type": "enabled",
               "budgetTokens": 8192
@@ -103,16 +104,12 @@
         },
         "qwen3.6-plus": {
           "name": "Qwen3.6 Plus",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"]
           },
-          "options": {
+          "settings": {
             "thinking": {
               "type": "enabled",
               "budgetTokens": 8192
@@ -121,16 +118,12 @@
         },
         "qwen3.6-flash": {
           "name": "Qwen3.6 Flash",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"]
           },
-          "options": {
+          "settings": {
             "thinking": {
               "type": "enabled",
               "budgetTokens": 8192
@@ -138,32 +131,53 @@
           }
         },
         "deepseek-v4-pro": {
-          "name": "DeepSeek V4 Pro"
+          "name": "DeepSeek V4 Pro",
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          }
         },
         "deepseek-v4-pro-0813": {
-          "name": "DeepSeek V4 Pro 0813"
+          "name": "DeepSeek V4 Pro 0813",
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          }
         },
         "deepseek-v4-flash": {
-          "name": "DeepSeek V4 Flash"
+          "name": "DeepSeek V4 Flash",
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          }
         },
         "deepseek-v4-flash-0731": {
-          "name": "DeepSeek V4 Flash 0731"
+          "name": "DeepSeek V4 Flash 0731",
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          }
         },
         "deepseek-v3.2": {
-          "name": "DeepSeek V3.2"
+          "name": "DeepSeek V3.2",
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          }
         },
         "kimi-k2.7-code": {
           "name": "Kimi K2.7 Code",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"]
           },
-          "options": {
+          "settings": {
             "thinking": {
               "type": "enabled",
               "budgetTokens": 8192
@@ -172,16 +186,12 @@
         },
         "kimi-k2.6": {
           "name": "Kimi K2.6",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"]
           },
-          "options": {
+          "settings": {
             "thinking": {
               "type": "enabled",
               "budgetTokens": 8192
@@ -190,16 +200,12 @@
         },
         "kimi-k2.5": {
           "name": "Kimi K2.5",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"]
           },
-          "options": {
+          "settings": {
             "thinking": {
               "type": "enabled",
               "budgetTokens": 8192
@@ -208,7 +214,12 @@
         },
         "glm-5.2": {
           "name": "GLM-5.2",
-          "options": {
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "settings": {
             "thinking": {
               "type": "enabled",
               "budgetTokens": 8192
@@ -217,7 +228,12 @@
         },
         "glm-5.1": {
           "name": "GLM-5.1",
-          "options": {
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "settings": {
             "thinking": {
               "type": "enabled",
               "budgetTokens": 8192
@@ -226,7 +242,12 @@
         },
         "glm-5": {
           "name": "GLM-5",
-          "options": {
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "settings": {
             "thinking": {
               "type": "enabled",
               "budgetTokens": 8192
@@ -234,25 +255,26 @@
           }
         },
         "MiniMax-M2.5": {
-          "name": "MiniMax M2.5"
+          "name": "MiniMax M2.5",
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          }
         },
         "qwen3.8-max-preview": {
-          "name": "Qwen3.8 Max Preview (legacy alias → qwen3.8-max)",
-          "reasoning": true,
+          "modelID": "qwen3.8-max",
+          "name": "Qwen3.8 Max Preview (compatibility alias)",
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "limit": {
             "context": 983616,
             "output": 131072
           },
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "options": {
+          "settings": {
             "effort": "xhigh"
           }
         }
@@ -260,62 +282,117 @@
     }
   },
   "default_agent": "build",
-  "instructions": [
-    "__CONFIG_DIR__/AGENTS.md"
-  ],
-  "agent": {
+  "agents": {
     "build": {
       "mode": "primary",
-      "prompt": "{file:__CONFIG_DIR__/prompts/orchestrator.md}",
-      "permission": {
-        "task": {
-          "*": "deny",
-          "local-reader": "ask"
+      "system": "{file:__CONFIG_DIR__/prompts/orchestrator.md}",
+      "permissions": [
+        {
+          "action": "subagent",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "subagent",
+          "resource": "local-reader",
+          "effect": "ask"
         }
-      }
+      ]
     },
     "plan": {
       "mode": "primary",
-      "prompt": "{file:__CONFIG_DIR__/prompts/orchestrator.md}",
-      "permission": {
-        "edit": "deny",
-        "bash": "deny",
-        "task": {
-          "*": "deny",
-          "local-reader": "ask"
+      "system": "{file:__CONFIG_DIR__/prompts/orchestrator.md}",
+      "permissions": [
+        {
+          "action": "edit",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "subagent",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "subagent",
+          "resource": "local-reader",
+          "effect": "ask"
         }
-      }
+      ]
     },
     "title": {
       "mode": "subagent",
       "hidden": true,
       "model": "opencode/hy3-free",
-      "temperature": 0.3,
-      "prompt": "You generate session titles. Given the conversation, output ONE short title: 2-5 words, in the same language the user writes in (Russian stays Russian). Plain text only: no quotes, no colons, no markdown, no trailing period."
+      "system": "You generate session titles. Given the conversation, output ONE short title: 2-5 words, in the same language the user writes in (Russian stays Russian). Plain text only: no quotes, no colons, no markdown, no trailing period."
     },
     "local-reader": {
       "description": "Read-only local worker for repository exploration, log analysis, file and symbol search, error extraction, and short factual summaries. Use it only for bounded mechanical reading tasks.",
       "mode": "subagent",
       "model": "opencode/hy3-free",
-      "temperature": 0.1,
       "steps": 12,
-      "permission": {
-        "*": "deny",
-        "read": {
-          "*": "allow",
-          "*.env": "deny",
-          "*.env.*": "deny",
-          "*.env.example": "allow"
+      "permissions": [
+        {
+          "action": "*",
+          "resource": "*",
+          "effect": "deny"
         },
-        "glob": "allow",
-        "grep": "allow",
-        "list": "allow",
-        "lsp": "allow",
-        "external_directory": {
-          "*": "deny",
-          "~/ai/logs/**": "allow"
+        {
+          "action": "read",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "read",
+          "resource": "*.env",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*.env.*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*.env.example",
+          "effect": "allow"
+        },
+        {
+          "action": "glob",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "grep",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "list",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "lsp",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "external_directory",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "external_directory",
+          "resource": "~/ai/logs/**",
+          "effect": "allow"
         }
-      }
+      ]
     }
   }
 }
