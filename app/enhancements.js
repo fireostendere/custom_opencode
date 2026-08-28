@@ -165,7 +165,7 @@ function renderPalette() {
   }
   palette.innerHTML = paletteItems.map((command, index) => `<button type="button" class="slash-item ${index === paletteIndex ? 'active' : ''}" data-slash-index="${index}"><span class="slash-name">/${escapeHtml(commandName(command))}</span><span class="slash-desc">${escapeHtml(commandDescription(command))}</span></button>`).join('')
   palette.hidden = false
-  palette.querySelectorAll('[data-slash-index]').forEach((button) => button.addEventListener('mousedown', (event) => {
+  palette.querySelectorAll('[data-slash-index]').forEach((button) => button.addEventListener('pointerdown', (event) => {
     event.preventDefault()
     insertCommand(Number(button.dataset.slashIndex))
   }))
@@ -255,8 +255,13 @@ function bindSlashCommands() {
       event.preventDefault(); event.stopImmediatePropagation()
       paletteIndex = paletteItems.length ? (paletteIndex - 1 + paletteItems.length) % paletteItems.length : 0
       renderPalette()
-    } else if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && paletteItems.length && !input.value.trim().includes(' '))) {
+    } else if (event.key === 'Tab') {
       event.preventDefault(); event.stopImmediatePropagation(); insertCommand()
+    } else if (event.key === 'Enter' && !event.shiftKey && paletteItems.length && !input.value.trim().includes(' ')) {
+      const selected = paletteItems[paletteIndex]
+      const exact = commandName(selected).toLowerCase() === input.value.trim().slice(1).toLowerCase()
+      event.preventDefault(); event.stopImmediatePropagation()
+      if (exact) { closePalette(); form.requestSubmit() } else insertCommand()
     } else if (event.key === 'Escape') {
       event.preventDefault(); event.stopImmediatePropagation(); closePalette()
     }
