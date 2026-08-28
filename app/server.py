@@ -212,16 +212,22 @@ def mark_quick_session(session: object) -> object:
 
 
 def transform_json_response(method: str, path: str, body: bytes) -> bytes:
-    if method != "GET" or not body:
+    if not body or path not in ("/api/session", "/api/project"):
         return body
-    if path not in ("/api/session", "/api/project"):
+    if method not in ("GET", "POST"):
         return body
     try:
         payload = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return body
 
-    if path == "/api/session":
+    if path == "/api/session" and method == "POST":
+        if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+            payload = dict(payload)
+            payload["data"] = mark_quick_session(payload["data"])
+        elif isinstance(payload, dict):
+            payload = mark_quick_session(payload)
+    elif path == "/api/session":
         if isinstance(payload, dict) and isinstance(payload.get("data"), list):
             payload = dict(payload)
             payload["data"] = [
