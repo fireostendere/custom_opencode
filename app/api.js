@@ -51,7 +51,11 @@ export async function createSession({ directory, title, agent, model }) {
   if (title) body.title = title
   if (agent) body.agent = agent
   if (model) body.model = model
-  return dataOf(await request('/api/session', { method: 'POST', body: JSON.stringify(body) }))
+  let created = dataOf(await request('/api/session', { method: 'POST', body: JSON.stringify(body) }))
+  if (title && created?.id && created.title !== title) {
+    try { created = await renameSession(created.id, title) || { ...created, title } } catch {}
+  }
+  return created
 }
 
 function normalizeModernMessage(item) {
@@ -113,25 +117,54 @@ export async function switchModel(sessionID, model) {
   return request(`/api/session/${encodeURIComponent(sessionID)}/model`, { method: 'POST', body: JSON.stringify({ model }) })
 }
 
-export async function sendPrompt(session, { text, files = [], delivery = 'normal' }) {
+export async function sendPrompt(session, { text, files = [], delivery = 'steer' }) {
   const id = encodeURIComponent(session.id)
+  const mode = delivery === 'queue' ? 'queue' : 'steer'
+  let lastFormatError
+
+  // Current OpenCode V2 contract.
   try {
     return await request(`/api/session/${id}/prompt`, {
       method: 'POST',
-      body: JSON.stringify({ text, files, delivery: 'steer' }),
+      body: JSON.stringify({ prompt: { text, files }, delivery: mode }),
     })
   } catch (error) {
-    if (error.status !== 404 || files.length) throw error
-    const parts = text ? [{ type: 'text', text }] : []
-    return request(`/api/session/${id}/prompt_async`, {
-      method: 'POST',
-      body: JSON.stringify({
-        agent: session.agent,
-        model: session.model,
-        parts,
-      }),
-    })
+    if (![400, 404, 405, 422].includes(error.status)) throw error
+    lastFormatError = error
   }
+
+  // Compatibility with the V2 build this repository originally targeted.
+  try {
+    return await request(`/api/session/${id}/prompt`, {
+      method: 'POST',
+      body: JSON.stringify({ text, files, delivery: mode }),
+    })
+  } catch (error) {
+    if (![400, 404, 405, 422].includes(error.status)) throw error
+    lastFormatError = error
+  }
+
+  // Legacy async prompt fallback. File attachments are not silently discarded.
+  if (!files.length) {
+    try {
+      const parts = text ? [{ type: 'text', text }] : []
+      return await request(`/api/session/${id}/prompt_async`, {
+        method: 'POST',
+        body: JSON.stringify({
+          agent: session.agent,
+          model: session.model,
+          parts,
+          delivery: mode,
+        }),
+      })
+    } catch (error) {
+      if (![400, 404, 405, 422].includes(error.status)) throw error
+      lastFormatError = error
+    }
+  }
+
+  if (lastFormatError && mode === 'queue') lastFormatError.unsupportedDelivery = true
+  throw lastFormatError || new Error('Prompt API is unavailable')
 }
 
 export async function abortSession(sessionID) {
@@ -146,10 +179,10 @@ export async function abortSession(sessionID) {
 export async function renameSession(sessionID, title) {
   const id = encodeURIComponent(sessionID)
   try {
-    return dataOf(await request(`/api/session/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }))
-  } catch (error) {
-    if (error.status !== 404 && error.status !== 405) throw error
     return dataOf(await request(`/api/session/${id}/rename`, { method: 'POST', body: JSON.stringify({ title }) }))
+  } catch (error) {
+    if (![404, 405].includes(error.status)) throw error
+    return dataOf(await request(`/api/session/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }))
   }
 }
 
