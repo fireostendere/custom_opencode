@@ -425,9 +425,13 @@ class Handler(BaseHTTPRequestHandler):
 
             response_body = response.read()
             success = 200 <= response.status < 300
-            if allocated_scratch and not success:
-                cleanup_scratch_directory(allocated_scratch)
-                allocated_scratch = None
+            if allocated_scratch:
+                if success:
+                    # The backend now owns this workspace through the persisted session.
+                    allocated_scratch = None
+                else:
+                    cleanup_scratch_directory(allocated_scratch)
+                    allocated_scratch = None
             if cleanup_after_delete and success:
                 cleanup_scratch_directory(cleanup_after_delete)
             if content_type.startswith("application/json"):
