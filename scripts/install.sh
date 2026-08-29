@@ -145,7 +145,10 @@ set -a
 source "$ROOT/.env"
 set +a
 if command -v opencode2 >/dev/null 2>&1; then
-  exec opencode2 "\$@"
+  exec env -u OPENCODE_CONFIG_DIR opencode2 "\$@"
+fi
+if [[ -z "\${OPENCODE_CONFIG_DIR:-}" ]]; then
+  unset OPENCODE_CONFIG_DIR
 fi
 exec opencode "\$@"
 EOF
@@ -181,6 +184,7 @@ fi
 systemctl --user restart opencode-web-client.service
 
 if [[ "$SELFTEST" != 0 ]]; then
+  "$ROOT/scripts/cli-wrapper-selftest.sh" "$BIN_DIR/custom-opencode"
   SELFTEST_ARGS=()
   if [[ "$RAG_DISABLED" == false ]]; then
     SELFTEST_ARGS+=(--rag-enabled)
