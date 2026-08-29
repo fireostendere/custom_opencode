@@ -24,7 +24,9 @@ function accentContrast(hex) {
   const rgb = [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16) / 255)
   const linear = rgb.map((value) => value <= .03928 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4)
   const luminance = .2126 * linear[0] + .7152 * linear[1] + .0722 * linear[2]
-  return luminance > .46 ? '#111111' : '#ffffff'
+  const darkContrast = (luminance + .05) / .05
+  const lightContrast = 1.05 / (luminance + .05)
+  return darkContrast >= lightContrast ? '#111111' : '#ffffff'
 }
 
 function resolvedTheme(mode) {
@@ -100,9 +102,11 @@ function bindAppearanceUI() {
   })
 }
 
-systemTheme.addEventListener?.('change', () => {
+function handleSystemThemeChange() {
   if (appearance.theme === 'system') applyAppearance()
-})
+}
+if (systemTheme.addEventListener) systemTheme.addEventListener('change', handleSystemThemeChange)
+else systemTheme.addListener?.(handleSystemThemeChange)
 
 applyAppearance()
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindAppearanceUI, { once:true })
