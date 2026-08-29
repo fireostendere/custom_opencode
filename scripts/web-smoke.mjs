@@ -91,7 +91,7 @@ if (ux.agentFor('build', 'orchestrated') !== 'build' || ux.agentFor('plan', 'orc
 if (!ux.permissionSummary('Команда', '{"command":"git status","description":"long"}').includes('git status')) throw new Error('Permission summary did not extract command')
 if (!ux.permissionSummary('question', '{"questions":[{"label":"Сохранить изменения","description":"Сначала сохранить изменения"}]}').startsWith('Нужен выбор:')) throw new Error('Question permission summary is not human-readable')
 if (ux.permissionSummary('Команда', 'x'.repeat(300)).length > 110) throw new Error('Permission summary must stay compact')
-if (ux.ORCHESTRATED_MODEL.label !== 'Qwen 3.8 Max · Оркестратор') throw new Error('Orchestrated model label regression')
+if (ux.ORCHESTRATED_MODEL.label !== 'Qwen 3.8 Max · Оркестрированная') throw new Error('Orchestrated model label regression')
 
 const index = readFileSync(resolve(root, 'app/index.html'), 'utf8')
 for (const marker of ['/ux-controls.css', '/ux-controls.js', 'id="composerAction"', 'id="permissionDetails"', 'model-catalog']) {
@@ -104,7 +104,9 @@ const uiSource = readFileSync(resolve(root, 'app/ui-enhancements.js'), 'utf8')
 if (!uxControls.includes("button.textContent = 'Build'")) throw new Error('Build must be the user-facing work mode label')
 if (uxControls.includes("button.textContent = 'Direct'")) throw new Error('Direct must not be exposed as a user-facing mode label')
 if (!uxControls.includes("event.target.closest('[data-orchestrated-model]')")) throw new Error('Orchestrated model click proxy missing')
+if (!uxControls.includes('syncOrchestratedChoiceLabel')) throw new Error('Orchestrated model variant label sync missing')
 if (!uxControls.includes("setNativeDelivery('queue')")) throw new Error('Automatic queue bridge missing')
+if (!uxControls.includes("addEventListener('submit', () => queueMicrotask(syncComposerAction))")) throw new Error('Composer action must resync after programmatic queue clear')
 if (!uxCss.includes('.delivery{display:none!important}')) throw new Error('Manual Steer/Queue control must stay hidden')
 if (!uxCss.includes('.native-composer-action{display:none!important}')) throw new Error('Native send/stop controls must never create a second visible composer action')
 if (!uxCss.includes('.composer-action.stop{background:#b23a3a')) throw new Error('Running empty composer must expose the red cancel action')
