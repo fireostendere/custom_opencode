@@ -1,6 +1,6 @@
 # Server Runtime V3
 
-Runtime V3 turns the custom OpenCode web server into a durable control plane around the native OpenCode V2 service. The OpenCode service remains the model/tool execution engine; the custom server owns task lifecycle, routing policy, context planning, shared repository/RAG state, policy enforcement and observability.
+Runtime V3 turns the custom OpenCode web server into a durable control plane around the native OpenCode V2 service. OpenCode remains the model/tool execution engine; the custom server owns task lifecycle, routing policy, context planning, shared repository/RAG state, policy enforcement and observability.
 
 ## Design rules
 
@@ -23,7 +23,7 @@ Pause/resume/cancel operate on server tasks. Resume uses the current OpenCode se
 
 The registry merges the OpenCode model catalog with server quality/cost hints and locally accumulated telemetry. Each model records provider/model ID, vision support, tool calling support, context window/class, cost class, fast-path suitability and coding/review/planning scores.
 
-Profiles currently include:
+Profiles include:
 
 - `direct`: preserve the user-selected model and use direct Build/Plan agents.
 - `qwen3.8-coder`: coding profile with adaptive local/cloud routing.
@@ -35,50 +35,37 @@ The adaptive scheduler incorporates task profile requirements, historical succes
 
 ## Dynamic context manager
 
-Runtime V3 uses OpenCode V2 native durable compaction instead of inventing a second conversation history format. The installed config enables native automatic compaction with a reserved tail, and Runtime V3 also checks active context against the selected profile/model budget. When the active context exceeds that budget it requests native compaction and applies a cooldown.
+Runtime V3 uses OpenCode V2 native durable compaction instead of inventing a second conversation history format. The installed config enables native automatic compaction with a reserved tail, and Runtime V3 checks active context against the selected profile/model budget. When active context exceeds that budget it requests native compaction and applies a cooldown.
 
-The server context envelope is independently bounded and deduplicated. It can contain:
+The server context envelope is independently bounded and deduplicated. It can contain project instructions, persistent project memory, decision log entries, structured mailbox/handoff messages, semantic repository matches, changed symbols since the task baseline and server-managed engineering RAG retrieval.
 
-- project instructions and persistent project memory;
-- decision log entries;
-- structured mailbox/handoff messages;
-- semantic repository matches;
-- changed symbols since the task baseline;
-- server-managed engineering RAG retrieval.
+## Shared repository index and semantic diff
 
-This prevents old server-added context, duplicate tool output and repeated repository metadata from growing without bound.
+A background maintenance loop refreshes active project indexes. The V3 index contains Python AST symbols with qualified names/line ranges, JS/TS-style symbol/import extraction, dependency/manifest metadata, dependency edges, a bounded Git graph, and file/symbol embeddings.
 
-## Shared repository index
-
-A background maintenance loop refreshes active project indexes. The V3 index contains:
-
-- Python AST symbols with qualified names and line ranges;
-- JS/TS-style symbol/import extraction;
-- dependency/manifest metadata;
-- internal/external dependency edges;
-- a bounded Git commit graph;
-- file/symbol embeddings.
-
-When `sentence-transformers` is available it can be used locally. Otherwise the index falls back to deterministic local hashed lexical embeddings, so indexing never requires an external API.
-
-Semantic diff maps Git changed line ranges back to indexed symbols. The context planner can therefore say which functions/classes changed instead of providing only a file list.
+When `sentence-transformers` is available it can be used locally. Otherwise the index falls back to deterministic local hashed lexical embeddings, so indexing never requires an external API. Semantic diff maps Git changed line ranges back to indexed symbols.
 
 ## MCP gateway and lazy loading
 
-OpenCode remains the central MCP host. Installation enables OpenCode V2 MCP Code Mode for the knowledge server, so native MCP schemas are not all injected into the provider tool list up front. The model first sees the compact Code Mode execution surface and the required namespace/tool schema is resolved when needed.
+OpenCode remains the central MCP host rather than duplicating a second protocol daemon. Installation enables OpenCode V2 MCP Code Mode for the knowledge server, so MCP schemas are not all injected into the provider tool list up front. Runtime V3 adds central policy, health/catalog metadata, read-result caching, rate limiting and secret handling around execution.
 
-Runtime V3 layers a server policy gateway on tool execution using the OpenCode V2 plugin hooks:
+The OpenCode V2 runtime guard applies:
 
-1. `session.request` injects bounded server context for non-web clients.
-2. `tool.execute.before` applies sandbox, ownership, loop and rate-limit policy before execution.
-3. `tool.execute.after` deduplicates/externalizes oversized tool results.
-4. `shell.create.before` strips server secrets and wraps commands in the selected sandbox.
+1. `session.request`: bounded server context for non-web clients.
+2. `tool.execute.before`: sandbox, ownership, loop and rate-limit policy.
+3. `tool.transform`: wraps cacheable read executors so a cache hit prevents the underlying tool call entirely.
+4. `tool.execute.after`: externalizes large results and deduplicates repeated outputs.
+5. `shell.create.before`: strips server secrets and wraps commands in the selected sandbox.
 
-The MCP gateway API exposes health/resource/tool-ID metadata without credentials. Shared RAG calls also use a TTL cache, so repeated read-only retrieval does not repeatedly start identical work.
+The pre-execution cache is restricted to deterministic/bounded reads: read/glob/grep/list/lsp, a narrow allowlist of read-only Git/filesystem shell commands, and selected knowledge read tools. Cache keys include tool input plus Git HEAD and working-tree status, so repository changes invalidate cached repository reads automatically.
+
+## Permission previews
+
+Permission classification still operates on the actual pending backend request, never client-supplied action data. The server now also produces a semantic compact preview for the UI, for example `Удалить 7 объектов в build/`, `Изменить 2 файла в src/`, or a bounded Git command summary. Full commands/resources remain available under the existing disclosure. R3/R4 hard-interactive boundaries are unchanged.
 
 ## Secret broker
 
-Runtime diagnostics expose secret names/references only. Values are never serialized to browser snapshots. The scoped broker supports allowlisted prefixes, optional per-scope name rules and short-lived single-use leases. Agent-created shell environments have secret-prefix variables stripped before execution; only explicitly configured secret references may be injected for an allowed shell scope.
+Runtime diagnostics expose secret references only. Values are never serialized to browser snapshots. The scoped broker supports allowlisted prefixes, optional per-scope name rules and short-lived single-use leases. Agent-created shell environments have secret-prefix variables stripped before execution; only explicitly configured secret references may be injected for an allowed shell scope.
 
 Provider credentials still live in the server/OpenCode service environment because the provider process itself requires them. They are not sent to the browser or placed into model context.
 
@@ -86,82 +73,69 @@ Provider credentials still live in the server/OpenCode service environment becau
 
 Supported profiles are:
 
-- `safe`: read-oriented; writes and arbitrary shell mutation are rejected. If bubblewrap is available, shell commands run with a read-only project bind and no network.
+- `safe`: read-oriented; writes and arbitrary shell mutation are rejected. With bubblewrap, shell commands use a read-only project bind and no network.
 - `repo-write`: edits are limited to the managed project/worktree; bubblewrap provides a writable project bind when available.
-- `docker`: shell execution is moved into a configured Docker image; network is disabled unless explicitly enabled.
-- `wsl`: shell execution is moved through WSL when available.
-- `full-machine`: requires the explicit `OPENCODE_ALLOW_FULL_MACHINE=1` opt-in.
+- `docker`: shell execution runs in a configured Docker image; network is disabled unless explicitly enabled.
+- `wsl`: shell execution runs through WSL when available.
+- `full-machine`: requires explicit `OPENCODE_ALLOW_FULL_MACHINE=1`.
 
-Path containment is also enforced for OpenCode file mutation tools. Docker/WSL profiles still use the managed worktree as the source-of-truth filesystem; file edits remain path-contained while shell/build execution occurs in the selected runner.
+Path containment is also enforced for file-mutation tools.
 
-## Tool result cache and large outputs
+## Large outputs, context dedup and accounting
 
-Runtime caches model catalogs, repository indexes, MCP health/catalog metadata, shared RAG reads and duplicate tool-result hashes. Identical large tool results are replaced with a compact artifact reference after the first capture. Large logs are stored in `ArtifactStore` and support bounded range/search access from the API/UI.
+Large tool outputs are stored in `ArtifactStore` and exposed by ID plus bounded preview/range/search. Native OpenCode output is additionally bounded with `tool_output.max_lines` and `tool_output.max_bytes`. Server context sections are content-hash deduplicated before injection.
 
-Native OpenCode tool output is additionally bounded at install time with `tool_output.max_lines` and `tool_output.max_bytes`.
+Per-task usage records planning, implementation, research, review and `wasted_retries`. Verification repair/recovery/retry work is deliberately separated from successful implementation usage so the dashboard/router can measure wasted retry cost rather than hiding it inside implementation totals.
 
 ## Mailbox and typed handoff
 
-Subagents can exchange structured mailbox messages such as finding, question, patch or blocker without copying large prose into a parent conversation. Typed handoff objects are persisted in task metadata and included in bounded context only when relevant.
+Agents exchange structured finding/question/patch/blocker/handoff messages through the durable mailbox. Typed planner/builder handoff objects live in task metadata and enter context only when relevant. Speculative researchers use independent read-only forks and feed structured findings to their dependent aggregator task.
 
-Speculative research forks two or three read-only sessions using the fast profile. The aggregator depends on those tasks and receives their findings through the mailbox before continuing.
+## Verification, reviewer, failure and watchdogs
 
-## Verification and review
+After writable work becomes idle, the server discovers a bounded formatter/lint/typecheck/test pipeline. Full command output is stored as artifacts and only concise failures are propagated. Failure classification separates code failures from network/environment/flaky failures. Only actionable code failures can enqueue targeted repair.
 
-After a writable task becomes idle, the verification pipeline discovers a bounded set of formatter/lint/typecheck/test commands appropriate to the project. Full command output is stored as artifacts; only concise failure summaries are propagated.
-
-Failure classification separates code failures from network/environment/flaky failures. Only actionable code failures can enqueue a targeted verification-fix task. A cheap diff-impact gate determines whether a full review task is warranted; trivial bounded changes skip the expensive review profile.
-
-## Loop/stuck protection
-
-The server tracks tool signatures, message/repository progress signatures and repeated mutations. Repeated mutation signatures are blocked by the V3 pre-tool gateway; the older progress monitor also records cyclic tool patterns and tasks that stop making progress. The configured stuck action may warn or interrupt/pause the task.
+A diff-impact gate determines whether a full review task is worthwhile. Repeated mutation signatures are blocked by the pre-tool gateway, while progress signatures detect cyclic/stuck agents independently of elapsed wall-clock time.
 
 ## Worktree isolation and patch ownership
 
-Standalone parallel writable tasks can run in detached Git worktrees. Patch ownership is keyed to the original project root even when the actual task directory is a worktree, so two parallel agents that attempt to own the same path are detected before mutation and again during progress polling.
+Parallel writable tasks can use detached Git worktrees. Ownership is tracked against the original project root, so conflicting paths are detected before mutation. `/client-worktree-merge.json` merges tracked changes with three-way Git apply and copies untracked files safely; it refuses to overwrite dirty/conflicting target paths and records durable merge checkpoints/events.
 
-`/client-worktree-merge.json` merges an isolated task back into its project root using a three-way Git apply against the task baseline plus safe copying of untracked files. It refuses to overwrite target paths that already contain uncommitted changes and records a durable merge checkpoint/event. Cleanup is explicit and fail-closed.
+## Session branching and agent-state merge
 
-## Session branching and state merge
+Runtime branching uses native OpenCode session forks. State merge now copies project memory/decisions and also transfers meaningful source-task checkpoints, typed handoff data, route/state metadata into a structured `handoff` mailbox message for the selected target task. The target receives a `branch-state-merged` checkpoint. Git code merging remains independent and uses the worktree path above.
 
-Runtime session branching uses native OpenCode session forks. State merge records the relationship and copies persistent project decisions/memory into the selected target state. Git code merging remains independent; isolated code changes use the worktree merge path above.
+## Replay, telemetry and adaptive routing
 
-## Replay and telemetry
+Completed/failed tasks can be captured as replay artifacts containing recorded OpenCode messages/tool results. Replay returns the recording plus task events/checkpoints/usage with `modelCalls: 0`.
 
-Completed/failed managed tasks are automatically captured as replay artifacts containing recorded OpenCode messages/tool results. Replay APIs return the recording plus durable task events/checkpoints/usage and make no model calls (`modelCalls: 0`). This is intended for debugging the custom runtime without paying to reproduce the original model run.
+Per-model success/latency/cost telemetry feeds adaptive routing. The dashboard exposes active tasks, queue state, usage, GPU/VRAM pressure, MCP health/Code Mode state and learned model statistics.
 
-Per-task usage is stored by stage (planning, implementation, research, review, verification repair) with input/output/cache tokens, cost, latency and success. Aggregated per-model statistics feed the adaptive router rather than remaining passive UI metrics.
+## Remote notifications/API
 
-## Remote API and dashboard
+Browser notifications and optional webhook delivery cover waiting-permission, needs-attention, failed and completed states. The compact authenticated remote API adds:
 
-The authenticated web API exposes task control, queue/dependencies, checkpoints/events, artifacts, semantic repo search, MCP gateway health, model telemetry, session branch/state merge, sandbox selection, worktree merge and zero-token replay. An optional webhook emits significant task states; non-loopback webhooks require an explicit remote-notification opt-in.
+- `GET /client-remote-status.json`: tasks plus pending permissions with semantic previews;
+- `POST /client-remote-action.json`: task cancel/pause/resume and permission `once`/`reject`.
 
-The existing Task Center remains the main UI. Runtime V3 adds a collapsible control-plane section showing GPU/VRAM pressure, adaptive router state, MCP Code Mode/lazy status, service coverage and model telemetry. It also exposes semantic repo search, sandbox selection, branch/state merge, worktree merge and replay without adding capability clutter to the normal composer/model UI.
+This is sufficient for a phone/Tailscale client without loading the full desktop UI. Webhook delivery remains opt-in for non-loopback destinations.
 
 ## Important environment settings
 
-See `.env.example` for the complete set. Notable controls include:
-
-- `OPENCODE_RUNTIME_PLUGIN_TOKEN`, `OPENCODE_RUNTIME_PLUGIN_HOST`;
-- `OPENCODE_GAME_PROCESSES`, CPU/GPU/VRAM thresholds and router hysteresis;
-- `OPENCODE_RESOURCE_PAUSE_COMMAND`, `OPENCODE_RESOURCE_RESUME_COMMAND`;
-- `OPENCODE_REPO_EMBEDDINGS`, `OPENCODE_REPO_EMBED_MODEL`;
-- `OPENCODE_MCP_RATE_LIMIT`, `OPENCODE_TOOL_ARTIFACT_THRESHOLD`, `OPENCODE_LOOP_LIMIT`;
-- `OPENCODE_SECRET_PREFIXES`, `OPENCODE_SECRET_SCOPES`, `OPENCODE_SHELL_SECRET_REFS`;
-- Docker/WSL/full-machine sandbox controls;
-- `OPENCODE_NOTIFICATION_WEBHOOK` and remote opt-in.
+See `.env.example`. Notable controls include `OPENCODE_RUNTIME_PLUGIN_TOKEN`, game/CPU/GPU/VRAM thresholds, resource pause/resume hooks, embedding backend/model, MCP rate limit, tool artifact/cache TTL, loop limit, scoped secret rules, Docker/WSL/full-machine controls, and notification webhook settings.
 
 ## Regression gates
 
-The runtime has separate zero-token architecture smokes plus the repository's existing verifier:
+Zero-token regression covers:
 
 - `scripts/runtime-smoke.py`
 - `scripts/runtime-resume-smoke.py`
 - `scripts/runtime-v3-smoke.py`
 - `scripts/runtime-v3-worktree-smoke.py`
+- `scripts/runtime-completion-smoke.py`
 - `scripts/verify-runtime-v3.sh`
 - `scripts/install-regression.sh`
 - `scripts/web-server-smoke.py`
 - `scripts/install-runtime-v3-selftest.py` after a real installation
 
-The merge gate is: static/runtime verification → isolated fresh install/update render → composed web-server regression → real post-install health checks when a real OpenCode service is present.
+The merge gate is static/runtime verification → isolated fresh install/update render → composed web-server regression → final diff review → fast-forward into `main`.
