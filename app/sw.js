@@ -1,4 +1,4 @@
-const CACHE='custom-opencode-web-v6'
+const CACHE='custom-opencode-web-v5'
 const STATIC_RE=/\.(?:js|css|webmanifest|png|svg|ico)$/
 
 self.addEventListener('install',()=>self.skipWaiting())
