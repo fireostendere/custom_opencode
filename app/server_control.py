@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 from urllib.parse import parse_qs
 
@@ -11,6 +12,10 @@ import server_features as features
 
 ACTION_LOCK = threading.RLock()
 INFLIGHT: set[str] = set()
+DIRECTORY_CACHE_LOCK = threading.Lock()
+DIRECTORY_CACHE: list[str] = []
+DIRECTORY_CACHE_AT = 0.0
+DIRECTORY_CACHE_SECONDS = 10.0
 
 
 def _request_id(request: dict[str, Any]) -> str:
@@ -151,7 +156,33 @@ def evaluate_permission(session_id: str, permission_id: str | None = None, *, au
     return result
 
 
+def _active_directories() -> list[str]:
+    """Resolve only workspaces with current OpenCode session activity."""
+    directories: set[str] = set()
+    try:
+        status = features._status_payload()
+    except Exception:
+        status = {}
+    if not isinstance(status, dict):
+        return []
+    for session_id, value in status.items():
+        if not features._status_busy(value):
+            continue
+        try:
+            directories.add(features._session_directory(str(session_id)))
+        except Exception:
+            continue
+    return sorted(directories)
+
+
 def _known_directories() -> list[str]:
+    """Cached fallback when OpenCode does not expose active-session status."""
+    global DIRECTORY_CACHE, DIRECTORY_CACHE_AT
+    now = time.monotonic()
+    with DIRECTORY_CACHE_LOCK:
+        if DIRECTORY_CACHE and now - DIRECTORY_CACHE_AT < DIRECTORY_CACHE_SECONDS:
+            return list(DIRECTORY_CACHE)
+
     directories: set[str] = set()
     try:
         sessions = features._data(features._backend_request_json("GET", "/api/session", timeout=8.0))
@@ -179,7 +210,17 @@ def _known_directories() -> list[str]:
                 continue
     except Exception:
         pass
-    return sorted(directories)
+
+    result = sorted(directories)
+    with DIRECTORY_CACHE_LOCK:
+        DIRECTORY_CACHE = result
+        DIRECTORY_CACHE_AT = now
+    return result
+
+
+def _permission_directories() -> list[str]:
+    active = _active_directories()
+    return active if active else _known_directories()
 
 
 def apply_permission_policies() -> None:
@@ -187,9 +228,10 @@ def apply_permission_policies() -> None:
 
     It evaluates actual pending backend requests. Project rules are composed
     with the global risk classifier; the browser never supplies action/resource
-    data for automatic permission decisions.
+    data for automatic permission decisions. Active workspaces are preferred;
+    full session-directory discovery is only a cached fallback.
     """
-    for directory in _known_directories():
+    for directory in _permission_directories():
         try:
             requests = features._permission_requests(directory)
         except Exception:
@@ -236,6 +278,7 @@ def snapshot() -> dict[str, Any]:
         "projectRules": True,
         "clientSuppliedActionData": False,
         "hardInteractiveBoundary": ["R3", "R4"],
+        "permissionScan": "active-workspaces-first with cached fallback",
     }
     return value
 
