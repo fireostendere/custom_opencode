@@ -18,7 +18,7 @@ function agentButtons() {
 }
 
 function rawActiveAgent() {
-  return agentButtons().find((button) => button.classList.contains('active'))?.dataset.agent || 'build'
+  return agentButtons().find((button) => button.classList.contains('active'))?.dataset.agent || 'build-direct'
 }
 
 function currentMode() {
@@ -53,11 +53,13 @@ function syncAgentSurface() {
   if (desiredProfile && desiredProfile === rawProfile) desiredProfile = null
   const profile = currentProfile()
   document.documentElement.dataset.modelProfile = profile
+  document.documentElement.dataset.executionMode = mode
   for (const button of agentButtons()) {
     const id = button.dataset.agent || ''
     button.classList.toggle('ux-hidden-agent', id !== 'build' && id !== 'plan')
-    button.classList.toggle('ux-mode-active', (id === 'build' || id === 'plan') && id === mode)
-    if (id === 'build' && button.textContent !== 'Build') button.textContent = 'Build'
+    const visibleMode = id === 'plan' ? 'plan' : id === 'build' ? 'direct' : ''
+    button.classList.toggle('ux-mode-active', Boolean(visibleMode) && visibleMode === mode)
+    if (id === 'build' && button.textContent !== 'Direct') button.textContent = 'Direct'
     if (id === 'plan' && button.textContent !== 'Plan') button.textContent = 'Plan'
   }
 }
@@ -168,7 +170,8 @@ function installAgentModeProxy() {
     if (!button || allowingAgentClick) return
     const requested = button.dataset.agent
     if (requested !== 'build' && requested !== 'plan') return
-    const target = agentFor(requested, currentProfile())
+    const requestedMode = requested === 'plan' ? 'plan' : 'direct'
+    const target = agentFor(requestedMode, currentProfile())
     if (target === requested) return
     event.preventDefault()
     event.stopImmediatePropagation()

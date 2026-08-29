@@ -84,7 +84,9 @@ const ux = await loadSource('app/ux-state.js')
 if (ux.composerActionState({ running:false, hasPayload:false }).kind !== 'send') throw new Error('Idle composer must show send')
 if (ux.composerActionState({ running:true, hasPayload:false }).kind !== 'stop') throw new Error('Running empty composer must show stop')
 if (ux.composerActionState({ running:true, hasPayload:true }).kind !== 'queue') throw new Error('Running composer with text must auto-queue')
-if (ux.agentFor('build', 'direct') !== 'build-direct' || ux.agentFor('plan', 'orchestrated') !== 'plan') throw new Error('Build/Plan profile mapping regression')
+if (ux.modeFromAgent('build-direct') !== 'direct' || ux.modeFromAgent('plan') !== 'plan') throw new Error('Visible mode mapping must be Direct/Plan')
+if (ux.agentFor('direct', 'direct') !== 'build-direct' || ux.agentFor('plan', 'direct') !== 'plan-direct') throw new Error('Direct profile mapping regression')
+if (ux.agentFor('direct', 'orchestrated') !== 'build' || ux.agentFor('plan', 'orchestrated') !== 'plan') throw new Error('Orchestrated profile mapping regression')
 if (!ux.permissionSummary('Команда', '{"command":"git status","description":"long"}').includes('git status')) throw new Error('Permission summary did not extract command')
 if (!ux.permissionSummary('question', '{"questions":[{"label":"Сохранить изменения","description":"Сначала сохранить изменения"}]}').startsWith('Нужен выбор:')) throw new Error('Question permission summary is not human-readable')
 if (ux.ORCHESTRATED_MODEL.label !== 'Qwen 3.8 Max · Оркестратор') throw new Error('Orchestrated model label regression')
@@ -96,6 +98,7 @@ for (const marker of ['/ux-controls.css', '/ux-controls.js', 'id="composerAction
 const uxControls = readFileSync(resolve(root, 'app/ux-controls.js'), 'utf8')
 const uxCss = readFileSync(resolve(root, 'app/ux-controls.css'), 'utf8')
 const uiSource = readFileSync(resolve(root, 'app/ui-enhancements.js'), 'utf8')
+if (!uxControls.includes("button.textContent = 'Direct'")) throw new Error('Build must not be exposed as a user-facing mode label')
 if (!uxControls.includes("event.target.closest('[data-orchestrated-model]')")) throw new Error('Orchestrated model click proxy missing')
 if (!uxControls.includes("setNativeDelivery('queue')")) throw new Error('Automatic queue bridge missing')
 if (!uxCss.includes('.delivery{display:none!important}')) throw new Error('Manual Steer/Queue control must stay hidden')
@@ -129,10 +132,10 @@ for (const id of ['build-direct', 'plan-direct']) {
 for (const action of ['edit', 'shell']) {
   if (!(agents['plan-direct'].permissions || []).some((rule) => rule.action === action && rule.effect === 'deny')) throw new Error(`plan-direct must deny ${action}`)
 }
-if (!String(agents.build.system || '').includes('orchestrator.md') || !String(agents.plan.system || '').includes('orchestrator.md')) throw new Error('Orchestrated Build/Plan must keep orchestrator prompt')
+if (!String(agents.build.system || '').includes('orchestrator.md') || !String(agents.plan.system || '').includes('orchestrator.md')) throw new Error('Underlying orchestrated build/plan agents must keep orchestrator prompt')
 if (agents['build-direct'].system || agents['plan-direct'].system) throw new Error('Direct profiles must not inherit orchestrator system prompt')
 
 const doctor = await loadSource('app/doctor.js')
 if (typeof doctor.openDoctor !== 'function') throw new Error('Doctor UI module does not export openDoctor')
 
-console.log('Web smoke passed: prompt/slash/RAG contracts + favorite/collapsible model catalog + contextual composer + fresh PWA assets + direct/orchestrated permissions')
+console.log('Web smoke passed: Direct/Plan UX + model-selected orchestration + prompt/slash/RAG + contextual composer + fresh PWA assets')

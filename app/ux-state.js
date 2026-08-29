@@ -4,8 +4,11 @@ export const ORCHESTRATED_MODEL = {
   label: 'Qwen 3.8 Max · Оркестратор',
 }
 
+// User-facing execution modes are Direct and Plan. The underlying OpenCode
+// primary agent IDs stay build/plan for the orchestrated profile and
+// build-direct/plan-direct for the ordinary direct profile.
 export function modeFromAgent(agentID = '') {
-  return String(agentID).startsWith('plan') ? 'plan' : 'build'
+  return String(agentID).startsWith('plan') ? 'plan' : 'direct'
 }
 
 export function profileFromAgent(agentID = '') {
@@ -14,9 +17,9 @@ export function profileFromAgent(agentID = '') {
   return 'direct'
 }
 
-export function agentFor(mode = 'build', profile = 'direct') {
-  const normalizedMode = mode === 'plan' ? 'plan' : 'build'
-  return profile === 'orchestrated' ? normalizedMode : `${normalizedMode}-direct`
+export function agentFor(mode = 'direct', profile = 'direct') {
+  const baseAgent = mode === 'plan' ? 'plan' : 'build'
+  return profile === 'orchestrated' ? baseAgent : `${baseAgent}-direct`
 }
 
 export function composerActionState({ running = false, hasPayload = false } = {}) {
