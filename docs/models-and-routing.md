@@ -1,30 +1,69 @@
 # Модели и routing
 
-## Текущая автоматическая схема
+## Пользовательская модель
 
-Default primary model:
+В UI остаются только два режима:
+
+```text
+Build
+Plan
+```
+
+Orchestration больше не выглядит как третий mode рядом с ними. Она выбирается в model picker как отдельный model profile:
+
+```text
+Qwen 3.8 Max · Оркестратор
+```
+
+Обычные модели из picker работают напрямую.
+
+## Direct profile
+
+При выборе любой обычной модели UI автоматически использует внутренний `build-direct` или `plan-direct` agent в зависимости от выбранного `Build/Plan`.
+
+Direct profile:
+
+- использует выбранную модель напрямую;
+- не имеет orchestrator system prompt;
+- не может автоматически запускать `fast-reader`;
+- не получает automatic RAG tools;
+- в `Plan` дополнительно запрещены `edit` и `shell`.
+
+Например:
+
+```text
+Build + GPT-5.6 Sol      → GPT-5.6 Sol direct
+Build + Qwen3.8 Max      → Qwen3.8 Max direct
+Plan  + Qwen3.8 Flash    → Qwen3.8 Flash direct, read/plan only
+```
+
+Внутренние direct agent IDs намеренно не показываются как дополнительные mode buttons.
+
+## Orchestrated profile
+
+При выборе:
+
+```text
+Qwen 3.8 Max · Оркестратор
+```
+
+используется тот же underlying model:
 
 ```text
 bailian-cli/qwen3.8-max
 ```
 
-Cheap bounded worker:
+но active primary agent становится `build` или `plan` с orchestrator policy.
+
+Схема:
 
 ```text
+Qwen 3.8 Max
+      ↓ если bounded read/delegation реально полезны
 fast-reader → bailian-cli/qwen3.6-flash
+      ↓ если нужен engineering corpus evidence
+kb MCP → mcp-rag
 ```
-
-Title worker:
-
-```text
-title → bailian-cli/qwen3.6-flash
-```
-
-`local-reader` сохранён как hidden compatibility alias для старых sessions, но также использует `qwen3.6-flash`.
-
-Ни один автоматический agent не использует `ollama/*`.
-
-## Зачем нужен fast-reader
 
 `fast-reader` используется для дешёвых read-only задач:
 
@@ -37,15 +76,11 @@ title → bailian-cli/qwen3.6-flash
 
 Он специально не получает edit/shell права.
 
-Это снижает расход дорогой primary model на механический поиск, но не отдаёт дешёвому worker архитектурные или security-sensitive решения.
-
-## Primary model
-
-`qwen3.8-max` остаётся владельцем:
+Qwen 3.8 Max остаётся владельцем:
 
 - пользовательской задачи;
 - planning/reasoning;
-- edit/shell операций;
+- edit/shell операций в Build;
 - архитектурных решений;
 - security-sensitive решений;
 - синтеза нескольких источников;
@@ -55,23 +90,50 @@ Delegation — опциональная оптимизация, а не обяз
 
 ## Build и Plan
 
-В текущем config есть два primary agents:
-
 ### Build
 
-Обычный рабочий режим. Может выполнять изменения в рамках разрешений OpenCode и вызывать только разрешённый subagent `fast-reader`.
+Обычный рабочий mode. В direct profile работает выбранная модель. В orchestrated profile Qwen Max может делегировать bounded read-only работу `fast-reader`.
 
 ### Plan
 
-Read/plan-oriented primary mode. В config запрещены `edit` и `shell`, но разрешён `fast-reader`.
+Read/plan-oriented mode. `edit` и `shell` запрещены и в direct, и в orchestrated profile. Orchestrated Plan при этом может использовать `fast-reader` для bounded retrieval.
 
-Важно: отдельный реализованный UI-режим `Router/Direct` в текущем config отсутствует. Router-like behavior реализуется через primary `build/plan` + разрешённый `fast-reader`. Не следует документировать или ожидать отдельный `Direct` switch, пока он не будет реально добавлен в код.
+Переключение `Build ↔ Plan` сохраняет текущий profile: direct остаётся direct, orchestrated остаётся orchestrated.
+
+## Model picker
+
+Model picker является главным местом выбора execution profile.
+
+Он поддерживает:
+
+- favorite toggle `★/☆`;
+- favorites-first sorting внутри группы;
+- выбранную модель выше обычных alphabetical entries;
+- collapsible provider groups;
+- сохранение collapsed state локально;
+- отдельную collapsible группу `Бесплатные модели`;
+- hidden search input, чтобы picker не поднимал мобильную клавиатуру;
+- отдельный entry `Qwen 3.8 Max · Оркестратор` в Alibaba group.
+
+Нажатие на `★/☆` меняет избранное, но не выбирает модель.
+
+## Automatic queue
+
+Delivery mode не относится к model routing и больше не выбирается вручную.
+
+```text
+idle                         → send
+running + empty composer     → stop
+running + payload            → queue
+```
+
+Скрытый compatibility `Steer/Queue` слой остаётся только для OpenCode API adapter.
 
 ## RAG routing
 
-RAG не вызывается автоматически для любого prompt.
+Automatic RAG доступен только orchestrated profile.
 
-Orchestrator и `fast-reader` должны использовать `kb` только если локальный корпус способен materially улучшить ответ, например:
+Orchestrator и `fast-reader` используют `kb` только если локальный corpus способен materially улучшить ответ, например:
 
 - datasheet;
 - application note;
@@ -83,6 +145,8 @@ Orchestrator и `fast-reader` должны использовать `kb` тол�
 Для обычного coding lookup, общих знаний и задач, где corpus не нужен, RAG не должен добавлять latency.
 
 При RAG timeout/error caller не должен зацикливаться. Нормальная политика: одна диагностика/повтор максимум, затем продолжить без RAG.
+
+Direct profile explicitly denies automatic `kb_knowledge_*` tools.
 
 ## Alibaba model catalog
 
@@ -102,7 +166,7 @@ deepseek-v4-flash-0731
 
 `qwen3.8-max-preview` — compatibility ID старых sessions, который map-ится на `qwen3.8-max`.
 
-Catalog может меняться вместе с Alibaba/OpenCode. `scripts/verify.sh` намеренно проверяет текущую allowlist, чтобы неожиданный drift был виден.
+`Qwen 3.8 Max · Оркестратор` не является вторым API model ID. Это UI/profile entry поверх `qwen3.8-max` + orchestrated primary agent.
 
 ## Бесплатные модели
 
@@ -113,7 +177,7 @@ UI выделяет отдельную группу `Бесплатные мод
 1. по V2 cost metadata — input/output/cache costs равны нулю;
 2. при отсутствии metadata — ограниченный fallback по известным free IDs.
 
-Бесплатная модель в picker не становится частью автоматического router path сама по себе.
+Бесплатная модель работает direct и не становится частью automatic router path сама по себе.
 
 ## Локальные модели
 
@@ -129,9 +193,9 @@ OPENCODE_LOCAL_PROVIDER=ollama
 То есть:
 
 - OpenCode не должен автоматически стартовать локальный inference для обычной работы;
-- отсутствие Ollama не ломает primary routing;
-- запуск игры/нагрузка GPU не влияет на автоматический cloud path;
-- локальный provider можно выбрать вручную для эксперимента.
+- отсутствие Ollama не ломает orchestrated cloud path;
+- локальный provider выбирается как direct model;
+- local Ollama не получает automatic RAG/subagent delegation.
 
 ## Permissions fast-reader
 
@@ -146,15 +210,16 @@ edit/shell/ingest/external dirs → deny, кроме явно разрешённ
 
 `.env` и `.env.*` запрещены для read-only worker; `.env.example` разрешён как публичная схема конфигурации.
 
-## Как проверить routing без платного inference
+## Проверка без платного inference
 
 Doctor бесплатно проверяет config-level invariants:
 
-- primary model — Max;
+- default underlying model — Max;
 - `fast-reader` — Flash;
 - automatic Ollama отсутствует;
-- model IDs присутствуют в catalog.
+- model IDs присутствуют в catalog;
+- RAG/MCP status при наличии RAG.
 
-Это доказывает конфигурацию, но не execution.
+Web smoke дополнительно проверяет state machine composer и mapping `Build/Plan × direct/orchestrated`.
 
-Для реального E2E есть ручной `Router E2E` smoke в Doctor. Он делает настоящий model inference и поэтому помечен как платный.
+Для реального orchestration E2E остаётся ручной `Router E2E` smoke в Doctor. Он делает настоящий model inference и поэтому помечен как платный.
