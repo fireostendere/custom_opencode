@@ -29,7 +29,7 @@ WRITE_ACTIONS = {"edit", "write", "patch"}
 SHELL_ACTIONS = {"shell", "bash"}
 
 SENSITIVE_PATH_RE = re.compile(
-    r"(?:^|[/\\])(?:\.env(?:\.|$)|\.ssh(?:[/\\]|$)|\.gnupg(?:[/\\]|$)|"
+    r"(?:^|[/\\\s])(?:\.env(?:\.|$)|\.ssh(?:[/\\]|$)|\.gnupg(?:[/\\]|$)|"
     r"id_(?:rsa|ed25519)(?:\.|$)|credentials?(?:\.|$)|secrets?(?:\.|$))",
     re.IGNORECASE,
 )
@@ -127,11 +127,25 @@ def _shell_command(request: dict[str, Any]) -> str:
     return ""
 
 
-def _shell_risk(command: str, preset: str) -> tuple[str, bool, str]:
+def _unsafe_path_argument(argv: list[str], workspace: str | None) -> str | None:
+    for arg in argv[1:]:
+        if not arg or arg == "-" or arg.startswith("-"):
+            continue
+        if _looks_sensitive(arg):
+            return arg
+        candidate = Path(arg).expanduser()
+        if candidate.is_absolute() and not _path_within_workspace(str(candidate), workspace):
+            return arg
+    return None
+
+
+def _shell_risk(command: str, preset: str, workspace: str | None) -> tuple[str, bool, str]:
     if not command:
         return "R3", False, "shell command is missing from the permission payload"
     if len(command) > 4096:
         return "R3", False, "shell command is too large for automatic approval"
+    if _looks_sensitive(command):
+        return "R4", False, "shell command references a sensitive path"
     if SHELL_META_RE.search(command):
         return "R3", False, "compound shell syntax requires confirmation"
     try:
@@ -142,12 +156,18 @@ def _shell_risk(command: str, preset: str) -> tuple[str, bool, str]:
         return "R3", False, "empty shell command"
 
     executable = Path(argv[0]).name
+    unsafe_path = _unsafe_path_argument(argv, workspace)
+    if unsafe_path:
+        return "R4" if _looks_sensitive(unsafe_path) else "R3", False, "command references a path outside the workspace or a sensitive path"
+
     if executable in SAFE_SIMPLE_COMMANDS:
         return "R0", True, f"read-only command: {executable}"
 
     if executable == "git" and len(argv) >= 2 and argv[1] in SAFE_GIT_SUBCOMMANDS:
         if argv[1] == "remote" and argv[2:] not in ([], ["-v"], ["--verbose"]):
             return "R3", False, "git remote mutation requires confirmation"
+        if any(arg == "-o" or arg.startswith("--output") for arg in argv[2:]):
+            return "R3", False, "git output redirection can mutate the filesystem"
         return "R0", True, f"read-only git {argv[1]}"
 
     if executable in {"python", "python3", "node", "npm", "pnpm", "bun", "git"} and len(argv) == 2 and argv[1] in {"--version", "-V"}:
@@ -192,6 +212,9 @@ def classify_permission(
         return decision
 
     if action in WRITE_ACTIONS:
+        if not resources:
+            decision.update(risk="R2", reason="file mutation target is missing from the permission payload")
+            return decision
         if any(_looks_sensitive(value) for value in resources):
             decision.update(risk="R4", reason="sensitive file mutation requires confirmation")
             return decision
@@ -204,7 +227,7 @@ def classify_permission(
         return decision
 
     if action in SHELL_ACTIONS:
-        risk, allow, reason = _shell_risk(_shell_command(request), selected)
+        risk, allow, reason = _shell_risk(_shell_command(request), selected, workspace)
         decision.update(risk=risk, reason=reason)
         if allow:
             decision.update(effect="allow", auto=True, reply="once")
