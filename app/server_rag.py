@@ -25,8 +25,6 @@ def _v2_workspace_target(path: str, directory: str | None = None) -> str:
     return f"{path}?{urlencode({'directory': directory})}"
 
 
-# server_plus Doctor was written against an older beta query spelling. Patch the
-# module global so Doctor and RAG control use the current V2 contract together.
 plus._workspace_target = _v2_workspace_target
 
 
@@ -56,21 +54,10 @@ def _mcp_status(directory: str) -> dict[str, Any]:
     return kb if isinstance(kb, dict) else {"status": "missing"}
 
 
-def _run_runtime_start(mode: str) -> dict[str, Any]:
-    runtime = plus._rag_runtime()
-    if not runtime.get("available"):
-        return {
-            "ok": False,
-            "stage": "runtime",
-            "error": "RAG runtime not found. Set MCP_RAG_ROOT/MCP_RAG_BIN or create the mcp-rag venv.",
-            "runtime": runtime,
-        }
-
+def _invoke_runtime(runtime: dict[str, object], args: list[str], timeout: float) -> dict[str, Any]:
     python = str(runtime["python"])
     root = str(runtime["root"])
-    command = [python, "-m", "knowledge_base.runtime", "--json", "--wait", "20"]
-    if mode != "quick":
-        command.extend(["--search", RAG_QUERY])
+    command = [python, "-m", "knowledge_base.runtime", "--json", *args]
     try:
         proc = subprocess.run(
             command,
@@ -78,17 +65,11 @@ def _run_runtime_start(mode: str) -> dict[str, Any]:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=180 if mode != "quick" else 60,
+            timeout=timeout,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return {
-            "ok": False,
-            "stage": "runtime",
-            "error": f"{type(exc).__name__}: {exc}",
-            "runtime": runtime,
-        }
-
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "runtime": runtime}
     try:
         report = json.loads(proc.stdout)
     except json.JSONDecodeError:
@@ -106,8 +87,33 @@ def _run_runtime_start(mode: str) -> dict[str, Any]:
     return report
 
 
+def _run_runtime_start(mode: str) -> dict[str, Any]:
+    runtime = plus._rag_runtime()
+    if not runtime.get("available"):
+        return {
+            "ok": False,
+            "stage": "runtime",
+            "error": "RAG runtime not found. Set MCP_RAG_ROOT/MCP_RAG_BIN or create the mcp-rag venv.",
+            "runtime": runtime,
+        }
+
+    # Always perform a model-free preflight first. This ensures a missing vector
+    # collection fails before any retrieval code can create/modify one.
+    preflight = _invoke_runtime(runtime, ["--wait", "20"], 60.0)
+    if not preflight.get("ok") or mode == "quick":
+        preflight["preflight"] = True
+        return preflight
+
+    full = _invoke_runtime(
+        runtime,
+        ["--no-start", "--search", RAG_QUERY],
+        180.0,
+    )
+    full["preflight"] = preflight
+    return full
+
+
 def _dynamic_mcp_config() -> dict[str, Any]:
-    """Use the current V2 HTTP add endpoint's V1 MCP config schema."""
     script = (plus.REPO_ROOT / "scripts/rag-mcp.sh").resolve()
     return {
         "type": "local",
@@ -167,8 +173,6 @@ def _connect_kb(directory: str) -> dict[str, Any]:
             timeout=20.0,
         )
     except plus.BackendHTTPError as exc:
-        # Older compatible builds may reject dynamic add while still supporting
-        # connect for the statically configured kb entry.
         if exc.status not in (400, 404, 405, 409, 422):
             raise
         add_error = str(exc)
