@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 import subprocess
+import tempfile
 import threading
 import time
 from typing import Any
@@ -25,6 +28,19 @@ def _v2_workspace_target(path: str, directory: str | None = None) -> str:
 # server_plus Doctor was written against an older beta query spelling. Patch the
 # module global so Doctor and RAG control use the current V2 contract together.
 plus._workspace_target = _v2_workspace_target
+
+
+def _session_directory(session_id: str | None) -> str:
+    if session_id:
+        try:
+            value = plus._data(plus._backend_request_json(
+                "GET", f"/api/session/{session_id}", timeout=15.0))
+            directory = ((value or {}).get("location") or {}).get("directory") if isinstance(value, dict) else None
+            if isinstance(directory, str) and directory:
+                return directory
+        except Exception:
+            pass
+    return str(plus.ext.base.SCRATCH_ROOT)
 
 
 def _mcp_status(directory: str) -> dict[str, Any]:
@@ -101,6 +117,41 @@ def _dynamic_mcp_config() -> dict[str, Any]:
     }
 
 
+def _persist_kb_enabled() -> dict[str, Any]:
+    """Persist exactly one safe bit so future workspaces/restarts auto-connect kb."""
+    config, path_text = plus._read_runtime_config()
+    if not isinstance(config, dict):
+        return {"ok": False, "changed": False, "error": f"runtime config is not readable: {path_text}"}
+    mcp = config.get("mcp")
+    servers = mcp.get("servers") if isinstance(mcp, dict) else None
+    kb = servers.get("kb") if isinstance(servers, dict) else None
+    if not isinstance(kb, dict):
+        return {"ok": False, "changed": False, "error": "runtime config has no mcp.servers.kb"}
+    if kb.get("disabled") is False:
+        return {"ok": True, "changed": False, "path": path_text}
+
+    kb["disabled"] = False
+    path = Path(path_text)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    previous_mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+    fd, temp_name = tempfile.mkstemp(prefix=".opencode-rag-", suffix=".json", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(config, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_name, previous_mode)
+        os.replace(temp_name, path)
+    finally:
+        try:
+            if os.path.exists(temp_name):
+                os.unlink(temp_name)
+        except OSError:
+            pass
+    return {"ok": True, "changed": True, "path": path_text}
+
+
 def _connect_kb(directory: str) -> dict[str, Any]:
     current = _mcp_status(directory)
     if current.get("status") == "connected":
@@ -157,7 +208,7 @@ def _connect_kb(directory: str) -> dict[str, Any]:
     }
 
 
-def run_rag_start(mode: str = "full") -> dict[str, Any]:
+def run_rag_start(mode: str = "full", session_id: str | None = None) -> dict[str, Any]:
     if not RAG_START_LOCK.acquire(blocking=False):
         return {"ok": False, "busy": True, "error": "RAG start/check is already running"}
     started = time.monotonic()
@@ -171,7 +222,8 @@ def run_rag_start(mode: str = "full") -> dict[str, Any]:
                 "runtime": runtime,
             }
 
-        directory = str(plus.ext.base.SCRATCH_ROOT)
+        directory = _session_directory(session_id)
+        persisted = _persist_kb_enabled()
         connection = _connect_kb(directory)
         protocol = plus._run_rag_probe("status")
         tools = set(protocol.get("tools") or []) if protocol.get("ok") else set()
@@ -183,8 +235,10 @@ def run_rag_start(mode: str = "full") -> dict[str, Any]:
             "ok": ok,
             "stage": "ready" if ok else "verification",
             "mode": mode,
+            "workspace": directory,
             "elapsedMs": int((time.monotonic() - started) * 1000),
             "runtime": runtime,
+            "persisted": persisted,
             "mcp": connection,
             "protocol": {
                 "ok": bool(protocol.get("ok")),
@@ -226,10 +280,14 @@ class Handler(plus.Handler):
                 self.send_error(400, "Invalid RAG JSON")
                 return
             mode = str(payload.get("mode") or "full").lower() if isinstance(payload, dict) else "full"
+            session_id = payload.get("sessionID") if isinstance(payload, dict) else None
             if mode not in {"quick", "full"}:
                 self.send_error(400, "Unknown RAG start mode")
                 return
-            self.json_response(run_rag_start(mode))
+            if session_id is not None and (not isinstance(session_id, str) or len(session_id) > 256):
+                self.send_error(400, "Invalid session id")
+                return
+            self.json_response(run_rag_start(mode, session_id=session_id))
             return
         super().do_POST()
 
