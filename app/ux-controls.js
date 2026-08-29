@@ -57,9 +57,9 @@ function syncAgentSurface() {
   for (const button of agentButtons()) {
     const id = button.dataset.agent || ''
     button.classList.toggle('ux-hidden-agent', id !== 'build' && id !== 'plan')
-    const visibleMode = id === 'plan' ? 'plan' : id === 'build' ? 'direct' : ''
+    const visibleMode = id === 'plan' ? 'plan' : id === 'build' ? 'build' : ''
     button.classList.toggle('ux-mode-active', Boolean(visibleMode) && visibleMode === mode)
-    if (id === 'build' && button.textContent !== 'Direct') button.textContent = 'Direct'
+    if (id === 'build' && button.textContent !== 'Build') button.textContent = 'Build'
     if (id === 'plan' && button.textContent !== 'Plan') button.textContent = 'Plan'
   }
 }
@@ -170,7 +170,7 @@ function installAgentModeProxy() {
     if (!button || allowingAgentClick) return
     const requested = button.dataset.agent
     if (requested !== 'build' && requested !== 'plan') return
-    const requestedMode = requested === 'plan' ? 'plan' : 'direct'
+    const requestedMode = requested === 'plan' ? 'plan' : 'build'
     const target = agentFor(requestedMode, currentProfile())
     if (target === requested) return
     event.preventDefault()
