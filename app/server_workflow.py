@@ -2,7 +2,12 @@
 """Production web entrypoint composing RAG and advanced workflow features."""
 from __future__ import annotations
 
+import csv
+import io
 import json
+from pathlib import Path
+import shutil
+import subprocess
 from urllib.parse import quote, urlsplit
 
 import server_features as features
@@ -10,6 +15,116 @@ import server_rag as rag
 
 
 _ORIGINAL_SEND = features._send_backend_prompt
+_ORIGINAL_PROCESS_NAMES = features._process_names
+_ORIGINAL_GPU_LOAD = features._gpu_load
+
+
+def _windows_process_names() -> set[str]:
+    """Best-effort Windows host process discovery when running under WSL."""
+    names: set[str] = set()
+    candidates = [
+        shutil.which("powershell.exe"),
+        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+    ]
+    powershell = next((value for value in candidates if value and Path(value).exists()), None)
+    if powershell:
+        try:
+            proc = subprocess.run(
+                [powershell, "-NoProfile", "-NonInteractive", "-Command", "Get-Process | Select-Object -ExpandProperty ProcessName"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=2.5,
+                check=False,
+            )
+            if proc.returncode == 0:
+                names.update(line.strip().lower() for line in proc.stdout.splitlines() if line.strip())
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    tasklist = shutil.which("tasklist.exe") or "/mnt/c/Windows/System32/tasklist.exe"
+    if Path(tasklist).exists():
+        try:
+            proc = subprocess.run(
+                [tasklist, "/FO", "CSV", "/NH"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=2.5,
+                check=False,
+            )
+            if proc.returncode == 0:
+                for row in csv.reader(io.StringIO(proc.stdout)):
+                    if row and row[0]:
+                        name = row[0].strip().lower()
+                        names.add(name)
+                        if name.endswith(".exe"):
+                            names.add(name[:-4])
+        except (OSError, subprocess.TimeoutExpired, csv.Error):
+            pass
+    return names
+
+
+def _process_names_cross_platform() -> set[str]:
+    names = set(_ORIGINAL_PROCESS_NAMES())
+    names.update(_windows_process_names())
+    return names
+
+
+def _gpu_load_cross_platform() -> tuple[int | None, str | None]:
+    # AMD exposes this cheaply on Linux/WSL kernels with amdgpu. Prefer it over
+    # spawning ROCm tools because it works for consumer Radeon cards too.
+    values: list[int] = []
+    for path in Path("/sys/class/drm").glob("card*/device/gpu_busy_percent"):
+        try:
+            value = int(path.read_text(encoding="utf-8").strip())
+            if 0 <= value <= 100:
+                values.append(value)
+        except (OSError, ValueError):
+            continue
+    if values:
+        return max(values), "sysfs-amdgpu"
+
+    # ROCm JSON commonly reports `GPU use (%)` as a quoted number without a `%`
+    # suffix, which the generic text parser cannot reliably detect.
+    rocm = shutil.which("rocm-smi")
+    if rocm:
+        try:
+            proc = subprocess.run(
+                [rocm, "--showuse", "--json"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=2.5,
+                check=False,
+            )
+            if proc.returncode == 0:
+                payload = json.loads(proc.stdout)
+                found: list[int] = []
+                stack = [payload]
+                while stack:
+                    node = stack.pop()
+                    if isinstance(node, dict):
+                        for key, value in node.items():
+                            if isinstance(value, (dict, list)):
+                                stack.append(value)
+                            elif "gpu use" in str(key).lower() or "gpu busy" in str(key).lower():
+                                try:
+                                    number = int(float(str(value).strip().rstrip("%")))
+                                except ValueError:
+                                    continue
+                                if 0 <= number <= 100:
+                                    found.append(number)
+                    elif isinstance(node, list):
+                        stack.extend(node)
+                if found:
+                    return max(found), "rocm-smi"
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+            pass
+    return _ORIGINAL_GPU_LOAD()
+
+
+features._process_names = _process_names_cross_platform
+features._gpu_load = _gpu_load_cross_platform
 
 
 def _file_parts(files: list[object]) -> list[dict[str, object]]:
