@@ -57,9 +57,9 @@ function syncAgentSurface() {
   for (const button of agentButtons()) {
     const id = button.dataset.agent || ''
     button.classList.toggle('ux-hidden-agent', id !== 'build' && id !== 'plan')
-    const visibleMode = id === 'plan' ? 'plan' : id === 'build' ? 'direct' : ''
+    const visibleMode = id === 'plan' ? 'plan' : id === 'build' ? 'build' : ''
     button.classList.toggle('ux-mode-active', Boolean(visibleMode) && visibleMode === mode)
-    if (id === 'build' && button.textContent !== 'Direct') button.textContent = 'Direct'
+    if (id === 'build' && button.textContent !== 'Build') button.textContent = 'Build'
     if (id === 'plan' && button.textContent !== 'Plan') button.textContent = 'Plan'
   }
 }
@@ -82,6 +82,14 @@ function normalizeLegacyProfile() {
   }
 }
 
+function syncOrchestratedChoiceLabel() {
+  const title = document.querySelector('#modelChoices [data-orchestrated-model] .choice-title')
+  if (!title) return
+  const selected = document.documentElement.dataset.modelProfile === 'orchestrated'
+  const next = `${ORCHESTRATED_MODEL.label}${selected ? ' · ✓' : ''}`
+  if (title.textContent !== next) title.textContent = next
+}
+
 function syncModelSurface() {
   const button = $('modelButton')
   if (!button) return
@@ -94,6 +102,7 @@ function syncModelSurface() {
   } else {
     button.title = 'Выбрать модель'
   }
+  syncOrchestratedChoiceLabel()
 }
 
 function hasPayload() {
@@ -170,7 +179,7 @@ function installAgentModeProxy() {
     if (!button || allowingAgentClick) return
     const requested = button.dataset.agent
     if (requested !== 'build' && requested !== 'plan') return
-    const requestedMode = requested === 'plan' ? 'plan' : 'direct'
+    const requestedMode = requested === 'plan' ? 'plan' : 'build'
     const target = agentFor(requestedMode, currentProfile())
     if (target === requested) return
     event.preventDefault()
@@ -205,9 +214,12 @@ function installModelProfileProxy() {
     document.documentElement.dataset.modelProfile = 'direct'
   }, true)
 
+  new MutationObserver(() => queueMicrotask(syncOrchestratedChoiceLabel)).observe(root, { childList:true, subtree:true })
+
   const modelButton = $('modelButton')
   modelButton?.addEventListener('click', () => {
     document.documentElement.dataset.modelProfile = currentProfile()
+    queueMicrotask(syncOrchestratedChoiceLabel)
   }, true)
   if (modelButton) new MutationObserver(() => queueMicrotask(syncModelSurface)).observe(modelButton, { childList:true, characterData:true, subtree:true })
 }
@@ -223,6 +235,7 @@ function installComposerAction() {
     $('form')?.requestSubmit()
   })
 
+  $('form')?.addEventListener('submit', () => setTimeout(syncComposerAction, 0))
   $('input')?.addEventListener('input', syncComposerAction)
   const stop = $('stop')
   if (stop) new MutationObserver(syncComposerAction).observe(stop, { attributes: true, attributeFilter: ['hidden'] })

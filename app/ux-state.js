@@ -1,14 +1,14 @@
 export const ORCHESTRATED_MODEL = {
   id: 'qwen3.8-max',
   providerID: 'bailian-cli',
-  label: 'Qwen 3.8 Max · Оркестратор',
+  label: 'Qwen 3.8 Max · Оркестрированная',
 }
 
-// User-facing execution modes are Direct and Plan. The underlying OpenCode
+// User-facing execution modes are Build and Plan. The underlying OpenCode
 // primary agent IDs stay build/plan for the orchestrated profile and
-// build-direct/plan-direct for the ordinary direct profile.
+// build-direct/plan-direct for the ordinary model profile.
 export function modeFromAgent(agentID = '') {
-  return String(agentID).startsWith('plan') ? 'plan' : 'direct'
+  return String(agentID).startsWith('plan') ? 'plan' : 'build'
 }
 
 export function profileFromAgent(agentID = '') {
@@ -17,7 +17,7 @@ export function profileFromAgent(agentID = '') {
   return 'direct'
 }
 
-export function agentFor(mode = 'direct', profile = 'direct') {
+export function agentFor(mode = 'build', profile = 'direct') {
   const baseAgent = mode === 'plan' ? 'plan' : 'build'
   return profile === 'orchestrated' ? baseAgent : `${baseAgent}-direct`
 }
@@ -27,9 +27,9 @@ export function composerActionState({ running = false, hasPayload = false } = {}
     return { kind: 'send', symbol: '↑', title: 'Отправить', delivery: 'normal' }
   }
   if (hasPayload) {
-    return { kind: 'queue', symbol: '↑', title: 'Добавить в очередь', delivery: 'queue' }
+    return { kind: 'queue', symbol: '↑', title: 'Отправить в очередь', delivery: 'queue' }
   }
-  return { kind: 'stop', symbol: '×', title: 'Остановить текущую работу', delivery: null }
+  return { kind: 'stop', symbol: '×', title: 'Отменить текущую работу', delivery: null }
 }
 
 function objectHint(value) {
@@ -56,10 +56,10 @@ function friendlyPermissionTitle(title) {
   return value || 'Требуется разрешение'
 }
 
-export function permissionSummary(title = 'Разрешение', raw = '', limit = 112) {
+export function permissionSummary(title = 'Разрешение', raw = '', limit = 84) {
   const friendlyTitle = friendlyPermissionTitle(title)
   const compact = String(raw || '').replace(/\s+/g, ' ').trim()
-  if (!compact) return `${friendlyTitle}: подробности доступны под катом`
+  if (!compact) return `${friendlyTitle}: детали под катом`
 
   let hint = compact
   if ((compact.startsWith('{') && compact.endsWith('}')) || (compact.startsWith('[') && compact.endsWith(']'))) {

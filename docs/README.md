@@ -7,7 +7,7 @@
 - [Установка и обновление](installation.md) — новая установка, миграция существующей установки, self-test, systemd и обновления.
 - [Конфигурация `.env`](configuration.md) — все основные переменные окружения, секреты, пути и рекомендуемые значения.
 - [Архитектура и возможности](architecture.md) — из каких компонентов состоит система и что именно она предоставляет.
-- [Модели и routing](models-and-routing.md) — Direct/Plan, model-selected orchestration, Qwen Max → Flash, ручной Ollama, permissions и стоимость.
+- [Модели и routing](models-and-routing.md) — Build/Plan, model-selected orchestration, Qwen Max → Flash, ручной Ollama, permissions и стоимость.
 - [Интеграция RAG](rag.md) — что нужно для RAG, как `custom_opencode` связывается с `mcp-rag`, lifecycle и ограничения.
 - [`/rag-start`](rag-start.md) — запуск/проверка RAG из web-клиента без LLM-токенов.
 - [Doctor](doctor.md) — бесплатные health checks и ручные платные E2E smoke tests.
@@ -33,9 +33,9 @@ custom_opencode web proxy
     |
     +--> OpenCode V2 backend
     |       |
-    |       +--> Direct / Plan user modes
+    |       +--> Build / Plan user modes
     |       +--> ordinary selected models (direct execution)
-    |       +--> Qwen 3.8 Max · Оркестратор
+    |       +--> Qwen 3.8 Max · Оркестрированная
     |               |
     |               +--> Qwen 3.6 Flash (fast-reader)
     |               +--> kb MCP when useful

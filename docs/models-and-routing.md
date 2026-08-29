@@ -5,21 +5,21 @@
 В UI есть только два режима выполнения:
 
 ```text
-Direct
+Build
 Plan
 ```
 
 Оркестрация не является третьим mode. Она выбирается в model picker как специальный model profile:
 
 ```text
-Qwen 3.8 Max · Оркестратор
+Qwen 3.8 Max · Оркестрированная
 ```
 
 Обычные модели из picker работают напрямую.
 
-## Direct
+## Build
 
-`Direct` — обычный рабочий режим. Выбранная модель может выполнять задачу с доступными ей edit/shell permissions.
+`Build` — обычный рабочий режим. Выбранная модель может выполнять задачу с доступными ей edit/shell permissions.
 
 При выборе обычной модели используется внутренний `build-direct` agent:
 
@@ -31,9 +31,9 @@ Qwen 3.8 Max · Оркестратор
 Например:
 
 ```text
-Direct + GPT-5.6 Sol      → GPT-5.6 Sol напрямую
-Direct + Qwen3.8 Max      → Qwen3.8 Max напрямую
-Direct + local Ollama     → локальная модель напрямую
+Build + GPT-5.6 Sol      → GPT-5.6 Sol напрямую
+Build + Qwen3.8 Max      → Qwen3.8 Max напрямую
+Build + local Ollama     → локальная модель напрямую
 ```
 
 ## Plan
@@ -51,7 +51,7 @@ Plan + Qwen3.8 Flash → Qwen3.8 Flash, без edit/shell
 При выборе:
 
 ```text
-Qwen 3.8 Max · Оркестратор
+Qwen 3.8 Max · Оркестрированная
 ```
 
 используется тот же underlying API model:
@@ -65,10 +65,10 @@ bailian-cli/qwen3.8-max
 Матрица внутренних agent IDs:
 
 ```text
-обычная модель + Direct        → build-direct
+обычная модель + Build         → build-direct
 обычная модель + Plan          → plan-direct
-Оркестратор + Direct           → build
-Оркестратор + Plan             → plan
+Оркестрированная + Build       → build
+Оркестрированная + Plan        → plan
 ```
 
 `build`, `plan`, `build-direct`, `plan-direct` — backend implementation detail. Пользователь не должен выбирать или видеть их как четыре режима.
@@ -98,7 +98,7 @@ Qwen 3.8 Max остаётся владельцем:
 
 - пользовательской задачи;
 - planning/reasoning;
-- edit/shell операций в Direct;
+- edit/shell операций в Build;
 - архитектурных решений;
 - security-sensitive решений;
 - синтеза нескольких источников;
@@ -106,7 +106,7 @@ Qwen 3.8 Max остаётся владельцем:
 
 Delegation — опциональная оптимизация, а не обязательный этап каждого prompt.
 
-Переключение `Direct ↔ Plan` сохраняет выбранный model profile: обычная модель остаётся обычной, `Qwen 3.8 Max · Оркестратор` остаётся orchestrated.
+Переключение `Build ↔ Plan` сохраняет выбранный model profile: обычная модель остаётся обычной, `Qwen 3.8 Max · Оркестрированная` остаётся orchestrated.
 
 ## Model picker
 
@@ -123,7 +123,7 @@ Model picker является единственным местом включе
 - сохранение collapsed state в `localStorage`;
 - отдельную collapsible группу `Бесплатные модели`;
 - hidden search input, чтобы picker не поднимал мобильную клавиатуру;
-- отдельный entry `Qwen 3.8 Max · Оркестратор` в Alibaba group.
+- отдельный entry `Qwen 3.8 Max · Оркестрированная` в Alibaba group.
 
 Favorites используют существующий ключ `opencode:web:favorites`, поэтому обновление UI не должно сбрасывать старое избранное. Состояние свёрнутых provider groups хранится отдельно в `opencode:web:model-provider-collapse-v1`.
 
@@ -133,7 +133,7 @@ Delivery mode не относится к model routing и не выбирает�
 
 ```text
 idle                         → send
-running + empty composer     → stop
+running + empty composer     → cancel current run
 running + payload            → queue
 ```
 
@@ -143,7 +143,7 @@ running + payload            → queue
 
 Automatic RAG доступен только при выборе orchestrated model profile.
 
-Orchestrator и `fast-reader` используют `kb` только если локальный corpus способен materially улучшить ответ, например:
+Оркестрированная модель и `fast-reader` используют `kb` только если локальный corpus способен materially улучшить ответ, например:
 
 - datasheet;
 - application note;
@@ -176,7 +176,7 @@ deepseek-v4-flash-0731
 
 `qwen3.8-max-preview` — compatibility ID старых sessions, который map-ится на `qwen3.8-max`.
 
-`Qwen 3.8 Max · Оркестратор` не является вторым API model ID. Это UI/profile entry поверх `qwen3.8-max` + orchestrated primary agent.
+`Qwen 3.8 Max · Оркестрированная` не является вторым API model ID. Это UI/profile entry поверх `qwen3.8-max` + orchestrated primary agent.
 
 ## Бесплатные модели
 
@@ -230,6 +230,6 @@ Doctor бесплатно проверяет config-level invariants:
 - model IDs присутствуют в catalog;
 - RAG/MCP status при наличии RAG.
 
-Web smoke дополнительно проверяет state machine composer, mapping `Direct/Plan × ordinary/orchestrated`, model sorting/favorites и наличие collapsible provider UI.
+Web smoke дополнительно проверяет state machine composer, mapping `Build/Plan × ordinary/orchestrated`, model sorting/favorites и наличие collapsible provider UI.
 
 Для реального orchestration E2E остаётся ручной `Router E2E` smoke в Doctor. Он делает настоящий model inference и поэтому помечен как платный.
