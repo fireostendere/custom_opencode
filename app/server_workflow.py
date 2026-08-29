@@ -30,11 +30,11 @@ def _file_parts(files: list[object]) -> list[dict[str, object]]:
 
 
 def _send_with_project_context(session_id: str, text: str, files: list[object]) -> object:
-    """Prefer the current message API so project instructions remain system-only."""
+    """Prefer the async message API so project instructions remain system-only."""
     directory = features._session_directory(session_id)
     settings = features.project_settings(directory)
     instructions = str(settings.get("instructions") or "").strip()
-    target = f"/api/session/{quote(session_id, safe='')}/message"
+    target = f"/api/session/{quote(session_id, safe='')}/prompt_async"
     parts: list[dict[str, object]] = []
     if text:
         parts.append({"type": "text", "text": text})
@@ -47,7 +47,7 @@ def _send_with_project_context(session_id: str, text: str, files: list[object]) 
             + instructions
         )
     try:
-        return features._backend_request_json("POST", target, payload, timeout=300.0)
+        return features._backend_request_json("POST", target, payload, timeout=30.0)
     except features.BackendHTTPError as exc:
         if exc.status not in (400, 404, 405, 422):
             raise
