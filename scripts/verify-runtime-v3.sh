@@ -28,7 +28,7 @@ for marker in \
 done
 
 for marker in \
-  'ctx.session.hook("request"' \
+  'ctx.session.hook("context"' \
   'ctx.tool.hook("execute.before"' \
   'ctx.tool.hook("execute.after"' \
   'ctx.tool.transform' \
