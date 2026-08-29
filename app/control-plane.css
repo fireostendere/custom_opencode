@@ -1,0 +1,8 @@
+.permission-risk-row{display:flex;align-items:center;gap:7px;margin-top:4px;min-width:0;font-size:12px;line-height:1.35;color:var(--muted,#a7a7a7)}
+.permission-risk-badge{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:20px;padding:0 7px;border-radius:999px;font-weight:700;letter-spacing:.02em;background:rgba(255,255,255,.08);color:inherit}
+.permission-risk-row[data-risk="R0"] .permission-risk-badge,.permission-risk-row[data-risk="R1"] .permission-risk-badge{background:rgba(77,166,109,.18);color:#9ad5ad}
+.permission-risk-row[data-risk="R2"] .permission-risk-badge{background:rgba(211,161,54,.18);color:#e4c478}
+.permission-risk-row[data-risk="R3"] .permission-risk-badge,.permission-risk-row[data-risk="R4"] .permission-risk-badge{background:rgba(178,58,58,.22);color:#ef9a9a}
+.permission-risk-reason{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.permission-project-button:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:720px){.permission-risk-reason{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}}
