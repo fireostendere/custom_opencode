@@ -11,11 +11,15 @@ chmod 600 .env
 
 Не копируйте `.env.example` поверх уже настроенного `.env` при обновлении. Новые keys добавляйте merge-ом.
 
-## Web UI
+## Web UI и авторизация
 
 ```text
 OPENCODE_SERVER_USERNAME=opencode
 OPENCODE_SERVER_PASSWORD=<required>
+OPENCODE_AUTH_SESSION_SECONDS=86400
+OPENCODE_AUTH_REMEMBER_SECONDS=2592000
+OPENCODE_AUTH_COOKIE_SECURE=auto
+OPENCODE_AUTH_ALLOW_BASIC=0
 OPENCODE_WEB_HOST=localhost
 OPENCODE_WEB_PORT=4098
 OPENCODE_WEB_ALLOW_LOCAL=1
@@ -23,7 +27,15 @@ OPENCODE_SCRATCH_DIRECTORY=
 OPENCODE_PROJECT_ROOTS=~
 ```
 
-`OPENCODE_SERVER_PASSWORD` обязателен. Web proxy использует Basic Auth.
+`OPENCODE_SERVER_PASSWORD` обязателен. Обычный web UI использует собственную login page и подписанную `HttpOnly` cookie, а не browser-native Basic Auth prompt.
+
+- `OPENCODE_AUTH_SESSION_SECONDS` — TTL обычной session cookie; по умолчанию 24 часа. Без `Запомнить вход` cookie не получает `Max-Age` и остаётся browser-session cookie.
+- `OPENCODE_AUTH_REMEMBER_SECONDS` — TTL при включённом `Запомнить вход`; по умолчанию 30 дней.
+- `OPENCODE_AUTH_COOKIE_SECURE=auto` — ставит `Secure` при HTTPS, обнаруженном через reverse-proxy headers. Можно принудительно задать `1` или `0`.
+- `OPENCODE_AUTH_ALLOW_BASIC=0` — рекомендуемый default. `1` нужен только для старых внешних clients/scripts, которые всё ещё отправляют `Authorization: Basic`.
+- `OPENCODE_WEB_ALLOW_LOCAL=1` разрешает loopback bypass. Для удалённого bind оцените, нужен ли он вообще.
+
+Пароль в браузере приложением не сохраняется. `Запомнить вход` хранит только пользовательское предпочтение/username в localStorage и долгоживущую подписанную HttpOnly cookie.
 
 `OPENCODE_WEB_HOST=localhost` — безопасный default. Если UI публикуется в LAN/tailnet, используйте TLS/Tailscale/reverse proxy и не выставляйте plaintext HTTP в недоверенную сеть.
 
@@ -36,6 +48,21 @@ OPENCODE_PROJECT_ROOTS=~/code;~/projects
 ```
 
 Чем уже список, тем меньше filesystem surface доступна web folder browser.
+
+## Browser-only UI state
+
+Тема/акцент, состояние `Лимиты`, remembered username/checkbox и drafts не относятся к `.env`. Они хранятся в browser local/session storage.
+
+Основные ключи:
+
+```text
+opencode:web:appearance-v1
+custom-opencode:limits-collapsed
+opencode:web:login-prefs-v2
+opencode:web:auth-resume-v1   # sessionStorage
+```
+
+`appearance-v1` содержит только `theme` (`system|light|dark`) и hex accent color. Секретов в этих keys быть не должно.
 
 ## Публичные/удалённые ссылки
 
@@ -109,8 +136,6 @@ MCP_RAG_BIN=/absolute/path/to/mcp-rag/.venv/bin/knowledge-mcp
 MCP_RAG_ENABLED=0
 ```
 
-Это предпочтительнее, чем удалять checkout или отключать весь install self-test.
-
 ## Alibaba / Qwen Token Plan
 
 ```text
@@ -125,10 +150,7 @@ BAILIAN_CONFIG_PATH=
 
 Не печатайте key в диагностических логах и не переносите его в tracked JSON.
 
-`QWEN_QUOTA_PROBE_ENABLED=0` оставляет install/restart и обычный runtime без
-автоматического LLM inference. Значение `1` явно включает периодический
-one-token probe для decoration заголовков сессий; панель лимитов через Bailian
-CLI не требует включать этот probe.
+`QWEN_QUOTA_PROBE_ENABLED=0` оставляет install/restart и обычный runtime без автоматического LLM inference. Значение `1` явно включает периодический one-token probe для decoration заголовков сессий; панель лимитов через Bailian CLI не требует включать этот probe.
 
 ## Локальный Ollama
 
@@ -156,10 +178,7 @@ INSTALL_OPENCODE_CONFIG=1
 CUSTOM_OPENCODE_INSTALL_SELFTEST=1
 ```
 
-Для shared OpenCode V2 оставляйте `OPENCODE_CONFIG_DIR` пустым: используется
-канонический global root `~/.config/opencode`. Installer отклоняет другой путь,
-потому что обычный shared launcher после рестарта иначе вернётся к стандартному
-профилю и runtime перестанет соответствовать установленному config.
+Для shared OpenCode V2 оставляйте `OPENCODE_CONFIG_DIR` пустым: используется канонический global root `~/.config/opencode`. Installer отклоняет другой путь, потому что обычный shared launcher после рестарта иначе вернётся к стандартному профилю и runtime перестанет соответствовать установленному config.
 
 Если `OPENCODE_AUTH_FILE` пуст, используется `~/.local/share/opencode/auth.json`.
 
@@ -182,11 +201,11 @@ Installer записывает в auth storage только реально за�
 
 ## Рекомендованный минимальный `.env`
 
-Пример структуры без реальных секретов, когда RAG пока выключен:
-
 ```text
 OPENCODE_SERVER_USERNAME=opencode
 OPENCODE_SERVER_PASSWORD=<set>
+OPENCODE_AUTH_ALLOW_BASIC=0
+OPENCODE_AUTH_COOKIE_SECURE=auto
 OPENCODE_WEB_HOST=localhost
 OPENCODE_WEB_PORT=4098
 OPENCODE_WEB_ALLOW_LOCAL=1
@@ -215,11 +234,6 @@ INSTALL_OPENCODE_CONFIG=1
 set -a
 source .env
 set +a
-```
-
-Затем:
-
-```bash
 ./scripts/verify.sh
 ```
 
