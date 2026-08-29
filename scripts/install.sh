@@ -23,6 +23,7 @@ UNIT_DIR="$HOME/.config/systemd/user"
 BIN_DIR="$HOME/.local/bin"
 SCRATCH_DIR=${OPENCODE_SCRATCH_DIRECTORY:-"$HOME/opencode-scratch"}
 AUTH_FILE=${OPENCODE_AUTH_FILE:-"$HOME/.local/share/opencode/auth.json"}
+SELFTEST=${CUSTOM_OPENCODE_INSTALL_SELFTEST:-1}
 
 RAG_ROOT=${MCP_RAG_ROOT:-}
 if [[ -z "$RAG_ROOT" ]]; then
@@ -40,6 +41,12 @@ fi
 RAG_DISABLED=true
 if [[ -n "$RAG_ROOT" && -n "$RAG_BIN" && -x "$RAG_BIN" ]]; then
   RAG_DISABLED=false
+fi
+
+if [[ "$SELFTEST" != 0 ]]; then
+  echo "==> Pre-install verification"
+  "$PYTHON3" -m py_compile "$ROOT/scripts/install-selftest.py"
+  "$ROOT/scripts/verify.sh"
 fi
 
 install -d "$UNIT_DIR" "$BIN_DIR" "$SCRATCH_DIR" "$(dirname "$AUTH_FILE")"
@@ -126,6 +133,15 @@ systemctl --user daemon-reload
 systemctl --user enable --now opencode-web-client.service
 if command -v opencode2 >/dev/null 2>&1; then timeout 45s opencode2 service restart >/dev/null 2>&1 || true; fi
 systemctl --user restart opencode-web-client.service
+
+if [[ "$SELFTEST" != 0 ]]; then
+  SELFTEST_ARGS=()
+  if [[ "$RAG_DISABLED" == false ]]; then
+    SELFTEST_ARGS+=(--rag-enabled)
+  fi
+  "$PYTHON3" "$ROOT/scripts/install-selftest.py" "${SELFTEST_ARGS[@]}"
+fi
+
 echo "Installed. Start OpenCode with: custom-opencode"
 if [[ "$RAG_DISABLED" == false ]]; then
   echo "RAG MCP: enabled ($RAG_ROOT)"
