@@ -11,9 +11,9 @@
 - native slash commands и локальные control-команды `/doctor`, `/rag-start`;
 - isolated quick-session workspaces;
 - `Проекты` → OpenCode projects или безопасный browser папок на host;
-- только `Direct / Plan` как пользовательские mode controls;
+- только `Build / Plan` как пользовательские mode controls;
 - model picker без visible search input, с favorites, сортировкой, collapsible providers и отдельной группой бесплатных моделей;
-- `Qwen 3.8 Max · Оркестратор` выбирается как model profile прямо в picker;
+- `Qwen 3.8 Max · Оркестрированная` выбирается как model profile прямо в picker;
 - contextual composer action вместо двух кнопок и ручного `Steer/Queue`;
 - compact permission banner с коротким summary и details под раскрытием;
 - rename/delete/fork/duplicate/handoff;
@@ -30,7 +30,7 @@
 
 ```text
 idle                         → ↑ send
-running + empty composer     → × stop
+running + empty composer     → × cancel
 running + text/attachment    → ↑ queue
 ```
 
@@ -46,31 +46,31 @@ Picker сохраняет существующий `opencode:web:favorites` stat
 - остальные модели группируются по provider;
 - provider sections можно сворачивать, состояние хранится локально;
 - внутри группы сначала favorites, затем выбранная модель, затем alphabetical sort;
-- `Qwen 3.8 Max · Оркестратор` добавляется как отдельный model profile рядом с Alibaba models;
+- `Qwen 3.8 Max · Оркестрированная` добавляется как отдельный model profile рядом с Alibaba models;
 - обычный `Qwen3.8 Max` остаётся обычным direct model choice.
 
-## Direct / Plan и model profiles
+## Build / Plan и model profiles
 
-Видимыми остаются только `Direct` и `Plan`.
+Видимыми остаются только `Build` и `Plan`.
 
-`Direct` означает обычное выполнение задачи выбранной моделью. `Plan` сохраняет выбранную модель/profile, но запрещает edit и shell.
+`Build` означает обычное выполнение задачи выбранной моделью. `Plan` сохраняет выбранную модель/profile, но запрещает edit и shell.
 
-Оркестрация выбирается не отдельной mode-кнопкой, а специальной моделью `Qwen 3.8 Max · Оркестратор`.
+Оркестрация выбирается не отдельной mode-кнопкой, а специальной моделью `Qwen 3.8 Max · Оркестрированная`.
 
 Внутри config существуют четыре technical primary agent ID:
 
 ```text
-обычная модель + Direct  → build-direct
+обычная модель + Build   → build-direct
 обычная модель + Plan    → plan-direct
-Оркестратор + Direct     → build
-Оркестратор + Plan       → plan
+Оркестрированная + Build → build
+Оркестрированная + Plan  → plan
 ```
 
 Эти ID являются implementation detail и не должны показываться пользователю как дополнительные режимы.
 
 ## Permission cards
 
-Большой permission payload больше не растягивает всю нижнюю часть экрана. На поверхности показываются action type и короткий извлечённый hint; raw resources/body находятся в `Показать детали` с bounded scroll area.
+Большой permission payload больше не растягивает всю нижнюю часть экрана. На поверхности показываются action type и короткий извлечённый hint максимум в две строки; raw resources/body находятся в `Показать детали` с bounded scroll area.
 
 ## Server stack
 
@@ -94,7 +94,7 @@ Production/user systemd unit запускает `server_rag.py`.
 - `styles.css` — основной UI;
 - `enhancements.css`, `enhancements.js` — provider limits + slash palette;
 - `ui-enhancements.css`, `ui-enhancements.js` — model catalog + project folder browser;
-- `ux-controls.css`, `ux-controls.js`, `ux-state.js` — Direct/Plan surface, model-selected orchestration, contextual composer и permission summary;
+- `ux-controls.css`, `ux-controls.js`, `ux-state.js` — Build/Plan surface, model-selected orchestration, contextual composer и permission summary;
 - `rag-control.js` — client-side `/rag-start` interception/control;
 - `doctor.css`, `doctor.js` — diagnostics UI;
 - `api.js` — OpenCode HTTP adapter/fallbacks;
@@ -150,4 +150,4 @@ python3 server_rag.py
 ../scripts/verify.sh
 ```
 
-Затем проверьте `Direct/Plan`, model picker, три состояния composer, permission card, `/doctor`; при настроенном RAG — `/rag-start quick`.
+Затем проверьте `Build/Plan`, model picker, три состояния composer, permission card, `/doctor`; при настроенном RAG — `/rag-start quick`.
