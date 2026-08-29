@@ -32,7 +32,12 @@
 - child/subagent sessions скрыты из обычного списка;
 - isolated quick-session workspaces;
 - параллельные running states;
-- Steer/Queue;
+- automatic delivery: send / stop / queue без ручного Steer/Queue toggle;
+- одна контекстная action button в composer;
+- только `Build/Plan` как пользовательские execution modes;
+- direct model profile или `Qwen 3.8 Max · Оркестратор` через model picker;
+- favorites-first model sorting и collapsible providers;
+- compact permission cards с raw payload под раскрытием;
 - rename/delete/fork/duplicate/project handoff;
 - deep links;
 - Markdown/code rendering;
@@ -111,13 +116,39 @@ Browser:
 
 После выбора создаётся обычная OpenCode session с `location.directory` выбранного проекта.
 
-## Model picker
+## Model picker и execution profile
 
 Видимый search input удалён, чтобы model picker на мобильном не вызывал клавиатуру.
 
+Catalog UI сохраняет favorites и предоставляет collapsible provider sections. Внутри группы сначала идут favorite entries, затем текущая модель, затем alphabetical sort.
+
 Группа `Бесплатные модели` определяется в первую очередь по model cost metadata. Если upstream build не отдаёт cost, используется небольшой fallback по ID.
 
-Это UI-группировка, а не отдельный provider.
+Обычный model entry означает direct execution. Специальный UI entry:
+
+```text
+Qwen 3.8 Max · Оркестратор
+```
+
+использует тот же `bailian-cli/qwen3.8-max`, но переключает внутренний primary agent на orchestrated `build`/`plan`, где разрешён bounded `fast-reader` и optional RAG. Direct profile использует внутренние `build-direct`/`plan-direct` agents без automatic subagents/RAG; эти IDs скрыты из mode selector.
+
+## Composer state machine
+
+В OpenCode API сохраняются delivery semantics, но пользовательский toggle убран.
+
+```text
+нет active run                  → send
+active run + empty composer     → stop
+active run + text/attachment    → queue
+```
+
+Скрытый compatibility layer по-прежнему использует native delivery API, поэтому backend contract не подменяется frontend-эмуляцией.
+
+## Permissions
+
+Permission request может содержать большой command/resource payload. Web UI не показывает этот payload целиком в основной строке. На поверхности остаётся короткий action summary; полный raw detail находится в collapsible block с bounded scroll area.
+
+Кнопки `Отклонить / Разрешить / Всегда` продолжают работать через native OpenCode permission reply API.
 
 ## Slash commands
 
@@ -139,6 +170,8 @@ Credentials остаются на host. Browser получает только н
 `kb` — optional local MCP server. OpenCode контролирует lifecycle stdio-процесса `knowledge-mcp`.
 
 `custom_opencode` не держит отдельный RAG daemon. Из инфраструктурных процессов RAG использует Qdrant.
+
+Automatic retrieval разрешён только orchestrated model profile. Direct agents явно запрещают `kb_knowledge_*` tools.
 
 Подробнее: [rag.md](rag.md).
 
@@ -167,7 +200,8 @@ real host self-test
 - recommended loopback bind;
 - project root allowlist;
 - scratch containment;
-- subagent permission deny-first;
+- direct agents deny automatic subagent/RAG;
+- orchestrated read worker permission deny-first;
 - RAG ingest permission-gated;
 - MCP execution timeout;
 - RAG private-network ingest blocked по умолчанию;

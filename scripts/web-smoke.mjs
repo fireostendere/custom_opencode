@@ -54,8 +54,8 @@ if (enhancements.windowLabel(300) !== 'Сессия · 5ч' || enhancements.wind
 
 const rag = await loadSource('app/rag-control.js')
 if (rag.parseRagStart('/rag-start')?.mode !== 'full') throw new Error('RAG default start parser failed')
-if (rag.parseRagStart('/rag-start quick')?.mode !== 'quick') throw new Error('RAG quick parser failed')
-if (rag.parseRagStart('/rag-start full')?.mode !== 'full') throw new Error('RAG full parser failed')
+if (rag.parseRagStart('/rag-start quick')?.mode !== 'quick') throw new Error('RAG quick start parser failed')
+if (rag.parseRagStart('/rag-start full')?.mode !== 'full') throw new Error('RAG full start parser failed')
 if (rag.parseRagStart('/rag-start nope') !== null) throw new Error('RAG parser accepted unknown mode')
 
 const ui = await loadSource('app/ui-enhancements.js')
@@ -65,8 +65,69 @@ if (!ui.isFreeModel({ id:'dynamic-free', cost:zeroCost })) throw new Error('Zero
 if (ui.isFreeModel({ id:'paid-model', cost:paidCost })) throw new Error('Paid model was incorrectly grouped as free')
 if (!ui.isFreeModel({ id:'hy3-free' })) throw new Error('Free-ID fallback failed')
 if (!ui.isFreeModel({ id:'big-pickle' })) throw new Error('Big Pickle free fallback failed')
+const modelRows = [
+  { name:'Zulu', favorite:false, selected:false },
+  { name:'Alpha', favorite:false, selected:true },
+  { name:'Beta', favorite:true, selected:false },
+]
+modelRows.sort(ui.compareModelEntries)
+if (modelRows.map((row)=>row.name).join(',') !== 'Beta,Alpha,Zulu') throw new Error('Model favorite/selected/alphabetical ordering regression')
+const providerRows = [
+  { id:'z', label:'Zulu', favoriteCount:0 },
+  { id:'a', label:'Alpha', favoriteCount:0 },
+  { id:'f', label:'Favorite provider', favoriteCount:2 },
+]
+providerRows.sort(ui.compareProviderGroups)
+if (providerRows.map((row)=>row.id).join(',') !== 'f,a,z') throw new Error('Provider favorite/alphabetical ordering regression')
+
+const ux = await loadSource('app/ux-state.js')
+if (ux.composerActionState({ running:false, hasPayload:false }).kind !== 'send') throw new Error('Idle composer must show send')
+if (ux.composerActionState({ running:true, hasPayload:false }).kind !== 'stop') throw new Error('Running empty composer must show stop')
+if (ux.composerActionState({ running:true, hasPayload:true }).kind !== 'queue') throw new Error('Running composer with text must auto-queue')
+if (ux.agentFor('build', 'direct') !== 'build-direct' || ux.agentFor('plan', 'orchestrated') !== 'plan') throw new Error('Build/Plan profile mapping regression')
+if (!ux.permissionSummary('Команда', '{"command":"git status","description":"long"}').includes('git status')) throw new Error('Permission summary did not extract command')
+if (!ux.permissionSummary('question', '{"questions":[{"label":"Сохранить изменения","description":"Сначала сохранить изменения"}]}').startsWith('Нужен выбор:')) throw new Error('Question permission summary is not human-readable')
+if (ux.ORCHESTRATED_MODEL.label !== 'Qwen 3.8 Max · Оркестратор') throw new Error('Orchestrated model label regression')
+
+const index = readFileSync(resolve(root, 'app/index.html'), 'utf8')
+for (const marker of ['/ux-controls.css', '/ux-controls.js', 'id="composerAction"', 'id="permissionDetails"', 'model-catalog']) {
+  if (!index.includes(marker)) throw new Error(`UX shell marker missing: ${marker}`)
+}
+const uxControls = readFileSync(resolve(root, 'app/ux-controls.js'), 'utf8')
+const uxCss = readFileSync(resolve(root, 'app/ux-controls.css'), 'utf8')
+const uiSource = readFileSync(resolve(root, 'app/ui-enhancements.js'), 'utf8')
+if (!uxControls.includes("event.target.closest('[data-orchestrated-model]')")) throw new Error('Orchestrated model click proxy missing')
+if (!uxControls.includes("setNativeDelivery('queue')")) throw new Error('Automatic queue bridge missing')
+if (!uxCss.includes('.delivery{display:none!important}')) throw new Error('Manual Steer/Queue control must stay hidden')
+if (!uxCss.includes('.model-provider-toggle')) throw new Error('Collapsible provider styling missing')
+if (!uxCss.includes('.model-favorite-toggle')) throw new Error('Favorite model control styling missing')
+for (const marker of ["model-provider-collapse-v1", "data-fav", "compareModelEntries", "compareProviderGroups"]) {
+  if (!uiSource.includes(marker)) throw new Error(`Model picker behavior marker missing: ${marker}`)
+}
+
+let configText = readFileSync(resolve(root, 'config/opencode.json.template'), 'utf8')
+  .replaceAll('__CONFIG_DIR__', '/tmp/opencode-config')
+  .replaceAll('__CUSTOM_OPENCODE_ROOT__', '/tmp/custom-opencode')
+  .replaceAll('__RAG_DISABLED__', 'true')
+const config = JSON.parse(configText)
+const agents = config.agents || {}
+for (const id of ['build', 'plan', 'build-direct', 'plan-direct']) {
+  if (!agents[id] || agents[id].mode !== 'primary') throw new Error(`Primary profile missing: ${id}`)
+}
+for (const id of ['build-direct', 'plan-direct']) {
+  const rules = agents[id].permissions || []
+  if (!rules.some((rule) => rule.action === 'subagent' && rule.effect === 'deny')) throw new Error(`${id} must deny subagents`)
+  for (const action of ['kb_knowledge_search', 'kb_knowledge_get', 'kb_knowledge_sources', 'kb_knowledge_status', 'kb_knowledge_ingest']) {
+    if (!rules.some((rule) => rule.action === action && rule.effect === 'deny')) throw new Error(`${id} must deny ${action}`)
+  }
+}
+for (const action of ['edit', 'shell']) {
+  if (!(agents['plan-direct'].permissions || []).some((rule) => rule.action === action && rule.effect === 'deny')) throw new Error(`plan-direct must deny ${action}`)
+}
+if (!String(agents.build.system || '').includes('orchestrator.md') || !String(agents.plan.system || '').includes('orchestrator.md')) throw new Error('Orchestrated Build/Plan must keep orchestrator prompt')
+if (agents['build-direct'].system || agents['plan-direct'].system) throw new Error('Direct profiles must not inherit orchestrator system prompt')
 
 const doctor = await loadSource('app/doctor.js')
 if (typeof doctor.openDoctor !== 'function') throw new Error('Doctor UI module does not export openDoctor')
 
-console.log('Web smoke passed: Markdown + prompt contracts + slash/doctor/RAG parsing + free-model classification')
+console.log('Web smoke passed: prompt/slash/RAG contracts + favorite/collapsible model catalog + contextual composer + direct/orchestrated permissions')

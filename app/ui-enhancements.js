@@ -1,4 +1,6 @@
 const $ = (id) => document.getElementById(id)
+const FAV_KEY = 'opencode:web:favorites'
+const COLLAPSE_KEY = 'opencode:web:model-provider-collapse-v1'
 
 function dataOf(value) {
   return value && typeof value === 'object' && 'data' in value ? value.data : value
@@ -19,7 +21,12 @@ async function request(path, options = {}) {
 }
 
 function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char])
+  const entities = { '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }
+  return String(value ?? '').replace(/[&<>'"]/g, (char) => entities[char])
+}
+
+function loadSet(key) {
+  try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')) } catch { return new Set() }
 }
 
 async function selectedDirectory() {
@@ -46,14 +53,124 @@ export function isFreeModel(model) {
   return /(^|[-_])free($|[-_])/.test(id) || id === 'big-pickle' || id === 'x-preview-f-free'
 }
 
+export function compareModelEntries(a, b) {
+  return Number(Boolean(b.favorite)) - Number(Boolean(a.favorite))
+    || Number(Boolean(b.selected)) - Number(Boolean(a.selected))
+    || String(a.name || '').localeCompare(String(b.name || ''), 'ru', { sensitivity:'base', numeric:true })
+}
+
+export function compareProviderGroups(a, b) {
+  return Number(b.favoriteCount || 0) - Number(a.favoriteCount || 0)
+    || String(a.label || a.id || '').localeCompare(String(b.label || b.id || ''), 'ru', { sensitivity:'base', numeric:true })
+}
+
+function providerLabelsFromFlatList(root) {
+  const labels = new Map()
+  let heading = ''
+  for (const node of [...root.children]) {
+    if (node.classList.contains('project')) {
+      heading = node.textContent.trim()
+      continue
+    }
+    if (node.matches?.('button[data-provider][data-model]') && heading) {
+      labels.set(node.dataset.provider, heading)
+    }
+  }
+  return labels
+}
+
+function normalizeChoice(button, favorites, orchestrated) {
+  const key = `${button.dataset.provider}/${button.dataset.model}`
+  const title = button.querySelector('.choice-title')
+  const selected = /\s·\s✓\s*$/.test(title?.textContent || '')
+  if (title) {
+    title.textContent = title.textContent.replace(/^★\s*/, '').replace(/\s·\s✓\s*$/, '')
+    if (selected && !(orchestrated && key === 'bailian-cli/qwen3.8-max')) title.textContent += ' · ✓'
+  }
+
+  const favorite = button.querySelector('[data-fav]')
+  if (favorite) {
+    favorite.textContent = favorites.has(key) ? '★' : '☆'
+    favorite.classList.add('model-favorite-toggle')
+    favorite.setAttribute('role', 'button')
+    favorite.setAttribute('aria-label', favorites.has(key) ? 'Убрать модель из избранного' : 'Добавить модель в избранное')
+    favorite.title = favorites.has(key) ? 'Убрать из избранного' : 'В избранное'
+  }
+  button.dataset.favorite = favorites.has(key) ? '1' : '0'
+  button.dataset.selected = selected ? '1' : '0'
+  return {
+    key,
+    button,
+    selected,
+    favorite: favorites.has(key),
+    name: title?.textContent?.replace(/\s·\s✓\s*$/, '') || button.dataset.model || key,
+  }
+}
+
+function sortChoices(entries) {
+  return [...entries].sort(compareModelEntries)
+}
+
+function providerSection({ id, label, entries, collapsed, providerLabels, orchestrated = false }) {
+  const section = document.createElement('section')
+  section.className = 'model-provider-section'
+  section.dataset.providerSection = id
+
+  const favoriteCount = entries.filter((entry) => entry.favorite).length
+  const toggle = document.createElement('button')
+  toggle.type = 'button'
+  toggle.className = 'model-provider-toggle'
+  toggle.dataset.providerToggle = id
+  toggle.setAttribute('aria-expanded', String(!collapsed.has(id)))
+  toggle.innerHTML = `<span class="model-provider-chevron">${collapsed.has(id) ? '›' : '⌄'}</span><strong>${escapeHtml(label)}</strong>${favoriteCount ? `<span class="model-provider-favorites">★ ${favoriteCount}</span>` : ''}<span class="model-provider-count">${entries.length + (orchestrated ? 1 : 0)}</span>`
+
+  const body = document.createElement('div')
+  body.className = 'model-provider-body'
+  body.hidden = collapsed.has(id)
+
+  if (orchestrated) {
+    const special = document.createElement('button')
+    special.type = 'button'
+    special.className = 'choice orchestrated-model-choice'
+    special.dataset.orchestratedModel = '1'
+    special.innerHTML = `<div class="choice-title">Qwen 3.8 Max · Оркестратор${document.documentElement.dataset.modelProfile === 'orchestrated' ? ' · ✓' : ''}</div><div class="choice-meta">Max → Flash worker · optional RAG</div>`
+    body.append(special)
+  }
+
+  for (const entry of sortChoices(entries)) {
+    const meta = entry.button.querySelector('.choice-meta')
+    if (id === '__free__' && meta && !meta.querySelector('.model-provider-label')) {
+      const provider = document.createElement('span')
+      provider.className = 'model-provider-label'
+      provider.textContent = providerLabels.get(entry.button.dataset.provider) || entry.button.dataset.provider
+      meta.prepend(provider)
+    }
+    body.append(entry.button)
+  }
+
+  toggle.addEventListener('click', () => {
+    const next = !body.hidden
+    body.hidden = next
+    toggle.setAttribute('aria-expanded', String(!next))
+    toggle.querySelector('.model-provider-chevron').textContent = next ? '›' : '⌄'
+    const current = loadSet(COLLAPSE_KEY)
+    if (next) current.add(id); else current.delete(id)
+    localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...current]))
+  })
+
+  section.append(toggle, body)
+  return section
+}
+
 let decoratingModels = false
 let modelObserver = null
 async function decorateModelChoices() {
   const root = $('modelChoices')
-  if (!root || decoratingModels || !root.querySelector('[data-model]')) return
+  if (!root || decoratingModels || root.querySelector(':scope > .model-provider-section') || !root.querySelector('[data-model]')) return
   decoratingModels = true
   modelObserver?.disconnect()
   try {
+    const providerLabels = providerLabelsFromFlatList(root)
     const directory = await selectedDirectory()
     const params = new URLSearchParams()
     if (directory) params.set('location[directory]', directory)
@@ -61,28 +178,54 @@ async function decorateModelChoices() {
     const free = new Set((Array.isArray(models) ? models : [])
       .filter(isFreeModel)
       .map((model) => `${model.providerID}/${model.id}`))
-    const buttons = [...root.querySelectorAll('button[data-provider][data-model]')]
-    const freeButtons = buttons.filter((button) => free.has(`${button.dataset.provider}/${button.dataset.model}`))
-    root.querySelector('.free-models-heading')?.remove()
-    if (!freeButtons.length) return
+    const favorites = loadSet(FAV_KEY)
+    const collapsed = loadSet(COLLAPSE_KEY)
+    const orchestrated = document.documentElement.dataset.modelProfile === 'orchestrated'
+    const entries = [...root.querySelectorAll('button[data-provider][data-model]')]
+      .map((button) => normalizeChoice(button, favorites, orchestrated))
 
-    const heading = document.createElement('div')
-    heading.className = 'project free-models-heading'
-    heading.textContent = 'Бесплатные модели'
-    root.prepend(heading)
-    heading.after(...freeButtons)
-
-    for (const providerHeading of [...root.querySelectorAll('.project:not(.free-models-heading)')]) {
-      let node = providerHeading.nextElementSibling
-      let hasChoice = false
-      while (node && !node.classList.contains('project')) {
-        if (node.matches('button[data-model]')) { hasChoice = true; break }
-        node = node.nextElementSibling
+    const freeEntries = []
+    const byProvider = new Map()
+    for (const entry of entries) {
+      if (free.has(entry.key)) {
+        freeEntries.push(entry)
+        continue
       }
-      if (!hasChoice) providerHeading.remove()
+      const providerID = entry.button.dataset.provider
+      if (!byProvider.has(providerID)) byProvider.set(providerID, [])
+      byProvider.get(providerID).push(entry)
+    }
+
+    root.replaceChildren()
+    if (freeEntries.length) {
+      root.append(providerSection({
+        id: '__free__',
+        label: 'Бесплатные модели',
+        entries: freeEntries,
+        collapsed,
+        providerLabels,
+      }))
+    }
+
+    const providerGroups = [...byProvider.entries()].map(([id, providerEntries]) => ({
+      id,
+      entries: providerEntries,
+      label: providerLabels.get(id) || id,
+      favoriteCount: providerEntries.filter((entry) => entry.favorite).length,
+    })).sort(compareProviderGroups)
+
+    for (const group of providerGroups) {
+      root.append(providerSection({
+        id: group.id,
+        label: group.label,
+        entries: group.entries,
+        collapsed,
+        providerLabels,
+        orchestrated: group.id === 'bailian-cli' && group.entries.some((entry) => entry.key === 'bailian-cli/qwen3.8-max'),
+      }))
     }
   } catch (error) {
-    console.warn('free model grouping failed', error)
+    console.warn('model catalog enhancement failed', error)
   } finally {
     decoratingModels = false
     if (modelObserver && root.isConnected) modelObserver.observe(root, { childList:true })
