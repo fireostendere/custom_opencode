@@ -1,7 +1,7 @@
 export const ORCHESTRATED_MODEL = {
   id: 'qwen3.8-max',
   providerID: 'bailian-cli',
-  label: 'Qwen 3.8 Max · Оркестратор',
+  label: 'Qwen 3.8 Max · Orchestrated',
 }
 
 export function modeFromAgent(agentID = '') {
@@ -31,7 +31,7 @@ export function composerActionState({ running = false, hasPayload = false } = {}
 
 function objectHint(value) {
   if (!value || typeof value !== 'object') return ''
-  const keys = ['command', 'cmd', 'path', 'file', 'filename', 'url', 'name', 'description', 'prompt', 'query']
+  const keys = ['command', 'cmd', 'path', 'file', 'filename', 'url', 'label', 'description', 'prompt', 'question', 'query']
   for (const key of keys) {
     const candidate = value[key]
     if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
@@ -46,9 +46,17 @@ function objectHint(value) {
   return ''
 }
 
+function friendlyPermissionTitle(title) {
+  const value = String(title || '').trim()
+  if (/^(question|ask)$/i.test(value)) return 'Нужен выбор'
+  if (/^(permission|разрешение)$/i.test(value)) return 'Требуется разрешение'
+  return value || 'Требуется разрешение'
+}
+
 export function permissionSummary(title = 'Разрешение', raw = '', limit = 112) {
+  const friendlyTitle = friendlyPermissionTitle(title)
   const compact = String(raw || '').replace(/\s+/g, ' ').trim()
-  if (!compact) return `${title}: подробности доступны под катом`
+  if (!compact) return `${friendlyTitle}: подробности доступны под катом`
 
   let hint = compact
   if ((compact.startsWith('{') && compact.endsWith('}')) || (compact.startsWith('[') && compact.endsWith(']'))) {
@@ -56,5 +64,5 @@ export function permissionSummary(title = 'Разрешение', raw = '', limi
   }
   hint = hint.replace(/\s+/g, ' ').trim()
   if (hint.length > limit) hint = `${hint.slice(0, Math.max(1, limit - 1)).trimEnd()}…`
-  return `${title}: ${hint}`
+  return `${friendlyTitle}: ${hint}`
 }
