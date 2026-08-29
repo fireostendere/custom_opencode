@@ -7,32 +7,55 @@
 - web/PWA UI для OpenCode sessions;
 - isolated quick-session workspaces;
 - `Проекты → Папки на ПК` с filesystem allowlist и symlink containment;
-- Build/Plan, model/provider/effort controls;
-- отдельную группу бесплатных моделей без mobile keyboard search field;
+- только два пользовательских режима работы: `Build` и `Plan`;
+- model picker с избранным, сортировкой, сворачиваемыми провайдерами и отдельной группой бесплатных моделей;
+- отдельный вариант `Qwen 3.8 Max · Оркестратор` прямо в model picker;
+- автоматическую очередь сообщений без ручного `Steer/Queue` переключателя;
+- одну контекстную кнопку composer: send / stop / queue;
+- компактные permission cards с деталями под раскрытием;
 - native slash commands;
 - Markdown/code/tool/reasoning renderers;
 - files и clipboard images;
 - Git/VCS UI, fork/duplicate/handoff, notifications, drafts;
 - Qwen Token Plan и Codex rate-limit sidebar;
-- cloud routing `Qwen 3.8 Max → Qwen 3.6 Flash fast-reader`;
+- orchestration `Qwen 3.8 Max → Qwen 3.6 Flash fast-reader`;
 - manual-only local Ollama models;
 - optional `mcp-rag` integration через `kb` MCP;
 - `/rag-start` и `/doctor`;
 - pre-install verifier и post-install zero-LLM-token self-test;
 - user systemd deployment и one-command update.
 
-## Routing по умолчанию
+## Модели и orchestration
+
+Обычная модель из picker работает напрямую в выбранном `Build` или `Plan` режиме: без automatic subagents и без automatic RAG.
+
+Для orchestration выбирается специальная модель:
 
 ```text
-Primary:     bailian-cli/qwen3.8-max
-Read worker: fast-reader → bailian-cli/qwen3.6-flash
-Title:       bailian-cli/qwen3.6-flash
-Local:       ollama/* — только ручной выбор
+Qwen 3.8 Max · Оркестратор
+        ↓ при необходимости
+fast-reader → Qwen 3.6 Flash
+        ↓ при corpus-relevant engineering lookup
+kb MCP → mcp-rag
 ```
 
-`fast-reader` — bounded read-only worker для repository exploration, логов и точечного RAG lookup. Он не получает edit/shell права. Финальные решения остаются у primary model.
+`fast-reader` — bounded read-only worker для repository exploration, логов и точечного RAG lookup. Он не получает edit/shell права. Финальные решения остаются у Qwen 3.8 Max.
 
-Отдельный UI switch `Router/Direct` в текущей реализации отсутствует: router-like behavior работает через `build/plan` + разрешённый `fast-reader`.
+Локальный `ollama/*` остаётся только ручным direct model choice и не включается в automatic path.
+
+## Composer
+
+Отдельного `Steer / Queue` переключателя в UI нет.
+
+Поведение выбирается автоматически:
+
+```text
+работы нет                         → ↑ Отправить
+работа идёт + composer пустой      → × Остановить
+работа идёт + есть текст/вложение  → ↑ Добавить в очередь
+```
+
+Очередь хранится для конкретной session и отправляется после завершения текущей работы.
 
 ## RAG
 
@@ -92,7 +115,7 @@ app/       web client + authenticated proxy + Doctor/RAG lifecycle
 config/    OpenCode V2 providers, agents, prompts, plugins
 scripts/   verify/install/update/RAG probes
 systemd/   user service
- docs/     пользовательская и эксплуатационная документация
+docs/      пользовательская и эксплуатационная документация
 ```
 
 ## Security defaults
@@ -103,6 +126,7 @@ systemd/   user service
 - project browser ограничен `OPENCODE_PROJECT_ROOTS`;
 - quick workspace cleanup защищён containment checks;
 - automatic Ollama отключён;
+- direct models не получают automatic RAG/subagent delegation;
 - RAG ingest не разрешён read-only worker;
 - MCP execution timeout ограничен;
 - install/update завершается ошибкой, если critical host self-test не прошёл.
