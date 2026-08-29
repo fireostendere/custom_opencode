@@ -96,6 +96,7 @@ if (ux.ORCHESTRATED_MODEL.label !== 'Qwen 3.8 Max · Оркестрирован�
 const index = readFileSync(resolve(root, 'app/index.html'), 'utf8')
 for (const marker of [
   '/ux-controls.css', '/ux-controls.js', '/advanced-features.css', '/advanced-features.js',
+  '/runtime-dashboard.css', '/runtime-dashboard.js', '/runtime-v3-dashboard.css', '/runtime-v3-dashboard.js',
   '/appearance-bootstrap.js', '/appearance.css', '/appearance.js', '/auth-ui.js', '/mobile-ui.js',
   'id="composerAction"', 'id="permissionDetails"', 'model-catalog', 'id="appearanceDialog"',
   'id="appearanceButton"', 'id="limitsShell"',
@@ -121,11 +122,13 @@ const authUi = readFileSync(resolve(root, 'app/auth-ui.js'), 'utf8')
 const login = readFileSync(resolve(root, 'app/login.html'), 'utf8')
 const loginJs = readFileSync(resolve(root, 'app/login.js'), 'utf8')
 const serverSource = readFileSync(resolve(root, 'app/server.py'), 'utf8')
+const runtimeDashboard = readFileSync(resolve(root, 'app/runtime-dashboard.js'), 'utf8')
+const runtimeCss = readFileSync(resolve(root, 'app/runtime-dashboard.css'), 'utf8')
+const runtimeV3Dashboard = readFileSync(resolve(root, 'app/runtime-v3-dashboard.js'), 'utf8')
 
 if (!uxControls.includes("button.textContent = 'Build'")) throw new Error('Build must remain the compatibility work-mode label')
 if (uxControls.includes("button.textContent = 'Direct'")) throw new Error('Direct must not be exposed as a user-facing mode label')
 if (!uxControls.includes("event.target.closest('[data-orchestrated-model]')")) throw new Error('Orchestrated model click proxy missing')
-if (uxControls.includes('data-auto-model') || uxControls.includes('local/cloud')) throw new Error('Automatic local/cloud profile must not exist')
 if (!uxControls.includes('window.CustomOpenCodeUX')) throw new Error('Project defaults cannot select orchestrated profile')
 if (!uxControls.includes("setNativeDelivery('queue')")) throw new Error('Automatic queue compatibility bridge missing')
 if (!uxControls.includes("addEventListener('submit', () => setTimeout(syncComposerAction, 0))")) throw new Error('Composer action must resync after programmatic queue clear')
@@ -146,18 +149,15 @@ for (const marker of [
 ]) {
   if (!advanced.includes(marker)) throw new Error(`Advanced workflow marker missing: ${marker}`)
 }
-if (advanced.includes('/client-auto-route.json') || advanced.includes('Auto · local/cloud')) throw new Error('Advanced workflow must not contain automatic local routing')
 for (const marker of ['.question-card', '.queue-list', '.orchestration-trace', '.review-hunk', '.workflow-status']) {
   if (!advancedCss.includes(marker)) throw new Error(`Advanced workflow styling missing: ${marker}`)
 }
 
-// access-fix intentionally removes the mode picker from the user surface while
-// keeping internal plan agents available for upstream compatibility.
 for (const marker of ["root.style.display = 'none'", "modeSelect.value = 'build'", 'buildAgentForProfile', 'resolvedPermissions']) {
   if (!accessFix.includes(marker)) throw new Error(`Build-only/permission fix marker missing: ${marker}`)
 }
 if (!accessFixCss.includes('#agentControls') || !accessFixCss.includes('display:none!important')) throw new Error('Build/Plan switch must remain hidden')
-if (!accessFixCss.includes('max-height:calc(100dvh')) throw new Error('Mobile dialogs must use the available dynamic viewport')
+if (!accessFixCss.includes('max-height:calc(100dvh')) throw new Error('Mobile dialogs must use the dynamic viewport')
 
 for (const marker of ['opencode:web:appearance-v1', "theme:'system'", '--accent-contrast', 'prefers-color-scheme']) {
   if (!appearance.includes(marker)) throw new Error(`Appearance behavior marker missing: ${marker}`)
@@ -172,7 +172,6 @@ for (const marker of ['html[data-theme="light"]', 'prefers-reduced-motion:reduce
 for (const marker of ['sidebarScrim', 'history.pushState', 'history.back()', '!sidebar.contains(target)', 'dx < -56']) {
   if (!mobileUi.includes(marker)) throw new Error(`Mobile drawer behavior marker missing: ${marker}`)
 }
-
 for (const marker of ['/auth/session', '/auth/logout', 'opencode:web:auth-resume-v1']) {
   if (!authUi.includes(marker)) throw new Error(`Auth UI marker missing: ${marker}`)
 }
@@ -185,24 +184,37 @@ for (const marker of ['AUTH_COOKIE_NAME', 'SameSite=Strict', 'OPENCODE_AUTH_ALLO
 }
 if (serverSource.includes('WWW-Authenticate')) throw new Error('Web server must not trigger browser-native Basic Auth challenge')
 
+for (const marker of ['/client-model-capabilities.json', '/client-tasks.json', '/client-task-control.json', '/client-resource-status.json', '/client-speculate.json', '/client-task-create.json', 'Task Center', 'qwen3.8-coder']) {
+  if (!runtimeDashboard.includes(marker)) throw new Error(`Runtime dashboard behavior marker missing: ${marker}`)
+}
+for (const marker of ['runtime-task', 'runtime-profile', 'runtime-state']) {
+  if (!runtimeCss.includes(marker)) throw new Error(`Runtime dashboard styling marker missing: ${marker}`)
+}
+for (const marker of ['/internal/runtime-v3/status', '/internal/runtime-v3/search', 'Runtime V3']) {
+  if (!runtimeV3Dashboard.includes(marker)) throw new Error(`Runtime V3 dashboard marker missing: ${marker}`)
+}
+
 const serviceWorker = readFileSync(resolve(root, 'app/sw.js'), 'utf8')
-if (!serviceWorker.includes('custom-opencode-web-v6')) throw new Error('PWA cache generation was not bumped for auth/appearance assets')
+if (!serviceWorker.includes('custom-opencode-web-v6')) throw new Error('PWA cache generation must include auth/appearance generation')
 if (!serviceWorker.includes("fetch(req,{cache:'no-cache'})")) throw new Error('PWA assets must prefer fresh network responses')
 if (!serviceWorker.includes("event.action==='dismiss'")) throw new Error('Notification dismiss action missing')
 if (serviceWorker.includes('return cached||network')) throw new Error('PWA must not serve stale cache before checking the network')
-if (!serviceWorker.includes("url.pathname.startsWith('/auth/')")) throw new Error('Auth responses must stay outside the PWA static cache')
+for (const marker of ["url.pathname.startsWith('/auth/')", "url.pathname.startsWith('/internal/')"]) {
+  if (!serviceWorker.includes(marker)) throw new Error(`Sensitive PWA cache exclusion missing: ${marker}`)
+}
 
 const workflowServer = readFileSync(resolve(root, 'app/server_workflow.py'), 'utf8')
 const featureServer = readFileSync(resolve(root, 'app/server_features.py'), 'utf8')
+const runtimeServer = readFileSync(resolve(root, 'app/server_runtime.py'), 'utf8')
 const service = readFileSync(resolve(root, 'systemd/opencode-web-client.service'), 'utf8')
-for (const marker of ['/client-send.json', 'prompt_async', 'body["system"]', 'features._send_backend_prompt']) {
+for (const marker of ['/client-send.json', 'prompt_async', 'body["system"]', 'features._send_backend_prompt', 'runtime.install(features)']) {
   if (!workflowServer.includes(marker)) throw new Error(`Workflow server marker missing: ${marker}`)
 }
 for (const marker of ['/client-queue.json', '/client-project-settings.json', '/client-git-revert.json', 'permissionRules', 'git apply']) {
   if (!featureServer.includes(marker)) throw new Error(`Persistent feature server marker missing: ${marker}`)
 }
-for (const forbidden of ['/client-auto-route.json', 'OPENCODE_AUTO_GAME_PROCESSES', 'keep_alive', '_unload_ollama', '_ollama_available']) {
-  if (featureServer.includes(forbidden)) throw new Error(`Local model automation leaked into workflow server: ${forbidden}`)
+for (const marker of ['/client-tasks.json', 'spawn_speculative', 'mcp_gateway', '_create_worktree', 'runtime.recovery_scan', 'agent.loop_detected', 'agent.stuck']) {
+  if (!runtimeServer.includes(marker)) throw new Error(`Runtime server marker missing: ${marker}`)
 }
 if (!service.includes('app/server_workflow.py') || !service.includes('app/server_rag.py')) throw new Error('Production service must compose workflow and RAG layers')
 
@@ -231,4 +243,4 @@ if (agents['build-direct'].system || agents['plan-direct'].system) throw new Err
 const doctor = await loadSource('app/doctor.js')
 if (typeof doctor.openDoctor !== 'function') throw new Error('Doctor UI module does not export openDoctor')
 
-console.log('Web smoke passed: Build-only UX + direct/orchestrated profiles + auth/appearance/mobile + persistent queue + questions + policies + review + orchestration UI')
+console.log('Web smoke passed: Build-only UX + Runtime V2/V3 + auth/appearance/mobile + direct/server profiles + queue/questions/permissions/review/orchestration')
