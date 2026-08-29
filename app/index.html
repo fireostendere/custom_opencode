@@ -23,10 +23,13 @@
         <button class="project-button" id="chooseProject" title="Открыть проект или папку на ПК">Проекты</button>
         <button class="icon" id="refresh" title="Обновить">↻</button>
       </div>
-      <div class="provider-limits" id="providerLimits" aria-live="polite">
-        <div class="quota-title"><span>Лимиты</span></div>
-        <div class="quota-note">Загрузка…</div>
-      </div>
+      <details class="limits-shell" id="limitsShell" open>
+        <summary class="limits-summary"><span>Лимиты</span></summary>
+        <div class="provider-limits" id="providerLimits" aria-live="polite">
+          <div class="quota-title"><span>Лимиты</span></div>
+          <div class="quota-note">Загрузка…</div>
+        </div>
+      </details>
       <button class="doctor-open" id="doctorButton" type="button">Диагностика</button>
       <div class="side-tools">
         <input class="search" id="search" placeholder="Поиск сессий…" autocomplete="off">
@@ -115,6 +118,7 @@
   <script type="module" src="/advanced-features.js"></script>
   <script type="module" src="/control-plane.js"></script>
   <script type="module" src="/doctor.js"></script>
+  <script type="module" src="/access-fix-limits.js"></script>
   <script type="module" src="/access-fix.js"></script>
 </body>
 </html>
