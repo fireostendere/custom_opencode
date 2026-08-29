@@ -82,6 +82,14 @@ function normalizeLegacyProfile() {
   }
 }
 
+function syncOrchestratedChoiceLabel() {
+  const title = document.querySelector('#modelChoices [data-orchestrated-model] .choice-title')
+  if (!title) return
+  const selected = document.documentElement.dataset.modelProfile === 'orchestrated'
+  const next = `${ORCHESTRATED_MODEL.label}${selected ? ' · ✓' : ''}`
+  if (title.textContent !== next) title.textContent = next
+}
+
 function syncModelSurface() {
   const button = $('modelButton')
   if (!button) return
@@ -94,6 +102,7 @@ function syncModelSurface() {
   } else {
     button.title = 'Выбрать модель'
   }
+  syncOrchestratedChoiceLabel()
 }
 
 function hasPayload() {
@@ -205,9 +214,12 @@ function installModelProfileProxy() {
     document.documentElement.dataset.modelProfile = 'direct'
   }, true)
 
+  new MutationObserver(() => queueMicrotask(syncOrchestratedChoiceLabel)).observe(root, { childList:true, subtree:true })
+
   const modelButton = $('modelButton')
   modelButton?.addEventListener('click', () => {
     document.documentElement.dataset.modelProfile = currentProfile()
+    queueMicrotask(syncOrchestratedChoiceLabel)
   }, true)
   if (modelButton) new MutationObserver(() => queueMicrotask(syncModelSurface)).observe(modelButton, { childList:true, characterData:true, subtree:true })
 }
@@ -223,6 +235,7 @@ function installComposerAction() {
     $('form')?.requestSubmit()
   })
 
+  $('form')?.addEventListener('submit', () => queueMicrotask(syncComposerAction))
   $('input')?.addEventListener('input', syncComposerAction)
   const stop = $('stop')
   if (stop) new MutationObserver(syncComposerAction).observe(stop, { attributes: true, attributeFilter: ['hidden'] })
