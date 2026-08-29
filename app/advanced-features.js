@@ -18,7 +18,6 @@ const state = {
   lastDurationMs: 0,
   attachments: [],
   attachmentReads: [],
-  bypassSubmit: false,
   reviewDiffs: [],
 }
 
@@ -170,6 +169,8 @@ async function refreshSelectedSession() {
   state.children = []
   state.childDetails.clear()
   state.autoRoute = null
+  state.attachments = []
+  state.attachmentReads = []
   state.runStartedAt = running() ? Date.now() : null
   renderAll()
   if (!id) return
@@ -281,10 +282,14 @@ async function chooseConcreteModel(ref) {
   choice?.click()
 }
 
-function readAttachment(file) {
+function readAttachment(file, slot) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onload = () => resolve({ uri:reader.result, name:file.name || `file-${Date.now()}`, mime:file.type || 'application/octet-stream' })
+    reader.onload = () => {
+      const value = { uri:reader.result, name:file.name || `file-${Date.now()}`, mime:file.type || 'application/octet-stream' }
+      state.attachments[slot] = value
+      resolve(value)
+    }
     reader.onerror = () => reject(reader.error)
     reader.readAsDataURL(file)
   })
@@ -292,7 +297,9 @@ function readAttachment(file) {
 function captureFiles(files) {
   for (const file of [...(files || [])]) {
     if (!file) continue
-    const promise = readAttachment(file).then((value) => { state.attachments.push(value); return value }).catch((error) => { console.warn('attachment mirror failed', error) })
+    const slot = state.attachments.length
+    state.attachments.push(null)
+    const promise = readAttachment(file, slot).catch((error) => { state.attachments[slot] = null; console.warn('attachment mirror failed', error) })
     state.attachmentReads.push(promise)
   }
 }
@@ -300,7 +307,7 @@ async function awaitAttachments() {
   const pending = [...state.attachmentReads]
   state.attachmentReads = []
   if (pending.length) await Promise.allSettled(pending)
-  return [...state.attachments]
+  return state.attachments.filter(Boolean)
 }
 function clearComposer() {
   const input = $('input')
@@ -315,8 +322,11 @@ function clearComposer() {
 }
 
 async function interceptSubmit(event) {
-  if (state.bypassSubmit || !state.sessionID) return
+  if (!state.sessionID) return
   const text = $('input')?.value.trim() || ''
+  // Native/control slash commands have their own interception layers and must
+  // not be converted into ordinary prompt messages by the workflow sender.
+  if (text.startsWith('/') && !text.startsWith('//')) return
   const hasAttachmentSurface = Boolean($('attachments') && !$('attachments').hidden && $('attachments').children.length)
   if (!text && !hasAttachmentSurface && !state.attachments.length && !state.attachmentReads.length) return
   event.preventDefault()
@@ -331,9 +341,12 @@ async function interceptSubmit(event) {
       toast('Добавлено в серверную очередь')
       return
     }
-    await request('/client-send.json', { method:'POST', body:JSON.stringify({ sessionID:state.sessionID, text, files, profile }) })
+    const sent = await request('/client-send.json', { method:'POST', body:JSON.stringify({ sessionID:state.sessionID, text, files, profile }) })
     clearComposer()
+    if ($('stop')) $('stop').hidden = false
     if (!state.runStartedAt) state.runStartedAt = Date.now()
+    if (sent?.route) state.autoRoute = sent.route
+    renderStatus()
     toast(profile === 'auto' ? `Отправлено · ${state.autoRoute?.route === 'local' ? 'local' : 'cloud'}` : 'Отправлено', 1300)
     setTimeout(() => refreshOrchestration(), 300)
   } catch (error) {
@@ -412,7 +425,7 @@ async function questionRequests() {
 }
 function normalizeQuestionRequest(raw) {
   if (!raw || typeof raw !== 'object') return null
-  const questions = Array.isArray(raw.questions) ? raw.questions : Array.isArray(raw.question) ? raw.question : []
+  const questions = Array.isArray(raw.questions) ? [...raw.questions] : Array.isArray(raw.question) ? [...raw.question] : []
   if (!questions.length && raw.question && typeof raw.question === 'string') {
     questions.push({ question:raw.question, header:raw.header, options:raw.options, multiple:raw.multiple })
   }
@@ -429,7 +442,10 @@ function normalizeQuestionRequest(raw) {
   }
 }
 async function refreshQuestions() {
-  if (!state.sessionID) { state.question = null; renderQuestion(); return }
+  if (!state.sessionID) {
+    if (state.questionKey) { state.question = null; state.questionKey = ''; renderQuestion() }
+    return
+  }
   try {
     const requests = await questionRequests()
     const requestRow = requests.map(normalizeQuestionRequest).find((item) => item?.id) || null
@@ -438,9 +454,13 @@ async function refreshQuestions() {
       state.questionKey = key
       state.question = requestRow
       state.questionSelection = requestRow ? requestRow.questions.map(() => ({ selected:new Set(), custom:'' })) : []
+      renderQuestion()
       if (requestRow) notifyAdvanced('OpenCode ждёт выбора', requestRow.questions[0]?.question || 'Нужно выбрать вариант', `question-${requestRow.id}`)
-    } else state.question = requestRow
-    renderQuestion()
+    } else {
+      // Keep the existing DOM while the same request is pending. Rebuilding it
+      // on every poll would destroy focus and a custom answer being typed.
+      state.question = requestRow
+    }
   } catch {}
 }
 function renderQuestion() {
@@ -449,7 +469,7 @@ function renderQuestion() {
   const requestRow = state.question
   host.hidden = !requestRow
   if (!requestRow) { host.innerHTML = ''; return }
-  host.innerHTML = `<div class="question-card"><div class="question-head"><div><div class="question-kicker">Нужен твой выбор</div><div class="question-title">${escapeHtml(requestRow.questions.length > 1 ? `Вопросов: ${requestRow.questions.length}` : requestRow.questions[0].header)}</div></div><button class="question-close" type="button" data-question-reject title="Отклонить вопрос">×</button></div><div class="question-sections">${requestRow.questions.map((question, qIndex) => `<div class="question-section ${question.multiple ? 'multiple' : ''}" data-question-index="${qIndex}"><div><div class="question-kicker">${escapeHtml(question.header)}</div><div class="question-section-title">${escapeHtml(question.question)}</div></div><div class="question-options">${question.options.map((option, oIndex) => `<button type="button" class="question-option" data-question-option="${qIndex}:${oIndex}"><span class="question-option-mark"></span><span class="question-option-text"><span class="question-option-label">${escapeHtml(option.label)}</span>${option.description ? `<span class="question-option-description">${escapeHtml(option.description)}</span>` : ''}</span></button>`).join('')}</div><div class="question-custom"><input data-question-custom="${qIndex}" placeholder="Свой вариант…"><button type="button" data-question-custom-use="${qIndex}">Использовать</button></div></div>`).join('')}</div><div class="question-actions"><button type="button" data-question-reject>Отмена</button><button type="button" class="primary" data-question-submit>Продолжить</button></div></div>`
+  host.innerHTML = `<div class="question-card"><div class="question-head"><div><div class="question-kicker">Нужен твой выбор</div><div class="question-title">${escapeHtml(requestRow.questions.length > 1 ? `Вопросов: ${requestRow.questions.length}` : requestRow.questions[0].header)}</div></div><button class="question-close" type="button" data-question-reject title="Отклонить вопрос">×</button></div><div class="question-sections">${requestRow.questions.map((question, qIndex) => `<div class="question-section ${question.multiple ? 'multiple' : ''}" data-question-index="${qIndex}"><div><div class="question-kicker">${escapeHtml(question.header)}</div><div class="question-section-title">${escapeHtml(question.question)}</div></div><div class="question-options">${question.options.map((option, oIndex) => `<button type="button" class="question-option" data-question-option="${qIndex}:${oIndex}"><span class="question-option-mark"></span><span class="question-option-text"><span class="question-option-label">${escapeHtml(option.label)}</span>${option.description ? `<span class="question-option-description">${escapeHtml(option.description)}</span>` : ''}</span></button>`).join('')}</div><div class="question-custom"><input data-question-custom="${qIndex}" value="${escapeHtml(state.questionSelection[qIndex]?.custom || '')}" placeholder="Свой вариант…"><button type="button" data-question-custom-use="${qIndex}">Использовать</button></div></div>`).join('')}</div><div class="question-actions"><button type="button" data-question-reject>Отмена</button><button type="button" class="primary" data-question-submit>Продолжить</button></div></div>`
   for (let qIndex = 0; qIndex < requestRow.questions.length; qIndex++) syncQuestionSection(qIndex)
   host.querySelectorAll('[data-question-option]').forEach((button) => button.addEventListener('click', () => {
     const [qIndexText, optionIndexText] = button.dataset.questionOption.split(':')
@@ -715,7 +735,8 @@ function renderReview() {
   const diffs = state.reviewDiffs || []
   const total = diffs.reduce((acc, item) => ({ add:acc.add + item.add, del:acc.del + item.del }), { add:0, del:0 })
   const summary = $('gitSummary')
-  if (summary) summary.innerHTML += `<div class="review-summary"><span class="review-stat">${diffs.length} files</span><span class="review-stat">+${total.add}</span><span class="review-stat">−${total.del}</span></div>`
+  summary?.querySelector('.review-summary')?.remove()
+  if (summary) summary.insertAdjacentHTML('beforeend', `<div class="review-summary"><span class="review-stat">${diffs.length} files</span><span class="review-stat">+${total.add}</span><span class="review-stat">−${total.del}</span></div>`)
   host.innerHTML = diffs.map((item, index) => `<details class="review-file" open><summary><span class="review-file-path">${escapeHtml(item.path)}</span><span class="review-file-stat">+${item.add} −${item.del}</span><span class="review-file-actions"><button type="button" class="workflow-button-danger" data-revert-file="${index}">Отменить файл</button></span></summary>${item.hunks.map((hunk, hIndex) => `<div class="review-hunk"><div class="review-hunk-head"><span>${escapeHtml(hunk.lines[0] || 'hunk')}</span><button type="button" data-revert-hunk="${index}:${hIndex}">Отменить hunk</button></div><pre>${hunk.lines.map((line) => `<span class="${line.startsWith('+') && !line.startsWith('+++') ? 'line-add' : line.startsWith('-') && !line.startsWith('---') ? 'line-del' : ''}">${escapeHtml(line)}</span>`).join('\n')}</pre></div>`).join('') || `<pre>${escapeHtml(item.patch)}</pre>`}</details>`).join('') || '<div class="empty">Изменений нет.</div>'
   host.querySelectorAll('[data-revert-file]').forEach((button) => button.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); revertReviewFile(Number(button.dataset.revertFile)) }))
   host.querySelectorAll('[data-revert-hunk]').forEach((button) => button.addEventListener('click', () => {
@@ -800,14 +821,10 @@ function bindEvents() {
 }
 
 async function tickFast() {
-  if (!document.hidden && state.sessionID) {
-    await Promise.allSettled([refreshQuestions(), refreshPermission()])
-  }
+  if (!document.hidden && state.sessionID) await Promise.allSettled([refreshQuestions(), refreshPermission()])
 }
 async function tickMedium() {
-  if (!document.hidden && state.sessionID) {
-    await Promise.allSettled([refreshQueue(), refreshOrchestration(), refreshAutoRoute()])
-  }
+  if (!document.hidden && state.sessionID) await Promise.allSettled([refreshQueue(), refreshOrchestration(), refreshAutoRoute()])
 }
 
 function init() {
