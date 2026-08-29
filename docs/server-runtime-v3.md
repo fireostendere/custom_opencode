@@ -51,7 +51,7 @@ OpenCode remains the central MCP host rather than duplicating a second protocol 
 
 The OpenCode V2 runtime guard applies:
 
-1. `session.request`: bounded server context for non-web clients.
+1. `session.context`: bounded server context for every managed client path before model dispatch.
 2. `tool.execute.before`: sandbox, ownership, loop and rate-limit policy.
 3. `tool.transform`: wraps cacheable read executors so a cache hit prevents the underlying tool call entirely.
 4. `tool.execute.after`: externalizes large results and deduplicates repeated outputs.
