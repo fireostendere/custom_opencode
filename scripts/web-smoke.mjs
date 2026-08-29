@@ -85,27 +85,44 @@ if (ux.composerActionState({ running:false, hasPayload:false }).kind !== 'send')
 if (ux.composerActionState({ running:true, hasPayload:false }).kind !== 'stop') throw new Error('Running empty composer must show stop')
 if (ux.composerActionState({ running:true, hasPayload:false }).symbol !== '×') throw new Error('Stop action must use cancel icon instead of square')
 if (ux.composerActionState({ running:true, hasPayload:true }).kind !== 'queue') throw new Error('Running composer with text must auto-queue')
-if (ux.modeFromAgent('build-direct') !== 'build' || ux.modeFromAgent('plan') !== 'plan') throw new Error('Visible mode mapping must be Build/Plan')
-if (ux.agentFor('build', 'direct') !== 'build-direct' || ux.agentFor('plan', 'direct') !== 'plan-direct') throw new Error('Direct profile mapping regression')
-if (ux.agentFor('build', 'orchestrated') !== 'build' || ux.agentFor('plan', 'orchestrated') !== 'plan') throw new Error('Orchestrated profile mapping regression')
+if (ux.modeFromAgent('build-direct') !== 'build' || ux.modeFromAgent('plan') !== 'plan') throw new Error('Internal Build/Plan compatibility mapping regressed')
+if (ux.agentFor('build', 'direct') !== 'build-direct' || ux.agentFor('plan', 'direct') !== 'plan-direct') throw new Error('Direct compatibility profile mapping regression')
+if (ux.agentFor('build', 'orchestrated') !== 'build' || ux.agentFor('plan', 'orchestrated') !== 'plan') throw new Error('Orchestrated compatibility profile mapping regression')
 if (!ux.permissionSummary('Команда', '{"command":"git status","description":"long"}').includes('git status')) throw new Error('Permission summary did not extract command')
 if (!ux.permissionSummary('question', '{"questions":[{"label":"Сохранить изменения","description":"Сначала сохранить изменения"}]}').startsWith('Нужен выбор:')) throw new Error('Question permission summary is not human-readable')
 if (ux.permissionSummary('Команда', 'x'.repeat(300)).length > 110) throw new Error('Permission summary must stay compact')
 if (ux.ORCHESTRATED_MODEL.label !== 'Qwen 3.8 Max · Оркестрированная') throw new Error('Orchestrated model label regression')
 
 const index = readFileSync(resolve(root, 'app/index.html'), 'utf8')
-for (const marker of ['/ux-controls.css', '/ux-controls.js', '/advanced-features.css', '/advanced-features.js', 'id="composerAction"', 'id="permissionDetails"', 'model-catalog']) {
+for (const marker of [
+  '/ux-controls.css', '/ux-controls.js', '/advanced-features.css', '/advanced-features.js',
+  '/appearance-bootstrap.js', '/appearance.css', '/appearance.js', '/auth-ui.js', '/mobile-ui.js',
+  'id="composerAction"', 'id="permissionDetails"', 'model-catalog', 'id="appearanceDialog"',
+  'id="appearanceButton"', 'id="limitsShell"',
+]) {
   if (!index.includes(marker)) throw new Error(`UX shell marker missing: ${marker}`)
 }
 if ((index.match(/id="composerAction"/g) || []).length !== 1) throw new Error('Composer must expose exactly one contextual action control')
 if (!index.includes('id="sessionActionList" class="action-list"></div></div></dialog>')) throw new Error('Session dialog modal wrapper is malformed')
+if (/<script(?![^>]*\bsrc=)[^>]*>\s*\S/i.test(index)) throw new Error('Main app shell must keep application JavaScript out of inline scripts')
 
 const uxControls = readFileSync(resolve(root, 'app/ux-controls.js'), 'utf8')
 const uxCss = readFileSync(resolve(root, 'app/ux-controls.css'), 'utf8')
 const uiSource = readFileSync(resolve(root, 'app/ui-enhancements.js'), 'utf8')
 const advanced = readFileSync(resolve(root, 'app/advanced-features.js'), 'utf8')
 const advancedCss = readFileSync(resolve(root, 'app/advanced-features.css'), 'utf8')
-if (!uxControls.includes("button.textContent = 'Build'")) throw new Error('Build must be the user-facing work mode label')
+const accessFix = readFileSync(resolve(root, 'app/access-fix.js'), 'utf8')
+const accessFixCss = readFileSync(resolve(root, 'app/access-fix.css'), 'utf8')
+const appearance = readFileSync(resolve(root, 'app/appearance.js'), 'utf8')
+const appearanceBootstrap = readFileSync(resolve(root, 'app/appearance-bootstrap.js'), 'utf8')
+const appearanceCss = readFileSync(resolve(root, 'app/appearance.css'), 'utf8')
+const mobileUi = readFileSync(resolve(root, 'app/mobile-ui.js'), 'utf8')
+const authUi = readFileSync(resolve(root, 'app/auth-ui.js'), 'utf8')
+const login = readFileSync(resolve(root, 'app/login.html'), 'utf8')
+const loginJs = readFileSync(resolve(root, 'app/login.js'), 'utf8')
+const serverSource = readFileSync(resolve(root, 'app/server.py'), 'utf8')
+
+if (!uxControls.includes("button.textContent = 'Build'")) throw new Error('Build must remain the compatibility work-mode label')
 if (uxControls.includes("button.textContent = 'Direct'")) throw new Error('Direct must not be exposed as a user-facing mode label')
 if (!uxControls.includes("event.target.closest('[data-orchestrated-model]')")) throw new Error('Orchestrated model click proxy missing')
 if (uxControls.includes('data-auto-model') || uxControls.includes('local/cloud')) throw new Error('Automatic local/cloud profile must not exist')
@@ -134,11 +151,46 @@ for (const marker of ['.question-card', '.queue-list', '.orchestration-trace', '
   if (!advancedCss.includes(marker)) throw new Error(`Advanced workflow styling missing: ${marker}`)
 }
 
+// access-fix intentionally removes the mode picker from the user surface while
+// keeping internal plan agents available for upstream compatibility.
+for (const marker of ["root.style.display = 'none'", "modeSelect.value = 'build'", 'buildAgentForProfile', 'resolvedPermissions']) {
+  if (!accessFix.includes(marker)) throw new Error(`Build-only/permission fix marker missing: ${marker}`)
+}
+if (!accessFixCss.includes('#agentControls') || !accessFixCss.includes('display:none!important')) throw new Error('Build/Plan switch must remain hidden')
+if (!accessFixCss.includes('max-height:calc(100dvh')) throw new Error('Mobile dialogs must use the available dynamic viewport')
+
+for (const marker of ['opencode:web:appearance-v1', "theme:'system'", '--accent-contrast', 'prefers-color-scheme']) {
+  if (!appearance.includes(marker)) throw new Error(`Appearance behavior marker missing: ${marker}`)
+}
+for (const marker of ['opencode:web:appearance-v1', 'prefers-color-scheme', '--accent-contrast']) {
+  if (!appearanceBootstrap.includes(marker)) throw new Error(`Appearance bootstrap marker missing: ${marker}`)
+}
+for (const marker of ['html[data-theme="light"]', 'prefers-reduced-motion:reduce', '.accent-swatch', '@keyframes dialog-pop']) {
+  if (!appearanceCss.includes(marker)) throw new Error(`Appearance styling marker missing: ${marker}`)
+}
+
+for (const marker of ['sidebarScrim', 'history.pushState', 'history.back()', '!sidebar.contains(target)', 'dx < -56']) {
+  if (!mobileUi.includes(marker)) throw new Error(`Mobile drawer behavior marker missing: ${marker}`)
+}
+
+for (const marker of ['/auth/session', '/auth/logout', 'opencode:web:auth-resume-v1']) {
+  if (!authUi.includes(marker)) throw new Error(`Auth UI marker missing: ${marker}`)
+}
+for (const marker of ['/auth/login', 'opencode:web:login-prefs-v2', 'remember:remember.checked']) {
+  if (!loginJs.includes(marker)) throw new Error(`Login behavior marker missing: ${marker}`)
+}
+if (!login.includes('Запомнить вход') || !login.includes('HttpOnly-сессию')) throw new Error('Custom login UX markers missing')
+for (const marker of ['AUTH_COOKIE_NAME', 'SameSite=Strict', 'OPENCODE_AUTH_ALLOW_BASIC', '/auth/login', '/login.html?next=']) {
+  if (!serverSource.includes(marker)) throw new Error(`Cookie auth server marker missing: ${marker}`)
+}
+if (serverSource.includes('WWW-Authenticate')) throw new Error('Web server must not trigger browser-native Basic Auth challenge')
+
 const serviceWorker = readFileSync(resolve(root, 'app/sw.js'), 'utf8')
-if (!serviceWorker.includes('custom-opencode-web-v4')) throw new Error('PWA cache generation was not bumped')
+if (!serviceWorker.includes('custom-opencode-web-v6')) throw new Error('PWA cache generation was not bumped for auth/appearance assets')
 if (!serviceWorker.includes("fetch(req,{cache:'no-cache'})")) throw new Error('PWA assets must prefer fresh network responses')
 if (!serviceWorker.includes("event.action==='dismiss'")) throw new Error('Notification dismiss action missing')
 if (serviceWorker.includes('return cached||network')) throw new Error('PWA must not serve stale cache before checking the network')
+if (!serviceWorker.includes("url.pathname.startsWith('/auth/')")) throw new Error('Auth responses must stay outside the PWA static cache')
 
 const workflowServer = readFileSync(resolve(root, 'app/server_workflow.py'), 'utf8')
 const featureServer = readFileSync(resolve(root, 'app/server_features.py'), 'utf8')
@@ -161,7 +213,7 @@ let configText = readFileSync(resolve(root, 'config/opencode.json.template'), 'u
 const config = JSON.parse(configText)
 const agents = config.agents || {}
 for (const id of ['build', 'plan', 'build-direct', 'plan-direct']) {
-  if (!agents[id] || agents[id].mode !== 'primary') throw new Error(`Primary profile missing: ${id}`)
+  if (!agents[id] || agents[id].mode !== 'primary') throw new Error(`Primary compatibility profile missing: ${id}`)
 }
 for (const id of ['build-direct', 'plan-direct']) {
   const rules = agents[id].permissions || []
@@ -171,12 +223,12 @@ for (const id of ['build-direct', 'plan-direct']) {
   }
 }
 for (const action of ['edit', 'shell']) {
-  if (!(agents['plan-direct'].permissions || []).some((rule) => rule.action === action && rule.effect === 'deny')) throw new Error(`plan-direct must deny ${action}`)
+  if (!(agents['plan-direct'].permissions || []).some((rule) => rule.action === action && rule.effect === 'deny')) throw new Error(`plan-direct compatibility profile must deny ${action}`)
 }
-if (!String(agents.build.system || '').includes('orchestrator.md') || !String(agents.plan.system || '').includes('orchestrator.md')) throw new Error('Underlying orchestrated build/plan agents must keep orchestrator prompt')
+if (!String(agents.build.system || '').includes('orchestrator.md') || !String(agents.plan.system || '').includes('orchestrator.md')) throw new Error('Underlying orchestrated compatibility agents must keep orchestrator prompt')
 if (agents['build-direct'].system || agents['plan-direct'].system) throw new Error('Direct profiles must not inherit orchestrator system prompt')
 
 const doctor = await loadSource('app/doctor.js')
 if (typeof doctor.openDoctor !== 'function') throw new Error('Doctor UI module does not export openDoctor')
 
-console.log('Web smoke passed: Build/Plan + direct/orchestrated profiles + persistent queue + native questions + project policies + review + orchestration UI')
+console.log('Web smoke passed: Build-only UX + direct/orchestrated profiles + auth/appearance/mobile + persistent queue + questions + policies + review + orchestration UI')
