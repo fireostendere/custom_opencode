@@ -1,4 +1,4 @@
-const CACHE='custom-opencode-web-v2'
+const CACHE='custom-opencode-web-v3'
 const STATIC_RE=/\.(?:js|css|webmanifest|png|svg|ico)$/
 self.addEventListener('install',()=>self.skipWaiting())
 self.addEventListener('activate',(event)=>event.waitUntil((async()=>{for(const key of await caches.keys())if(key!==CACHE)await caches.delete(key);await self.clients.claim()})()))
