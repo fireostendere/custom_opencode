@@ -78,11 +78,18 @@ OPENCODE_LIMITS_CACHE_SECONDS=60
 ## RAG
 
 ```text
+MCP_RAG_ENABLED=auto
 MCP_RAG_ROOT=
 MCP_RAG_BIN=
 ```
 
-Installer ищет RAG в порядке:
+`MCP_RAG_ENABLED` задаёт намерение установки:
+
+- `auto` — default; installer пытается найти usable RAG и включает его только если checkout/executable доступны;
+- `0` — RAG намеренно выключен; autodetect не выполняется, `kb` рендерится disabled, `rag-quick` в post-install self-test становится `SKIP`;
+- `1` — RAG обязателен; если usable checkout/executable не найден, установка завершается ошибкой до runtime self-test.
+
+В режиме `auto` или `1` installer ищет RAG в порядке:
 
 1. `MCP_RAG_ROOT`;
 2. соседний `../mcp-rag`;
@@ -91,11 +98,18 @@ Installer ищет RAG в порядке:
 Для предсказуемой production-like установки лучше задать абсолютные пути:
 
 ```text
+MCP_RAG_ENABLED=1
 MCP_RAG_ROOT=/absolute/path/to/mcp-rag
 MCP_RAG_BIN=/absolute/path/to/mcp-rag/.venv/bin/knowledge-mcp
 ```
 
-Если executable отсутствует, `kb` автоматически рендерится disabled и OpenCode продолжает работать без RAG.
+Если RAG checkout лежит рядом, но его пока не нужно подключать, укажите явно:
+
+```text
+MCP_RAG_ENABLED=0
+```
+
+Это предпочтительнее, чем удалять checkout или отключать весь install self-test.
 
 ## Alibaba / Qwen Token Plan
 
@@ -168,7 +182,7 @@ Installer записывает в auth storage только реально за�
 
 ## Рекомендованный минимальный `.env`
 
-Пример структуры без реальных секретов:
+Пример структуры без реальных секретов, когда RAG пока выключен:
 
 ```text
 OPENCODE_SERVER_USERNAME=opencode
@@ -183,8 +197,9 @@ TOKEN_PLAN_ANTHROPIC_BASE_URL=https://token-plan.ap-southeast-1.maas.aliyuncs.co
 TOKEN_PLAN_OPENAI_BASE_URL=https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
 TOKEN_PLAN_PROBE_MODEL=qwen3.8-max
 
-MCP_RAG_ROOT=/absolute/path/to/mcp-rag
-MCP_RAG_BIN=/absolute/path/to/mcp-rag/.venv/bin/knowledge-mcp
+MCP_RAG_ENABLED=0
+MCP_RAG_ROOT=
+MCP_RAG_BIN=
 
 OPENCODE_LOCAL_AUTO_START=0
 OPENCODE_LOCAL_PROVIDER=ollama
