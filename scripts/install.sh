@@ -32,22 +32,39 @@ if command -v opencode2 >/dev/null 2>&1 && [[ "$CONFIG_DIR" != "$SHARED_CONFIG_D
   exit 1
 fi
 
-RAG_ROOT=${MCP_RAG_ROOT:-}
-if [[ -z "$RAG_ROOT" ]]; then
-  for candidate in "$ROOT/../mcp-rag" "$HOME/mcp-rag"; do
-    if [[ -f "$candidate/pyproject.toml" && -x "$candidate/.venv/bin/knowledge-mcp" ]]; then
-      RAG_ROOT=$candidate
-      break
-    fi
-  done
-fi
-RAG_BIN=${MCP_RAG_BIN:-}
-if [[ -z "$RAG_BIN" && -n "$RAG_ROOT" ]]; then
-  RAG_BIN="$RAG_ROOT/.venv/bin/knowledge-mcp"
-fi
+RAG_MODE=${MCP_RAG_ENABLED:-auto}
+case "$RAG_MODE" in
+  0|1|auto) ;;
+  *)
+    echo "MCP_RAG_ENABLED must be one of: 0, 1, auto" >&2
+    exit 1
+    ;;
+esac
+
+RAG_ROOT=""
+RAG_BIN=""
 RAG_DISABLED=true
-if [[ -n "$RAG_ROOT" && -n "$RAG_BIN" && -x "$RAG_BIN" ]]; then
-  RAG_DISABLED=false
+if [[ "$RAG_MODE" != 0 ]]; then
+  RAG_ROOT=${MCP_RAG_ROOT:-}
+  if [[ -z "$RAG_ROOT" ]]; then
+    for candidate in "$ROOT/../mcp-rag" "$HOME/mcp-rag"; do
+      if [[ -f "$candidate/pyproject.toml" && -x "$candidate/.venv/bin/knowledge-mcp" ]]; then
+        RAG_ROOT=$candidate
+        break
+      fi
+    done
+  fi
+  RAG_BIN=${MCP_RAG_BIN:-}
+  if [[ -z "$RAG_BIN" && -n "$RAG_ROOT" ]]; then
+    RAG_BIN="$RAG_ROOT/.venv/bin/knowledge-mcp"
+  fi
+  if [[ -n "$RAG_ROOT" && -n "$RAG_BIN" && -x "$RAG_BIN" ]]; then
+    RAG_DISABLED=false
+  elif [[ "$RAG_MODE" == 1 ]]; then
+    echo "MCP_RAG_ENABLED=1 but no usable RAG checkout/executable was found" >&2
+    echo "Set MCP_RAG_ROOT and MCP_RAG_BIN, or set MCP_RAG_ENABLED=0 to disable RAG intentionally." >&2
+    exit 1
+  fi
 fi
 
 if [[ "$SELFTEST" != 0 ]]; then
@@ -174,6 +191,8 @@ fi
 echo "Installed. Start OpenCode with: custom-opencode"
 if [[ "$RAG_DISABLED" == false ]]; then
   echo "RAG MCP: enabled ($RAG_ROOT)"
+elif [[ "$RAG_MODE" == 0 ]]; then
+  echo "RAG MCP: intentionally disabled (MCP_RAG_ENABLED=0)"
 else
-  echo "RAG MCP: disabled; set MCP_RAG_ROOT/MCP_RAG_BIN and rerun install/update"
+  echo "RAG MCP: disabled; set MCP_RAG_ENABLED=1 plus MCP_RAG_ROOT/MCP_RAG_BIN, then rerun install/update"
 fi
