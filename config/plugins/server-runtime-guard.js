@@ -6,6 +6,7 @@ const TOKEN = process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN || process.env.OPENCODE_
 const BASE = `http://${WEB_HOST}:${WEB_PORT}`
 const TIMEOUT = Number(process.env.OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS || 1800)
 const SECRET_PREFIXES = (process.env.OPENCODE_SECRET_PREFIXES || "TOKEN_PLAN_;OPENAI_;GITHUB_;MCP_;QDRANT_;HF_").split(";").filter(Boolean)
+const CONTEXT_MARKER = "Server runtime context"
 
 async function call(path, payload) {
   if (!TOKEN) throw new Error("Runtime plugin token is not configured")
@@ -32,19 +33,25 @@ function stripSecrets(env) {
   }
 }
 
+function hasManagedContext(system) {
+  if (Array.isArray(system)) return system.some((item) => String(item || "").includes(CONTEXT_MARKER))
+  return String(system || "").includes(CONTEXT_MARKER)
+}
+
 export default Plugin.define({
   id: "custom-opencode.server-runtime-guard",
   setup: async (ctx) => {
     await ctx.session.hook("request", async (event) => {
       const sessionID = event?.sessionID || event?.session?.id || ""
-      if (!sessionID) return
+      if (!sessionID || hasManagedContext(event.system)) return
       try {
         const managed = await call("/internal/runtime/context", { sessionID })
         const text = managed?.text || ""
         if (text) {
-          const block = `Server runtime context (deduplicated, budgeted, checkpoint/RAG/repo aware):\n${text}`
+          const block = `${CONTEXT_MARKER} (deduplicated, budgeted, checkpoint/RAG/repo aware):\n${text}`
           if (Array.isArray(event.system)) event.system.push(block)
           else if (typeof event.system === "string") event.system = `${event.system}\n\n${block}`
+          else event.system = block
         }
       } catch {
         // Context injection is additive: native OpenCode context remains usable while web runtime restarts.
@@ -79,6 +86,7 @@ export default Plugin.define({
 
     if (ctx.shell?.hook) {
       await ctx.shell.hook("create.before", async (event) => {
+        event.env ||= {}
         stripSecrets(event.env)
         const decision = await call("/internal/runtime/shell", {
           command: event.command,
