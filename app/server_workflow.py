@@ -6,6 +6,7 @@ import json
 from urllib.parse import quote, urlsplit
 
 import runtime_resume
+import runtime_v3
 import server_control as control
 import server_features as features
 import server_rag as rag
@@ -14,6 +15,7 @@ import server_runtime as runtime
 
 _ORIGINAL_SEND = features._send_backend_prompt
 runtime.install(features)
+runtime_v3.install(runtime, features)
 control.install()
 
 
@@ -35,11 +37,17 @@ def _file_parts(files: list[object]) -> list[dict[str, object]]:
 
 
 def _send_with_project_context(session_id: str, text: str, files: list[object]) -> object:
-    """Prefer async prompt with bounded context and checkpoint-aware resume."""
+    """Prefer async prompt with native compaction, shared RAG and checkpoint-aware resume."""
     directory = features._session_directory(session_id)
     settings = features.project_settings(directory)
     instructions = str(settings.get("instructions") or "").strip()
-    envelope = runtime.context_envelope(features, session_id, instructions)
+    envelope = runtime_v3.context_envelope(
+        features,
+        runtime,
+        session_id,
+        instructions,
+        str(settings.get("rag") or "auto"),
+    )
     context = str(envelope.get("text") or "").strip()
     effective_text, effective_files, resume = runtime_resume.continuation_payload(runtime.STORE, session_id, text, list(files))
     if resume:
@@ -58,9 +66,10 @@ def _send_with_project_context(session_id: str, text: str, files: list[object]) 
     body: dict[str, object] = {"parts": parts}
     if context:
         body["system"] = (
-            "Server-managed bounded context for this workspace/task. It is deduplicated and may include "
-            "project policy, durable decisions, semantic diff, structured mailbox/handoff and cached repository metadata. "
-            "Use it as project/task context unless it conflicts with higher-priority instructions.\n\n" + context
+            "Server runtime context (deduplicated, budgeted, checkpoint/RAG/repo aware). "
+            "It may include project policy, durable decisions, semantic symbol diff, structured mailbox/handoff, "
+            "repository index matches and server-managed engineering RAG. Use it as project/task context unless "
+            "it conflicts with higher-priority instructions.\n\n" + context
         )
     try:
         return features._backend_request_json("POST", target, body, timeout=30.0)
@@ -75,7 +84,7 @@ features._send_backend_prompt = _send_with_project_context
 
 
 class Handler(rag.Handler, features.Handler):
-    """Runtime/control routes first, then RAG/workflow/base proxy routes."""
+    """V3/runtime/control routes first, then RAG/workflow/base proxy routes."""
 
     def json_response(self, value: object, status: int = 200) -> None:
         body = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -88,6 +97,8 @@ class Handler(rag.Handler, features.Handler):
 
     def do_GET(self) -> None:
         parsed = urlsplit(self.path)
+        if runtime_v3.handle_get(self, parsed, runtime, features):
+            return
         if runtime.handle_get(self, parsed, features):
             return
         if control.handle_get(self, parsed):
@@ -96,6 +107,8 @@ class Handler(rag.Handler, features.Handler):
 
     def do_POST(self) -> None:
         parsed = urlsplit(self.path)
+        if runtime_v3.handle_post(self, parsed, runtime, features):
+            return
         if runtime.handle_post(self, parsed, features):
             return
         if control.handle_post(self, parsed):
