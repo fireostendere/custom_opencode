@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#171717">
+  <script>
+    (()=>{try{const p=JSON.parse(localStorage.getItem('opencode:web:appearance-v1')||'null')||{};const m=['system','light','dark'].includes(p.theme)?p.theme:'system';const t=m==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):m;const r=document.documentElement;r.dataset.theme=t;r.dataset.themeMode=m;if(/^#[0-9a-f]{6}$/i.test(p.accent||'')){const a=p.accent.toLowerCase();r.style.setProperty('--accent',a);const c=[1,3,5].map(i=>parseInt(a.slice(i,i+2),16)/255),l=c.map(v=>v<=.03928?v/12.92:((v+.055)/1.055)**2.4),y=.2126*l[0]+.7152*l[1]+.0722*l[2];r.style.setProperty('--accent-contrast',(y+.05)/.05>=1.05/(y+.05)?'#111111':'#ffffff')}}catch{}})()
+  </script>
+  <title>Вход · OpenCode</title>
+  <link rel="stylesheet" href="/login.css">
+  <style>
+    html[data-theme="light"]{color-scheme:light;--bg:#f5f5f5;--card:#fff;--field:#f1f1f1;--line:#d9d9d9;--line-focus:#7b8f89;--text:#1d1d1f;--muted:#686868}
+    html[data-theme="light"] .login-shell{background:radial-gradient(700px 420px at 50% -12%,color-mix(in srgb,var(--accent) 10%,transparent),transparent 68%),linear-gradient(180deg,#fafafa 0%,#f2f2f2 100%)}
+    html[data-theme="light"] .login-card{background:#fff;border-color:var(--line);box-shadow:0 28px 90px #0002}
+    html[data-theme="light"] .login-mark,html[data-theme="light"] .password-field,html[data-theme="light"] .login-field>input{background:var(--field);border-color:var(--line)}
+    html[data-theme="light"] .login-security{border-color:var(--line);color:#777}
+    .login-submit{color:var(--accent-contrast,#fff)}
+    .login-card{animation:login-in .24s cubic-bezier(.2,.8,.2,1) both}
+    @keyframes login-in{from{opacity:0;transform:translateY(10px) scale(.99)}to{opacity:1;transform:none}}
+    @media(prefers-reduced-motion:reduce){.login-card{animation:none!important}}
+  </style>
+</head>
+<body>
+  <main class="login-shell">
+    <section class="login-card" aria-labelledby="loginTitle">
+      <div class="login-brand">
+        <div class="login-mark" aria-hidden="true"><span></span></div>
+        <div>
+          <div class="login-product">OpenCode</div>
+          <div class="login-kicker">Private engineering workspace</div>
+        </div>
+      </div>
+
+      <div class="login-copy">
+        <h1 id="loginTitle">Вход</h1>
+        <p>Авторизуйтесь, чтобы открыть рабочее пространство.</p>
+      </div>
+
+      <form id="loginForm" novalidate>
+        <label class="login-field">
+          <span>Логин</span>
+          <input id="username" name="username" type="text" inputmode="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+        </label>
+
+        <label class="login-field">
+          <span>Пароль</span>
+          <div class="password-field">
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+            <button id="togglePassword" class="password-toggle" type="button" aria-label="Показать пароль">Показать</button>
+          </div>
+        </label>
+
+        <label class="remember-row">
+          <input id="remember" type="checkbox" checked>
+          <span>
+            <strong>Запомнить вход</strong>
+            <small>Не спрашивать пароль на этом устройстве</small>
+          </span>
+        </label>
+
+        <div class="login-error" id="loginError" role="alert" hidden></div>
+        <button class="login-submit" id="loginSubmit" type="submit">
+          <span class="login-submit-label">Войти</span>
+          <span class="login-spinner" aria-hidden="true"></span>
+        </button>
+      </form>
+
+      <p class="login-security">Пароль не сохраняется в localStorage. При «Запомнить вход» браузер получает только HttpOnly-сессию.</p>
+    </section>
+  </main>
+  <script type="module" src="/login.js"></script>
+</body>
+</html>

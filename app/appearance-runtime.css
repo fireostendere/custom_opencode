@@ -1,0 +1,59 @@
+/* Runtime V2/V3 light-theme bridge. Loaded after the runtime dashboards. */
+html[data-theme="light"] .runtime-profile-badge,
+html[data-theme="light"] .runtime-stat,
+html[data-theme="light"] .runtime-profile,
+html[data-theme="light"] .runtime-task,
+html[data-theme="light"] .runtime-task-detail,
+html[data-theme="light"] .runtime-v3-panel,
+html[data-theme="light"] .runtime-v3-card,
+html[data-theme="light"] .runtime-v3-wide{
+  background:var(--surface-raised);
+  border-color:var(--line);
+  color:var(--text);
+}
+html[data-theme="light"] .runtime-profile.active,
+html[data-theme="light"] .runtime-task.active{
+  background:color-mix(in srgb,var(--accent) 8%,var(--surface-raised));
+  border-color:color-mix(in srgb,var(--accent) 42%,var(--line));
+}
+html[data-theme="light"] .runtime-v3-panel>summary,
+html[data-theme="light"] .runtime-state{
+  background:var(--surface-input);
+  color:var(--text);
+}
+html[data-theme="light"] .runtime-v3-search input{
+  background:var(--surface-input);
+  border-color:var(--line);
+  color:var(--text);
+}
+html[data-theme="light"] .runtime-event,
+html[data-theme="light"] .runtime-v3-results>div{
+  border-color:var(--line);
+}
+html[data-theme="light"] .runtime-event code,
+html[data-theme="light"] .runtime-event>span:last-child{
+  color:var(--muted);
+}
+html[data-theme="light"] .runtime-task-actions .runtime-danger{
+  color:#9f3030;
+  border-color:#d9aaaa;
+}
+
+.runtime-profile-badge,
+.runtime-stat,
+.runtime-profile,
+.runtime-task,
+.runtime-task-detail,
+.runtime-v3-panel,
+.runtime-v3-card,
+.runtime-v3-wide,
+.runtime-v3-panel>summary{
+  transition:background-color .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease;
+}
+.runtime-profile:hover,
+.runtime-task:hover{
+  transform:translateY(-1px);
+}
+@media(prefers-reduced-motion:reduce){
+  .runtime-profile:hover,.runtime-task:hover{transform:none}
+}

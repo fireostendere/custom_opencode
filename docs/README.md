@@ -1,69 +1,68 @@
 # Документация custom_opencode
 
-`custom_opencode` — переносимый комплект поверх OpenCode V2: web/PWA-интерфейс, Alibaba/Qwen routing, безопасное открытие локальных проектов, диагностика, self-test, серверный task/control runtime и опциональный инженерный RAG.
+`custom_opencode` — переносимый комплект поверх OpenCode V2: web/PWA-интерфейс, custom web auth, Alibaba/Qwen routing, Runtime V2/V3 control plane, безопасное открытие локальных проектов, диагностика/self-test и опциональный инженерный RAG.
 
 ## С чего начать
 
-- [Установка и обновление](installation.md) — новая установка, миграция существующей установки, self-test, systemd и обновления.
-- [Конфигурация `.env`](configuration.md) — основные переменные окружения, секреты, пути и рекомендуемые значения.
-- [Архитектура и возможности](architecture.md) — компоненты системы и их границы ответственности.
-- [Server Runtime V3](server-runtime-v3.md) — durable tasks/checkpoints, capability registry, adaptive scheduler, native compaction, AST/embedding repo index, MCP Code Mode gateway, enforced sandbox/secret boundary, shared RAG, worktrees, replay и telemetry.
-- [Server Runtime V2](server-runtime-v2.md) — предыдущий фундамент task/control runtime и история перехода к V3.
-- [Permission control plane](control-plane.md) — R0–R4 risk policy, auto-approval безопасных действий, project rules и audit.
-- [Модели и routing](models-and-routing.md) — Build/Plan, model-selected orchestration, Qwen profiles, provider paths и стоимость.
+- [Установка и обновление](installation.md) — новая установка, миграция, login/session settings, self-test, systemd и обновления.
+- [Конфигурация `.env`](configuration.md) — web auth, runtime/scheduler, секреты, пути и рекомендуемые значения.
+- [Web UI, авторизация и оформление](web-ui.md) — custom login, remembered session, mobile drawer, темы, accent colors и микроанимации.
+- [Архитектура и возможности](architecture.md) — компоненты системы и границы ответственности.
+- [Server Runtime V3](server-runtime-v3.md) — durable tasks/checkpoints, capability registry, adaptive scheduler, native compaction, AST/embedding repo index, MCP Code Mode gateway, sandbox/secret boundary, shared RAG, worktrees, replay и telemetry.
+- [Server Runtime V2](server-runtime-v2.md) — фундамент task/control runtime и история перехода к V3.
+- [Permission control plane](control-plane.md) — R0–R4 risk policy, safe auto-approval, project rules и audit.
+- [Модели и routing](models-and-routing.md) — Build-only UI, direct/server profiles, adaptive local/cloud routing и orchestration.
 - [Интеграция RAG](rag.md) — `mcp-rag`, lifecycle и server-managed retrieval.
-- [`/rag-start`](rag-start.md) — запуск/проверка RAG из web-клиента без LLM-токенов.
-- [Doctor](doctor.md) — бесплатные health checks и ручные платные E2E smoke tests.
-- [Эксплуатация и recovery](operations.md) — systemd, обновление, backup, логи, восстановление и проверка после upgrade.
-- [Troubleshooting](troubleshooting.md) — типовые симптомы и порядок диагностики.
+- [`/rag-start`](rag-start.md) — запуск/проверка RAG без LLM-токенов.
+- [Doctor](doctor.md) — health checks и ручные paid E2E smoke tests.
+- [Эксплуатация и recovery](operations.md) — systemd, update, backup, logs и recovery.
+- [Troubleshooting](troubleshooting.md) — типовые симптомы, включая login/theme/mobile cases.
 
 ## Репозитории
 
-Система разделена на два проекта:
+- `custom_opencode` — UI, web auth, OpenCode config, Runtime V2/V3, model profiles, MCP gateway/wiring, installer и self-test;
+- `mcp-rag` — инженерная база знаний: registry, Qdrant, embeddings/BM25/reranker, ingestion и knowledge tools.
 
-- `custom_opencode` — UI, OpenCode V2 config, server runtime, модели/profiles, agents, MCP gateway/wiring, installer, self-test и lifecycle-control;
-- `mcp-rag` — локальная инженерная база знаний: registry, Qdrant, embeddings/BM25/reranker, ingestion и knowledge tools.
-
-`custom_opencode` может работать без `mcp-rag`. Если RAG не найден или явно отключён, installer отключает `kb`, а обычные OpenCode/model workflows остаются рабочими.
+`custom_opencode` работает без `mcp-rag`. При отключённом/отсутствующем RAG обычные OpenCode/runtime workflows остаются рабочими.
 
 ## Базовая схема
 
 ```text
 Browser / PWA / CLI
     |
-    v
-OpenCode V2 + custom server control plane
+    +--> custom login -> signed HttpOnly web session
     |
-    +--> Server Runtime V3
-    |       +--> SQLite/WAL tasks / dependencies / checkpoints / events
-    |       +--> capability registry + model profiles + adaptive router
-    |       +--> native context compaction + bounded context planner
-    |       +--> AST/symbol/embedding/dependency/git repo index
-    |       +--> semantic symbol diff + shared context/tool caches
-    |       +--> MCP Code Mode gateway + health/rate/policy layer
-    |       +--> scoped secrets + enforced sandbox/worktrees/ownership
-    |       +--> artifacts / mailbox / typed handoff / verification / review
-    |       +--> shared engineering RAG / memory / decision log
-    |       +--> branching / replay / telemetry / remote notification API
-    |       +--> Task Center + Runtime control-plane dashboard
+    v
+server_workflow.py
+    |
+    +--> Runtime V2/V3
+    |       +--> SQLite/WAL tasks / checkpoints / events
+    |       +--> capability registry + model profiles + adaptive scheduler
+    |       +--> context planner + native compaction
+    |       +--> repo AST/symbol/embedding/dependency/Git index
+    |       +--> cache / artifacts / mailbox / handoff / verification / review
+    |       +--> sandbox / worktrees / scoped secrets / replay / telemetry
+    |       +--> Task Center + runtime dashboards
     |
     +--> permission control plane (R0-R4)
     |
-    +--> OpenCode V2 native model/tool/session engine
+    +--> OpenCode V2 native model/tool/session/MCP engine
             |
-            +--> Build / Plan
-            +--> direct selected model
-            +--> qwen3.8-coder / orchestrated / review / fast profiles
-            +--> MCP Code Mode namespaces
-            +--> optional mcp-rag knowledge source
+            +--> Build-only user surface
+            +--> manual direct model
+            +--> adaptive/orchestrated/review server profiles
+            +--> optional kb / mcp-rag
 ```
 
-## Основной принцип безопасности
+## Основные safety/UX invariants
 
-Permission control plane остаётся детерминированным и не делегирует модели право понижать собственный risk floor. R3/R4 сохраняют интерактивную границу.
-
-Runtime V3 добавляет ещё один слой: OpenCode V2 plugin hooks выполняют server-side sandbox/ownership/loop/rate policy до tool execution, shell environment очищается от server secret prefixes, а большие результаты после execution уходят в ArtifactStore. `safe`, `repo-write`, Docker/WSL и gated `full-machine` — реальные execution policies, а не UI labels.
-
-Provider credentials по-прежнему обязаны существовать внутри доверенной server/OpenCode service boundary, но не сериализуются в browser/runtime snapshots и удаляются из agent-created shell environments. Для явной передачи секретов используется scoped broker allowlist.
-
-RAG и локальные модели остаются необязательными. Падение Qdrant, отсутствие Ollama или ошибка retrieval не должны блокировать обычную работу OpenCode: auto profiles переходят на доступный cloud path, а direct profile сохраняет вручную выбранную модель.
+- user-visible execution mode всегда Build; `plan*` остаётся internal compatibility;
+- direct/manual model selection не меняется adaptive scheduler-ом;
+- auto local/cloud routing работает только внутри явно выбранного server profile;
+- R3/R4 permission floor остаётся interactive;
+- remembered web login использует signed HttpOnly cookie, password не хранится в browser storage;
+- legacy Basic Auth выключен по умолчанию;
+- project/scratch/worktree containment проверяется server-side;
+- secrets не сериализуются в browser/runtime snapshots;
+- PWA не кэширует auth-sensitive HTML/API response как offline shell;
+- RAG/Ollama могут деградировать отдельно, не блокируя обычный OpenCode path.

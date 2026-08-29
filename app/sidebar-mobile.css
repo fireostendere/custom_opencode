@@ -1,0 +1,22 @@
+.sidebar-scrim{display:none}
+
+@media(max-width:760px){
+  body.mobile-sidebar-open{
+    overflow:hidden;
+    overscroll-behavior:none;
+  }
+
+  .sidebar{
+    touch-action:pan-y;
+  }
+
+  .sidebar-scrim{
+    display:block;
+    position:fixed;
+    inset:0;
+    z-index:7;
+    background:#0007;
+  }
+
+  .sidebar-scrim[hidden]{display:none}
+}

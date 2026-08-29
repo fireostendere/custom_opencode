@@ -4,7 +4,11 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import http.client
+from http.cookies import SimpleCookie
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
 import mimetypes
@@ -14,8 +18,8 @@ import re
 import secrets
 import shutil
 import sys
-from urllib.parse import urlsplit
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import time
+from urllib.parse import quote, urlsplit
 
 
 ROOT = Path(__file__).resolve().parent
@@ -24,6 +28,8 @@ DEFAULT_LEGACY_AUTH_FILE = Path.home() / ".config/opencode/mobile-server.env"
 SCRATCH_PROJECT_ID = "__custom_opencode_quick__"
 SCRATCH_PROJECT_NAME = "Быстрые"
 SESSION_DELETE_RE = re.compile(r"^/api/session/[^/]+$")
+AUTH_COOKIE_NAME = "opencode_session"
+PUBLIC_PATHS = {"/login.html", "/login.css", "/login.js"}
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -103,6 +109,10 @@ ALLOW_LOCAL = setting(
     "OPENCODE_WEB_ALLOW_LOCAL",
     "1" if is_loopback(WEB_HOST) else "0",
 ) not in ("0", "false", "no")
+ALLOW_BASIC_AUTH = setting("OPENCODE_AUTH_ALLOW_BASIC", "0").lower() in ("1", "true", "yes")
+AUTH_SESSION_SECONDS = max(300, int(setting("OPENCODE_AUTH_SESSION_SECONDS", "86400")))
+AUTH_REMEMBER_SECONDS = max(AUTH_SESSION_SECONDS, int(setting("OPENCODE_AUTH_REMEMBER_SECONDS", "2592000")))
+AUTH_COOKIE_SECURE = setting("OPENCODE_AUTH_COOKIE_SECURE", "auto").strip().lower()
 SCRATCH_ROOT = Path(setting("OPENCODE_SCRATCH_DIRECTORY", str(Path.home() / "opencode-scratch"))).expanduser().resolve()
 SCRATCH_DIRECTORY = str(SCRATCH_ROOT)
 
@@ -112,8 +122,19 @@ def basic_value(user: str, password: str) -> str:
     return "Basic " + base64.b64encode(value).decode("ascii")
 
 
+def b64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def b64url_decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
 CLIENT_AUTH = basic_value(CLIENT_USER, CLIENT_PASSWORD)
 BACKEND_AUTH = basic_value(BACKEND_USER, BACKEND_PASSWORD)
+AUTH_KEY = hashlib.sha256(
+    f"custom-opencode-auth-v1\0{CLIENT_USER}\0{CLIENT_PASSWORD}".encode("utf-8")
+).digest()
 HOP_BY_HOP = {
     "connection",
     "keep-alive",
@@ -124,6 +145,32 @@ HOP_BY_HOP = {
     "transfer-encoding",
     "upgrade",
 }
+
+
+def issue_session_token(ttl_seconds: int) -> str:
+    payload = json.dumps(
+        {"u": CLIENT_USER, "exp": int(time.time()) + ttl_seconds, "v": 1},
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    signature = hmac.new(AUTH_KEY, payload, hashlib.sha256).digest()
+    return f"{b64url_encode(payload)}.{b64url_encode(signature)}"
+
+
+def valid_session_token(token: str) -> bool:
+    try:
+        payload_part, signature_part = token.split(".", 1)
+        payload = b64url_decode(payload_part)
+        supplied_signature = b64url_decode(signature_part)
+        expected_signature = hmac.new(AUTH_KEY, payload, hashlib.sha256).digest()
+        if not hmac.compare_digest(supplied_signature, expected_signature):
+            return False
+        data = json.loads(payload.decode("utf-8"))
+        if data.get("v") != 1 or data.get("u") != CLIENT_USER:
+            return False
+        return int(data.get("exp", 0)) >= int(time.time())
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
 
 
 def resolve_directory(value: object) -> Path | None:
@@ -265,29 +312,158 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write(f"{fmt % args}\n")
 
+    def cookie_token(self) -> str:
+        header = self.headers.get("Cookie", "")
+        if not header:
+            return ""
+        try:
+            cookie = SimpleCookie()
+            cookie.load(header)
+            morsel = cookie.get(AUTH_COOKIE_NAME)
+            return morsel.value if morsel else ""
+        except Exception:
+            return ""
+
+    def local_bypass(self) -> bool:
+        return ALLOW_LOCAL and is_loopback(self.client_address[0])
+
     def authenticated(self) -> bool:
-        if ALLOW_LOCAL and is_loopback(self.client_address[0]):
+        if self.local_bypass():
             return True
-        supplied = self.headers.get("Authorization", "")
-        if not secrets.compare_digest(supplied, CLIENT_AUTH):
-            self.send_response(401)
-            self.send_header("WWW-Authenticate", 'Basic realm="OpenCode web"')
+        if valid_session_token(self.cookie_token()):
+            return True
+        if ALLOW_BASIC_AUTH:
+            supplied = self.headers.get("Authorization", "")
+            if supplied and secrets.compare_digest(supplied, CLIENT_AUTH):
+                return True
+        return False
+
+    def request_is_secure(self) -> bool:
+        if AUTH_COOKIE_SECURE in ("1", "true", "yes"):
+            return True
+        if AUTH_COOKIE_SECURE in ("0", "false", "no"):
+            return False
+        forwarded_proto = self.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip().lower()
+        if forwarded_proto == "https":
+            return True
+        forwarded = self.headers.get("Forwarded", "").lower()
+        return "proto=https" in forwarded
+
+    def session_cookie(self, token: str, *, remember: bool) -> str:
+        parts = [
+            f"{AUTH_COOKIE_NAME}={token}",
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Strict",
+        ]
+        if remember:
+            parts.append(f"Max-Age={AUTH_REMEMBER_SECONDS}")
+        if self.request_is_secure():
+            parts.append("Secure")
+        return "; ".join(parts)
+
+    def clear_session_cookie(self) -> str:
+        parts = [
+            f"{AUTH_COOKIE_NAME}=",
+            "Path=/",
+            "Max-Age=0",
+            "HttpOnly",
+            "SameSite=Strict",
+        ]
+        if self.request_is_secure():
+            parts.append("Secure")
+        return "; ".join(parts)
+
+    def unauthorized(self, *, redirect: bool = False) -> None:
+        if redirect:
+            next_value = quote(self.path or "/", safe="")
+            self.send_response(302)
+            self.send_header("Location", f"/login.html?next={next_value}")
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", "0")
             self.end_headers()
-            return False
-        return True
+            return
+        self.json_response({"ok": False, "error": "Требуется авторизация"}, status=401)
+
+    def read_json_body(self, *, limit: int = 8192) -> dict[str, object] | None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return None
+        if length <= 0 or length > limit:
+            return None
+        try:
+            value = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    def login(self) -> None:
+        payload = self.read_json_body()
+        if payload is None:
+            self.json_response({"ok": False, "error": "Некорректный запрос"}, status=400)
+            return
+        username = str(payload.get("username", ""))
+        password = str(payload.get("password", ""))
+        remember = bool(payload.get("remember", False))
+        user_ok = secrets.compare_digest(username, CLIENT_USER)
+        password_ok = secrets.compare_digest(password, CLIENT_PASSWORD)
+        if not (user_ok and password_ok):
+            time.sleep(0.35)
+            self.json_response({"ok": False, "error": "Неверный логин или пароль"}, status=401)
+            return
+
+        ttl = AUTH_REMEMBER_SECONDS if remember else AUTH_SESSION_SECONDS
+        token = issue_session_token(ttl)
+        self.send_response(204)
+        self.send_header("Set-Cookie", self.session_cookie(token, remember=remember))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def logout(self) -> None:
+        self.send_response(204)
+        self.send_header("Set-Cookie", self.clear_session_cookie())
+        self.send_header("Clear-Site-Data", '"cache"')
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_OPTIONS(self) -> None:
+        path = urlsplit(self.path).path
+        if path == "/auth/login":
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if not self.authenticated():
+            self.unauthorized()
             return
         self.send_response(204)
         self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_GET(self) -> None:
-        if not self.authenticated():
-            return
         path = urlsplit(self.path).path
+        if path == "/auth/session":
+            if not self.authenticated():
+                self.unauthorized()
+                return
+            self.json_response({
+                "ok": True,
+                "user": CLIENT_USER,
+                "localBypass": self.local_bypass(),
+            })
+            return
+        if path in PUBLIC_PATHS:
+            self.static_file(path)
+            return
+        if not self.authenticated():
+            if path.startswith("/api/") or path.startswith("/client-"):
+                self.unauthorized()
+            else:
+                self.unauthorized(redirect=True)
+            return
         if path.startswith("/api/"):
             self.proxy()
             return
@@ -297,29 +473,48 @@ class Handler(BaseHTTPRequestHandler):
         self.static_file(path)
 
     def do_HEAD(self) -> None:
-        if not self.authenticated():
-            return
         path = urlsplit(self.path).path
+        if path in PUBLIC_PATHS:
+            self.static_file(path, head_only=True)
+            return
+        if not self.authenticated():
+            self.unauthorized(redirect=not path.startswith("/api/"))
+            return
         if path.startswith("/api/"):
             self.proxy()
             return
         self.static_file(path, head_only=True)
 
     def do_POST(self) -> None:
-        if self.authenticated():
-            self.proxy()
+        path = urlsplit(self.path).path
+        if path == "/auth/login":
+            self.login()
+            return
+        if path == "/auth/logout":
+            self.logout()
+            return
+        if not self.authenticated():
+            self.unauthorized()
+            return
+        self.proxy()
 
     def do_PUT(self) -> None:
-        if self.authenticated():
-            self.proxy()
+        if not self.authenticated():
+            self.unauthorized()
+            return
+        self.proxy()
 
     def do_PATCH(self) -> None:
-        if self.authenticated():
-            self.proxy()
+        if not self.authenticated():
+            self.unauthorized()
+            return
+        self.proxy()
 
     def do_DELETE(self) -> None:
-        if self.authenticated():
-            self.proxy()
+        if not self.authenticated():
+            self.unauthorized()
+            return
+        self.proxy()
 
     def static_file(self, path: str, head_only: bool = False) -> None:
         if path in ("", "/"):
@@ -340,16 +535,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "same-origin")
+        self.send_header("X-Frame-Options", "DENY")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if not head_only:
             self.wfile.write(body)
 
-    def json_response(self, value: object) -> None:
-        body = json.dumps(value).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
+    def json_response(self, value: object, *, status: int = 200) -> None:
+        body = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -399,7 +598,7 @@ class Handler(BaseHTTPRequestHandler):
         headers = {
             key: value
             for key, value in self.headers.items()
-            if key.lower() not in HOP_BY_HOP and key.lower() not in ("authorization", "content-length")
+            if key.lower() not in HOP_BY_HOP and key.lower() not in ("authorization", "content-length", "cookie")
         }
         headers["Authorization"] = BACKEND_AUTH
         headers["Host"] = BACKEND.hostname

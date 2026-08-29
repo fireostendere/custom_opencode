@@ -1,129 +1,109 @@
 # OpenCode web client
 
-Модульный ChatGPT-подобный web/PWA-клиент для OpenCode V2.
+Модульный ChatGPT-подобный web/PWA-клиент и server control layer для OpenCode V2.
 
-Полная пользовательская документация находится в [`../docs/README.md`](../docs/README.md). Этот файл описывает именно `app/` layer.
+Полная документация: [`../docs/README.md`](../docs/README.md).
 
-## Возможности
+## Web/PWA
 
-- root sessions в sidebar; child/subagent sessions скрыты из sidebar;
-- provider limits для Qwen Token Plan и OpenAI/Codex;
-- native slash commands и локальные control-команды `/doctor`, `/rag-start`;
-- isolated quick-session workspaces;
-- `Проекты` → OpenCode projects или безопасный browser папок на host;
-- только `Build / Plan` как пользовательские mode controls;
-- model picker с favorites, сортировкой, collapsible providers и отдельной группой бесплатных моделей;
-- `Qwen 3.8 Max · Оркестрированная` как model profile;
-- contextual composer action вместо двух кнопок и ручного `Steer/Queue`;
-- server-backed persistent queue с reorder/delete;
-- native question cards: single/multiple choice + custom text answer;
-- compact permission banner + project permission policy;
-- Project settings с system instructions/defaults/RAG policy;
-- Changes/Review с file/hunk diffs и safe revert;
-- expandable orchestration tree с child sessions/RAG marker;
-- compact workflow status bar;
-- rename/delete/fork/duplicate/handoff;
-- deep links и parallel running state;
-- Markdown/code, tool/reasoning renderers, image previews;
-- Git/VCS drawer, context/cost widget;
-- actionable notifications, draft autosave, files/clipboard images, permissions;
-- SSE/status polling и mobile refresh;
-- Doctor + zero-token/paid smoke test UI.
+- root sessions в sidebar; child/subagent sessions — в orchestration trace;
+- custom login вместо browser-native Basic Auth prompt;
+- signed HttpOnly sessions с `Запомнить вход`, logout и возвратом в исходный `#/session/...` после re-auth;
+- provider limits для Qwen Token Plan и OpenAI/Codex; панель сворачивается и запоминает состояние;
+- mobile drawer: swipe справа налево, Back и tap/click вне панели;
+- light/dark/system theme, preset/custom accent color;
+- short reduced-motion-aware microanimations;
+- native slash commands и control-команды `/doctor`, `/rag-start`;
+- isolated quick-session workspaces и безопасный browser локальных project roots;
+- Build-only пользовательский execution surface;
+- model picker с favorites, collapsible providers, free-model group, ordinary models и server profiles;
+- contextual composer action: send / cancel / durable queue;
+- native question cards, compact session-scoped permission banner, project policies;
+- Project settings: system instructions/model profile/RAG/permission defaults;
+- Changes/Review, file/hunk revert, orchestration trace и workflow/runtime status;
+- Markdown/code/tool/reasoning, images/files, Git/VCS, drafts, notifications.
 
-Локальные Ollama models остаются существующей manual-only возможностью обычного model picker. Advanced workflow layer не выбирает local provider программно, не запускает и не выгружает local runtime и не анализирует GPU/игры для model routing.
+## Build-only UX и routing
 
-## Composer state machine
+Visible `Build / Plan` switch удалён. `plan`/`plan-direct` остаются internal OpenCode compatibility IDs, но при попадании в пользовательский surface frontend возвращает session в соответствующий Build profile.
 
-Пользователь не выбирает delivery mode вручную:
+Обычная модель из model picker остаётся direct/manual selection:
+
+```text
+ordinary selected model → build-direct → selected model preserved
+```
+
+Runtime V2/V3 дополнительно предлагает server profiles:
+
+```text
+direct                 → выбранная модель, scheduler не меняет её
+qwen3.8-coder          → adaptive local/cloud route
+qwen3.8-orchestrated   → cloud Max + bounded orchestration/fast-reader/RAG
+qwen3.8-review         → cloud review/safe profile
+qwen3.8-fast           → cloud fast/read profile
+```
+
+То есть local/cloud auto-routing существует, но только внутри явно выбранного `route=auto` server profile. Ручная Ollama/Qwen/OpenAI model selection не должна быть незаметно заменена scheduler-ом.
+
+## Composer и task runtime
+
+UI state machine:
 
 ```text
 idle                         → ↑ send
 running + empty composer     → × cancel
-running + text/attachment    → ↑ persistent queue
+running + text/attachment    → ↑ queue
 ```
 
-Старые native `send`, `stop`, `Steer/Queue` controls остаются внутренним compatibility layer для существующего `app.js`, но скрыты из UI. `ux-controls.js` синхронизирует единственную видимую кнопку, а `advanced-features.js` перехватывает queued submit и сохраняет его сервером.
+Legacy `/client-queue.json`/feature-state сохраняются как compatibility facade. Runtime V2/V3 использует SQLite/WAL tasks, checkpoints, events, artifacts, dependencies, priority, pause/resume/cancel и recovery.
 
-## Model profiles
+`runtime-dashboard.js` добавляет server profile badge и Task Center. `runtime-v3-dashboard.js` добавляет V3 status/search/control surface. Оба dashboard остаются внутри общего theme layer.
 
-Видимыми execution modes остаются только `Build` и `Plan`.
+## Web auth
 
-```text
-обычная модель + Build   → build-direct
-обычная модель + Plan    → plan-direct
-Оркестрированная + Build → build
-Оркестрированная + Plan  → plan
-```
+`server.py` публикует `/login.html`, `/login.css`, `/login.js` и auth endpoints. Неавторизованный HTML получает redirect на login; API/client endpoints — JSON `401` без `WWW-Authenticate`.
 
-Обычный выбор локальной модели в model picker по-прежнему является ручным ordinary-model choice и не связан с Project defaults или persistent queue routing.
+После `/auth/login` сервер выдаёт signed `HttpOnly; SameSite=Strict` cookie. `Secure` определяется HTTPS/reverse-proxy settings. `Запомнить вход` меняет TTL cookie; password приложением в browser storage не сохраняется.
 
-## Native questions
+`auth-ui.js` ловит same-origin `401`, сохраняет полный route в sessionStorage и после login возвращает пользователя в ту же session.
 
-`advanced-features.js` опрашивает native OpenCode question requests и отображает их отдельной карточкой над composer:
+Legacy Basic Auth выключен по умолчанию (`OPENCODE_AUTH_ALLOW_BASIC=0`) и предназначен только для старых внешних clients/scripts.
 
-- один или несколько вопросов;
-- single/multi-select;
-- option descriptions;
-- custom text для каждого вопроса;
-- reply/reject через native question API;
-- notification/deep link при ожидании ответа.
+## Appearance
 
-Это не текстовая имитация `1/2/3`: agent loop получает настоящий question reply и продолжает выполнение.
+`appearance.js` хранит `{theme, accent}` в `opencode:web:appearance-v1`:
 
-## Project settings
+- `system`, `light`, `dark`;
+- preset/custom accent;
+- automatic contrast foreground;
+- live follow `prefers-color-scheme`.
 
-Server state привязан к canonical project directory. UI хранит:
+`appearance-bootstrap.js` запускается синхронно из `<head>` до CSS, поэтому persisted theme применяется до первого paint. `appearance.css` покрывает legacy UI, а `appearance-runtime.css` — Runtime V2/V3 dashboards.
 
-- persistent instructions;
-- default Build/Plan;
-- default orchestrated или конкретную cloud model;
-- RAG preference;
-- permission rules.
+Microanimations используются для dialogs, permission/question/status surfaces, toast, drawer, focus/press и progress. `prefers-reduced-motion` почти полностью отключает motion.
 
-Project defaults намеренно не могут автоматически выбрать `ollama/*`. Persistent instructions передаются через `system` field current OpenCode message API и не отображаются внутри user message. Для старого несовместимого backend остаётся prompt compatibility fallback.
+## Mobile drawer
 
-## Persistent queue
+`mobile-ui.js` создаёт scrim и synthetic history entry. Drawer закрывается:
 
-Очередь хранится в `server_features.py`, по умолчанию в `$XDG_STATE_HOME/custom-opencode/web-features.json` или `~/.local/state/custom-opencode/web-features.json`.
+- повторным menu click;
+- tap/click по scrim или любому target вне sidebar;
+- swipe справа налево;
+- Android/browser Back.
 
-Фоновый worker production web server:
+При выборе session synthetic history entry потребляется до навигации.
 
-1. проверяет status queued session;
-2. ждёт idle;
-3. отправляет следующий prompt через OpenCode API с уже выбранной для session моделью;
-4. удаляет item только после успешного принятия backend.
+## Permissions
 
-Queue worker никогда не меняет model/provider. Поэтому вкладка/PWA не обязана оставаться открытой, а ручной local-model выбор не превращается в automatic routing.
+`access-fix.js` показывает только pending permission текущего `sessionID`. После ответа карточка исчезает немедленно, а временный resolved-key suppression не позволяет stale poll вернуть её обратно.
 
-## Permission policy
+Summary извлекает понятные `command/path/URL/prompt`, raw payload остаётся под details.
 
-Project rules имеют форму:
-
-```text
-action glob + resource glob → ask | allow | deny
-```
-
-`Разрешать в проекте` на permission card создаёт точечное allow-rule из текущего action/resource. Worker применяет allow/deny к pending permission requests. Глобальное backend `Always` остаётся доступным, но не требуется для типовых project exceptions.
-
-## Changes / Review
-
-Базовый Git drawer остаётся источником VCS status/session diff. Advanced layer добавляет:
-
-- `files / + / -` summary;
-- diff per file;
-- hunks;
-- revert tracked file через `git restore --worktree`;
-- removal только конкретного untracked file;
-- hunk reverse apply;
-- canonical path containment внутри разрешённого project root.
-
-## Orchestration tree и status bar
-
-Child sessions всё ещё не засоряют sidebar. Они отображаются внутри раскрываемого execution trace текущей root session. Для child показываются agent/model/status/time и RAG marker, если в child trace виден knowledge tool.
-
-Status bar показывает компактно model/profile, context, cost, elapsed time, RAG и persistent queue count.
+Server-side R0–R4 control plane остаётся финальной risk boundary.
 
 ## Server stack
+
+Production composition включает legacy web/features и Runtime V2/V3:
 
 ```text
 server.py
@@ -131,60 +111,40 @@ server.py
         └── server_plus.py
               ├── server_rag.py
               └── server_features.py
-                    ↓ composition
-                server_workflow.py   ← production entrypoint
+                    └── server_control.py / server_runtime.py
+                          └── server_workflow.py  ← systemd entrypoint
 ```
 
-- `server.py` — authenticated proxy + isolated quick workspaces;
-- `server_ext.py` — Qwen/OpenAI rate-limit bridges;
-- `server_plus.py` — constrained host-directory browser + Doctor endpoints;
-- `server_rag.py` — `/rag-start`, V2 MCP workspace connect и persisted RAG enablement;
-- `server_features.py` — persistent queue/project policy/git revert;
-- `server_workflow.py` — production composition + project system-context send path.
+Runtime modules:
+
+- `runtime_store.py` — SQLite/WAL tasks/checkpoints/events/usage/mailbox;
+- `model_registry.py` — model capabilities, server profiles, adaptive scheduler;
+- `repo_services.py` — repo index/context/artifacts/verification/secrets;
+- `runtime_resume.py` — checkpoint continuation policy;
+- `runtime_v3.py`, `runtime_v3_ext.py`, `runtime_completion.py` — V3 context/index/cache/sandbox/worktree/replay/telemetry/completion layers;
+- `server_runtime.py` — runtime APIs and task lifecycle integration.
+
+OpenCode V2 остаётся native model/tool/session/MCP execution engine.
 
 ## Frontend modules
 
-- `index.html` — application shell;
-- `styles.css` — основной UI;
-- `enhancements.css`, `enhancements.js` — provider limits + slash palette;
-- `ui-enhancements.css`, `ui-enhancements.js` — model catalog + project folder browser;
-- `ux-controls.css`, `ux-controls.js`, `ux-state.js` — Build/Plan, direct/orchestrated profiles, contextual composer, permission summary;
-- `advanced-features.css`, `advanced-features.js` — persistent queue, questions, project settings, orchestration trace, advanced review;
-- `rag-control.js` — client-side `/rag-start` interception/control;
-- `doctor.css`, `doctor.js` — diagnostics UI;
-- `api.js` — OpenCode HTTP adapter/fallbacks;
-- `markdown.js` — Markdown/code renderer;
-- `app.js` — session store/event/UI orchestration compatibility core;
-- `sw.js` — PWA cache/notifications.
-
-## Folder browser
-
-`/client-directories.json`:
-
-- требует ту же web-auth;
-- ограничен `OPENCODE_PROJECT_ROOTS`;
-- canonicalizes paths;
-- блокирует symlink escape;
-- отдаёт только directories;
-- скрывает dot-directories;
-- ограничивает listing.
-
-Browser намеренно не содержит raw path text input.
-
-## Slash/control commands
-
-Native OpenCode commands загружаются через `/api/command` и выполняются native session command API.
-
-`/doctor` и `/rag-start` — host-local controls, они не должны уходить модели как обычный prompt.
-
-`//text` позволяет отправить обычное сообщение, начинающееся с `/`.
+- `index.html` — app shell + appearance settings dialog;
+- `styles.css` — core legacy UI;
+- `appearance-bootstrap.js`, `appearance.js`, `appearance.css`, `appearance-runtime.css` — theme/accent/motion;
+- `login.*`, `auth-ui.js`, `auth.css` — web session UX;
+- `mobile-ui.js`, `sidebar-mobile.css` — mobile drawer lifecycle;
+- `enhancements.*`, `ui-enhancements.*`, `ux-controls.*`, `advanced-features.*` — UI/features compatibility layers;
+- `runtime-dashboard.*`, `runtime-v3-dashboard.*` — Task Center/Runtime V3 controls;
+- `access-fix.*` — Build-only/permissions/mobile dialog corrections;
+- `rag-control.js`, `doctor.*`, `control-plane.*` — RAG/diagnostics/risk surfaces;
+- `api.js`, `markdown.js`, `app.js` — OpenCode adapter/render/store core;
+- `sw.js` — PWA static asset cache/notifications; HTML/auth/API/internal runtime responses не кэшируются.
 
 ## Проверка
 
-После upstream OpenCode V2 changes:
-
 ```bash
 ../scripts/verify.sh
+../scripts/verify-runtime-v3.sh
 ```
 
-Verifier проверяет JavaScript/Python syntax, web smoke, provider/Doctor smoke и zero-token workflow smoke: persistent settings/queue, запрет automatic local defaults и safe Git revert.
+Verifier включает JS/Python syntax, web smoke, runtime/RAG/limits smokes и source invariants. Для визуальных изменений дополнительно проверяйте light/dark/system, reduced-motion, mobile drawer и re-auth route restoration.

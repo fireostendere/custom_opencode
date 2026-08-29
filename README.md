@@ -1,80 +1,73 @@
 # custom_opencode
 
-Переносимый комплект поверх OpenCode V2: собственный ChatGPT-подобный web/PWA client, Alibaba/Qwen routing, серверный task/control runtime, безопасная работа с локальными проектами, диагностика/self-test и опциональный инженерный RAG через MCP.
+Переносимый комплект поверх OpenCode V2: собственный ChatGPT-подобный web/PWA client, Alibaba/Qwen routing, серверный Runtime V2/V3 control plane, безопасная работа с локальными проектами, диагностика/self-test и опциональный инженерный RAG через MCP.
 
 ## Что предоставляет
 
-- web/PWA UI для OpenCode sessions;
-- isolated quick-session workspaces;
-- `Проекты → Папки на ПК` с filesystem allowlist и symlink containment;
-- только два пользовательских режима работы: `Build` и `Plan`;
-- model picker с избранным, сортировкой, сворачиваемыми провайдерами и отдельной группой бесплатных моделей;
-- server model profiles: `qwen3.8-coder`, `qwen3.8-orchestrated`, `qwen3.8-review`, fast path;
-- model capability registry: vision/tools/context/cost/quality hints остаются на сервере;
-- SQLite/WAL task queue с priority, dependencies, cancel, pause/resume и recovery;
-- durable checkpoints, event history и per-stage token/cost accounting, включая `wasted_retries`;
-- Task Center для server tasks, profiles, checkpoints, artifacts и resource state;
-- одну контекстную кнопку composer: send / cancel / queue;
-- native OpenCode questions: single/multi-select, описания вариантов и собственный текстовый ответ;
-- compact server-generated permission previews и project-level allow/deny policies;
-- Project settings: persistent system instructions, default Build/Plan/cloud model profile и RAG policy;
-- Changes/Review: file stats, diff по файлам/hunks, safe revert файла или отдельного hunk;
-- раскрываемое дерево оркестрации с child sessions и RAG marker;
+### Web/PWA UX
+
+- custom login page вместо browser-native Basic Auth prompt;
+- signed `HttpOnly; SameSite=Strict` web sessions, `Запомнить вход`, logout и возврат в исходный `#/session/...` после re-auth;
+- root sessions в sidebar и isolated quick-session workspaces;
+- Build-only пользовательский execution surface: visible `Build / Plan` switch удалён;
+- model picker с favorites, collapsible providers, free-model group и server model profiles;
+- одна контекстная кнопка composer: send / cancel / persistent queue;
+- native OpenCode questions: single/multi-select, descriptions и custom answer;
+- session-scoped compact permission cards и project allow/deny policies;
+- Changes/Review: file stats, hunks, safe file/hunk revert;
+- orchestration trace, runtime/RAG/queue/status surfaces;
+- light / dark / system theme;
+- preset и произвольный accent color;
+- reduced-motion-aware микроанимации;
+- mobile drawer: swipe справа налево, browser/Android Back и tap/click вне панели;
+- сворачиваемые provider limits с сохранением состояния;
+- Markdown/code/tool/reasoning renderers, files, clipboard images, Git/VCS UI, drafts, notifications и deep links.
+
+### Server Runtime V2/V3
+
+- SQLite/WAL durable task queue с priority, dependencies, cancel, pause/resume и recovery;
+- checkpoints, event history, artifacts и per-stage token/cost accounting;
+- Task Center и Runtime dashboard;
+- model capability registry и server profiles `qwen3.8-coder`, `qwen3.8-orchestrated`, `qwen3.8-review`, fast path;
+- adaptive local/cloud routing только внутри явно выбранных auto server profiles;
 - AST/symbol repository index, embeddings, dependency graph, bounded Git graph и semantic symbol diff;
-- bounded dynamic context с native OpenCode compaction, automatic dedup и server-managed retrieval;
+- bounded dynamic context + native OpenCode compaction;
 - pre-execution read/tool-result cache с Git-aware invalidation;
 - large-output artifact storage с range/search;
-- structured agent mailbox, typed handoff и speculative parallel research;
-- verification pipeline, failure classifier, automatic review gate, loop/stuck/conflict detection;
+- structured mailbox, typed handoff и bounded speculative research;
+- verification pipeline, failure classifier, review gate, loop/stuck/conflict detection;
 - isolated Git worktree tasks, patch ownership и fail-closed merge/cleanup;
-- resource-aware adaptive profile: local coding model при свободном хосте, cloud fallback при game/CPU/GPU/VRAM pressure или unavailable local;
-- OpenCode-central MCP Code Mode/lazy loading, server policy/rate-limit/health layer и shared RAG cache;
-- scoped Secret Broker без plaintext secrets в UI/model context;
-- enforced sandbox profiles `safe`, `repo-write`, `docker`, `wsl`, `full-machine`;
-- session branching с переносом durable agent state/handoff;
-- zero-token replay сохранённых responses/tool results;
-- remote authenticated status/action API и optional webhook notifications;
-- local telemetry dashboard: task usage, model success/latency, MCP health, GPU/VRAM и routing state;
-- compact status bar: model/context/cost/runtime/RAG/queue;
-- native slash commands;
-- Markdown/code/tool/reasoning renderers;
-- files и clipboard images;
-- Git/VCS UI, fork/duplicate/handoff, notifications, drafts;
+- OpenCode-central MCP Code Mode/lazy loading + server policy/rate-limit/health layer;
+- scoped Secret Broker и enforced sandbox profiles `safe`, `repo-write`, `docker`, `wsl`, gated `full-machine`;
+- session branching, replay без новых model calls, telemetry и remote authenticated task API.
+
+### Knowledge / providers / operations
+
 - Qwen Token Plan и Codex rate-limit sidebar;
-- actionable PWA notifications и deep links к session;
 - orchestration `Qwen 3.8 Max → Qwen 3.6 Flash fast-reader`;
-- optional `mcp-rag` integration через `kb` MCP;
+- optional `mcp-rag` через `kb` MCP;
 - `/rag-start` и `/doctor`;
 - pre-install verifier, Runtime V2/V3 smokes и post-install zero-LLM-token self-test;
-- user systemd deployment и one-command update.
+- user systemd deployment и `custom-opencode-update`.
 
-Обычный `direct` профиль никогда автоматически не меняет вручную выбранную модель. Автоматический local/cloud routing включается только при выборе server profile с `route=auto`, например `qwen3.8-coder`.
+## Build-only UI и model profiles
 
-[`docs/server-runtime-v2.md`](docs/server-runtime-v2.md) описывает базовый durable runtime layer. Полный актуальный control plane, включая AST/embeddings, native compaction, MCP Code Mode, sandbox enforcement, scoped secrets, shared RAG, replay, adaptive telemetry routing и remote API, описан в [`docs/server-runtime-v3.md`](docs/server-runtime-v3.md).
+Пользователь больше не переключает `Build / Plan`: web UI всегда работает в Build. Внутренние OpenCode IDs `plan`/`plan-direct` сохраняются только как upstream compatibility и при попадании в UI переводятся обратно в соответствующий Build profile.
 
-## Build / Plan и model profiles
-
-`Build` и `Plan` — единственные пользовательские режимы выполнения:
-
-- `Build` — обычный рабочий режим выбранной модели с доступными ей edit/shell permissions;
-- `Plan` — read/plan-only режим без edit и shell.
-
-Оркестрация и routing выбираются в model picker, а не дополнительным режимом:
+Routing выбирается моделью/profile:
 
 ```text
-Build | Plan
-     +
-direct                         → сохранить выбранную OpenCode model
-qwen3.8-coder                  → local/cloud adaptive coding
-qwen3.8-orchestrated           → Qwen Max → bounded fast-reader → optional RAG
-qwen3.8-review                 → read-only review
+обычная вручную выбранная модель  → build-direct, модель не меняется автоматически
+qwen3.8-coder                    → Build + adaptive local/cloud server profile
+Qwen 3.8 Max · Оркестрированная  → Build + bounded fast-reader + optional RAG
+qwen3.8-review                   → server read/review profile
 ```
 
-Внутренние OpenCode agent IDs `build`, `plan`, `build-direct`, `plan-direct` являются implementation detail и не должны отображаться как дополнительные пользовательские режимы.
+Важно: direct/manual selection не перезаписывается scheduler-ом. Автоматический local/cloud routing существует только для server profile с `route=auto`, а не как скрытая замена любой выбранной модели.
 
-## Composer и server task queue
+Подробнее: [Модели и routing](docs/models-and-routing.md), [Server Runtime V2](docs/server-runtime-v2.md), [Server Runtime V3](docs/server-runtime-v3.md).
 
-Отдельного `Steer / Queue` переключателя в UI нет.
+## Composer и durable queue
 
 ```text
 работы нет                         → ↑ Отправить
@@ -82,41 +75,50 @@ qwen3.8-review                 → read-only review
 работа идёт + есть текст/вложение  → ↑ Отправить в очередь
 ```
 
-Legacy `/client-queue.json` сохранён как compatibility facade. Внутри новые queued prompts сохраняются как SQLite runtime tasks и поддерживают priority, dependencies, pause/resume/cancel, checkpoints и recovery после рестарта web process.
+Legacy `/client-queue.json` остаётся compatibility facade. В Runtime V2/V3 queued work хранится в SQLite/WAL, переживает reload/restart и поддерживает priority/dependencies/pause/resume/cancel/checkpoints.
 
-Task Center позволяет открыть server tasks текущей session, поменять priority/dependencies, поставить задачу на паузу, продолжить или отменить, посмотреть checkpoints, usage, event history и artifacts.
+## Авторизация
 
-## Questions / выбор вариантов
+Обычный web UX использует `/login.html` + `/auth/login`, а не Chrome Basic Auth dialog.
 
-Когда модель вызывает native OpenCode `question`, web client показывает отдельную карточку вместо неработающего текстового prompt:
+После успешного входа сервер выдаёт подписанную `HttpOnly; SameSite=Strict` cookie. При `Запомнить вход` по умолчанию используется 30-дневный TTL. Password приложением в browser storage не сохраняется.
 
-- single-select;
-- multi-select;
-- label + description;
-- `Свой вариант…` для каждого вопроса;
-- несколько вопросов в одной карточке;
-- reject/cancel;
-- PWA notification с deep link в нужную session.
+Если session истекла во время работы, `auth-ui.js` сохраняет полный route, включая `#/session/...`, и после login возвращает пользователя туда же.
 
-Ответ отправляется через native question reply API и продолжает остановленный agent loop.
+Legacy Basic compatibility выключена по умолчанию:
 
-## Project settings, permissions и sandbox
+```text
+OPENCODE_AUTH_ALLOW_BASIC=0
+```
 
-Кнопка `Project` в header открывает настройки текущей директории:
+Она нужна только старым внешним clients/scripts.
 
-- persistent instructions — передаются как отдельный OpenCode system context и не вставляются в видимый user text;
-- default `Build / Plan`;
-- default orchestrated или конкретная cloud model;
-- `RAG: auto/on/off`;
-- ordered permission rules `action + resource glob → ask/allow/deny`.
+## Оформление и mobile UX
 
-На permission card есть server-generated краткое описание действия и `Разрешать в проекте`, который сохраняет точечное allow rule вместо глобального бесконтрольного `Always`. R3/R4 остаются interactive независимо от project allow.
+`Аккаунт → Настройки`:
 
-Runtime V3 добавляет отдельный enforcement layer до tool execution: path containment, patch ownership, loop/rate policies и sandbox profile. `safe`/`repo-write` используют bubblewrap, когда он доступен; `docker`/`wsl` запускают shell/build в соответствующем runner; `full-machine` требует явного `OPENCODE_ALLOW_FULL_MACHINE=1`.
+- `Системная / Светлая / Тёмная`;
+- шесть accent presets;
+- произвольный accent через color picker;
+- reset к default.
 
-## Server Runtime V2/V3
+Appearance state хранится только в browser storage. Main app применяет `appearance-bootstrap.js` до CSS, поэтому сохранённая тема появляется до первого paint. Accent автоматически получает контрастный foreground.
 
-Runtime V2 добавляет durable task/store layer, а Runtime V3 — полный server control plane поверх существующего OpenCode backend:
+Микроанимации короткие и используются для dialogs, toast, state surfaces, progress, sidebar и press/focus feedback. `prefers-reduced-motion: reduce` практически отключает motion.
+
+На mobile drawer закрывается swipe справа налево, Back и кликом/тапом вне панели. Панель `Лимиты` сворачивается и запоминает состояние.
+
+Подробнее: [Web UI, авторизация и оформление](docs/web-ui.md).
+
+## Permissions
+
+Permission card показывается только в session, которой принадлежит pending request. После `Разрешить / Отклонить / Всегда` она скрывается сразу, stale polling не должен возвращать уже resolved request.
+
+Краткое описание показывает конкретное действие — command/path/URL/subtask — вместо сырого payload. Полные детали остаются под disclosure.
+
+Server permission control plane остаётся детерминированным. R3/R4 не могут быть понижены model-side или project allow rule.
+
+## Server Runtime V3
 
 ```text
 Browser / PWA / OpenCode clients
@@ -124,65 +126,30 @@ Browser / PWA / OpenCode clients
     v
 server_workflow.py
     |
-    +--> server_runtime.py            durable task lifecycle / queue / verification
-    +--> runtime_v3.py                context/index/sandbox/RAG/replay/adaptive routing
-    +--> runtime_v3_ext.py            worktree merge / MCP telemetry / runtime APIs
-    +--> runtime_completion.py        previews/cache/retry accounting/remote actions
-    +--> runtime_store.py             SQLite/WAL state
-    +--> server permission control plane
+    +--> server_runtime.py      durable task lifecycle / queue / verification
+    +--> runtime_v3.py          context/index/sandbox/RAG/replay/adaptive routing
+    +--> runtime_v3_ext.py      worktree merge / MCP telemetry / runtime APIs
+    +--> runtime_completion.py  previews/cache/retry accounting/remote actions
+    +--> runtime_store.py       SQLite/WAL state
+    +--> permission control plane
     +--> OpenCode V2 backend + central MCP host
 ```
 
-После значимых runtime-этапов сохраняются checkpoints. In-flight task после рестарта переходит в recovery: если upstream OpenCode session ещё busy, task снова привязывается к ней; если нет — task ставится на паузу вместо молчаливого повторного model call.
+OpenCode остаётся model/tool/session/MCP execution engine; custom runtime добавляет durable orchestration, policy и host integration вокруг него.
 
-Writable standalone task можно создать в отдельном Git worktree. Сервер умеет fail-closed объединить tracked/untracked изменения обратно в ownership root и не перезаписывает dirty/conflicting target path.
+## Project settings
 
-Для сложного исследования Task Center умеет создать 2–3 дешёвых read-only research forks и зависимый aggregator. Findings передаются через structured mailbox. Session branch merge также переносит meaningful checkpoints, typed handoff и route/state metadata.
+Project state может задавать persistent system instructions, model/profile, RAG policy и ordered permission rules. Visible execution mode всё равно Build — старый mode field остаётся только compatibility data.
 
-Подробнее: [Server Runtime V2](docs/server-runtime-v2.md) и [Server Runtime V3](docs/server-runtime-v3.md).
+Folder browser ограничен `OPENCODE_PROJECT_ROOTS` и canonical/symlink containment.
 
-## Dynamic context, cache и repository index
+## RAG
 
-OpenCode V2 native compaction остаётся authoritative conversation-history mechanism. Runtime V3 выставляет install-time compaction budget, дополнительно следит за profile/model context budget и запрашивает native compaction при переполнении.
+RAG опционален. При `MCP_RAG_ENABLED=0` или отсутствии usable `mcp-rag` обычные OpenCode/runtime workflows продолжают работать.
 
-Server context собирается отдельно и ограниченно: project instructions/memory, decisions, mailbox/handoff, semantic repository matches, changed symbols и selective shared RAG. Повторяющиеся секции дедуплицируются.
-
-Repository daemon поддерживает Python AST symbols, JS/TS symbol/import extraction, dependency edges, bounded Git graph и embeddings. При наличии `sentence-transformers` используется локальная модель; иначе deterministic hashed lexical fallback не требует внешнего API.
-
-Cacheable read tools оборачиваются через OpenCode V2 tool transform. Cache hit предотвращает сам underlying read call. Cache key включает tool input, Git HEAD и working-tree status, поэтому изменение репозитория инвалидирует stale read cache.
-
-## Verification / Review
-
-Git drawer остаётся основной точкой просмотра изменений:
-
-- количество файлов и `+/-` статистика;
-- раскрываемые file diffs;
-- hunks;
-- `Отменить файл` через bounded `git restore`;
-- `Отменить hunk` через reverse patch;
-- containment: web backend не принимает revert path вне разрешённого project root.
-
-После writable runtime task сервер автоматически запускает обнаруженные lint/typecheck/test checks. Network/environment/flaky failures отделяются от code failures. Code failures могут породить bounded repair task, а нетривиальный diff — read-only review task. Retry/repair/recovery usage учитывается как `wasted_retries` отдельно от implementation.
-
-## RAG и MCP
-
-RAG полностью опционален. Если `mcp-rag` не найден или явно отключён через `MCP_RAG_ENABLED=0`, installer создаёт рабочий OpenCode config с `kb.disabled=true`.
-
-Когда RAG установлен, `/rag-start` может без LLM-токенов проверить/поднять локальный Qdrant, проверить corpus/index, подключить `kb` к текущему workspace и проверить MCP tools.
-
-OpenCode V2 остаётся единственным центральным MCP host. Installer включает MCP Code Mode для `kb`, чтобы полные tool schemas не занимали provider context заранее. Runtime V3 поверх этого даёт server policy, rate limit, health/tool metadata, secret handling и shared read/RAG cache, поэтому MCP не подключается отдельно к каждому web client.
-
-## Replay, telemetry и remote API
-
-Managed run может быть сохранён как replay artifact с исходными assistant responses/tool results. Replay API возвращает recording + events/checkpoints/usage и не делает новых model calls (`modelCalls: 0`).
-
-Telemetry хранится локально по task/model/stage и включает token/cost/latency/success; adaptive router использует накопленные model stats вместе с CPU/GPU/VRAM/game/local-health сигналами.
-
-Authenticated remote API позволяет с телефона получить pending tasks/permissions и выполнить cancel/pause/resume либо permission `once/reject`. Для significant task states доступен optional webhook; non-loopback destination требует explicit opt-in.
+`/rag-start` может без LLM inference проверить/поднять локальный Qdrant, corpus/index, подключить `kb` к текущему workspace и проверить MCP tools.
 
 ## Быстрый старт
-
-Требуются OpenCode V2, Python 3, Node.js и `systemd --user`.
 
 ```bash
 cp .env.example .env
@@ -208,55 +175,33 @@ Installer по умолчанию выполняет pre-install verification и
 
 ## Документация
 
-Полный индекс: [`docs/README.md`](docs/README.md).
+Полный индекс: [docs/README.md](docs/README.md).
 
 Основные разделы:
 
 - [Установка, миграция и обновление](docs/installation.md)
 - [Конфигурация `.env`](docs/configuration.md)
+- [Web UI, авторизация и оформление](docs/web-ui.md)
 - [Архитектура и возможности](docs/architecture.md)
 - [Server Runtime V2](docs/server-runtime-v2.md)
 - [Server Runtime V3](docs/server-runtime-v3.md)
-- [Permission control plane](docs/control-plane.md)
 - [Модели и routing](docs/models-and-routing.md)
+- [Permission control plane](docs/control-plane.md)
 - [RAG integration](docs/rag.md)
 - [`/rag-start`](docs/rag-start.md)
 - [Doctor](docs/doctor.md)
 - [Эксплуатация и recovery](docs/operations.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
-Отдельная документация по созданию/индексации corpus находится в репозитории `mcp-rag`.
-
-## Структура
-
-```text
-app/       web client + authenticated proxy + runtime/control/RAG lifecycle
-config/    OpenCode V2 providers, agents, prompts, plugins
-scripts/   verify/install/update/RAG/runtime probes
-systemd/   user service
-docs/      пользовательская и эксплуатационная документация
-```
-
-Production server stack заканчивается `app/server_workflow.py`, который композиционно устанавливает Runtime V2, Runtime V3, completion layer, permission control plane и RAG lifecycle поверх base proxy layers. OpenCode V2 остаётся model/tool/MCP execution engine.
-
 ## Security defaults
 
-- secrets и host-specific URLs — только в `.env`;
-- web UI использует Basic Auth;
-- рекомендуемый bind — loopback;
-- project browser ограничен `OPENCODE_PROJECT_ROOTS`;
-- quick workspace cleanup защищён containment checks;
-- `direct` profile не меняет вручную выбранную модель;
-- auto local/cloud routing ограничен явно выбранными server profiles;
-- RAG ingest не разрешён read-only worker;
-- persistent runtime state и artifacts создаются с user-only permissions;
-- file mutation ограничена managed project/worktree;
-- managed worktree merge/cleanup fail-closed при dirty/conflicting state;
-- git revert ограничен project root и конкретным path/patch;
-- MCP execution и gateway rate limits ограничены;
-- Secret Broker snapshot никогда не сериализует plaintext secret values;
-- full-machine sandbox disabled by default;
-- remote webhook delivery disabled for non-loopback destinations by default;
-- install/update завершается ошибкой, если critical host self-test не прошёл.
-
-OpenCode V2 остаётся изменяющимся upstream, поэтому verifier, runtime smokes и host-level Doctor являются частью штатной эксплуатации, а не только development tooling.
+- secrets/host URLs только в private `.env`/trusted service boundary;
+- signed HttpOnly web session; legacy Basic off by default;
+- recommended web bind — loopback или защищённый tailnet/reverse proxy;
+- project/scratch containment;
+- R0–R4 permission floor;
+- direct manual model selection не меняется auto scheduler-ом;
+- scoped secrets не сериализуются в browser/runtime snapshots;
+- sandbox/worktree ownership checks до writable execution;
+- auth/API/HTML responses не кэшируются service worker как offline app shell;
+- install/update fail closed при critical self-test failure.
