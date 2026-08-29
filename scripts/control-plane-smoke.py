@@ -37,11 +37,15 @@ def main() -> None:
         expect({"action":"read", "resources":["README.md"]}, effect="allow", risk="R0", workspace=str(workspace))
         expect({"action":"read", "resources":[".env"]}, effect="ask", risk="R4", workspace=str(workspace))
         expect({"permission":"read", "patterns":["../outside.txt"]}, effect="ask", risk="R3", workspace=str(workspace))
+        expect({"action":"glob", "resources":["../outside/*"]}, effect="ask", risk="R3", workspace=str(workspace))
+        expect({"action":"grep", "resources":[".env"]}, effect="ask", risk="R4", workspace=str(workspace))
         expect({"action":"shell", "resources":["git status --short"]}, effect="allow", risk="R0", workspace=str(workspace))
         expect({"action":"shell", "metadata":{"command":"pytest -q"}}, effect="allow", risk="R1", workspace=str(workspace))
         expect({"action":"shell", "resources":["rm -rf build"]}, effect="ask", risk="R3", workspace=str(workspace))
         expect({"action":"shell", "resources":["cat README.md && rm -rf build"]}, effect="ask", risk="R3", workspace=str(workspace))
         expect({"action":"edit", "resources":["app/api.js"]}, effect="allow", risk="R2", workspace=str(workspace))
+        expect({"action":"edit", "resources":["../outside.txt"]}, effect="ask", risk="R3", workspace=str(workspace))
+        expect({"action":"edit", "resources":[]}, effect="ask", risk="R3", workspace=str(workspace))
         expect({"action":"edit", "resources":["app/api.js"]}, effect="ask", risk="R2", workspace=str(workspace), preset="safe")
         expect({"action":"webfetch", "resources":["https://example.invalid/"]}, effect="ask", risk="R1", workspace=str(workspace))
         expect({"action":"webfetch", "resources":["https://example.invalid/"]}, effect="allow", risk="R1", workspace=str(workspace), preset="autonomous")
@@ -64,6 +68,8 @@ def main() -> None:
             }
             decision = server_control.decision_for({"action":"edit", "resources":["app/api.js"]}, str(workspace))
             assert decision["effect"] == "allow" and decision["risk"] == "R2", decision
+            decision = server_control.decision_for({"action":"edit", "resources":["../outside.txt"]}, str(workspace))
+            assert decision["effect"] == "ask" and decision["risk"] == "R3", decision
 
             server_control.features.project_settings = lambda directory: {
                 "permissionRules": [{"action":"shell", "resource":"*", "effect":"allow"}]
