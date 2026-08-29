@@ -7,6 +7,7 @@ from urllib.parse import quote, urlsplit
 
 import runtime_resume
 import runtime_v3
+import runtime_v3_ext
 import server_control as control
 import server_features as features
 import server_rag as rag
@@ -16,6 +17,7 @@ import server_runtime as runtime
 _ORIGINAL_SEND = features._send_backend_prompt
 runtime.install(features)
 runtime_v3.install(runtime, features)
+runtime_v3_ext.install(runtime, runtime_v3, features)
 control.install()
 
 
@@ -79,7 +81,6 @@ def _send_with_project_context(session_id: str, text: str, files: list[object]) 
     return _ORIGINAL_SEND(session_id, effective_text, effective_files)
 
 
-# Runtime dispatch and legacy queue facade share the same context-aware send path.
 features._send_backend_prompt = _send_with_project_context
 
 
@@ -97,6 +98,8 @@ class Handler(rag.Handler, features.Handler):
 
     def do_GET(self) -> None:
         parsed = urlsplit(self.path)
+        if runtime_v3_ext.handle_get(self, parsed, runtime, runtime_v3, features):
+            return
         if runtime_v3.handle_get(self, parsed, runtime, features):
             return
         if runtime.handle_get(self, parsed, features):
@@ -107,6 +110,8 @@ class Handler(rag.Handler, features.Handler):
 
     def do_POST(self) -> None:
         parsed = urlsplit(self.path)
+        if runtime_v3_ext.handle_post(self, parsed, runtime, runtime_v3, features):
+            return
         if runtime_v3.handle_post(self, parsed, runtime, features):
             return
         if runtime.handle_post(self, parsed, features):
