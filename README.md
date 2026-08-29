@@ -7,11 +7,11 @@
 - web/PWA UI для OpenCode sessions;
 - isolated quick-session workspaces;
 - `Проекты → Папки на ПК` с filesystem allowlist и symlink containment;
-- только два пользовательских режима работы: `Direct` и `Plan`;
+- только два пользовательских режима работы: `Build` и `Plan`;
 - model picker с избранным, сортировкой, сворачиваемыми провайдерами и отдельной группой бесплатных моделей;
 - отдельный вариант `Qwen 3.8 Max · Оркестратор` прямо в model picker;
 - автоматическую очередь сообщений без ручного `Steer/Queue` переключателя;
-- одну контекстную кнопку composer: send / stop / queue;
+- одну контекстную кнопку composer: send / cancel / queue;
 - компактные permission cards с деталями под раскрытием;
 - native slash commands;
 - Markdown/code/tool/reasoning renderers;
@@ -25,17 +25,17 @@
 - pre-install verifier и post-install zero-LLM-token self-test;
 - user systemd deployment и one-command update.
 
-## Direct / Plan и orchestration
+## Build / Plan и orchestration
 
-`Direct` и `Plan` — единственные пользовательские режимы выполнения:
+`Build` и `Plan` — единственные пользовательские режимы выполнения:
 
-- `Direct` — модель может выполнять обычную рабочую задачу с доступными ей edit/shell permissions;
+- `Build` — обычный рабочий режим выбранной модели с доступными ей edit/shell permissions;
 - `Plan` — read/plan-only режим без edit и shell.
 
 Оркестрация не является отдельным режимом. Она выбирается только через специальную модель в picker:
 
 ```text
-Direct | Plan
+Build | Plan
      +
 Qwen 3.8 Max · Оркестратор
         ↓ при необходимости
@@ -50,7 +50,7 @@ kb MCP → mcp-rag
 
 `fast-reader` — bounded read-only worker для repository exploration, логов и точечного RAG lookup. Он не получает edit/shell права. Финальные решения остаются у Qwen 3.8 Max.
 
-Локальный `ollama/*` остаётся только ручным direct model choice и не включается в automatic path.
+Локальный `ollama/*` остаётся только ручным model choice и не включается в automatic path.
 
 ## Composer
 
@@ -60,8 +60,8 @@ kb MCP → mcp-rag
 
 ```text
 работы нет                         → ↑ Отправить
-работа идёт + composer пустой      → × Остановить
-работа идёт + есть текст/вложение  → ↑ Добавить в очередь
+работа идёт + composer пустой      → × Отменить текущую работу
+работа идёт + есть текст/вложение  → ↑ Отправить в очередь
 ```
 
 Очередь хранится для конкретной session и отправляется после завершения текущей работы.
