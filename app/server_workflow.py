@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Production web entrypoint composing RAG and persistent workflow features."""
+"""Production web entrypoint composing RAG, workflow and permission control plane."""
 from __future__ import annotations
 
 import json
 from urllib.parse import quote, urlsplit
 
+import server_control as control
 import server_features as features
 import server_rag as rag
 
 
 _ORIGINAL_SEND = features._send_backend_prompt
+control.install()
 
 
 def _file_parts(files: list[object]) -> list[dict[str, object]]:
@@ -60,7 +62,7 @@ features._send_backend_prompt = _send_with_project_context
 
 
 class Handler(rag.Handler, features.Handler):
-    """RAG routes first, workflow routes second, base proxy last."""
+    """Control-plane routes first, then RAG/workflow/base proxy routes."""
 
     def json_response(self, value: object, status: int = 200) -> None:
         body = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -71,8 +73,16 @@ class Handler(rag.Handler, features.Handler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_GET(self) -> None:
+        parsed = urlsplit(self.path)
+        if control.handle_get(self, parsed):
+            return
+        super().do_GET()
+
     def do_POST(self) -> None:
         parsed = urlsplit(self.path)
+        if control.handle_post(self, parsed):
+            return
         if parsed.path == "/client-send.json":
             if not self.authenticated():
                 return
