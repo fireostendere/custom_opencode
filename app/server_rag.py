@@ -6,9 +6,8 @@ import json
 import subprocess
 import threading
 import time
-from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import server_plus as plus
 
@@ -16,10 +15,22 @@ RAG_START_LOCK = threading.Lock()
 RAG_QUERY = "DipTrace PCB layout"
 
 
+def _v2_workspace_target(path: str, directory: str | None = None) -> str:
+    """Current OpenCode V2 workspace middleware uses ?directory=, not V1 location[]."""
+    if not directory:
+        return path
+    return f"{path}?{urlencode({'directory': directory})}"
+
+
+# server_plus Doctor was written against an older beta query spelling. Patch the
+# module global so Doctor and RAG control use the current V2 contract together.
+plus._workspace_target = _v2_workspace_target
+
+
 def _mcp_status(directory: str) -> dict[str, Any]:
     try:
         value = plus._data(plus._backend_request_json(
-            "GET", plus._workspace_target("/api/mcp", directory), timeout=15.0))
+            "GET", _v2_workspace_target("/api/mcp", directory), timeout=15.0))
     except Exception as exc:
         return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
     if not isinstance(value, dict):
@@ -99,7 +110,7 @@ def _connect_kb(directory: str) -> dict[str, Any]:
     try:
         plus._backend_request_json(
             "POST",
-            plus._workspace_target("/api/mcp", directory),
+            _v2_workspace_target("/api/mcp", directory),
             {"name": "kb", "config": _dynamic_mcp_config()},
             timeout=20.0,
         )
@@ -115,7 +126,7 @@ def _connect_kb(directory: str) -> dict[str, Any]:
         try:
             plus._backend_request_json(
                 "POST",
-                plus._workspace_target("/api/mcp/kb/connect", directory),
+                _v2_workspace_target("/api/mcp/kb/connect", directory),
                 None,
                 timeout=20.0,
             )
