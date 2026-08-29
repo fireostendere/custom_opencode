@@ -45,6 +45,7 @@ fi
 
 if [[ "$SELFTEST" != 0 ]]; then
   echo "==> Pre-install verification"
+  "$PYTHON3" -m py_compile "$ROOT/scripts/install-selftest.py"
   "$ROOT/scripts/verify.sh"
 fi
 
