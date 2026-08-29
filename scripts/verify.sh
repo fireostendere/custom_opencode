@@ -7,7 +7,7 @@ NODE=$(command -v node || true)
 if [[ -z "$PYTHON3" ]]; then echo "python3 is required" >&2; exit 1; fi
 if [[ -z "$NODE" ]]; then echo "node is required" >&2; exit 1; fi
 
-"$PYTHON3" -m py_compile "$ROOT/app/server.py" "$ROOT/app/server_ext.py" "$ROOT/app/server_plus.py"
+"$PYTHON3" -m py_compile "$ROOT/app/server.py" "$ROOT/app/server_ext.py" "$ROOT/app/server_plus.py" "$ROOT/app/server_rag.py" "$ROOT/scripts/rag-probe.py" "$ROOT/scripts/rag-start-smoke.py"
 
 WORKSPACE_TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$WORKSPACE_TEST_ROOT"' EXIT
@@ -61,6 +61,7 @@ for file in "$ROOT/app/"*.js "$ROOT/config/events.js" "$ROOT/config/plugins/"*.j
 done
 "$NODE" "$ROOT/scripts/web-smoke.mjs"
 "$PYTHON3" "$ROOT/scripts/limits-smoke.py"
+"$PYTHON3" "$ROOT/scripts/rag-start-smoke.py"
 for file in "$ROOT/scripts/"*.sh; do
   bash -n "$file"
 done
@@ -77,20 +78,25 @@ bad: list[str] = []
 index = (root / "app/index.html").read_text(encoding="utf-8")
 required_web = [
     "styles.css", "api.js", "markdown.js", "app.js", "enhancements.css",
-    "enhancements.js", "ui-enhancements.css", "ui-enhancements.js", "sw.js",
-    "server.py", "server_ext.py", "server_plus.py",
+    "enhancements.js", "ui-enhancements.css", "ui-enhancements.js", "doctor.js",
+    "doctor.css", "rag-control.js", "sw.js", "server.py", "server_ext.py",
+    "server_plus.py", "server_rag.py",
 ]
 for name in required_web:
     if not (root / "app" / name).is_file():
         bad.append(f"missing web module: app/{name}")
 for script in (
     '<script type="module" src="/app.js"></script>',
+    '<script type="module" src="/rag-control.js"></script>',
     '<script type="module" src="/enhancements.js"></script>',
     '<script type="module" src="/ui-enhancements.js"></script>',
+    '<script type="module" src="/doctor.js"></script>',
 ):
     if script not in index:
         bad.append(f"index.html missing module: {script}")
-for css in ("/enhancements.css", "/ui-enhancements.css"):
+if index.find('/rag-control.js') > index.find('/enhancements.js'):
+    bad.append("rag-control.js must load before enhancements.js so /rag-start intercepts native slash submission")
+for css in ("/enhancements.css", "/ui-enhancements.css", "/doctor.css"):
     if f'href="{css}"' not in index:
         bad.append(f"index.html missing stylesheet: {css}")
 if 'id="providerLimits"' not in index or 'id="slashPalette"' not in index:
@@ -108,8 +114,10 @@ api_js = (root / "app/api.js").read_text(encoding="utf-8")
 markdown_js = (root / "app/markdown.js").read_text(encoding="utf-8")
 enhancements_js = (root / "app/enhancements.js").read_text(encoding="utf-8")
 ui_js = (root / "app/ui-enhancements.js").read_text(encoding="utf-8")
+rag_control_js = (root / "app/rag-control.js").read_text(encoding="utf-8")
 server_ext_py = (root / "app/server_ext.py").read_text(encoding="utf-8")
 server_plus_py = (root / "app/server_plus.py").read_text(encoding="utf-8")
+server_rag_py = (root / "app/server_rag.py").read_text(encoding="utf-8")
 local_router_js = (root / "config/plugins/lazy-local-router.js").read_text(encoding="utf-8")
 service = (root / "systemd/opencode-web-client.service").read_text(encoding="utf-8")
 orchestrator = (root / "config/prompts/orchestrator.md").read_text(encoding="utf-8")
@@ -138,6 +146,9 @@ for endpoint in ("/session/active", "/session/${encodeURIComponent(sessionID)}/f
 for marker in ("/api/command", "/command`", "parseSlash", "slashPalette"):
     if marker not in enhancements_js:
         bad.append(f"slash-command capability missing: {marker}")
+for marker in ("parseRagStart", "/client-rag-start.json", "/rag-start", "sessionID"):
+    if marker not in rag_control_js:
+        bad.append(f"RAG slash-control capability missing: {marker}")
 for marker in ("account/rateLimits/read", "QWEN_FIVE_HOUR_LIMIT = 12_000", "QWEN_SEVEN_DAY_LIMIT = 40_000", "/client-limits.json"):
     if marker not in server_ext_py:
         bad.append(f"provider-limit capability missing: {marker}")
@@ -147,8 +158,11 @@ for marker in ("isFreeModel", "Бесплатные модели", "/client-dire
 for marker in ("OPENCODE_PROJECT_ROOTS", "directory-outside-allowed-roots"):
     if marker not in server_plus_py:
         bad.append(f"project browser boundary missing: {marker}")
-if "app/server_plus.py" not in service:
-    bad.append("web systemd service must launch server_plus.py")
+for marker in ("knowledge_base.runtime", "/api/mcp", "enabled\": True", "_persist_kb_enabled", "?{urlencode({'directory': directory})}"):
+    if marker not in server_rag_py:
+        bad.append(f"RAG lifecycle server capability missing: {marker}")
+if "app/server_rag.py" not in service:
+    bad.append("web systemd service must launch server_rag.py")
 if 'OPENCODE_LOCAL_PROVIDER || "ollama"' not in local_router_js or "OPENCODE_LOCAL_AUTO_START" not in local_router_js:
     bad.append("local router must be manual/opt-in and target the actual ollama provider")
 if "qwen3.8-max" not in orchestrator or "qwen3.6-flash" not in orchestrator or "RAG is optional" not in orchestrator:
@@ -260,5 +274,5 @@ if not any(rule.get("action") == "kb_knowledge_ingest" and rule.get("effect") ==
 
 if bad:
     raise SystemExit("\n".join(bad))
-print(f"Verification passed; Max->Flash router + optional bounded RAG + free-model/project UI; Alibaba Personal models: {len(expected)} current + {len(compat_ids)} compatibility ID")
+print(f"Verification passed; Max->Flash router + /rag-start bounded lifecycle + optional RAG + free-model/project UI; Alibaba Personal models: {len(expected)} current + {len(compat_ids)} compatibility ID")
 PY
