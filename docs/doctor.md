@@ -1,45 +1,115 @@
-# Doctor diagnostics
+# Doctor / Диагностика
 
-Web UI exposes `Диагностика`, and `/doctor` opens the same panel without creating a session.
+Doctor — встроенная host-level диагностика `custom_opencode`. Панель открывается кнопкой `Диагностика` или локальной командой:
 
-## Zero-token checks
+```text
+/doctor
+```
 
-Opening Doctor does **not** send an LLM prompt. It checks:
+Открытие Doctor само по себе не создаёт model prompt и не расходует LLM-токены.
+
+## Зачем он нужен
+
+Статически правильный JSON ещё не доказывает, что конкретная машина действительно имеет:
+
+- живой OpenCode backend;
+- доступный provider catalog;
+- рабочий Bailian Token Plan auth;
+- подключённый MCP;
+- живой Qdrant/corpus;
+- реально зарегистрированные RAG tools.
+
+Doctor проверяет эти слои отдельно, чтобы ошибка не маскировалась зелёным статусом соседнего компонента.
+
+## Бесплатные checks
+
+При открытии панели проверяются:
 
 - OpenCode backend HTTP availability;
 - rendered runtime `opencode.json`;
-- `bailian-cli/qwen3.8-max` and `bailian-cli/qwen3.6-flash` in the current model catalog;
-- Bailian Token Plan usage/auth availability through `bl usage token-plan --output json`;
-- routing config: primary Max, `fast-reader` Flash, no automatic `ollama/*` agents;
-- OpenCode `/api/mcp` status for `kb`;
-- local RAG executable discovery;
-- MCP protocol initialization and `list_tools` using the RAG venv;
+- наличие `bailian-cli/qwen3.8-max` и `bailian-cli/qwen3.6-flash` в model catalog;
+- Bailian Token Plan usage/auth через `bl usage token-plan --output json`;
+- routing config: Max primary, Flash `fast-reader`, отсутствие automatic `ollama/*` agents;
+- OpenCode MCP status для `kb`;
+- обнаружение локального RAG executable;
+- independent MCP protocol initialization + `list_tools`;
 - required RAG tools: `knowledge_search`, `knowledge_get`, `knowledge_sources`, `knowledge_status`;
-- `knowledge_status`: Qdrant, corpus counts, model idle-unload and Qdrant timeout.
+- `knowledge_status`: Qdrant/corpus/lifecycle settings.
 
-The independent MCP probe is intentional: a green OpenCode `kb: connected` alone does not prove that the expected tools can actually be discovered and called.
+Independent MCP probe сделан намеренно: `kb: connected` подтверждает transport, но не гарантирует, что ожидаемые tools действительно discover/call-ятся.
 
-## Manual smoke tests
+## Smoke tests
 
-No paid smoke is started automatically. The UI asks for confirmation before every model-backed smoke, and the server allows only one Doctor smoke at a time.
+Doctor не запускает платные smoke автоматически. Перед model-backed проверкой требуется явное подтверждение, одновременно выполняется только один smoke.
 
-- **RAG retrieval** — 0 LLM tokens. Starts a temporary MCP client and performs one local `knowledge_search(top_k=1)`. Local embedding/reranker compute is used.
-- **Qwen Flash inference** — paid. Temporary scratch session, one short prompt to `qwen3.6-flash`, then cleanup.
-- **Qwen Max inference** — paid. Temporary scratch session, one short prompt to `qwen3.8-max`, then cleanup.
-- **Router E2E** — paid. Max is instructed to delegate a bounded file-read task to `fast-reader`; Doctor verifies a child session, `qwen3.6-flash`, the random marker, and absence of Ollama in the child trace.
-- **Router + RAG E2E** — paid. Max delegates to `fast-reader`, which must call `kb_knowledge_search`; Doctor verifies child delegation, Flash, RAG tool use, final marker and no Ollama route.
+### RAG retrieval — 0 LLM tokens
 
-Smoke workspaces are allocated under the isolated quick-session root. Parent/child smoke sessions are deleted after the check, and the scratch child is removed with the same containment guard used by normal quick sessions.
+Создаёт временный MCP client и выполняет один `knowledge_search(top_k=1)`.
 
-The browser stores only the last smoke result/timestamp in localStorage. It does not persist credentials or prompt contents.
+Использует локальный embedding/reranker compute, но не Qwen/OpenAI API.
 
-## Failure interpretation
+### Qwen Flash inference — платно
 
-- Catalog PASS + inference FAIL: OpenCode config/catalog is present, but the provider request/auth/model runtime failed.
-- MCP `kb` FAIL/disabled + direct MCP probe PASS: RAG itself works, but OpenCode did not connect it; rerun install/update and inspect rendered MCP config.
-- MCP connected + direct MCP probe FAIL: the executable/server environment is broken even though OpenCode established a transport.
-- Qdrant FAIL: RAG must fail open; ordinary OpenCode/model work should continue.
-- Router E2E FAIL while Max/Flash inference PASS: provider access is good, but delegation policy/subagent execution is not working as intended.
-- Router + RAG FAIL while Router and RAG retrieval PASS: the selective RAG handoff path is the broken layer.
+Создаёт временную scratch session и делает один короткий запрос к `qwen3.6-flash`, затем очищает session/workspace.
 
-GitHub CI is not a substitute for this host-level check because provider credentials, the local Qdrant corpus, the RAG venv and the installed OpenCode V2 backend exist only on the actual machine.
+### Qwen Max inference — платно
+
+То же для `qwen3.8-max`.
+
+### Router E2E — платно
+
+Max получает bounded задачу, которую должен делегировать `fast-reader`. Doctor проверяет:
+
+- child session создана;
+- child model — `qwen3.6-flash`;
+- ожидаемый random marker получен;
+- в child trace нет Ollama.
+
+### Router + RAG E2E — платно
+
+Дополнительно проверяется фактический вызов `kb_knowledge_search` внутри delegated path.
+
+## Cleanup smoke tests
+
+Temporary smoke workspaces создаются под isolated quick-session root. Parent/child sessions удаляются после проверки; scratch cleanup использует тот же containment guard, что и обычные quick sessions.
+
+Browser сохраняет только последний статус/timestamp smoke в `localStorage`, без credentials и prompt payloads.
+
+## Как читать ошибки
+
+| Состояние | Наиболее вероятный слой |
+|---|---|
+| Catalog PASS, inference FAIL | provider auth/runtime/model request |
+| `kb` disabled/FAIL, direct MCP probe PASS | OpenCode MCP wiring/workspace connect |
+| `kb` connected, direct MCP probe FAIL | RAG executable/venv/protocol environment |
+| Qdrant FAIL | RAG backend; обычный OpenCode должен продолжить работу |
+| RAG retrieval PASS, Router+RAG FAIL | delegation/RAG handoff policy |
+| Max/Flash inference PASS, Router E2E FAIL | subagent/delegation path |
+
+## Рекомендуемый порядок диагностики
+
+Сначала бесплатные checks:
+
+```text
+1. открыть /doctor
+2. /rag-start quick
+3. /rag-start
+4. Doctor → RAG retrieval
+```
+
+Только если нужно доказать provider execution/routing:
+
+```text
+5. Flash inference
+6. Max inference
+7. Router E2E
+8. Router + RAG E2E
+```
+
+## Install self-test и Doctor
+
+Install self-test проверяет критический минимум автоматически после install/update: service, backend, web HTTP и, если RAG настроен, `rag-start quick`-эквивалент.
+
+Doctor шире: он даёт detailed snapshot и ручные E2E проверки.
+
+GitHub CI не заменяет Doctor, потому что local auth, OpenCode process, Qdrant corpus и RAG venv существуют только на конкретном host.
