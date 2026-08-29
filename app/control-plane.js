@@ -51,6 +51,12 @@ function renderDecision(decision) {
   row.querySelector('.permission-risk-badge').textContent = risk
   row.querySelector('.permission-risk-reason').textContent = decision.reason || ''
 
+  const summary = $('permissionSummary')
+  if (summary && typeof decision?.preview === 'string' && decision.preview.trim()) {
+    summary.textContent = decision.preview.trim()
+    summary.dataset.serverPreview = '1'
+  }
+
   const projectAllow = document.querySelector('#permissionBanner .permission-project-button')
   if (projectAllow) {
     const hard = risk === 'R3' || risk === 'R4'

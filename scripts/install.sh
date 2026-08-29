@@ -69,8 +69,9 @@ fi
 
 if [[ "$SELFTEST" != 0 ]]; then
   echo "==> Pre-install verification"
-  "$PYTHON3" -m py_compile "$ROOT/scripts/install-selftest.py"
+  "$PYTHON3" -m py_compile "$ROOT/scripts/install-selftest.py" "$ROOT/scripts/install-runtime-v3-selftest.py"
   "$ROOT/scripts/verify.sh"
+  "$ROOT/scripts/verify-runtime-v3.sh"
 fi
 
 install -d "$UNIT_DIR" "$BIN_DIR" "$SCRATCH_DIR" "$(dirname "$AUTH_FILE")"
@@ -103,8 +104,17 @@ text = open(source, encoding="utf-8").read()
 text = text.replace("__CONFIG_DIR__", config_dir)
 text = text.replace("__CUSTOM_OPENCODE_ROOT__", root)
 text = text.replace("__RAG_DISABLED__", rag_disabled)
-json.loads(text)
-open(target, "w", encoding="utf-8").write(text)
+config = json.loads(text)
+# Runtime V3 relies on native durable compaction and Code Mode. Code Mode keeps
+# MCP schemas out of the provider tool list until the namespace is actually used.
+config["compaction"] = {"auto": True, "keep": {"tokens": 12000}, "buffer": 24000}
+config["tool_output"] = {"max_lines": 1600, "max_bytes": 48000}
+kb = (((config.get("mcp") or {}).get("servers") or {}).get("kb"))
+if isinstance(kb, dict):
+    kb["codemode"] = True
+with open(target, "w", encoding="utf-8") as handle:
+    json.dump(config, handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
 PY
 fi
 
@@ -160,9 +170,8 @@ systemctl --user daemon-reload
 systemctl --user enable --now opencode-web-client.service
 if command -v opencode2 >/dev/null 2>&1; then
   # The shared V2 service is long-lived and does not inherit variables from a
-  # later custom-opencode client. Persist the canonical config path plus the
-  # variables required by providers/plugins. Service configuration itself must
-  # also be written through the standard shared-service root.
+  # later custom-opencode client. Persist only variables needed by providers and
+  # server-runtime plugins; arbitrary agent shells are scrubbed by the guard.
   SERVICE_OPENCODE=(env -u OPENCODE_CONFIG_DIR opencode2)
   SERVICE_ENV=(
     OPENCODE_CONFIG_DIR TOKEN_PLAN_API_KEY TOKEN_PLAN_ANTHROPIC_BASE_URL
@@ -170,7 +179,9 @@ if command -v opencode2 >/dev/null 2>&1; then
     OPENCODE_LOCAL_AUTO_START OPENCODE_LOCAL_PROVIDER
     OPENCODE_LOCAL_ROUTER_URL OPENCODE_LOCAL_ROUTER_START
     OPENCODE_LOCAL_ROUTER_LOG BAILIAN_CONFIG_PATH
-    QWEN_QUOTA_PROBE_ENABLED
+    QWEN_QUOTA_PROBE_ENABLED OPENCODE_WEB_PORT OPENCODE_SERVER_PASSWORD
+    OPENCODE_RUNTIME_PLUGIN_TOKEN OPENCODE_RUNTIME_PLUGIN_HOST
+    OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS OPENCODE_SECRET_PREFIXES
   )
   for name in "${SERVICE_ENV[@]}"; do
     value=${!name:-}
@@ -190,6 +201,7 @@ if [[ "$SELFTEST" != 0 ]]; then
     SELFTEST_ARGS+=(--rag-enabled)
   fi
   "$PYTHON3" "$ROOT/scripts/install-selftest.py" "${SELFTEST_ARGS[@]}"
+  "$PYTHON3" "$ROOT/scripts/install-runtime-v3-selftest.py"
 fi
 
 echo "Installed. Start OpenCode with: custom-opencode"

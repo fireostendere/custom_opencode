@@ -1,0 +1,39 @@
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - feat/server-runtime-v2
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Python version
+        run: python3 --version
+
+      - name: Full static and runtime verifier
+        run: bash scripts/verify.sh
+
+      - name: Runtime V3 architecture verifier
+        run: bash scripts/verify-runtime-v3.sh
+
+      - name: Fresh install and update regression
+        run: bash scripts/install-regression.sh
+
+      - name: Composed web-server regression
+        run: python3 scripts/web-server-smoke.py

@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+from types import SimpleNamespace
+
+ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/"app"))
+
+with tempfile.TemporaryDirectory() as temp:
+    root=Path(temp); db=root/"state"/"runtime.sqlite3"
+    os.environ["CUSTOM_OPENCODE_RUNTIME_DB"]=str(db)
+    os.environ["OPENCODE_REPO_EMBEDDINGS"]="hash"
+    os.environ["OPENCODE_SECRET_PREFIXES"]="MCP_;TOKEN_PLAN_"
+    os.environ["OPENCODE_SECRET_SCOPES"]="shell=MCP_SMOKE_TOKEN;task:t1:shell=MCP_SMOKE_TOKEN"
+    os.environ["MCP_SMOKE_TOKEN"]="never-serialize-this"
+    os.environ["OPENCODE_LOOP_LIMIT"]="3"
+    os.environ["OPENCODE_TOOL_ARTIFACT_THRESHOLD"]="256"
+    os.environ["OPENCODE_RESOURCE_SCHEDULER"]="auto"
+
+    from runtime_store import RuntimeStore
+    from repo_services import ArtifactStore,ContextService,RepoIndexer,git_snapshot
+    from runtime_v3 import (
+        AdaptiveResourceScheduler,BranchStateService,DynamicContextManager,ReplayService,
+        SandboxManager,ScopedSecretBroker,SemanticRepoIndexer,SharedRAGService,ToolGateway,
+    )
+
+    store=RuntimeStore(db); store.initialize(); project=root/"project"; project.mkdir()
+    subprocess.run(["git","init","-q",str(project)],check=True)
+    subprocess.run(["git","-C",str(project),"config","user.email","smoke@example.invalid"],check=True)
+    subprocess.run(["git","-C",str(project),"config","user.name","Runtime V3 Smoke"],check=True)
+    (project/"package.json").write_text(json.dumps({"scripts":{"test":"echo ok"},"dependencies":{"left-pad":"1.3.0"}}),encoding="utf-8")
+    (project/"dep.py").write_text("def helper():\n    return 1\n",encoding="utf-8")
+    (project/"src.py").write_text("from .dep import helper\n\nclass Engine:\n    def alpha(self):\n        return helper()\n",encoding="utf-8")
+    (project/"ui.js").write_text("import x from './util.js'\nexport function render(){ return x }\n",encoding="utf-8")
+    (project/"util.js").write_text("export const x = 1\n",encoding="utf-8")
+    subprocess.run(["git","-C",str(project),"add","."],check=True)
+    subprocess.run(["git","-C",str(project),"commit","-qm","base"],check=True)
+    baseline=git_snapshot(str(project))
+
+    indexer=SemanticRepoIndexer(store); index=indexer.refresh(str(project),force=True)
+    assert index["version"]==3
+    assert index["embeddingBackend"]=="hashed-lexical-v1"
+    assert any(s.get("qualified")=="Engine.alpha" for s in index["symbols"])
+    assert any(edge.get("from")=="ui.js" and str(edge.get("to")).endswith("util.js") for edge in index["dependencyGraph"])
+    assert index["gitGraph"] and index["gitGraph"][0]["sha"]==baseline["head"]
+    search=indexer.search(str(project),"Engine alpha")
+    assert any(hit.get("qualified")=="Engine.alpha" for hit in search["hits"])
+
+    (project/"src.py").write_text("from .dep import helper\n\nclass Engine:\n    def alpha(self):\n        value = helper()\n        return value + 1\n",encoding="utf-8")
+    diff=indexer.semantic_diff(str(project),baseline)
+    assert "src.py" in diff["changedFiles"]
+    assert any(item.get("qualified")=="Engine.alpha" for item in diff["changedSymbols"]), diff
+
+    broker=ScopedSecretBroker(); lease=broker.issue("MCP_SMOKE_TOKEN",scope="task:t1:shell",ttl=30)
+    assert broker.redeem(lease,scope="task:t1:shell")=="never-serialize-this"
+    assert "never-serialize-this" not in json.dumps(broker.snapshot())
+    try: broker.issue("TOKEN_PLAN_API_KEY",scope="untrusted")
+    except (PermissionError,KeyError): pass
+    else: raise AssertionError("secret scope was not enforced")
+
+    sandbox=SandboxManager()
+    assert sandbox.path_allowed("src.py",str(project),"repo-write",write=True)
+    assert not sandbox.path_allowed("../escape",str(project),"repo-write",write=True)
+    try: sandbox.wrap_shell("rm -rf build",str(project),"safe")
+    except PermissionError: pass
+    else: raise AssertionError("safe sandbox accepted destructive shell")
+    try: sandbox.wrap_shell("echo hi",str(project),"full-machine")
+    except PermissionError: pass
+    else: raise AssertionError("full-machine ran without explicit opt-in")
+
+    artifacts=ArtifactStore(store); gateway=ToolGateway(store,artifacts,sandbox,broker)
+    t1=store.create_task(task_id="t1",session_id="s1",project_dir=str(project),text="Engine alpha edit",metadata={"sandbox":"repo-write"},baseline=baseline)
+    t2=store.create_task(task_id="t2",session_id="s2",project_dir=str(project),text="other",metadata={"sandbox":"repo-write"},baseline=baseline)
+    store.transition(t1["id"],"submitted"); store.transition(t2["id"],"submitted")
+    assert gateway.before({"sessionID":"s1","tool":"edit","input":{"path":"src.py"}})["allow"]
+    try: gateway.before({"sessionID":"s2","tool":"edit","input":{"path":"src.py"}})
+    except RuntimeError as exc: assert "ownership" in str(exc)
+    else: raise AssertionError("patch ownership conflict was not blocked")
+    try: gateway.before({"sessionID":"s1","tool":"edit","input":{"path":"../escape"}})
+    except PermissionError: pass
+    else: raise AssertionError("sandbox traversal was accepted")
+    large=gateway.after({"sessionID":"s1","tool":"grep","result":"x"*2000})
+    assert large["replace"] and large["result"]["artifactID"]
+    duplicate=gateway.after({"sessionID":"s1","tool":"grep","result":"x"*2000})
+    assert duplicate["replace"] and duplicate["result"].get("deduplicated") is True
+    for attempt in range(3):
+        try: gateway.before({"sessionID":"s1","tool":"edit","input":{"path":"dep.py","content":"same"}})
+        except RuntimeError:
+            assert attempt==2; break
+    else: raise AssertionError("loop detector did not block repeated mutation")
+
+    class FakeRegistry:
+        def models(self):
+            return [
+                {"ref":"ollama/local","tools":True,"coding":.82,"planning":.7,"review":.7,"costClass":"local"},
+                {"ref":"bailian-cli/qwen3.8-max","tools":True,"coding":.93,"planning":.95,"review":.95,"costClass":"premium"},
+                {"ref":"bailian-cli/qwen3.6-flash","tools":True,"coding":.76,"planning":.72,"review":.7,"fastPath":True,"costClass":"cheap"},
+            ]
+    store.add_usage(task_id="t1",model_ref="bailian-cli/qwen3.8-max",stage="implementation",latency_ms=2000,success=True)
+    scheduler=AdaptiveResourceScheduler(FakeRegistry(),store)
+    scheduler.game_state=lambda:(False,[]); scheduler.pressure=lambda:(False,.1); scheduler.local_available=lambda force=False:True; scheduler.gpu_snapshot=lambda:{"utilization":10.,"vramPercent":20.,"pressureHigh":False}
+    decision=scheduler.decide({"id":"coder","route":"auto","localModel":"ollama/local","cloudModel":"bailian-cli/qwen3.8-max","requires":{"tools":True,"coding":.75}})
+    assert decision.selected_model in {"ollama/local","bailian-cli/qwen3.8-max"}
+    scheduler.gpu_snapshot=lambda:{"utilization":99.,"vramPercent":95.,"pressureHigh":True}
+    constrained=scheduler.decide({"id":"coder-gpu","route":"auto","localModel":"ollama/local","cloudModel":"bailian-cli/qwen3.8-max","requires":{"tools":True,"coding":.75}})
+    assert constrained.selected_model and not constrained.selected_model.startswith("ollama/")
+
+    class FakeFeatures:
+        def __init__(self): self.calls=[]; self.forks=0
+        def _session_directory(self,sid): return str(project)
+        def _canonical_directory(self,value): return str(Path(value).resolve())
+        @staticmethod
+        def _data(value): return value.get("data") if isinstance(value,dict) and "data" in value else value
+        @staticmethod
+        def _workspace_target(path,directory): return path
+        @staticmethod
+        def _rag_runtime(): return {"available":False}
+        def _backend_request_json(self,method,target,payload=None,timeout=20.0):
+            self.calls.append((method,target,payload))
+            if target.endswith("/context") and method=="GET": return [{"type":"message","text":"z"*450000}]
+            if target.endswith("/compact") and method=="POST": return {"ok":True}
+            if target.endswith("/summarize") and method=="POST": return {"ok":True}
+            if target.endswith("/fork") and method=="POST": self.forks+=1; return {"id":f"fork-{self.forks}"}
+            if "/message" in target and method=="GET": return [{"info":{"role":"assistant"},"parts":[{"type":"text","text":"recorded answer"}]}]
+            if target=="/api/mcp": return {"kb":{"status":"connected"}}
+            if target=="/api/mcp/resource": return [{"uri":"kb://status"}]
+            if target in {"/api/experimental/tool/ids","/experimental/tool/ids"}: return ["execute"]
+            raise RuntimeError((method,target,payload))
+    fake=FakeFeatures()
+
+    legacy_index=RepoIndexer(store); legacy_context=ContextService(store,legacy_index)
+    rag=SharedRAGService(store); manager=DynamicContextManager(store,indexer,rag)
+    runtime_stub=SimpleNamespace(REGISTRY=SimpleNamespace(
+        profiles=lambda:{"direct":{"contextBudget":32000}},
+        get=lambda ref:{"context":64000} if ref else None,
+    ),CONTEXT=legacy_context)
+    context=manager.envelope(fake,runtime_stub,"s1","run tests",rag_mode="off")
+    assert context["compaction"]["activeTokens"]>context["compaction"]["budgetTokens"]
+    assert context["compaction"]["compactionRequested"] is True
+    assert any(call[1].endswith("/compact") for call in fake.calls)
+    assert "Semantic repository matches" in context["text"]
+
+    replay=ReplayService(store,artifacts); captured=replay.capture(fake,store.get_task("t1"))
+    assert captured and captured["kind"]=="run-replay"
+    replayed=replay.replay("t1")
+    assert replayed["modelCalls"]==0 and replayed["recording"]
+
+    store.memory_set(str(project),"rule","source memory","policy")
+    source=store.create_task(session_id="source-session",project_dir=str(project),text="source")
+    target=store.create_task(session_id="target-session",project_dir=str(project),text="target")
+    branches=BranchStateService(store); branched=branches.branch(fake,"source-session")
+    assert branched["session"]["id"].startswith("fork-")
+    merged=branches.merge(fake,"source-session","target-session")
+    assert merged["ok"] and merged["sourceTasks"]>=1
+
+print("Runtime V3 smoke passed: AST/embeddings/diff + sandbox/broker/gateway + adaptive scheduler + compaction + replay/branching")

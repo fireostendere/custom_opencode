@@ -7,7 +7,13 @@ NODE=$(command -v node || true)
 if [[ -z "$PYTHON3" ]]; then echo "python3 is required" >&2; exit 1; fi
 if [[ -z "$NODE" ]]; then echo "node is required" >&2; exit 1; fi
 
-"$PYTHON3" -m py_compile "$ROOT/app/server.py" "$ROOT/app/server_ext.py" "$ROOT/app/server_plus.py" "$ROOT/app/server_rag.py" "$ROOT/scripts/rag-probe.py" "$ROOT/scripts/rag-start-smoke.py"
+"$PYTHON3" -m py_compile \
+  "$ROOT/app/server.py" "$ROOT/app/server_ext.py" "$ROOT/app/server_plus.py" \
+  "$ROOT/app/server_rag.py" "$ROOT/app/server_features.py" "$ROOT/app/server_control.py" \
+  "$ROOT/app/server_workflow.py" "$ROOT/app/server_runtime.py" "$ROOT/app/runtime_store.py" \
+  "$ROOT/app/model_registry.py" "$ROOT/app/repo_services.py" "$ROOT/app/runtime_resume.py" \
+  "$ROOT/scripts/rag-probe.py" "$ROOT/scripts/rag-start-smoke.py" "$ROOT/scripts/runtime-smoke.py" \
+  "$ROOT/scripts/runtime-resume-smoke.py"
 
 WORKSPACE_TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$WORKSPACE_TEST_ROOT"' EXIT
@@ -62,6 +68,8 @@ done
 "$NODE" "$ROOT/scripts/web-smoke.mjs"
 "$PYTHON3" "$ROOT/scripts/limits-smoke.py"
 "$PYTHON3" "$ROOT/scripts/rag-start-smoke.py"
+"$PYTHON3" "$ROOT/scripts/runtime-smoke.py"
+"$PYTHON3" "$ROOT/scripts/runtime-resume-smoke.py"
 for file in "$ROOT/scripts/"*.sh; do
   bash -n "$file"
 done
@@ -96,7 +104,9 @@ required_web = [
     "styles.css", "api.js", "markdown.js", "app.js", "enhancements.css",
     "enhancements.js", "ui-enhancements.css", "ui-enhancements.js", "doctor.js",
     "doctor.css", "rag-control.js", "sw.js", "server.py", "server_ext.py",
-    "server_plus.py", "server_rag.py",
+    "server_plus.py", "server_rag.py", "server_features.py", "server_control.py",
+    "server_workflow.py", "server_runtime.py", "runtime_store.py", "model_registry.py",
+    "repo_services.py", "runtime_resume.py", "runtime-dashboard.js", "runtime-dashboard.css",
 ]
 for name in required_web:
     if not (root / "app" / name).is_file():
@@ -106,13 +116,14 @@ for script in (
     '<script type="module" src="/rag-control.js"></script>',
     '<script type="module" src="/enhancements.js"></script>',
     '<script type="module" src="/ui-enhancements.js"></script>',
+    '<script type="module" src="/runtime-dashboard.js"></script>',
     '<script type="module" src="/doctor.js"></script>',
 ):
     if script not in index:
         bad.append(f"index.html missing module: {script}")
 if index.find('/rag-control.js') > index.find('/enhancements.js'):
     bad.append("rag-control.js must load before enhancements.js so /rag-start intercepts native slash submission")
-for css in ("/enhancements.css", "/ui-enhancements.css", "/doctor.css"):
+for css in ("/enhancements.css", "/ui-enhancements.css", "/doctor.css", "/runtime-dashboard.css"):
     if f'href="{css}"' not in index:
         bad.append(f"index.html missing stylesheet: {css}")
 if 'id="providerLimits"' not in index or 'id="slashPalette"' not in index:
@@ -131,9 +142,17 @@ markdown_js = (root / "app/markdown.js").read_text(encoding="utf-8")
 enhancements_js = (root / "app/enhancements.js").read_text(encoding="utf-8")
 ui_js = (root / "app/ui-enhancements.js").read_text(encoding="utf-8")
 rag_control_js = (root / "app/rag-control.js").read_text(encoding="utf-8")
+runtime_dashboard_js = (root / "app/runtime-dashboard.js").read_text(encoding="utf-8")
+runtime_dashboard_css = (root / "app/runtime-dashboard.css").read_text(encoding="utf-8")
 server_ext_py = (root / "app/server_ext.py").read_text(encoding="utf-8")
 server_plus_py = (root / "app/server_plus.py").read_text(encoding="utf-8")
 server_rag_py = (root / "app/server_rag.py").read_text(encoding="utf-8")
+server_runtime_py = (root / "app/server_runtime.py").read_text(encoding="utf-8")
+server_workflow_py = (root / "app/server_workflow.py").read_text(encoding="utf-8")
+runtime_store_py = (root / "app/runtime_store.py").read_text(encoding="utf-8")
+model_registry_py = (root / "app/model_registry.py").read_text(encoding="utf-8")
+repo_services_py = (root / "app/repo_services.py").read_text(encoding="utf-8")
+runtime_resume_py = (root / "app/runtime_resume.py").read_text(encoding="utf-8")
 local_router_js = (root / "config/plugins/lazy-local-router.js").read_text(encoding="utf-8")
 service = (root / "systemd/opencode-web-client.service").read_text(encoding="utf-8")
 orchestrator = (root / "config/prompts/orchestrator.md").read_text(encoding="utf-8")
@@ -177,14 +196,45 @@ for marker in ("OPENCODE_PROJECT_ROOTS", "directory-outside-allowed-roots"):
 for marker in ("knowledge_base.runtime", "/api/mcp", "disabled\": False", "_persist_kb_enabled", "?{urlencode({'location[directory]': directory})}"):
     if marker not in server_rag_py:
         bad.append(f"RAG lifecycle server capability missing: {marker}")
-if "app/server_rag.py" not in service:
-    bad.append("web systemd service must launch server_rag.py")
+if "app/server_rag.py" not in service or "app/server_workflow.py" not in service:
+    bad.append("web systemd service must launch the composed workflow/RAG server")
 if 'OPENCODE_LOCAL_PROVIDER || "ollama"' not in local_router_js or "OPENCODE_LOCAL_AUTO_START" not in local_router_js:
-    bad.append("local router must be manual/opt-in and target the actual ollama provider")
+    bad.append("local router must stay manual/opt-in outside server runtime profiles")
 if "qwen3.8-max" not in orchestrator or "qwen3.6-flash" not in orchestrator or "RAG is optional" not in orchestrator:
     bad.append("orchestrator must define Max -> Flash and optional-RAG policy")
 if not (root / "scripts/rag-mcp.sh").is_file():
     bad.append("missing portable RAG MCP launcher")
+if not (root / "scripts/runtime-smoke.py").is_file():
+    bad.append("missing runtime-v2 smoke test")
+if not (root / "scripts/runtime-resume-smoke.py").is_file():
+    bad.append("missing runtime resume smoke test")
+if not (root / "docs/server-runtime-v2.md").is_file():
+    bad.append("missing server runtime v2 documentation")
+
+for marker in ("/client-tasks.json", "/client-task-control.json", "/client-model-capabilities.json", "/client-resource-status.json", "Task Center", "qwen3.8-coder"):
+    if marker not in runtime_dashboard_js:
+        bad.append(f"runtime dashboard marker missing: {marker}")
+for marker in ("runtime-task", "runtime-profile", "runtime-state"):
+    if marker not in runtime_dashboard_css:
+        bad.append(f"runtime dashboard CSS marker missing: {marker}")
+for marker in ("CREATE TABLE IF NOT EXISTS tasks", "CREATE TABLE IF NOT EXISTS checkpoints", "CREATE TABLE IF NOT EXISTS events", "CREATE TABLE IF NOT EXISTS usage", "CREATE TABLE IF NOT EXISTS mailbox"):
+    if marker not in runtime_store_py:
+        bad.append(f"runtime durable-store marker missing: {marker}")
+for marker in ("qwen3.8-coder", "qwen3.8-orchestrated", "qwen3.8-review", "ResourceScheduler", "game process detected; route to cloud"):
+    if marker not in model_registry_py:
+        bad.append(f"model registry/scheduler marker missing: {marker}")
+for marker in ("class RepoIndexer", "class ContextService", "class ArtifactStore", "class VerificationPipeline", "class SecretBroker", "semantic_diff"):
+    if marker not in repo_services_py:
+        bad.append(f"repo/context service marker missing: {marker}")
+for marker in ("recover_inflight", "spawn_speculative", "mcp_gateway", "_create_worktree", "agent.loop_detected", "agent.stuck", "review.decision", "verification.code_failure"):
+    if marker not in server_runtime_py:
+        bad.append(f"server runtime integration marker missing: {marker}")
+for marker in ("runtime_resume.continuation_payload", "task.resume_continuation", "effective_files"):
+    if marker not in server_workflow_py:
+        bad.append(f"checkpoint resume wiring marker missing: {marker}")
+for marker in ("Continue the existing task", "dispatchCount", "attachmentsReplayed"):
+    if marker not in runtime_resume_py:
+        bad.append(f"checkpoint resume policy marker missing: {marker}")
 
 ipv4 = re.compile(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)")
 secrets = [
@@ -290,5 +340,5 @@ if not any(rule.get("action") == "kb_knowledge_ingest" and rule.get("effect") ==
 
 if bad:
     raise SystemExit("\n".join(bad))
-print(f"Verification passed; Max->Flash router + /rag-start bounded lifecycle + optional RAG + free-model/project UI; Alibaba Personal models: {len(expected)} current + {len(compat_ids)} compatibility ID")
+print(f"Verification passed; runtime-v2 + checkpoint resume + Max->Flash router + bounded RAG lifecycle + Alibaba Personal models: {len(expected)} current + {len(compat_ids)} compatibility ID")
 PY
