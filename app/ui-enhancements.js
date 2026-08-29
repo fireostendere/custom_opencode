@@ -21,7 +21,8 @@ async function request(path, options = {}) {
 }
 
 function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>'\"]/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '\"':'&quot;' })[char])
+  const entities = { '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }
+  return String(value ?? '').replace(/[&<>'"]/g, (char) => entities[char])
 }
 
 function loadSet(key) {
@@ -132,7 +133,7 @@ function providerSection({ id, label, entries, collapsed, providerLabels, orches
     special.type = 'button'
     special.className = 'choice orchestrated-model-choice'
     special.dataset.orchestratedModel = '1'
-    special.innerHTML = `<div class="choice-title">Qwen 3.8 Max · Orchestrated${document.documentElement.dataset.modelProfile === 'orchestrated' ? ' · ✓' : ''}</div><div class="choice-meta">Max → Flash worker · optional RAG</div>`
+    special.innerHTML = `<div class="choice-title">Qwen 3.8 Max · Оркестратор${document.documentElement.dataset.modelProfile === 'orchestrated' ? ' · ✓' : ''}</div><div class="choice-meta">Max → Flash worker · optional RAG</div>`
     body.append(special)
   }
 
