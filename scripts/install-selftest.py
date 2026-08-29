@@ -43,12 +43,12 @@ def retry(check: Callable[[], tuple[bool, str]], timeout: float = 20.0,
 
 
 def local_probe_host(bind_host: str) -> str:
+    raw = bind_host.strip("[]")
     try:
-        if ipaddress.ip_address(bind_host.strip("[]")).is_unspecified:
-            return "localhost"
+        address = ipaddress.ip_address(raw)
+        return "localhost" if address.is_unspecified else raw
     except ValueError:
-        pass
-    return bind_host
+        return bind_host
 
 
 def main(argv: list[str] | None = None) -> int:
