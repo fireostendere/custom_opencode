@@ -9,7 +9,7 @@
 - `Проекты → Папки на ПК` с filesystem allowlist и symlink containment;
 - только два пользовательских режима работы: `Build` и `Plan`;
 - model picker с избранным, сортировкой, сворачиваемыми провайдерами и отдельной группой бесплатных моделей;
-- отдельный вариант `Qwen 3.8 Max · Оркестратор` прямо в model picker;
+- отдельный вариант `Qwen 3.8 Max · Оркестрированная` прямо в model picker;
 - автоматическую очередь сообщений без ручного `Steer/Queue` переключателя;
 - одну контекстную кнопку composer: send / cancel / queue;
 - компактные permission cards с деталями под раскрытием;
@@ -37,14 +37,14 @@
 ```text
 Build | Plan
      +
-Qwen 3.8 Max · Оркестратор
+Qwen 3.8 Max · Оркестрированная
         ↓ при необходимости
 fast-reader → Qwen 3.6 Flash
         ↓ при corpus-relevant engineering lookup
 kb MCP → mcp-rag
 ```
 
-Любая обычная модель из picker работает напрямую. `Qwen 3.8 Max · Оркестратор` использует тот же Qwen Max как primary, но разрешает bounded delegation в `fast-reader` и optional RAG.
+Любая обычная модель из picker работает напрямую. `Qwen 3.8 Max · Оркестрированная` использует тот же Qwen Max как primary, но разрешает bounded delegation в `fast-reader` и optional RAG.
 
 Внутренние OpenCode agent IDs `build`, `plan`, `build-direct`, `plan-direct` являются implementation detail и не должны отображаться как дополнительные пользовательские режимы.
 
