@@ -57,8 +57,8 @@ function syncAgentSurface() {
     const id = button.dataset.agent || ''
     button.classList.toggle('ux-hidden-agent', id !== 'build' && id !== 'plan')
     button.classList.toggle('ux-mode-active', (id === 'build' || id === 'plan') && id === mode)
-    if (id === 'build') button.textContent = 'Build'
-    if (id === 'plan') button.textContent = 'Plan'
+    if (id === 'build' && button.textContent !== 'Build') button.textContent = 'Build'
+    if (id === 'plan' && button.textContent !== 'Plan') button.textContent = 'Plan'
   }
 }
 
@@ -87,7 +87,7 @@ function syncModelSurface() {
   const profile = currentProfile()
   document.documentElement.dataset.modelProfile = profile
   if (profile === 'orchestrated' && qwenMaxSelected()) {
-    button.textContent = ORCHESTRATED_MODEL.label
+    if (button.textContent !== ORCHESTRATED_MODEL.label) button.textContent = ORCHESTRATED_MODEL.label
     button.title = 'Qwen 3.8 Max с автоматической делегацией дешёвому read-only worker и optional RAG'
   } else {
     button.title = 'Выбрать модель'
@@ -113,7 +113,7 @@ function syncComposerAction() {
   const button = $('composerAction')
   if (!button) return
   const action = composerActionState({ running: isRunning(), hasPayload: hasPayload() })
-  button.textContent = action.symbol
+  if (button.textContent !== action.symbol) button.textContent = action.symbol
   button.title = action.title
   button.setAttribute('aria-label', action.title)
   button.dataset.action = action.kind
@@ -131,7 +131,8 @@ function syncPermission() {
   if (!detail || !summary) return
   const raw = detail.textContent || ''
   const title = $('permissionTitle')?.textContent?.trim() || 'Разрешение'
-  summary.textContent = permissionSummary(title, raw)
+  const compact = permissionSummary(title, raw)
+  if (summary.textContent !== compact) summary.textContent = compact
   if (raw !== lastPermissionRaw) {
     lastPermissionRaw = raw
     if (details) details.open = false
