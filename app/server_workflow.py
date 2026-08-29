@@ -10,6 +10,7 @@ import server_rag as rag
 
 
 _ORIGINAL_SEND = features._send_backend_prompt
+_ORIGINAL_PERMISSION_EVALUATE = getattr(rag, "evaluate_permission", None)
 
 
 def _file_parts(files: list[object]) -> list[dict[str, object]]:
@@ -57,8 +58,151 @@ def _send_with_project_context(session_id: str, text: str, files: list[object]) 
 features._send_backend_prompt = _send_with_project_context
 
 
+def _pending_permission(session_id: str, permission_id: str) -> tuple[str, dict[str, object] | None]:
+    try:
+        workspace = features._session_directory(session_id)
+        requests = features._permission_requests(workspace)
+    except Exception:
+        return "", None
+    request = next(
+        (
+            item for item in requests
+            if str(item.get("id") or item.get("requestID") or "") == permission_id
+            and str(item.get("sessionID") or "") == session_id
+        ),
+        None,
+    )
+    return workspace, request
+
+
+def _project_rule_for(workspace: str, request: dict[str, object]) -> dict[str, str] | None:
+    try:
+        settings = features.project_settings(workspace)
+    except Exception:
+        return None
+    for raw in settings.get("permissionRules") or []:
+        if isinstance(raw, dict) and features._rule_matches(raw, request):
+            return {str(key): str(value) for key, value in raw.items()}
+    return None
+
+
+def _risk_rank(value: object) -> int:
+    text = str(value or "R4").upper()
+    try:
+        return int(text.removeprefix("R"))
+    except ValueError:
+        return 4
+
+
+def _evaluate_permission_with_project_policy(session_id: str, permission_id: str) -> dict[str, object]:
+    """Apply explicit project rules without bypassing the global risk boundary.
+
+    Project deny always tightens policy. Project allow may auto-reply only for
+    R0-R2 as classified by the server control plane. R3/R4 remain interactive.
+    """
+    if _ORIGINAL_PERMISSION_EVALUATE is None:
+        return {"ok": True, "autoReplied": False, "effect": "ask", "reason": "control-plane evaluator unavailable"}
+
+    workspace, request = _pending_permission(session_id, permission_id)
+    if not workspace or request is None:
+        return _ORIGINAL_PERMISSION_EVALUATE(session_id, permission_id)
+    rule = _project_rule_for(workspace, request)
+    if not rule or rule.get("effect") == "ask":
+        return _ORIGINAL_PERMISSION_EVALUATE(session_id, permission_id)
+
+    try:
+        import control_plane
+        decision = control_plane.classify_permission(request, workspace=workspace)
+    except Exception:
+        # Never widen permissions if the deterministic control-plane classifier
+        # is unavailable. A deny remains safe; allow falls back to interactive.
+        if rule.get("effect") != "deny":
+            return _ORIGINAL_PERMISSION_EVALUATE(session_id, permission_id)
+        decision = {"risk": "R3", "preset": "project", "reason": "explicit project deny rule"}
+
+    if rule.get("effect") == "deny":
+        try:
+            features._permission_reply(request, "reject")
+        except Exception as exc:
+            return {"ok": False, "autoReplied": False, "effect": "deny", "risk": decision.get("risk", "R3"), "error": f"project deny reply failed: {type(exc).__name__}: {exc}"}
+        result = {
+            "ok": True,
+            "autoReplied": True,
+            "effect": "deny",
+            "reply": "reject",
+            "risk": decision.get("risk", "R3"),
+            "preset": decision.get("preset", "project"),
+            "reason": "explicit project deny rule",
+            "projectRule": True,
+        }
+    else:
+        if _risk_rank(decision.get("risk")) > 2:
+            result = dict(_ORIGINAL_PERMISSION_EVALUATE(session_id, permission_id))
+            result["projectRule"] = True
+            result["projectRuleSuppressed"] = "risk-boundary"
+            return result
+        try:
+            features._permission_reply(request, "once")
+        except Exception as exc:
+            return {"ok": False, "autoReplied": False, "effect": "ask", "risk": decision.get("risk", "R3"), "error": f"project allow reply failed: {type(exc).__name__}: {exc}"}
+        result = {
+            "ok": True,
+            "autoReplied": True,
+            "effect": "allow",
+            "reply": "once",
+            "risk": decision.get("risk", "R2"),
+            "preset": decision.get("preset", "project"),
+            "reason": f"explicit project allow rule; {decision.get('reason') or 'risk accepted'}",
+            "projectRule": True,
+        }
+
+    try:
+        import control_plane
+        control_plane.audit_decision(result, request=request, session_id=session_id, permission_id=permission_id)
+    except Exception:
+        pass
+    return result
+
+
+if _ORIGINAL_PERMISSION_EVALUATE is not None:
+    # server_rag.Handler resolves the module-global evaluator at request time,
+    # so this composes project rules into the existing authenticated endpoint.
+    rag.evaluate_permission = _evaluate_permission_with_project_policy
+
+
+def _apply_project_permission_policies() -> None:
+    """Let saved project rules work even when the PWA is closed."""
+    if _ORIGINAL_PERMISSION_EVALUATE is None:
+        return
+    with features.STATE_LOCK:
+        state = features._load_state_unlocked()
+        projects = dict(state.get("projects") or {})
+    for workspace, raw in projects.items():
+        settings = features._sanitize_settings(raw)
+        if not any((rule or {}).get("effect") in {"allow", "deny"} for rule in settings.get("permissionRules") or [] if isinstance(rule, dict)):
+            continue
+        try:
+            requests = features._permission_requests(workspace)
+        except Exception:
+            continue
+        for request in requests:
+            sid = str(request.get("sessionID") or "")
+            pid = str(request.get("id") or request.get("requestID") or "")
+            if not sid or not pid or _project_rule_for(workspace, request) is None:
+                continue
+            try:
+                _evaluate_permission_with_project_policy(sid, pid)
+            except Exception:
+                pass
+
+
+# Replace the earlier standalone project auto-replier. The workflow worker now
+# goes through exactly the same risk-gated evaluator as the browser control plane.
+features._apply_permission_policies = _apply_project_permission_policies
+
+
 class Handler(rag.Handler, features.Handler):
-    """RAG routes first, workflow routes second, base proxy last."""
+    """RAG/control-plane routes first, workflow routes second, base proxy last."""
 
     def json_response(self, value: object, status: int = 200) -> None:
         body = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
