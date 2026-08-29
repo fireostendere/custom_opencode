@@ -116,8 +116,9 @@ def main(argv: list[str] | None = None) -> int:
                 env=service_process_env,
             )
             service_env = json.loads(persisted.stdout) if persisted.returncode == 0 else {}
-            expected_dir = str(Path(os.environ.get(
-                "OPENCODE_CONFIG_DIR", Path.home() / ".config" / "opencode")).expanduser())
+            configured_dir = os.environ.get("OPENCODE_CONFIG_DIR") or str(
+                Path.home() / ".config" / "opencode")
+            expected_dir = str(Path(configured_dir).expanduser())
             missing_env = sorted(
                 name for name in (
                     "OPENCODE_CONFIG_DIR",
@@ -182,6 +183,17 @@ def main(argv: list[str] | None = None) -> int:
             item.get("id"): item.get("status") for item in plugins or []
             if isinstance(item, dict) and isinstance(item.get("id"), str)
         }
+        configured_dir = os.environ.get("OPENCODE_CONFIG_DIR") or str(
+            Path.home() / ".config" / "opencode")
+        plugin_dir = str(Path(configured_dir).expanduser() / "plugins")
+        failed_local_plugins = sorted(
+            Path(str((item.get("source") or {}).get("path"))).name
+            for item in plugins or []
+            if isinstance(item, dict)
+            and item.get("status") == "failed"
+            and isinstance(item.get("source"), dict)
+            and str((item.get("source") or {}).get("path", "")).startswith(plugin_dir + "/")
+        )
         required_plugins = {
             "config-backup",
             "keep-awake",
@@ -196,8 +208,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         add(
             "backend-plugin-catalog",
-            not inactive_plugins,
-            "6 custom plugins active" if not inactive_plugins else "Missing/inactive: " + ", ".join(inactive_plugins),
+            not inactive_plugins and not failed_local_plugins,
+            "6 custom plugins active; no failed local plugins"
+            if not inactive_plugins and not failed_local_plugins
+            else "; ".join(filter(None, [
+                "Missing/inactive: " + ", ".join(inactive_plugins) if inactive_plugins else "",
+                "Failed local: " + ", ".join(failed_local_plugins) if failed_local_plugins else "",
+            ])),
         )
     except Exception as exc:
         add("backend-plugin-catalog", False, f"{type(exc).__name__}: {exc}")

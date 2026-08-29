@@ -142,7 +142,10 @@ INSTALL_OPENCODE_CONFIG=1
 CUSTOM_OPENCODE_INSTALL_SELFTEST=1
 ```
 
-Если `OPENCODE_CONFIG_DIR` пуст, используется `~/.config/opencode`.
+Для shared OpenCode V2 оставляйте `OPENCODE_CONFIG_DIR` пустым: используется
+канонический global root `~/.config/opencode`. Installer отклоняет другой путь,
+потому что обычный shared launcher после рестарта иначе вернётся к стандартному
+профилю и runtime перестанет соответствовать установленному config.
 
 Если `OPENCODE_AUTH_FILE` пуст, используется `~/.local/share/opencode/auth.json`.
 

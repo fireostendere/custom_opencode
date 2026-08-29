@@ -18,12 +18,19 @@ set -a
 source "$ENV_FILE"
 set +a
 
-CONFIG_DIR=${OPENCODE_CONFIG_DIR:-"$HOME/.config/opencode"}
+SHARED_CONFIG_DIR="$HOME/.config/opencode"
+CONFIG_DIR=${OPENCODE_CONFIG_DIR:-"$SHARED_CONFIG_DIR"}
 UNIT_DIR="$HOME/.config/systemd/user"
 BIN_DIR="$HOME/.local/bin"
 SCRATCH_DIR=${OPENCODE_SCRATCH_DIRECTORY:-"$HOME/opencode-scratch"}
 AUTH_FILE=${OPENCODE_AUTH_FILE:-"$HOME/.local/share/opencode/auth.json"}
 SELFTEST=${CUSTOM_OPENCODE_INSTALL_SELFTEST:-1}
+
+if command -v opencode2 >/dev/null 2>&1 && [[ "$CONFIG_DIR" != "$SHARED_CONFIG_DIR" ]]; then
+  echo "OpenCode V2 shared service loads its global config from $SHARED_CONFIG_DIR" >&2
+  echo "Unset OPENCODE_CONFIG_DIR (or set it to that exact path) before installing." >&2
+  exit 1
+fi
 
 RAG_ROOT=${MCP_RAG_ROOT:-}
 if [[ -z "$RAG_ROOT" ]]; then
@@ -133,11 +140,9 @@ systemctl --user daemon-reload
 systemctl --user enable --now opencode-web-client.service
 if command -v opencode2 >/dev/null 2>&1; then
   # The shared V2 service is long-lived and does not inherit variables from a
-  # later custom-opencode client. Persist only the variables required to load
-  # this profile and its providers/plugins. Service configuration itself must
-  # be written through the standard shared-service root: otherwise an exported
-  # OPENCODE_CONFIG_DIR stores the registration inside the isolated profile and
-  # the ordinary launcher cannot see it after its next restart.
+  # later custom-opencode client. Persist the canonical config path plus the
+  # variables required by providers/plugins. Service configuration itself must
+  # also be written through the standard shared-service root.
   SERVICE_OPENCODE=(env -u OPENCODE_CONFIG_DIR opencode2)
   SERVICE_ENV=(
     OPENCODE_CONFIG_DIR TOKEN_PLAN_API_KEY TOKEN_PLAN_ANTHROPIC_BASE_URL

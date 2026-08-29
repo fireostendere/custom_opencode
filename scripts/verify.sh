@@ -73,6 +73,10 @@ if ! grep -q 'env -u OPENCODE_CONFIG_DIR opencode2' "$ROOT/scripts/install.sh"; 
   echo "installer must write registration through the shared service root" >&2
   exit 1
 fi
+if ! grep -q 'CONFIG_DIR.*!=.*SHARED_CONFIG_DIR' "$ROOT/scripts/install.sh"; then
+  echo "installer must reject a config root ignored by the shared V2 launcher" >&2
+  exit 1
+fi
 if ! grep -q 'QWEN_QUOTA_PROBE_ENABLED || "0"' "$ROOT/config/plugins/qwen-quota.js"; then
   echo "completion-based quota probe must remain explicit opt-in" >&2
   exit 1
