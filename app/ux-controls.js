@@ -235,7 +235,7 @@ function installComposerAction() {
     $('form')?.requestSubmit()
   })
 
-  $('form')?.addEventListener('submit', () => queueMicrotask(syncComposerAction))
+  $('form')?.addEventListener('submit', () => setTimeout(syncComposerAction, 0))
   $('input')?.addEventListener('input', syncComposerAction)
   const stop = $('stop')
   if (stop) new MutationObserver(syncComposerAction).observe(stop, { attributes: true, attributeFilter: ['hidden'] })
