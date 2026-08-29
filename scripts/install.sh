@@ -134,24 +134,27 @@ systemctl --user enable --now opencode-web-client.service
 if command -v opencode2 >/dev/null 2>&1; then
   # The shared V2 service is long-lived and does not inherit variables from a
   # later custom-opencode client. Persist only the variables required to load
-  # this profile and its providers/plugins. `service set env` writes the
-  # service-private, mode-0600 config and stops the service; start it once after
-  # all values are in place.
+  # this profile and its providers/plugins. Service configuration itself must
+  # be written through the standard shared-service root: otherwise an exported
+  # OPENCODE_CONFIG_DIR stores the registration inside the isolated profile and
+  # the ordinary launcher cannot see it after its next restart.
+  SERVICE_OPENCODE=(env -u OPENCODE_CONFIG_DIR opencode2)
   SERVICE_ENV=(
     OPENCODE_CONFIG_DIR TOKEN_PLAN_API_KEY TOKEN_PLAN_ANTHROPIC_BASE_URL
     TOKEN_PLAN_OPENAI_BASE_URL TOKEN_PLAN_PROBE_MODEL OLLAMA_BASE_URL
     OPENCODE_LOCAL_AUTO_START OPENCODE_LOCAL_PROVIDER
     OPENCODE_LOCAL_ROUTER_URL OPENCODE_LOCAL_ROUTER_START
     OPENCODE_LOCAL_ROUTER_LOG BAILIAN_CONFIG_PATH
+    QWEN_QUOTA_PROBE_ENABLED
   )
   for name in "${SERVICE_ENV[@]}"; do
     value=${!name:-}
     if [[ "$name" == OPENCODE_CONFIG_DIR ]]; then value=$CONFIG_DIR; fi
     if [[ -n "$value" ]]; then
-      timeout 15s opencode2 service set env "$name" "$value" >/dev/null
+      timeout 15s "${SERVICE_OPENCODE[@]}" service set env "$name" "$value" >/dev/null
     fi
   done
-  timeout 45s opencode2 service start >/dev/null
+  timeout 45s "${SERVICE_OPENCODE[@]}" service start >/dev/null
 fi
 systemctl --user restart opencode-web-client.service
 

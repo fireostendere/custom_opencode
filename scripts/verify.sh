@@ -65,8 +65,16 @@ done
 for file in "$ROOT/scripts/"*.sh; do
   bash -n "$file"
 done
-if ! grep -q 'opencode2 service set env' "$ROOT/scripts/install.sh"; then
+if ! grep -q 'service set env' "$ROOT/scripts/install.sh"; then
   echo "installer must persist the active V2 service environment" >&2
+  exit 1
+fi
+if ! grep -q 'env -u OPENCODE_CONFIG_DIR opencode2' "$ROOT/scripts/install.sh"; then
+  echo "installer must write registration through the shared service root" >&2
+  exit 1
+fi
+if ! grep -q 'QWEN_QUOTA_PROBE_ENABLED || "0"' "$ROOT/config/plugins/qwen-quota.js"; then
+  echo "completion-based quota probe must remain explicit opt-in" >&2
   exit 1
 fi
 

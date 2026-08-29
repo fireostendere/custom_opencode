@@ -7,6 +7,7 @@ import { startEvents } from "../events.js"
 const CONFIG_PATH = process.env.BAILIAN_CONFIG_PATH || join(homedir(), ".bailian", "config.json")
 const BASE = (process.env.TOKEN_PLAN_OPENAI_BASE_URL || "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1").replace(/\/$/, "")
 const MODEL = process.env.TOKEN_PLAN_PROBE_MODEL || "qwen3.8-max"
+const PROBE_ENABLED = /^(1|true|yes)$/i.test(process.env.QWEN_QUOTA_PROBE_ENABLED || "0")
 const OK_MS = 30 * 60_000
 const EXHAUSTED_MS = 10 * 60_000
 const SUFFIX_RE = / · Qwen[^·]*$/
@@ -48,6 +49,10 @@ export async function probe(apiKey) {
 export default Plugin.define({
   id: "qwen-quota",
   async setup(ctx) {
+    // A completion-based quota probe consumes model quota. Keep installation,
+    // service restarts and the default runtime strictly zero-LLM-token; users
+    // who explicitly want title decoration can opt in through the private env.
+    if (!PROBE_ENABLED) return
     const apiKey = loadKey()
     if (!apiKey) return
 

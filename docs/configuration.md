@@ -111,6 +111,11 @@ BAILIAN_CONFIG_PATH=
 
 Не печатайте key в диагностических логах и не переносите его в tracked JSON.
 
+`QWEN_QUOTA_PROBE_ENABLED=0` оставляет install/restart и обычный runtime без
+автоматического LLM inference. Значение `1` явно включает периодический
+one-token probe для decoration заголовков сессий; панель лимитов через Bailian
+CLI не требует включать этот probe.
+
 ## Локальный Ollama
 
 ```text

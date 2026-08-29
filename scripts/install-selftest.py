@@ -11,7 +11,9 @@ import argparse
 import http.client
 import ipaddress
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
@@ -99,6 +101,45 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         add("runtime-config", False, f"{type(exc).__name__}: {exc}")
 
+    opencode2 = shutil.which("opencode2")
+    if opencode2:
+        try:
+            service_process_env = os.environ.copy()
+            service_process_env.pop("OPENCODE_CONFIG_DIR", None)
+            persisted = subprocess.run(
+                [opencode2, "service", "get", "env"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10,
+                check=False,
+                env=service_process_env,
+            )
+            service_env = json.loads(persisted.stdout) if persisted.returncode == 0 else {}
+            expected_dir = str(Path(os.environ.get(
+                "OPENCODE_CONFIG_DIR", Path.home() / ".config" / "opencode")).expanduser())
+            missing_env = sorted(
+                name for name in (
+                    "OPENCODE_CONFIG_DIR",
+                    "TOKEN_PLAN_API_KEY",
+                    "TOKEN_PLAN_ANTHROPIC_BASE_URL",
+                )
+                if not isinstance(service_env, dict) or not service_env.get(name)
+            )
+            wrong_dir = isinstance(service_env, dict) and service_env.get("OPENCODE_CONFIG_DIR") != expected_dir
+            service_env_ok = not missing_env and not wrong_dir
+            if missing_env:
+                service_env_detail = "Missing: " + ", ".join(missing_env)
+            elif wrong_dir:
+                service_env_detail = "OPENCODE_CONFIG_DIR does not match installed profile"
+            else:
+                service_env_detail = "profile + provider environment persisted"
+            add("shared-service-env", service_env_ok, service_env_detail)
+        except Exception as exc:
+            add("shared-service-env", False, f"{type(exc).__name__}: {exc}")
+    else:
+        add("shared-service-env", False, "opencode2 not found")
+
     backend_models: set[str] = set()
 
     def backend_check() -> tuple[bool, str]:
@@ -133,6 +174,33 @@ def main(argv: list[str] | None = None) -> int:
         )
     except Exception as exc:
         add("backend-agent-catalog", False, f"{type(exc).__name__}: {exc}")
+
+    try:
+        plugins = plus._data(plus._backend_request_json(
+            "GET", server_rag._v2_workspace_target("/api/plugin", str(base.SCRATCH_ROOT)), timeout=5.0))
+        plugin_status = {
+            item.get("id"): item.get("status") for item in plugins or []
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        required_plugins = {
+            "config-backup",
+            "keep-awake",
+            "lazy-local-router",
+            "notify-win",
+            "qwen-quota",
+            "slow-cmd-watchdog",
+        }
+        inactive_plugins = sorted(
+            plugin_id for plugin_id in required_plugins
+            if plugin_status.get(plugin_id) != "active"
+        )
+        add(
+            "backend-plugin-catalog",
+            not inactive_plugins,
+            "6 custom plugins active" if not inactive_plugins else "Missing/inactive: " + ", ".join(inactive_plugins),
+        )
+    except Exception as exc:
+        add("backend-plugin-catalog", False, f"{type(exc).__name__}: {exc}")
 
     def web_check() -> tuple[bool, str]:
         host = local_probe_host(str(base.WEB_HOST))
