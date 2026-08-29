@@ -12,8 +12,9 @@ The branch contains the requested server/runtime architecture already present in
 
 The existing web UX also retains the requested interaction contract:
 
-- only Build and Plan are user-facing execution modes;
-- orchestration is a model profile, not a third mode;
+- Build is the only user-facing execution mode; the Build / Plan selector is hidden;
+- `plan` and `plan-direct` remain internal compatibility agents for old sessions/API only;
+- orchestration is a model profile, not a separate execution mode;
 - idle composer -> send;
 - running + empty composer -> cancel;
 - running + payload -> queue;
@@ -91,7 +92,7 @@ python3 scripts/integration-preflight.py
 python3 scripts/integration-preflight.py --json
 ```
 
-The preflight is static/model-free and does not touch Qdrant. It checks the frontend contract, Runtime V3 wiring, portable RAG launcher, non-destructive lifecycle markers and the UX contract.
+The preflight is static/model-free and does not touch Qdrant. It checks the Build-only frontend contract, hidden plan compatibility, Runtime V3 wiring, portable RAG launcher, non-destructive lifecycle markers and the UX contract.
 
 Then run the repository regression gates already shipped with Runtime V3, including `scripts/verify-runtime-v3.sh`, `scripts/runtime-v3-smoke.py`, `scripts/runtime-v3-worktree-smoke.py`, `scripts/runtime-completion-smoke.py`, `scripts/install-regression.sh`, `scripts/web-server-smoke.py` and `scripts/install-runtime-v3-selftest.py` as applicable to the host.
 

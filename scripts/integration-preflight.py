@@ -80,9 +80,23 @@ def run() -> dict[str, Any]:
             "action.kind === 'queue'",
             "action.kind === 'stop'",
             "button.textContent !== 'Build'",
-            "button.textContent !== 'Plan'",
             "dataset.modelProfile",
         ),
+        errors,
+    )
+    _check_file(
+        "app/access-fix.js",
+        (
+            "root.style.display = 'none'",
+            "modeSelect.value = 'build'",
+            "buildAgentForProfile",
+            "resolvedPermissions",
+        ),
+        errors,
+    )
+    _check_file(
+        "app/access-fix.css",
+        ("#agentControls", "display:none!important"),
         errors,
     )
     _check_file(
@@ -129,6 +143,17 @@ def run() -> dict[str, Any]:
     if missing_routes:
         errors.append("integration contract missing routes: " + ", ".join(missing_routes))
 
+    frontend = contract.get("frontend") if isinstance(contract.get("frontend"), dict) else {}
+    modes = [str(item) for item in (frontend.get("modes") or [])]
+    if modes != ["build"]:
+        errors.append("integration contract frontend modes must be Build-only")
+    if frontend.get("modeSelectorVisible") is not False:
+        errors.append("integration contract must keep the execution mode selector hidden")
+    if frontend.get("legacyPlanCompatibility") is not True:
+        errors.append("integration contract must preserve hidden plan compatibility")
+    if frontend.get("orchestrationLivesInModelProfile") is not True:
+        errors.append("integration contract must keep orchestration in the model profile")
+
     required_tools = {"knowledge_search", "knowledge_get", "knowledge_sources", "knowledge_status"}
     rag = contract.get("rag") if isinstance(contract.get("rag"), dict) else {}
     tools = {str(item) for item in (rag.get("requiredTools") or [])}
@@ -152,7 +177,11 @@ def run() -> dict[str, Any]:
             "ragNonDestructiveLifecycle": not any("server_rag.py" in error for error in errors),
             "runtimeV3": not any("runtime_v3.py" in error for error in errors),
             "durableServerTasks": not any("server_runtime.py" in error for error in errors),
-            "uxContract": not any("ux-controls.js" in error for error in errors),
+            "uxContract": not any(
+                marker in error
+                for error in errors
+                for marker in ("ux-controls.js", "access-fix.js", "access-fix.css", "frontend modes", "mode selector")
+            ),
         },
     }
 

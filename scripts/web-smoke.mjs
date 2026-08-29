@@ -190,7 +190,7 @@ for (const marker of ['/client-model-capabilities.json', '/client-tasks.json', '
 for (const marker of ['runtime-task', 'runtime-profile', 'runtime-state']) {
   if (!runtimeCss.includes(marker)) throw new Error(`Runtime dashboard styling marker missing: ${marker}`)
 }
-for (const marker of ['/internal/runtime-v3/status', '/internal/runtime-v3/search', 'Runtime V3']) {
+for (const marker of ['/client-runtime-v3.json', '/client-repo-index-v3.json', 'Runtime control plane']) {
   if (!runtimeV3Dashboard.includes(marker)) throw new Error(`Runtime V3 dashboard marker missing: ${marker}`)
 }
 
