@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#171717">
+  <title>Вход · OpenCode</title>
+  <link rel="stylesheet" href="/login.css">
+</head>
+<body>
+  <main class="login-shell">
+    <section class="login-card" aria-labelledby="loginTitle">
+      <div class="login-brand">
+        <div class="login-mark" aria-hidden="true"><span></span></div>
+        <div>
+          <div class="login-product">OpenCode</div>
+          <div class="login-kicker">Private engineering workspace</div>
+        </div>
+      </div>
+
+      <div class="login-copy">
+        <h1 id="loginTitle">Вход</h1>
+        <p>Авторизуйтесь, чтобы открыть рабочее пространство.</p>
+      </div>
+
+      <form id="loginForm" novalidate>
+        <label class="login-field">
+          <span>Логин</span>
+          <input id="username" name="username" type="text" inputmode="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+        </label>
+
+        <label class="login-field">
+          <span>Пароль</span>
+          <div class="password-field">
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+            <button id="togglePassword" class="password-toggle" type="button" aria-label="Показать пароль">Показать</button>
+          </div>
+        </label>
+
+        <label class="remember-row">
+          <input id="remember" type="checkbox" checked>
+          <span>
+            <strong>Запомнить вход</strong>
+            <small>Не спрашивать пароль на этом устройстве</small>
+          </span>
+        </label>
+
+        <div class="login-error" id="loginError" role="alert" hidden></div>
+        <button class="login-submit" id="loginSubmit" type="submit">
+          <span class="login-submit-label">Войти</span>
+          <span class="login-spinner" aria-hidden="true"></span>
+        </button>
+      </form>
+
+      <p class="login-security">Пароль не сохраняется в localStorage. При «Запомнить вход» браузер получает только HttpOnly-сессию.</p>
+    </section>
+  </main>
+  <script type="module" src="/login.js"></script>
+</body>
+</html>

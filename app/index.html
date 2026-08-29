@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="/control-plane.css">
   <link rel="stylesheet" href="/access-fix.css">
   <link rel="stylesheet" href="/sidebar-mobile.css">
+  <link rel="stylesheet" href="/auth.css">
   <title>OpenCode</title>
 </head>
 <body>
@@ -37,6 +38,13 @@
         <label class="check"><input id="showArchived" type="checkbox"> Архив</label>
       </div>
       <div class="sessions" id="sessions"><div class="loading">Загрузка…</div></div>
+      <div class="sidebar-account" id="sidebarAccount">
+        <div class="sidebar-account-copy">
+          <span class="sidebar-account-label">Аккаунт</span>
+          <span class="sidebar-account-user" id="accountUser">opencode</span>
+        </div>
+        <button class="logout-button" id="logoutButton" type="button">Выйти</button>
+      </div>
     </aside>
 
     <main class="main">
@@ -111,6 +119,7 @@
   <dialog id="confirmDialog"><div class="modal"><div class="modal-head"><h3 id="confirmTitle">Подтверждение</h3></div><p id="confirmText"></p><div class="modal-actions"><button id="confirmCancel">Отмена</button><button class="danger" id="confirmOk">Продолжить</button></div></div></dialog>
 
   <div class="toast" id="toast" hidden></div>
+  <script type="module" src="/auth-ui.js"></script>
   <script type="module" src="/app.js"></script>
   <script type="module" src="/rag-control.js"></script>
   <script type="module" src="/enhancements.js"></script>

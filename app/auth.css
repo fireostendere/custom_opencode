@@ -1,0 +1,30 @@
+.sidebar-account{
+  flex:0 0 auto;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin:0 8px 8px;
+  padding:10px 10px 9px;
+  border:1px solid var(--line);
+  border-radius:11px;
+  background:#1d1d1d;
+}
+.sidebar-account-copy{min-width:0;flex:1;display:flex;flex-direction:column;gap:1px}
+.sidebar-account-label{font-size:10px;line-height:1.25;text-transform:uppercase;letter-spacing:.07em;color:#777}
+.sidebar-account-user{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#cfcfcf}
+.logout-button{
+  flex:0 0 auto;
+  min-height:34px;
+  padding:6px 10px;
+  border:1px solid #454545;
+  background:#292929;
+  color:#bdbdbd;
+  border-radius:9px;
+  font-size:11px;
+}
+.logout-button:hover{color:#fff;background:#333}
+.logout-button:disabled{opacity:.6;cursor:wait}
+@media(max-width:760px){
+  .sidebar-account{margin-bottom:max(8px,env(safe-area-inset-bottom));min-height:54px}
+  .logout-button{min-height:38px;padding-inline:12px}
+}
