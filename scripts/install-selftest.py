@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import http.client
+import ipaddress
 import json
 from pathlib import Path
 import subprocess
@@ -39,6 +40,15 @@ def retry(check: Callable[[], tuple[bool, str]], timeout: float = 20.0,
         if last[0] or time.monotonic() >= deadline:
             return last
         time.sleep(interval)
+
+
+def local_probe_host(bind_host: str) -> str:
+    try:
+        if ipaddress.ip_address(bind_host.strip("[]")).is_unspecified:
+            return "localhost"
+    except ValueError:
+        pass
+    return bind_host
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -98,9 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     add("opencode-backend", ok, detail)
 
     def web_check() -> tuple[bool, str]:
-        host = str(base.WEB_HOST)
-        if host in {"0.0.0.0", "::", "[::]"}:
-            host = "127.0.0.1"
+        host = local_probe_host(str(base.WEB_HOST))
         connection = http.client.HTTPConnection(host, int(base.WEB_PORT), timeout=4)
         try:
             connection.request("GET", "/", headers={"Authorization": base.CLIENT_AUTH})
