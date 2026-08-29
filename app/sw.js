@@ -11,7 +11,13 @@ self.addEventListener('fetch',(event)=>{
   const req=event.request
   if(req.method!=='GET')return
   const url=new URL(req.url)
-  if(url.origin!==location.origin||url.pathname.startsWith('/api/')||url.pathname.startsWith('/auth/')||url.pathname.startsWith('/client-'))return
+  if(
+    url.origin!==location.origin||
+    url.pathname.startsWith('/api/')||
+    url.pathname.startsWith('/auth/')||
+    url.pathname.startsWith('/client-')||
+    url.pathname.startsWith('/internal/')
+  )return
 
   // HTML is authentication-sensitive. Never serve a cached app shell after a
   // logout or expired session; only cache immutable-ish static assets.
