@@ -51,4 +51,12 @@ if (enhancements.parseSlash('ordinary text') !== null) throw new Error('Slash pa
 if (enhancements.commandName({ name:'/init' }) !== 'init') throw new Error('Slash command normalization failed')
 if (enhancements.windowLabel(300) !== 'Сессия · 5ч' || enhancements.windowLabel(10080) !== 'Неделя · 7д') throw new Error('Rate-limit window labels failed')
 
-console.log('Web smoke passed: Markdown + prompt contracts + slash command parsing')
+const ui = await loadSource('app/ui-enhancements.js')
+const zeroCost = [{ input:0, output:0, cache:{ read:0, write:0 } }]
+const paidCost = [{ input:0.1, output:0, cache:{ read:0, write:0 } }]
+if (!ui.isFreeModel({ id:'dynamic-free', cost:zeroCost })) throw new Error('Zero-cost model was not grouped as free')
+if (ui.isFreeModel({ id:'paid-model', cost:paidCost })) throw new Error('Paid model was incorrectly grouped as free')
+if (!ui.isFreeModel({ id:'hy3-free' })) throw new Error('Free-ID fallback failed')
+if (!ui.isFreeModel({ id:'big-pickle' })) throw new Error('Big Pickle free fallback failed')
+
+console.log('Web smoke passed: Markdown + prompt contracts + slash parsing + free-model classification')
