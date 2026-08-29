@@ -106,7 +106,7 @@ if (uxControls.includes("button.textContent = 'Direct'")) throw new Error('Direc
 if (!uxControls.includes("event.target.closest('[data-orchestrated-model]')")) throw new Error('Orchestrated model click proxy missing')
 if (!uxControls.includes('syncOrchestratedChoiceLabel')) throw new Error('Orchestrated model variant label sync missing')
 if (!uxControls.includes("setNativeDelivery('queue')")) throw new Error('Automatic queue bridge missing')
-if (!uxControls.includes("addEventListener('submit', () => queueMicrotask(syncComposerAction))")) throw new Error('Composer action must resync after programmatic queue clear')
+if (!uxControls.includes("addEventListener('submit', () => setTimeout(syncComposerAction, 0))")) throw new Error('Composer action must resync after programmatic queue clear')
 if (!uxCss.includes('.delivery{display:none!important}')) throw new Error('Manual Steer/Queue control must stay hidden')
 if (!uxCss.includes('.native-composer-action{display:none!important}')) throw new Error('Native send/stop controls must never create a second visible composer action')
 if (!uxCss.includes('.composer-action.stop{background:#b23a3a')) throw new Error('Running empty composer must expose the red cancel action')
