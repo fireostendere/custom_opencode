@@ -92,6 +92,7 @@ fi
 
 "$PYTHON3" - "$ROOT" <<'PY'
 from pathlib import Path
+import ipaddress
 import json
 import re
 import sys
@@ -237,6 +238,28 @@ for marker in ("Continue the existing task", "dispatchCount", "attachmentsReplay
         bad.append(f"checkpoint resume policy marker missing: {marker}")
 
 ipv4 = re.compile(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)")
+documentation_networks = tuple(ipaddress.ip_network(value) for value in (
+    "192.0.2.0/24",
+    "198.51.100.0/24",
+    "203.0.113.0/24",
+))
+
+def allowed_ipv4_literal(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return True
+    if not isinstance(address, ipaddress.IPv4Address):
+        return True
+    return address.is_loopback or address.is_unspecified or any(address in network for network in documentation_networks)
+
+# Keep the exception set narrow. Private/LAN, link-local metadata and public
+# addresses are still treated as accidental hardcode and must fail verification.
+for accepted in ("127.0.0.1", "127.42.0.9", "0.0.0.0", "192.0.2.10", "198.51.100.20", "203.0.113.30"):
+    assert allowed_ipv4_literal(accepted), accepted
+for rejected in ("10.0.0.8", "192.168.1.5", "169.254.169.254", "8.8.8.8"):
+    assert not allowed_ipv4_literal(rejected), rejected
+
 secrets = [
     re.compile(r"\bgh[opsu]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bsk-(?:sp-|ws-)?[A-Za-z0-9][A-Za-z0-9_-]{15,}\b"),
@@ -250,7 +273,16 @@ for path in root.rglob("*"):
         continue
     text = path.read_text(encoding="utf-8", errors="ignore")
     rel = path.relative_to(root)
-    if ipv4.search(text): bad.append(f"network address: {rel}")
+    for match in ipv4.finditer(text):
+        literal = match.group(0)
+        if allowed_ipv4_literal(literal):
+            continue
+        try:
+            address = ipaddress.ip_address(literal)
+        except ValueError:
+            continue
+        bad.append(f"network address: {rel}: {address}")
+        break
     if any(pattern.search(text) for pattern in secrets): bad.append(f"secret: {rel}")
     if any(pattern.search(text) for pattern in personal_paths): bad.append(f"personal absolute path: {rel}")
 
