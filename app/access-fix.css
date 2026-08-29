@@ -92,6 +92,39 @@
   font-size:27px;
 }
 
+/* Dialogs should use the available viewport instead of clipping themselves at
+   arbitrary vh limits. The modal owns scrolling, not the page behind it. */
+dialog{
+  max-width:calc(100vw - 16px);
+  max-height:calc(100dvh - 16px);
+  overflow:hidden;
+}
+
+dialog > .modal{
+  max-height:calc(100dvh - 18px);
+  overflow:auto;
+  overscroll-behavior:contain;
+}
+
+dialog .modal.large,
+dialog .workflow-modal,
+dialog .workflow-modal.large{
+  max-height:calc(100dvh - 18px)!important;
+}
+
+#modelDialog .model-modal{
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+
+#modelDialog .model-catalog{
+  flex:1 1 auto;
+  min-height:0;
+  max-height:none!important;
+  overflow:auto;
+}
+
 @media(max-width:760px){
   .composer-meta{
     display:block;
@@ -138,5 +171,19 @@
     flex-basis:46px!important;
     width:46px!important;
     height:46px!important;
+  }
+
+  dialog{
+    width:calc(100vw - 12px)!important;
+    max-width:calc(100vw - 12px)!important;
+    max-height:calc(100dvh - 12px)!important;
+    margin:auto 6px;
+  }
+
+  dialog > .modal,
+  dialog .modal.large,
+  dialog .workflow-modal,
+  dialog .workflow-modal.large{
+    max-height:calc(100dvh - 14px)!important;
   }
 }
