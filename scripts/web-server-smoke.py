@@ -72,6 +72,8 @@ with tempfile.TemporaryDirectory() as temp:
 
         denied, _, _ = request("GET","/client-runtime-v3.json",authenticated=False)
         assert denied == 401, denied
+        remote_denied,_,_=request("GET","/client-remote-status.json",authenticated=False)
+        assert remote_denied==401,remote_denied
 
         status, content_type, body = request("GET","/client-runtime.json")
         assert status == 200, status
@@ -104,6 +106,21 @@ with tempfile.TemporaryDirectory() as temp:
         assert allowed==200
         assert json.loads(body).get("allow") is True
 
+        cache_forbidden,_,_=request("POST","/internal/runtime/tool-cache",{"op":"get","cwd":str(project),"tool":"read","input":{"path":"main.py"}},authenticated=False,internal=False)
+        assert cache_forbidden==403
+        miss,_,body=request("POST","/internal/runtime/tool-cache",{"op":"get","cwd":str(project),"tool":"read","input":{"path":"main.py"}},authenticated=False,internal=True)
+        assert miss==200 and json.loads(body).get("hit") is False
+        stored,_,_=request("POST","/internal/runtime/tool-cache",{"op":"put","cwd":str(project),"tool":"read","input":{"path":"main.py"},"result":{"text":"cached"}},authenticated=False,internal=True)
+        assert stored==200
+        hit,_,body=request("POST","/internal/runtime/tool-cache",{"op":"get","cwd":str(project),"tool":"read","input":{"path":"main.py"}},authenticated=False,internal=True)
+        assert hit==200 and json.loads(body).get("hit") is True and json.loads(body).get("result",{}).get("text")=="cached"
+
+        remote,_,body=request("GET","/client-remote-status.json")
+        assert remote==200
+        remote_payload=json.loads(body)
+        assert remote_payload["actions"]["task"]==["cancel","pause","resume"]
+        assert remote_payload["actions"]["permission"]==["once","reject"]
+
         status, _, body = request("GET","/client-resource-status.json")
         assert status == 200
         resources = json.loads(body)
@@ -114,4 +131,4 @@ with tempfile.TemporaryDirectory() as temp:
         server.server_close()
         thread.join(timeout=5)
 
-print("Composed web-server smoke passed: static UI + auth/internal boundary + Runtime V2/V3 + semantic index + MCP gateway")
+print("Composed web-server smoke passed: auth + Runtime V2/V3 + semantic index + MCP + pre-exec cache + remote actions")
