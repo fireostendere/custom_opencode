@@ -1,4 +1,4 @@
-import { define } from "@opencode-ai/plugin/v2/promise"
+import { Plugin } from "@opencode-ai/plugin"
 
 const WEB_HOST = process.env.OPENCODE_RUNTIME_PLUGIN_HOST || "127.0.0.1"
 const WEB_PORT = process.env.OPENCODE_WEB_PORT || "4098"
@@ -84,7 +84,7 @@ async function wrapCachedTools(ctx) {
   })
 }
 
-export default define({
+export default Plugin.define({
   id: "custom-opencode.server-runtime-guard",
   setup: async (ctx)=>{
     await wrapCachedTools(ctx)
