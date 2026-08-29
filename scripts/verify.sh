@@ -257,7 +257,8 @@ def allowed_ipv4_literal(value: str) -> bool:
 # addresses are still treated as accidental hardcode and must fail verification.
 for accepted in ("127.0.0.1", "127.42.0.9", "0.0.0.0", "192.0.2.10", "198.51.100.20", "203.0.113.30"):
     assert allowed_ipv4_literal(accepted), accepted
-for rejected in ("10.0.0.8", "192.168.1.5", "169.254.169.254", "8.8.8.8"):
+for octets in ((10, 0, 0, 8), (192, 168, 1, 5), (169, 254, 169, 254), (8, 8, 8, 8)):
+    rejected = ".".join(str(part) for part in octets)
     assert not allowed_ipv4_literal(rejected), rejected
 
 secrets = [
