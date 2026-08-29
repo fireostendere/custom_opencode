@@ -27,6 +27,8 @@ OPENCODE_PERMISSION_AUDIT=1
 OPENCODE_BACKEND_URL=http://localhost:9
 OPENCODE_BACKEND_USERNAME=opencode
 OPENCODE_BACKEND_PASSWORD=test
+OPENCODE_RUNTIME_PLUGIN_HOST=127.0.0.1
+OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS=1800
 MCP_RAG_ENABLED=0
 INSTALL_OPENCODE_CONFIG=1
 CUSTOM_OPENCODE_INSTALL_SELFTEST=0
@@ -56,10 +58,12 @@ CONFIG="$HOME_DIR/.config/opencode/opencode.json"
 SERVICE="$HOME_DIR/.config/systemd/user/opencode-web-client.service"
 WRAPPER="$HOME_DIR/.local/bin/custom-opencode"
 UPDATER="$HOME_DIR/.local/bin/custom-opencode-update"
+RUNTIME_GUARD="$HOME_DIR/.config/opencode/plugins/server-runtime-guard.js"
 [[ -f "$CONFIG" ]] || { echo "fresh install did not render config" >&2; exit 1; }
 [[ -f "$SERVICE" ]] || { echo "fresh install did not render systemd unit" >&2; exit 1; }
 [[ -x "$WRAPPER" ]] || { echo "fresh install did not create executable wrapper" >&2; exit 1; }
 [[ -L "$UPDATER" ]] || { echo "fresh install did not create updater symlink" >&2; exit 1; }
+[[ -f "$RUNTIME_GUARD" ]] || { echo "fresh install did not install runtime guard plugin" >&2; exit 1; }
 grep -Fq "$COPY/app/server_workflow.py" "$SERVICE"
 grep -Fq 'systemctl --user enable --now opencode-web-client.service' "$LOG"
 grep -Fq 'systemctl --user restart opencode-web-client.service' "$LOG"
@@ -74,9 +78,15 @@ for marker in ('__CONFIG_DIR__','__CUSTOM_OPENCODE_ROOT__','__RAG_DISABLED__'):
 config = json.loads(text)
 kb = ((config.get('mcp') or {}).get('servers') or {}).get('kb') or {}
 assert kb.get('disabled') is True
+assert kb.get('codemode') is True
 assert config.get('model') == 'bailian-cli/qwen3.8-max'
+assert config.get('compaction') == {'auto': True, 'keep': {'tokens': 12000}, 'buffer': 24000}
+assert config.get('tool_output') == {'max_lines': 1600, 'max_bytes': 48000}
 assert str(root / 'scripts' / 'rag-mcp.sh') in (kb.get('command') or [])
 PY
+
+grep -Fq 'ctx.tool.hook("execute.before"' "$RUNTIME_GUARD"
+grep -Fq '/internal/runtime/context' "$RUNTIME_GUARD"
 
 # Update regression: use a fake git shim so the script proves its exact
 # origin/main fast-forward contract without touching the checked-out branch.
@@ -105,4 +115,14 @@ grep -Fxq 'git merge --ff-only FETCH_HEAD' "$LOG"
 grep -Fq 'systemctl --user restart opencode-web-client.service' "$LOG"
 grep -Fq 'Updated from origin/main' "$TMP/update.out"
 
-echo "Install/update regression passed: isolated fresh render + pinned origin/main updater + service restart"
+# The update must preserve the V3 render and plugin installation path.
+python3 - "$CONFIG" <<'PY'
+import json,sys
+config=json.load(open(sys.argv[1],encoding='utf-8'))
+assert config['mcp']['servers']['kb']['codemode'] is True
+assert config['compaction']['auto'] is True
+assert config['tool_output']['max_bytes'] == 48000
+PY
+[[ -f "$RUNTIME_GUARD" ]]
+
+echo "Install/update regression passed: isolated V3 render + Code Mode/compaction + pinned origin/main updater + service restart"
