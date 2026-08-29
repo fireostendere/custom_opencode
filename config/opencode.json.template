@@ -89,7 +89,7 @@
           }
         },
         "qwen3.8-orchestrated": {
-          "modelID": "qwen3.8-max",
+          "id": "qwen3.8-max",
           "name": "Qwen3.8 Max · Orchestrated",
           "capabilities": {
             "tools": true,
@@ -200,7 +200,7 @@
           }
         },
         "qwen3.8-max-preview": {
-          "modelID": "qwen3.8-max",
+          "id": "qwen3.8-max",
           "name": "Qwen3.8 Max Preview (legacy session alias)",
           "capabilities": {
             "tools": true,
