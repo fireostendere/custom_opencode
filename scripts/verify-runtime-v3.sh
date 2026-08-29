@@ -7,13 +7,16 @@ NODE=$(command -v node || true)
 [[ -n "$NODE" ]] || { echo "node is required" >&2; exit 1; }
 
 "$PYTHON3" -m py_compile \
-  "$ROOT/app/runtime_v3.py" "$ROOT/app/runtime_v3_ext.py" \
+  "$ROOT/app/runtime_v3.py" "$ROOT/app/runtime_v3_ext.py" "$ROOT/app/runtime_completion.py" \
   "$ROOT/app/server_workflow.py" "$ROOT/scripts/runtime-v3-smoke.py" \
-  "$ROOT/scripts/runtime-v3-worktree-smoke.py" "$ROOT/scripts/install-runtime-v3-selftest.py"
+  "$ROOT/scripts/runtime-v3-worktree-smoke.py" "$ROOT/scripts/runtime-completion-smoke.py" \
+  "$ROOT/scripts/install-runtime-v3-selftest.py"
 "$NODE" --check "$ROOT/config/plugins/server-runtime-guard.js"
 "$NODE" --check "$ROOT/app/runtime-v3-dashboard.js"
+"$NODE" --check "$ROOT/app/control-plane.js"
 "$PYTHON3" "$ROOT/scripts/runtime-v3-smoke.py"
 "$PYTHON3" "$ROOT/scripts/runtime-v3-worktree-smoke.py"
+"$PYTHON3" "$ROOT/scripts/runtime-completion-smoke.py"
 
 for marker in \
   'config["compaction"]' \
@@ -28,8 +31,10 @@ for marker in \
   'ctx.session.hook("request"' \
   'ctx.tool.hook("execute.before"' \
   'ctx.tool.hook("execute.after"' \
+  'ctx.tool.transform' \
   'ctx.shell.hook("create.before"' \
   '/internal/runtime/tool-before' \
+  '/internal/runtime/tool-cache' \
   '/internal/runtime/shell'; do
   grep -Fq "$marker" "$ROOT/config/plugins/server-runtime-guard.js" || { echo "runtime guard hook missing: $marker" >&2; exit 1; }
 done
@@ -41,8 +46,10 @@ root=Path(sys.argv[1])
 required={
   "app/runtime_v3.py":["class SemanticRepoIndexer","class DynamicContextManager","class ToolGateway","class ScopedSecretBroker","class SandboxManager","class AdaptiveResourceScheduler","class SharedRAGService","class ReplayService","class BranchStateService"],
   "app/runtime_v3_ext.py":["notification.sent","run-replay","client-mcp-gateway-v3.json","client-runtime-telemetry.json","client-task-sandbox.json","client-worktree-merge.json","worktree.merged","_ownership_root_wrapped"],
-  "app/server_workflow.py":["runtime_v3.install","runtime_v3_ext.install","runtime_v3.context_envelope"],
-  "app/runtime-v3-dashboard.js":["client-runtime-telemetry.json","client-repo-index-v3.json","client-session-branch.json","client-session-merge.json","client-task-sandbox.json","client-replay.json"],
+  "app/runtime_completion.py":["permission_preview","wasted_retries","tool-input-v3","branch-state-merged","client-remote-status.json","client-remote-action.json"],
+  "app/server_workflow.py":["runtime_v3.install","runtime_v3_ext.install","runtime_completion.install","runtime_v3.context_envelope"],
+  "app/runtime-v3-dashboard.js":["client-runtime-telemetry.json","client-repo-index-v3.json","client-session-branch.json","client-session-merge.json","client-task-sandbox.json","client-replay.json","client-worktree-merge.json"],
+  "app/control-plane.js":["decision.preview","serverPreview"],
 }
 for name,markers in required.items():
     text=(root/name).read_text(encoding="utf-8")
@@ -51,8 +58,6 @@ for name,markers in required.items():
 index=(root/"app/index.html").read_text(encoding="utf-8")
 for marker in ('/runtime-v3-dashboard.js','/runtime-v3-dashboard.css'):
     if marker not in index: raise SystemExit(f"missing Runtime V3 UI asset: {marker}")
-# Emulate the install-time canonical OpenCode V2 render and verify settings that
-# intentionally remain server-side rather than becoming UI toggles.
 text=(root/"config/opencode.json.template").read_text(encoding="utf-8")
 text=text.replace("__CONFIG_DIR__","/tmp/opencode").replace("__CUSTOM_OPENCODE_ROOT__","/tmp/custom-opencode").replace("__RAG_DISABLED__","true")
 config=json.loads(text)
