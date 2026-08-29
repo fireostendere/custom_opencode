@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Production web entrypoint composing RAG and advanced workflow features.
-
-Local model lifecycle/routing is intentionally out of scope for this layer.
-Existing manual Ollama selection remains owned by the base OpenCode config.
-"""
+"""Production web entrypoint composing RAG and persistent workflow features."""
 from __future__ import annotations
 
 import json
@@ -14,74 +10,6 @@ import server_rag as rag
 
 
 _ORIGINAL_SEND = features._send_backend_prompt
-
-
-def _local_automation_disabled(*_args: object, **_kwargs: object) -> dict[str, object]:
-    """Compatibility no-op for stale Auto queue/profile state.
-
-    Never probes, starts, unloads, or switches a local model. A stale queued
-    item simply runs with the session's already selected model.
-    """
-    return {
-        "enabled": False,
-        "route": "unchanged",
-        "applied": False,
-        "reason": "local-model-automation-disabled",
-    }
-
-
-def _resource_automation_disabled(*_args: object, **_kwargs: object) -> dict[str, object]:
-    return {
-        "enabled": False,
-        "busy": None,
-        "localAvailable": None,
-        "reason": "local-model-automation-disabled",
-    }
-
-
-# server_features originally grew an experimental Auto local/cloud route while
-# this feature batch was being developed. Keep the compatibility symbols so old
-# persisted queue rows cannot fail, but make them side-effect free. In
-# particular these functions must not contact Ollama, inspect GPU/game load,
-# unload VRAM, start a router, or switch the selected model.
-features.auto_route = _local_automation_disabled
-features.resource_snapshot = _resource_automation_disabled
-
-
-def _strip_local_automation(settings: dict[str, object]) -> dict[str, object]:
-    """Return project settings without any automatic local-model behavior."""
-    result = dict(settings)
-    result.pop("autoRouting", None)
-    default_model = str(result.get("defaultModel") or "inherit")
-    if default_model == "auto" or default_model.startswith("ollama/"):
-        result["defaultModel"] = "inherit"
-    return result
-
-
-def _project_settings_payload(session_id: str) -> dict[str, object]:
-    directory = features._session_directory(session_id)
-    return {
-        "directory": directory,
-        "settings": _strip_local_automation(features.project_settings(directory)),
-    }
-
-
-def _update_project_settings(payload: dict[str, object]) -> dict[str, object]:
-    directory = features._resolve_directory(payload=payload)
-    source = payload.get("settings") if isinstance(payload.get("settings"), dict) else payload
-    update = dict(source) if isinstance(source, dict) else {}
-    update.pop("autoRouting", None)
-    default_model = str(update.get("defaultModel") or "inherit")
-    if default_model == "auto" or default_model.startswith("ollama/"):
-        update["defaultModel"] = "inherit"
-    # Preserve the convenience action used by the permission card.
-    if isinstance(payload.get("addPermission"), dict):
-        update["addPermission"] = payload["addPermission"]
-    if "removePermissionIndex" in payload:
-        update["removePermissionIndex"] = payload["removePermissionIndex"]
-    value = features.update_project_settings(directory, update)
-    value["settings"] = _strip_local_automation(dict(value.get("settings") or {}))
-    return value
 
 
 def _file_parts(files: list[object]) -> list[dict[str, object]]:
@@ -141,28 +69,6 @@ class Handler(rag.Handler, features.Handler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self) -> None:
-        parsed = urlsplit(self.path)
-        if parsed.path == "/client-auto-route.json":
-            if not self.authenticated():
-                return
-            self.json_response(_local_automation_disabled())
-            return
-        if parsed.path == "/client-project-settings.json":
-            if not self.authenticated():
-                return
-            try:
-                from urllib.parse import parse_qs
-                params = parse_qs(parsed.query)
-                session_id = (params.get("sessionID") or [""])[0]
-                if session_id:
-                    self.json_response(_project_settings_payload(session_id))
-                    return
-            except Exception as exc:
-                self._feature_error(exc)
-                return
-        super().do_GET()
-
     def do_POST(self) -> None:
         parsed = urlsplit(self.path)
         if parsed.path == "/client-send.json":
@@ -179,15 +85,6 @@ class Handler(rag.Handler, features.Handler):
                     raise ValueError("empty message")
                 result = _send_with_project_context(session_id, text, files)
                 self.json_response({"ok": True, "result": result})
-            except Exception as exc:
-                self._feature_error(exc)
-            return
-        if parsed.path == "/client-project-settings.json":
-            if not self.authenticated():
-                return
-            try:
-                payload = self._feature_body()
-                self.json_response(_update_project_settings(payload))
             except Exception as exc:
                 self._feature_error(exc)
             return
