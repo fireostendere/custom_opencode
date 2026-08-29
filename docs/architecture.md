@@ -32,10 +32,10 @@
 - child/subagent sessions скрыты из обычного списка;
 - isolated quick-session workspaces;
 - параллельные running states;
-- automatic delivery: send / stop / queue без ручного Steer/Queue toggle;
+- automatic delivery: send / cancel / queue без ручного Steer/Queue toggle;
 - одна контекстная action button в composer;
-- только `Direct/Plan` как пользовательские execution modes;
-- orchestration выбирается специальным `Qwen 3.8 Max · Оркестратор` через model picker;
+- только `Build/Plan` как пользовательские execution modes;
+- orchestration выбирается специальной моделью `Qwen 3.8 Max · Оркестрированная` через model picker;
 - favorites-first model sorting и collapsible providers;
 - compact permission cards с raw payload под раскрытием;
 - rename/delete/fork/duplicate/project handoff;
@@ -116,7 +116,7 @@ Browser:
 
 После выбора создаётся обычная OpenCode session с `location.directory` выбранного проекта.
 
-## Direct / Plan и model picker
+## Build / Plan и model picker
 
 Видимый search input удалён, чтобы model picker на мобильном не вызывал клавиатуру.
 
@@ -127,7 +127,7 @@ Catalog UI сохраняет favorites и предоставляет collapsibl
 Пользователь выбирает только execution mode:
 
 ```text
-Direct | Plan
+Build | Plan
 ```
 
 и отдельно модель.
@@ -135,7 +135,7 @@ Direct | Plan
 Обычный model entry означает direct execution выбранной моделью. Специальный UI entry:
 
 ```text
-Qwen 3.8 Max · Оркестратор
+Qwen 3.8 Max · Оркестрированная
 ```
 
 включает orchestration поверх того же `bailian-cli/qwen3.8-max`.
@@ -143,10 +143,10 @@ Qwen 3.8 Max · Оркестратор
 Внутренняя матрица OpenCode agents:
 
 ```text
-обычная модель + Direct        → build-direct
+обычная модель + Build         → build-direct
 обычная модель + Plan          → plan-direct
-Оркестратор + Direct           → build
-Оркестратор + Plan             → plan
+Оркестрированная + Build       → build
+Оркестрированная + Plan        → plan
 ```
 
 Эти agent IDs являются implementation detail и скрыты за двумя пользовательскими mode controls.
@@ -157,7 +157,7 @@ Qwen 3.8 Max · Оркестратор
 
 ```text
 нет active run                  → send
-active run + empty composer     → stop
+active run + empty composer     → cancel current run
 active run + text/attachment    → queue
 ```
 
@@ -165,7 +165,7 @@ active run + text/attachment    → queue
 
 ## Permissions
 
-Permission request может содержать большой command/resource payload. Web UI не показывает этот payload целиком в основной строке. На поверхности остаётся короткий action summary; полный raw detail находится в collapsible block с bounded scroll area.
+Permission request может содержать большой command/resource payload. Web UI не показывает этот payload целиком в основной строке. На поверхности остаётся короткий action summary максимум в две строки; полный raw detail находится в collapsible block с bounded scroll area.
 
 Кнопки `Отклонить / Разрешить / Всегда` продолжают работать через native OpenCode permission reply API.
 
