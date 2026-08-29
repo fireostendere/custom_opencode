@@ -9,54 +9,53 @@
 - `Проекты → Папки на ПК` с filesystem allowlist и symlink containment;
 - только два пользовательских режима работы: `Build` и `Plan`;
 - model picker с избранным, сортировкой, сворачиваемыми провайдерами и отдельной группой бесплатных моделей;
-- отдельный вариант `Qwen 3.8 Max · Оркестрированная` прямо в model picker;
-- автоматическую очередь сообщений без ручного `Steer/Queue` переключателя;
+- `Qwen 3.8 Max · Оркестрированная` прямо в model picker;
+- `Auto · local/cloud`: локальный Ollama на свободном ПК и cloud fallback при нагрузке/игре;
+- серверную persistent queue, которая переживает reload/закрытие PWA и поддерживает reorder/delete;
 - одну контекстную кнопку composer: send / cancel / queue;
-- компактные permission cards с деталями под раскрытием;
+- native OpenCode questions: single/multi-select, описания вариантов и собственный текстовый ответ;
+- компактные permission cards и project-level allow/deny policies;
+- Project settings: persistent system instructions, default Build/Plan/model profile, RAG и Auto-routing policy;
+- Changes/Review: file stats, diff по файлам/hunks, safe revert файла или отдельного hunk;
+- раскрываемое дерево оркестрации с child sessions и RAG marker;
+- компактный status bar: model/context/cost/runtime/route/RAG/queue;
 - native slash commands;
 - Markdown/code/tool/reasoning renderers;
 - files и clipboard images;
 - Git/VCS UI, fork/duplicate/handoff, notifications, drafts;
 - Qwen Token Plan и Codex rate-limit sidebar;
+- actionable PWA notifications и deep links к session;
 - orchestration `Qwen 3.8 Max → Qwen 3.6 Flash fast-reader`;
-- manual-only local Ollama models;
 - optional `mcp-rag` integration через `kb` MCP;
 - `/rag-start` и `/doctor`;
 - pre-install verifier и post-install zero-LLM-token self-test;
 - user systemd deployment и one-command update.
 
-## Build / Plan и orchestration
+## Build / Plan и model profiles
 
 `Build` и `Plan` — единственные пользовательские режимы выполнения:
 
 - `Build` — обычный рабочий режим выбранной модели с доступными ей edit/shell permissions;
 - `Plan` — read/plan-only режим без edit и shell.
 
-Оркестрация не является отдельным режимом. Она выбирается только через специальную модель в picker:
+Routing/orchestration выбираются в model picker, а не дополнительными режимами:
 
 ```text
 Build | Plan
      +
-Qwen 3.8 Max · Оркестрированная
-        ↓ при необходимости
-fast-reader → Qwen 3.6 Flash
-        ↓ при corpus-relevant engineering lookup
-kb MCP → mcp-rag
+обычная модель                    → direct
+Qwen 3.8 Max · Оркестрированная   → Max → bounded fast-reader → optional RAG
+Auto · local/cloud                → local Ollama, если ПК свободен
+                                  → cloud fallback, если ПК занят/идёт игра
 ```
 
-Любая обычная модель из picker работает напрямую. `Qwen 3.8 Max · Оркестрированная` использует тот же Qwen Max как primary, но разрешает bounded delegation в `fast-reader` и optional RAG.
+`Auto` включается только явным выбором пользователя или как сохранённый default конкретного проекта. Он не делает Ollama глобальным автоматическим backend. При обнаруженной игре/высокой GPU load выбирается cloud model проекта и отправляется best-effort unload локальной Ollama model.
 
 Внутренние OpenCode agent IDs `build`, `plan`, `build-direct`, `plan-direct` являются implementation detail и не должны отображаться как дополнительные пользовательские режимы.
 
-`fast-reader` — bounded read-only worker для repository exploration, логов и точечного RAG lookup. Он не получает edit/shell права. Финальные решения остаются у Qwen 3.8 Max.
-
-Локальный `ollama/*` остаётся только ручным model choice и не включается в automatic path.
-
-## Composer
+## Composer и persistent queue
 
 Отдельного `Steer / Queue` переключателя в UI нет.
-
-Поведение выбирается автоматически:
 
 ```text
 работы нет                         → ↑ Отправить
@@ -64,7 +63,45 @@ kb MCP → mcp-rag
 работа идёт + есть текст/вложение  → ↑ Отправить в очередь
 ```
 
-Очередь хранится для конкретной session и отправляется после завершения текущей работы.
+Очередь хранится сервером в feature-state, а не только в памяти открытой вкладки. Поэтому queued prompts продолжают выполняться после reload/закрытия PWA. В status bar можно открыть очередь, удалить сообщение или поменять порядок.
+
+## Questions / выбор вариантов
+
+Когда модель вызывает native OpenCode `question`, web client показывает отдельную карточку вместо неработающего текстового prompt:
+
+- single-select;
+- multi-select;
+- label + description;
+- `Свой вариант…` для каждого вопроса;
+- несколько вопросов в одной карточке;
+- reject/cancel;
+- PWA notification с deep link в нужную session.
+
+Ответ отправляется через native question reply API и продолжает остановленный agent loop.
+
+## Project settings и permissions
+
+Кнопка `Project` в header открывает настройки текущей директории:
+
+- persistent instructions — передаются при отправке как отдельный OpenCode `system` context и не вставляются в видимый user text;
+- default `Build / Plan`;
+- default model/profile (`Auto`, orchestrated или конкретная модель);
+- `RAG: auto/on/off`;
+- local/cloud модели и GPU threshold для `Auto`;
+- ordered permission rules `action + resource glob → ask/allow/deny`.
+
+На permission card есть `Разрешать в проекте`, который сохраняет точечное allow rule вместо глобального бесконтрольного `Always`.
+
+## Changes / Review
+
+Git drawer остаётся основной точкой просмотра изменений, но поверх него добавлен review layer:
+
+- количество файлов и `+/-` статистика;
+- раскрываемые file diffs;
+- hunks;
+- `Отменить файл` через bounded `git restore`;
+- `Отменить hunk` через reverse patch;
+- containment: web backend не принимает revert path вне разрешённого project root.
 
 ## RAG
 
@@ -120,12 +157,14 @@ Installer по умолчанию выполняет pre-install verification и
 ## Структура
 
 ```text
-app/       web client + authenticated proxy + Doctor/RAG lifecycle
+app/       web client + authenticated proxy + Doctor/RAG/workflow lifecycle
 config/    OpenCode V2 providers, agents, prompts, plugins
-scripts/   verify/install/update/RAG probes
+scripts/   verify/install/update/RAG/workflow probes
 systemd/   user service
 docs/      пользовательская и эксплуатационная документация
 ```
+
+Production server stack заканчивается `app/server_workflow.py`, который композиционно добавляет persistent workflow endpoints поверх существующих RAG/Doctor/base proxy layers.
 
 ## Security defaults
 
@@ -134,9 +173,11 @@ docs/      пользовательская и эксплуатационная 
 - рекомендуемый bind — loopback;
 - project browser ограничен `OPENCODE_PROJECT_ROOTS`;
 - quick workspace cleanup защищён containment checks;
-- automatic Ollama отключён;
+- `Auto` включается только явным model-profile choice/default проекта;
 - обычные модели не получают automatic RAG/subagent delegation;
 - RAG ingest не разрешён read-only worker;
+- persistent workflow state создаётся с user-only permissions;
+- git revert ограничен project root и конкретным path/patch;
 - MCP execution timeout ограничен;
 - install/update завершается ошибкой, если critical host self-test не прошёл.
 
