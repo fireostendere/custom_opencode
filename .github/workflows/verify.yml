@@ -16,5 +16,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Compile advanced workflow modules
+        run: |
+          python -m py_compile app/server_features.py app/server_workflow.py
+          node --check app/advanced-features.js
+          node --check app/ux-controls.js
       - name: Static and smoke verification
         run: bash scripts/verify.sh
