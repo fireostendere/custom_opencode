@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#171717">
   <script>
-    (()=>{try{const p=JSON.parse(localStorage.getItem('opencode:web:appearance-v1')||'null')||{};const m=['system','light','dark'].includes(p.theme)?p.theme:'system';const t=m==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):m;document.documentElement.dataset.theme=t;document.documentElement.dataset.themeMode=m;if(/^#[0-9a-f]{6}$/i.test(p.accent||''))document.documentElement.style.setProperty('--accent',p.accent.toLowerCase())}catch{}})()
+    (()=>{try{const p=JSON.parse(localStorage.getItem('opencode:web:appearance-v1')||'null')||{};const m=['system','light','dark'].includes(p.theme)?p.theme:'system';const t=m==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):m;const r=document.documentElement;r.dataset.theme=t;r.dataset.themeMode=m;if(/^#[0-9a-f]{6}$/i.test(p.accent||'')){const a=p.accent.toLowerCase();r.style.setProperty('--accent',a);const c=[1,3,5].map(i=>parseInt(a.slice(i,i+2),16)/255),l=c.map(v=>v<=.03928?v/12.92:((v+.055)/1.055)**2.4),y=.2126*l[0]+.7152*l[1]+.0722*l[2];r.style.setProperty('--accent-contrast',(y+.05)/.05>=1.05/(y+.05)?'#111111':'#ffffff')}}catch{}})()
   </script>
   <title>Вход · OpenCode</title>
   <link rel="stylesheet" href="/login.css">
@@ -15,6 +15,7 @@
     html[data-theme="light"] .login-card{background:#fff;border-color:var(--line);box-shadow:0 28px 90px #0002}
     html[data-theme="light"] .login-mark,html[data-theme="light"] .password-field,html[data-theme="light"] .login-field>input{background:var(--field);border-color:var(--line)}
     html[data-theme="light"] .login-security{border-color:var(--line);color:#777}
+    .login-submit{color:var(--accent-contrast,#fff)}
     .login-card{animation:login-in .24s cubic-bezier(.2,.8,.2,1) both}
     @keyframes login-in{from{opacity:0;transform:translateY(10px) scale(.99)}to{opacity:1;transform:none}}
     @media(prefers-reduced-motion:reduce){.login-card{animation:none!important}}
