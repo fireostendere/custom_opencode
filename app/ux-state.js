@@ -1,7 +1,7 @@
 export const ORCHESTRATED_MODEL = {
   id: 'qwen3.8-max',
   providerID: 'bailian-cli',
-  label: 'Qwen 3.8 Max · Оркестратор',
+  label: 'Qwen 3.8 Max · Оркестрированная',
 }
 
 // User-facing execution modes are Build and Plan. The underlying OpenCode
