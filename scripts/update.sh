@@ -18,6 +18,11 @@ if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
   exit 1
 fi
 
-git pull --ff-only
+# Production updates are intentionally pinned to origin/main. Avoid `git pull`
+# here: a malformed or duplicated branch.*.merge entry in local Git config can
+# make pull try to fast-forward multiple branches at once.
+git fetch --prune origin main
+git merge --ff-only FETCH_HEAD
+
 "$ROOT/scripts/install.sh"
-echo "Updated from Git and restarted the web/shared OpenCode services."
+echo "Updated from origin/main and restarted the web/shared OpenCode services."
