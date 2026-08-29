@@ -9,15 +9,14 @@ Build
 Plan
 ```
 
-Routing выбирается отдельным entry в model picker. Сейчас есть три типа profile:
+Оркестрация выбирается отдельным entry в model picker:
 
 ```text
 обычная модель
 Qwen 3.8 Max · Оркестрированная
-Auto · local/cloud
 ```
 
-Ни orchestration, ни Auto не являются третьим/четвёртым execution mode.
+Оркестрация не является третьим execution mode.
 
 ## Build / Plan
 
@@ -30,8 +29,6 @@ Auto · local/cloud
 ```text
 обычная модель + Build         → build-direct
 обычная модель + Plan          → plan-direct
-Auto + Build                   → build-direct
-Auto + Plan                    → plan-direct
 Оркестрированная + Build       → build
 Оркестрированная + Plan        → plan
 ```
@@ -51,8 +48,10 @@ Auto + Plan                    → plan-direct
 ```text
 Build + Qwen3.8 Max  → Qwen3.8 Max напрямую
 Plan + Qwen3.8 Flash → Qwen3.8 Flash read-only
-Build + Ollama       → local напрямую
+Build + Ollama       → local напрямую, только после ручного выбора пользователем
 ```
+
+Локальный provider не входит в новые workflow routing/defaults. Workflow server не проверяет GPU/игры, не стартует и не выгружает Ollama и не переключает session на `ollama/*` автоматически.
 
 ## Оркестрированная модель
 
@@ -68,52 +67,7 @@ kb MCP → mcp-rag
 
 `fast-reader` read-only: repository exploration, logs, точечный lookup и ограниченный RAG evidence. Финальное reasoning/edit/security решение остаётся у Max.
 
-Automatic RAG доступен только orchestrated profile. Direct и Auto primary agents не получают automatic subagent/RAG delegation.
-
-## Auto · local/cloud
-
-`Auto` — явный profile в model picker. Он может также быть сохранён default конкретного project.
-
-Он сохраняет direct agent policy, но перед каждым submit выбирает underlying model:
-
-```text
-Ollama доступен + ПК свободен → project localModel
-иначе                        → project cloudModel
-```
-
-Default policy:
-
-```text
-localModel      = ollama/qwen3.8:27b
-cloudModel      = bailian-cli/qwen3.8-flash
-gpuBusyPercent  = 35
-```
-
-В Project settings эти значения можно менять.
-
-### Что считается busy
-
-Backend проверяет:
-
-- known game process;
-- GPU utilization >= project threshold.
-
-`OPENCODE_AUTO_GAME_PROCESSES` задаёт semicolon-separated process fragments. Default включает `dota2`, `cs2`, Wine/Proton helpers.
-
-Для WSL detector дополнительно читает Windows process list через `powershell.exe` и `tasklist.exe`. Поэтому Windows Dota/CS может переключить OpenCode, запущенный в WSL, на cloud.
-
-Для AMD GPU приоритетно читается `/sys/class/drm/card*/device/gpu_busy_percent`, затем используются ROCm/AMD-SMI fallbacks. NVIDIA использует существующий `nvidia-smi` path.
-
-При busy state backend делает best-effort Ollama unload через `keep_alive: 0`, чтобы VRAM быстрее освободилась игре.
-
-### Что Auto не делает
-
-- не переключает обычные model entries;
-- не включает local routing скрытно;
-- не даёт local model subagent/RAG permissions;
-- если Ollama недоступен, не ломает задачу — выбирается cloud fallback.
-
-`OPENCODE_LOCAL_AUTO_START` остаётся отдельной host policy для lazy local-router plugin. Если local runtime должен стартовать по model request, настройте router/start script; иначе Auto использует local только когда runtime уже доступен.
+Automatic RAG доступен только orchestrated profile. Direct primary agents не получают automatic subagent/RAG delegation.
 
 ## Model picker
 
@@ -124,26 +78,42 @@ Picker поддерживает:
 - collapsible provider groups;
 - отдельную `Бесплатные модели` group;
 - hidden search input на mobile;
-- special profile entries `Оркестрированная` и `Auto`;
-- сохранение выбранного profile per session в browser state.
+- special profile entry `Qwen 3.8 Max · Оркестрированная`;
+- сохранение direct/orchestrated profile per session в browser state.
 
-Переключение `Build ↔ Plan` не должно выключать выбранный special profile.
+Переключение `Build ↔ Plan` не должно выключать orchestrated profile.
 
-## Persistent queue и routing
+Обычная локальная Ollama model остаётся обычным manual model entry. Никакой дополнительный Auto local/cloud entry этой итерацией не добавляется.
 
-Если run уже активен, новый submit не меняет текущую model. Prompt сохраняется сервером вместе с profile, выбранным в момент постановки в queue.
+## Persistent queue и model state
 
-Когда queued item доходит до head:
+Если run уже активен, новый submit сохраняется сервером. Когда item доходит до head, queue worker отправляет его в ту же session через уже выбранную для session модель.
 
-- `direct` использует session model;
-- `orchestrated` использует сохранённую orchestrated agent/profile state;
-- `auto` повторно оценивает machine load прямо перед отправкой.
+Persistent queue:
 
-Это важно: queued Auto prompt, созданный до запуска игры, всё равно уйдёт в cloud, если к моменту его выполнения ПК уже занят.
+- не выбирает provider;
+- не переключает model;
+- не стартует model runtime;
+- не выгружает local runtime;
+- переживает закрытие/reload PWA;
+- позволяет reorder/delete до отправки.
+
+Profile в queue metadata используется только как UX/trace metadata (`direct` или `orchestrated`), а не как механизм автоматического выбора local/cloud provider.
 
 ## Project memory
 
-Project settings могут задавать default profile/model для новых/пустых sessions. Existing session при открытии не переписывается автоматически.
+Project settings могут задавать defaults только для безопасного workflow surface:
+
+- `Build / Plan`;
+- `Qwen 3.8 Max · Оркестрированная`;
+- конкретная поддерживаемая cloud model;
+- RAG preference;
+- persistent project instructions;
+- permission policy.
+
+`auto` и `ollama/*` не принимаются как автоматические project defaults. Если старый experimental feature-state содержит такие значения, server sanitizes их в `inherit`.
+
+Это не мешает пользователю вручную выбрать Ollama в обычном picker.
 
 Persistent project instructions отправляются через отдельное `system` field message request; это не user-visible prefix.
 
@@ -165,11 +135,11 @@ deepseek-v4-flash-0731
 
 `qwen3.8-max-preview` — compatibility ID старых sessions.
 
-Special profiles не создают фиктивных API model IDs: они являются UI/routing policy поверх реальных models.
+`Qwen 3.8 Max · Оркестрированная` не создаёт фиктивный API model ID: это UI/orchestration policy поверх реального `qwen3.8-max`.
 
 ## Бесплатные модели
 
-`Бесплатные модели` определяется сначала по V2 cost metadata, затем ограниченным fallback по known IDs. Free model остаётся direct model и сама по себе не входит в Auto/orchestration.
+`Бесплатные модели` определяется сначала по V2 cost metadata, затем ограниченным fallback по known IDs. Free model остаётся direct model и сама по себе не входит в orchestration.
 
 ## Permissions fast-reader
 
@@ -189,10 +159,11 @@ edit/shell/ingest/external dirs → deny, кроме явно разрешённ
 Zero-token verifier проверяет:
 
 - Build/Plan mapping;
-- ordinary/orchestrated/Auto UI profiles;
+- ordinary/orchestrated UI profiles;
 - persistent queue surface;
 - project settings/policies;
-- Auto local/cloud routing на synthetic load;
+- запрет automatic `auto`/`ollama/*` project defaults;
+- отсутствие local lifecycle/routing hooks в новом workflow server;
 - safe Git revert containment;
 - Max/Flash catalog/config invariants;
 - RAG/MCP status при наличии RAG.
