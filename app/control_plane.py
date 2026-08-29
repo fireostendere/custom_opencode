@@ -233,16 +233,19 @@ def classify_permission(
 
     if action in WRITE_ACTIONS:
         if not resources:
-            decision.update(risk="R2", reason="file mutation target is missing from the permission payload")
+            decision.update(risk="R3", reason="file mutation target is missing from the permission payload")
             return decision
         if any(_looks_sensitive(value) for value in resources):
             decision.update(risk="R4", reason="sensitive file mutation requires confirmation")
             return decision
         inside = all(_path_within_workspace(value, workspace) for value in resources)
-        if selected in {"workspace", "autonomous"} and inside:
+        if not inside:
+            decision.update(risk="R3", reason="file mutation target escapes the workspace")
+            return decision
+        if selected in {"workspace", "autonomous"}:
             decision.update(effect="allow", auto=True, reply="once", risk="R2", reason="workspace-local file mutation")
         else:
-            decision.update(risk="R2", reason="workspace mutation is outside the selected automatic policy")
+            decision.update(risk="R2", reason="workspace-local mutation remains interactive in safe policy")
         return decision
 
     if action in SHELL_ACTIONS:
