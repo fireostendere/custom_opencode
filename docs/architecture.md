@@ -2,145 +2,102 @@
 
 ## Что такое custom_opencode
 
-`custom_opencode` не является форком OpenCode. Это host-side комплект вокруг OpenCode V2, который добавляет собственный web/PWA client, переносимую конфигурацию, model routing, диагностику, безопасный browser локальных проектов и опциональную связь с `mcp-rag`.
+`custom_opencode` не является форком OpenCode. Это host-side комплект вокруг OpenCode V2, который добавляет собственный web/PWA client, переносимую конфигурацию, persistent workflow state, диагностику, безопасный browser локальных проектов и опциональную связь с `mcp-rag`.
 
-Главная идея: OpenCode остаётся execution/model backend, а `custom_opencode` управляет UX и локальной интеграцией.
+OpenCode остаётся execution/model backend; `custom_opencode` управляет UX и host integration.
 
 ## Компоненты
 
 ### OpenCode V2 backend
 
-Отвечает за:
-
-- sessions;
-- agents/subagents;
-- model/provider execution;
-- permissions;
-- native commands;
-- MCP supervision;
-- Git/VCS/session APIs.
-
-`custom_opencode` не пытается заново реализовать model runtime.
+Отвечает за sessions, agents/subagents, model/provider execution, permissions, native questions/commands, MCP supervision и Git/VCS/session APIs.
 
 ### Web/PWA client
 
-Каталог `app/` содержит отдельный UI и same-origin authenticated proxy.
+Каталог `app/` предоставляет:
 
-Основные возможности:
+- root sessions в sidebar, child sessions только в orchestration trace;
+- isolated quick workspaces;
+- parallel running states;
+- automatic send / cancel / persistent queue;
+- только `Build / Plan` как execution modes;
+- direct/orchestrated model profiles;
+- native question cards с single/multi-select и custom answer;
+- project memory/defaults/permission policy;
+- compact permission cards;
+- advanced Changes/Review с file/hunk revert;
+- orchestration tree;
+- model/context/cost/runtime/RAG/queue status bar;
+- files/images, Markdown/code/tool/reasoning rendering;
+- drafts, deep links и actionable PWA notifications;
+- provider quotas, Doctor, `/rag-start`, project browser.
 
-- root sessions в sidebar;
-- child/subagent sessions скрыты из обычного списка;
-- isolated quick-session workspaces;
-- параллельные running states;
-- automatic delivery: send / cancel / queue без ручного Steer/Queue toggle;
-- одна контекстная action button в composer;
-- только `Build/Plan` как пользовательские execution modes;
-- orchestration выбирается специальной моделью `Qwen 3.8 Max · Оркестрированная` через model picker;
-- favorites-first model sorting и collapsible providers;
-- compact permission cards с raw payload под раскрытием;
-- rename/delete/fork/duplicate/project handoff;
-- deep links;
-- Markdown/code rendering;
-- tool/reasoning blocks;
-- file/image attachments;
-- notifications и draft autosave;
-- Git/VCS drawer;
-- context/cost usage;
-- provider usage limits;
-- slash palette;
-- project folder browser;
-- Doctor и `/rag-start`.
+Локальные Ollama models остаются manual-only ordinary model entries существующего model picker. Новый workflow layer не реализует local/cloud router и не управляет local runtime.
 
 ### Server layers
-
-Web server расширяется слоями:
 
 ```text
 server.py
   └── server_ext.py
         └── server_plus.py
-              └── server_rag.py
+              ├── server_rag.py
+              └── server_features.py
+                    ↓ composed by
+                server_workflow.py
 ```
 
-`server.py`:
+`server.py` — Basic Auth, same-origin proxy, quick-session isolation, scratch cleanup.
 
-- Basic Auth;
-- same-origin proxy к OpenCode backend;
-- quick-session isolation;
-- safe scratch cleanup.
+`server_ext.py` — provider-limit bridges.
 
-`server_ext.py`:
+`server_plus.py` — constrained host-directory browser, symlink containment, Doctor endpoints.
 
-- provider-limit bridges для Codex и Bailian.
+`server_rag.py` — `/rag-start`, MCP workspace routing, dynamic `kb` connect и persisted RAG enablement.
 
-`server_plus.py`:
+`server_features.py` — persistent queue/project settings, project permission rules, safe Git revert и background queue worker.
 
-- browser разрешённых host directories через `OPENCODE_PROJECT_ROOTS`;
-- symlink containment;
-- Doctor endpoints и smoke infrastructure.
+`server_workflow.py` — production entrypoint. Он композиционно сохраняет RAG routes, добавляет workflow send path и отправку project memory через OpenCode `system` context.
 
-`server_rag.py`:
+Systemd запускает `app/server_workflow.py`.
 
-- `/rag-start` lifecycle;
-- current OpenCode V2 MCP workspace routing;
-- dynamic `kb` connect;
-- persisted RAG enablement после успешной проверки.
+## Persistent workflow state
 
-Systemd запускает именно `app/server_rag.py`.
-
-## Quick sessions
-
-Quick-session создаётся не в одном общем directory, а в отдельном:
+По умолчанию state находится в:
 
 ```text
-<OPENCODE_SCRATCH_DIRECTORY>/session-<random>/
+$XDG_STATE_HOME/custom-opencode/web-features.json
 ```
 
-Это уменьшает риск пересечения временных файлов между независимыми сессиями.
+или `~/.local/state/custom-opencode/web-features.json`.
 
-При удалении session proxy удаляет directory только если он прошёл containment check внутри scratch root. Сам scratch root и любые внешние пути не удаляются этим механизмом.
+Файл создаётся с user-only permissions и содержит только workflow metadata: queued prompts/attachments, project preferences и permission rules. Secrets туда не записываются.
 
-## Открытие локальных проектов
+Queue worker живёт внутри production web process. Он может дождаться завершения run и отправить следующий queued prompt, даже если браузер/PWA закрыт.
 
-`Проекты → Папки на ПК` работает через server-side directory browser.
+## Quick sessions и project boundary
 
-Browser:
+Quick session создаётся в отдельном `<scratch>/session-<random>/`. Cleanup разрешён только после containment check.
 
-- принимает только путь внутри разрешённых roots;
-- canonicalizes paths;
-- блокирует symlink escape;
-- скрывает dot-directories;
-- отдаёт только директории, а не содержимое файлов;
-- ограничивает размер listing;
-- не содержит текстового поля пути.
+Project browser и workflow endpoints используют canonicalized path и `OPENCODE_PROJECT_ROOTS`. Symlink/path traversal за allowlist не допускается.
 
-После выбора создаётся обычная OpenCode session с `location.directory` выбранного проекта.
+Git revert дополнительно проверяет целевой relative path и для hunk принимает только patch, заголовки которого относятся к выбранному файлу.
 
-## Build / Plan и model picker
+## Build / Plan и model profiles
 
-Видимый search input удалён, чтобы model picker на мобильном не вызывал клавиатуру.
-
-Catalog UI сохраняет favorites и предоставляет collapsible provider sections. Внутри группы сначала идут favorite entries, затем текущая модель, затем alphabetical sort.
-
-Группа `Бесплатные модели` определяется в первую очередь по model cost metadata. Если upstream build не отдаёт cost, используется небольшой fallback по ID.
-
-Пользователь выбирает только execution mode:
+Пользовательский execution mode всегда один из:
 
 ```text
 Build | Plan
 ```
 
-и отдельно модель.
-
-Обычный model entry означает direct execution выбранной моделью. Специальный UI entry:
+Model picker отдельно выбирает execution profile:
 
 ```text
-Qwen 3.8 Max · Оркестрированная
+обычная модель                    → direct
+Qwen 3.8 Max · Оркестрированная   → bounded subagent/RAG delegation
 ```
 
-включает orchestration поверх того же `bailian-cli/qwen3.8-max`.
-
-Внутренняя матрица OpenCode agents:
+Внутренняя agent matrix:
 
 ```text
 обычная модель + Build         → build-direct
@@ -149,54 +106,79 @@ Qwen 3.8 Max · Оркестрированная
 Оркестрированная + Plan        → plan
 ```
 
-Эти agent IDs являются implementation detail и скрыты за двумя пользовательскими mode controls.
+Agent IDs не показываются пользователю.
 
-## Composer state machine
+Локальный provider остаётся ordinary direct model choice только при реальном ручном выборе пользователя. Project defaults, persistent queue и workflow worker не имеют automatic `ollama/*` route.
 
-В OpenCode API сохраняются delivery semantics, но пользовательский toggle убран.
+## Composer и queue
 
 ```text
 нет active run                  → send
-active run + empty composer     → cancel current run
-active run + text/attachment    → queue
+active run + empty composer     → cancel
+active run + text/attachment    → persistent queue
 ```
 
-Скрытый compatibility layer по-прежнему использует native delivery API, поэтому backend contract не подменяется frontend-эмуляцией.
+Скрытые native controls остаются compatibility layer, но пользователь не выбирает `Steer/Queue` вручную.
+
+Advanced frontend перехватывает queued submit и отправляет его в `/client-queue.json`; сервер хранит порядок и удаляет item только после успешного принятия backend.
+
+Queue worker отправляет prompt с уже выбранным model/provider текущей session. Он не переключает model и не выполняет model lifecycle actions.
+
+## Native questions
+
+OpenCode question request не преобразуется в обычный текст. Web UI получает pending native request и показывает:
+
+- header/question;
+- option labels/descriptions;
+- single или multiple selection;
+- собственный текстовый вариант;
+- несколько вопросов в одном request.
+
+Reply отправляется native question endpoint как `answers: string[][]`, после чего agent loop продолжает работу.
+
+## Project memory и defaults
+
+Project settings привязаны к canonical directory. Persistent instructions при submit передаются отдельным `system` field current OpenCode message API, поэтому не отображаются как часть user message.
+
+Также проект может задать default mode, orchestrated/конкретную cloud model, RAG preference и permission rules.
+
+`auto` и `ollama/*` не принимаются как автоматические project defaults. Старые experimental значения sanitizes в `inherit`. Это не влияет на ручной выбор Ollama в model picker.
+
+Defaults применяются только к пустой/new session, чтобы открытие существующей session не меняло её execution state неожиданно.
 
 ## Permissions
 
-Permission request может содержать большой command/resource payload. Web UI не показывает этот payload целиком в основной строке. На поверхности остаётся короткий action summary максимум в две строки; полный raw detail находится в collapsible block с bounded scroll area.
+Permission banner показывает короткий summary; raw payload остаётся под details.
 
-Кнопки `Отклонить / Разрешить / Всегда` продолжают работать через native OpenCode permission reply API.
+Project policy имеет ordered rules:
 
-## Slash commands
+```text
+action glob + resource glob → ask | allow | deny
+```
 
-Обычные native OpenCode команды загружаются через `/api/command` и исполняются через session command API.
+`Разрешать в проекте` создаёт конкретное allow-rule из текущего native permission request. Background worker может автоматически ответить только на явно сохранённые `allow/deny`; остальные requests остаются интерактивными.
 
-Локальные control-команды вроде `/doctor` и `/rag-start` перехватываются web layer и не отправляются модели как prompt.
+## Changes / Review
 
-## Provider limits
+Базовый Git/VCS drawer остаётся источником статуса. Review layer строит file/hunk representation поверх session/VCS diff и даёт bounded revert:
 
-Sidebar может показывать:
+- tracked file: `git restore --worktree -- <path>`;
+- untracked: удаляется только выбранный contained file;
+- hunk: reverse `git apply` после проверки file headers.
 
-- Alibaba/Qwen Token Plan usage через Bailian CLI;
-- OpenAI/Codex rate-limit windows через локальный Codex app-server RPC.
+## Orchestration trace
 
-Credentials остаются на host. Browser получает только нормализованный snapshot.
+Child/subagent sessions намеренно не возвращаются в sidebar. Текущая root session показывает раскрываемый trace с primary + child nodes, model/agent/status/runtime и RAG marker при использовании knowledge tools.
 
 ## RAG
 
-`kb` — optional local MCP server. OpenCode контролирует lifecycle stdio-процесса `knowledge-mcp`.
-
-`custom_opencode` не держит отдельный RAG daemon. Из инфраструктурных процессов RAG использует Qdrant.
-
-Automatic retrieval разрешён только orchestrated model profile. Обычные model profiles явно запрещают `kb_knowledge_*` tools.
+`kb` — optional local MCP server. Automatic retrieval разрешён только orchestrated profile; ordinary direct agents сохраняют deny rules на subagent/RAG delegation.
 
 Подробнее: [rag.md](rag.md).
 
-## Installer
+## Installer / verifier
 
-Installer не просто копирует конфиги. Он является deployment gate:
+Deployment gate:
 
 ```text
 verify source/contracts
@@ -208,27 +190,19 @@ restart services
 real host self-test
 ```
 
-Это важно из-за beta-совместимости OpenCode V2: статически валидный config ещё не доказывает, что backend/API/MCP реально поднялись на конкретной машине.
+Zero-token smoke дополнительно проверяет persistent settings/queue, запрет automatic local project defaults и safe Git revert. Это важно, потому что CI не может доказать состояние конкретного host/OpenCode/Qdrant.
 
 ## Security boundaries
-
-Система использует несколько независимых boundaries:
 
 - `.env` не tracked;
 - web Basic Auth;
 - recommended loopback bind;
-- project root allowlist;
+- project root allowlist + symlink containment;
 - scratch containment;
-- ordinary model profiles deny automatic subagent/RAG;
-- orchestrated read worker permission deny-first;
-- RAG ingest permission-gated;
-- MCP execution timeout;
-- RAG private-network ingest blocked по умолчанию;
-- Qdrant loopback-only в `mcp-rag` Compose;
-- no automatic local-model dependency.
-
-## Что не является гарантией
-
-- `kb: connected` сам по себе не доказывает, что MCP tools реально доступны — поэтому Doctor делает отдельный protocol probe.
-- model в catalog не доказывает успешный inference — это проверяет только ручной paid smoke.
-- GitHub CI не доказывает состояние локального Qdrant/corpus/auth — поэтому install self-test запускается на host.
+- workflow state user-only;
+- local models manual-only, без workflow lifecycle/routing;
+- ordinary direct agents deny automatic subagent/RAG;
+- orchestrated read worker deny-first;
+- project permission automation только из explicit saved rules;
+- safe bounded Git revert;
+- MCP execution timeout.

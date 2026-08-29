@@ -2,67 +2,29 @@
 
 ## Пользовательская модель
 
-В UI есть только два режима выполнения:
+В UI есть только два execution mode:
 
 ```text
 Build
 Plan
 ```
 
-Оркестрация не является третьим mode. Она выбирается в model picker как специальный model profile:
+Оркестрация выбирается отдельным entry в model picker:
 
 ```text
+обычная модель
 Qwen 3.8 Max · Оркестрированная
 ```
 
-Обычные модели из picker работают напрямую.
+Оркестрация не является третьим execution mode.
 
-## Build
+## Build / Plan
 
-`Build` — обычный рабочий режим. Выбранная модель может выполнять задачу с доступными ей edit/shell permissions.
+`Build` — рабочий режим с доступными выбранному primary agent edit/shell permissions.
 
-При выборе обычной модели используется внутренний `build-direct` agent:
+`Plan` — read/plan-only: edit/shell запрещены независимо от model profile.
 
-- выбранная модель работает напрямую;
-- orchestrator system prompt отсутствует;
-- automatic `fast-reader` запрещён;
-- automatic RAG tools запрещены.
-
-Например:
-
-```text
-Build + GPT-5.6 Sol      → GPT-5.6 Sol напрямую
-Build + Qwen3.8 Max      → Qwen3.8 Max напрямую
-Build + local Ollama     → локальная модель напрямую
-```
-
-## Plan
-
-`Plan` — read/plan-only режим. `edit` и `shell` запрещены независимо от выбранного model profile.
-
-Обычная модель в Plan использует внутренний `plan-direct` agent:
-
-```text
-Plan + Qwen3.8 Flash → Qwen3.8 Flash, без edit/shell
-```
-
-## Оркестрированная модель
-
-При выборе:
-
-```text
-Qwen 3.8 Max · Оркестрированная
-```
-
-используется тот же underlying API model:
-
-```text
-bailian-cli/qwen3.8-max
-```
-
-но Qwen Max получает orchestrator policy и может при необходимости делегировать bounded read-only работу.
-
-Матрица внутренних agent IDs:
+Внутренняя matrix:
 
 ```text
 обычная модель + Build         → build-direct
@@ -71,96 +33,93 @@ bailian-cli/qwen3.8-max
 Оркестрированная + Plan        → plan
 ```
 
-`build`, `plan`, `build-direct`, `plan-direct` — backend implementation detail. Пользователь не должен выбирать или видеть их как четыре режима.
+`build`, `plan`, `build-direct`, `plan-direct` — implementation detail.
 
-Схема orchestration:
+## Direct models
+
+Любая обычная модель из picker работает напрямую:
+
+- orchestrator prompt отсутствует;
+- automatic fast-reader запрещён;
+- automatic RAG tools запрещены.
+
+Например:
+
+```text
+Build + Qwen3.8 Max  → Qwen3.8 Max напрямую
+Plan + Qwen3.8 Flash → Qwen3.8 Flash read-only
+Build + Ollama       → local напрямую, только после ручного выбора пользователем
+```
+
+Локальный provider не входит в новые workflow routing/defaults. Workflow server не проверяет GPU/игры, не стартует и не выгружает Ollama и не переключает session на `ollama/*` автоматически.
+
+## Оркестрированная модель
+
+`Qwen 3.8 Max · Оркестрированная` использует underlying `bailian-cli/qwen3.8-max`, но разрешает bounded delegation:
 
 ```text
 Qwen 3.8 Max
-      ↓ если bounded read/delegation реально полезны
+      ↓ если bounded read/delegation полезны
 fast-reader → bailian-cli/qwen3.6-flash
-      ↓ если нужен engineering corpus evidence
+      ↓ при corpus-relevant engineering lookup
 kb MCP → mcp-rag
 ```
 
-`fast-reader` используется для дешёвых read-only задач:
+`fast-reader` read-only: repository exploration, logs, точечный lookup и ограниченный RAG evidence. Финальное reasoning/edit/security решение остаётся у Max.
 
-- найти файл/символ;
-- прочитать небольшой набор файлов;
-- разобрать лог;
-- сделать точный repository lookup;
-- получить ограниченное RAG evidence;
-- вернуть короткое factual summary primary agent.
-
-Он специально не получает edit/shell права.
-
-Qwen 3.8 Max остаётся владельцем:
-
-- пользовательской задачи;
-- planning/reasoning;
-- edit/shell операций в Build;
-- архитектурных решений;
-- security-sensitive решений;
-- синтеза нескольких источников;
-- финальной проверки/ответа.
-
-Delegation — опциональная оптимизация, а не обязательный этап каждого prompt.
-
-Переключение `Build ↔ Plan` сохраняет выбранный model profile: обычная модель остаётся обычной, `Qwen 3.8 Max · Оркестрированная` остаётся orchestrated.
+Automatic RAG доступен только orchestrated profile. Direct primary agents не получают automatic subagent/RAG delegation.
 
 ## Model picker
 
-Model picker является единственным местом включения orchestration.
+Picker поддерживает:
 
-Он поддерживает:
-
-- favorite toggle `★/☆` у каждой обычной модели;
-- нажатие `★/☆` не выбирает модель;
-- сортировку внутри provider: favorites → выбранная модель → остальные по имени;
-- provider groups с избранным поднимаются выше provider groups без избранного;
-- остальные provider groups сортируются по имени;
+- favorite toggle;
+- favorites-first sorting;
 - collapsible provider groups;
-- сохранение collapsed state в `localStorage`;
-- отдельную collapsible группу `Бесплатные модели`;
-- hidden search input, чтобы picker не поднимал мобильную клавиатуру;
-- отдельный entry `Qwen 3.8 Max · Оркестрированная` в Alibaba group.
+- отдельную `Бесплатные модели` group;
+- hidden search input на mobile;
+- special profile entry `Qwen 3.8 Max · Оркестрированная`;
+- сохранение direct/orchestrated profile per session в browser state.
 
-Favorites используют существующий ключ `opencode:web:favorites`, поэтому обновление UI не должно сбрасывать старое избранное. Состояние свёрнутых provider groups хранится отдельно в `opencode:web:model-provider-collapse-v1`.
+Переключение `Build ↔ Plan` не должно выключать orchestrated profile.
 
-## Automatic queue
+Обычная локальная Ollama model остаётся обычным manual model entry. Никакой дополнительный Auto local/cloud entry этой итерацией не добавляется.
 
-Delivery mode не относится к model routing и не выбирается вручную.
+## Persistent queue и model state
 
-```text
-idle                         → send
-running + empty composer     → cancel current run
-running + payload            → queue
-```
+Если run уже активен, новый submit сохраняется сервером. Когда item доходит до head, queue worker отправляет его в ту же session через уже выбранную для session модель.
 
-Скрытый compatibility `Steer/Queue` слой остаётся только для OpenCode API adapter.
+Persistent queue:
 
-## RAG routing
+- не выбирает provider;
+- не переключает model;
+- не стартует model runtime;
+- не выгружает local runtime;
+- переживает закрытие/reload PWA;
+- позволяет reorder/delete до отправки.
 
-Automatic RAG доступен только при выборе orchestrated model profile.
+Profile в queue metadata используется только как UX/trace metadata (`direct` или `orchestrated`), а не как механизм автоматического выбора local/cloud provider.
 
-Оркестрированная модель и `fast-reader` используют `kb` только если локальный corpus способен materially улучшить ответ, например:
+## Project memory
 
-- datasheet;
-- application note;
-- reference design;
-- PCB/layout rule;
-- DipTrace documentation;
-- indexed engineering video/transcript.
+Project settings могут задавать defaults только для безопасного workflow surface:
 
-Для обычного coding lookup, общих знаний и задач, где corpus не нужен, RAG не должен добавлять latency.
+- `Build / Plan`;
+- `Qwen 3.8 Max · Оркестрированная`;
+- конкретная поддерживаемая cloud model;
+- RAG preference;
+- persistent project instructions;
+- permission policy.
 
-При RAG timeout/error caller не должен зацикливаться. Нормальная политика: одна диагностика/повтор максимум, затем продолжить без RAG.
+`auto` и `ollama/*` не принимаются как автоматические project defaults. Если старый experimental feature-state содержит такие значения, server sanitizes их в `inherit`.
 
-Обычные model profiles явно запрещают automatic `kb_knowledge_*` tools.
+Это не мешает пользователю вручную выбрать Ollama в обычном picker.
+
+Persistent project instructions отправляются через отдельное `system` field message request; это не user-visible prefix.
 
 ## Alibaba model catalog
 
-В текущем provider config зарегистрированы:
+Provider config содержит:
 
 ```text
 qwen3.8-max
@@ -174,42 +133,17 @@ deepseek-v4-pro-0813
 deepseek-v4-flash-0731
 ```
 
-`qwen3.8-max-preview` — compatibility ID старых sessions, который map-ится на `qwen3.8-max`.
+`qwen3.8-max-preview` — compatibility ID старых sessions.
 
-`Qwen 3.8 Max · Оркестрированная` не является вторым API model ID. Это UI/profile entry поверх `qwen3.8-max` + orchestrated primary agent.
+`Qwen 3.8 Max · Оркестрированная` не создаёт фиктивный API model ID: это UI/orchestration policy поверх реального `qwen3.8-max`.
 
 ## Бесплатные модели
 
-UI выделяет отдельную группу `Бесплатные модели`.
-
-Определение идёт:
-
-1. по V2 cost metadata — input/output/cache costs равны нулю;
-2. при отсутствии metadata — ограниченный fallback по известным free IDs.
-
-Бесплатная модель работает напрямую и сама по себе не становится частью automatic router path.
-
-## Локальные модели
-
-Provider `ollama` остаётся доступен для явного ручного выбора.
-
-Default:
-
-```text
-OPENCODE_LOCAL_AUTO_START=0
-OPENCODE_LOCAL_PROVIDER=ollama
-```
-
-То есть:
-
-- OpenCode не должен автоматически стартовать локальный inference для обычной работы;
-- отсутствие Ollama не ломает orchestrated cloud path;
-- локальный provider выбирается как обычная модель;
-- local Ollama не получает automatic RAG/subagent delegation.
+`Бесплатные модели` определяется сначала по V2 cost metadata, затем ограниченным fallback по known IDs. Free model остаётся direct model и сама по себе не входит в orchestration.
 
 ## Permissions fast-reader
 
-Политика deny-first:
+Deny-first policy:
 
 ```text
 * → deny
@@ -218,18 +152,20 @@ kb_knowledge_search/get/sources/status → allow
 edit/shell/ingest/external dirs → deny, кроме явно разрешённых исключений
 ```
 
-`.env` и `.env.*` запрещены для read-only worker; `.env.example` разрешён как публичная схема конфигурации.
+`.env` и `.env.*` запрещены read-only worker; `.env.example` разрешён как публичная схема.
 
 ## Проверка без платного inference
 
-Doctor бесплатно проверяет config-level invariants:
+Zero-token verifier проверяет:
 
-- default underlying model — Max;
-- `fast-reader` — Flash;
-- automatic Ollama отсутствует;
-- model IDs присутствуют в catalog;
+- Build/Plan mapping;
+- ordinary/orchestrated UI profiles;
+- persistent queue surface;
+- project settings/policies;
+- запрет automatic `auto`/`ollama/*` project defaults;
+- отсутствие local lifecycle/routing hooks в новом workflow server;
+- safe Git revert containment;
+- Max/Flash catalog/config invariants;
 - RAG/MCP status при наличии RAG.
 
-Web smoke дополнительно проверяет state machine composer, mapping `Build/Plan × ordinary/orchestrated`, model sorting/favorites и наличие collapsible provider UI.
-
-Для реального orchestration E2E остаётся ручной `Router E2E` smoke в Doctor. Он делает настоящий model inference и поэтому помечен как платный.
+Реальный Router E2E в Doctor остаётся отдельным paid smoke.

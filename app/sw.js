@@ -1,4 +1,4 @@
-const CACHE='custom-opencode-web-v3'
+const CACHE='custom-opencode-web-v4'
 const STATIC_RE=/\.(?:js|css|webmanifest|png|svg|ico)$/
 
 self.addEventListener('install',()=>self.skipWaiting())
@@ -11,7 +11,7 @@ self.addEventListener('fetch',(event)=>{
   const req=event.request
   if(req.method!=='GET')return
   const url=new URL(req.url)
-  if(url.origin!==location.origin||url.pathname.startsWith('/api/')||url.pathname==='/client-config.json')return
+  if(url.origin!==location.origin||url.pathname.startsWith('/api/')||url.pathname.startsWith('/client-'))return
   if(url.pathname==='/'||url.pathname==='/index.html'||STATIC_RE.test(url.pathname))event.respondWith((async()=>{
     const cache=await caches.open(CACHE)
     const cached=await cache.match(req)
@@ -26,7 +26,7 @@ self.addEventListener('fetch',(event)=>{
   })())
 })
 
-self.addEventListener('notificationclick',(event)=>{event.notification.close();event.waitUntil((async()=>{
+self.addEventListener('notificationclick',(event)=>{event.notification.close();if(event.action==='dismiss')return;event.waitUntil((async()=>{
   const clients=await self.clients.matchAll({type:'window',includeUncontrolled:true})
   const url=event.notification.data?.url||'/'
   if(clients[0]){
