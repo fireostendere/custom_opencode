@@ -29,7 +29,7 @@ globalThis.fetch = async (path, options = {}) => {
   calls.push({ path, options })
   return response(200, { data: { ok: true } })
 }
-await api.sendPrompt({ id: 'ses_native' }, { text: 'hello', files: [{ uri: 'data:text/plain;base64,WA==', name: 'x' }], delivery: 'queue' })
+await api.sendPrompt({ id:'ses_native' }, { text:'hello', files:[{ uri:'data:text/plain;base64,WA==', name:'x' }], delivery:'queue' })
 let body = JSON.parse(calls.at(-1).options.body)
 if (body.delivery !== 'queue' || body.prompt?.text !== 'hello') throw new Error('Current V2 prompt contract regression')
 
@@ -38,9 +38,9 @@ let attempt = 0
 globalThis.fetch = async (path, options = {}) => {
   calls.push({ path, options })
   attempt++
-  return attempt === 1 ? response(422, 'unsupported shape') : response(200, { data: { ok: true } })
+  return attempt === 1 ? response(422, 'unsupported shape') : response(200, { data: { ok:true } })
 }
-await api.sendPrompt({ id: 'ses_compat' }, { text: 'fallback', files: [], delivery: 'steer' })
+await api.sendPrompt({ id:'ses_compat' }, { text:'fallback', files:[], delivery:'steer' })
 body = JSON.parse(calls.at(-1).options.body)
 if (body.text !== 'fallback' || body.delivery !== 'steer') throw new Error('Compatibility prompt fallback regression')
 
@@ -108,9 +108,8 @@ const advancedCss = readFileSync(resolve(root, 'app/advanced-features.css'), 'ut
 if (!uxControls.includes("button.textContent = 'Build'")) throw new Error('Build must be the user-facing work mode label')
 if (uxControls.includes("button.textContent = 'Direct'")) throw new Error('Direct must not be exposed as a user-facing mode label')
 if (!uxControls.includes("event.target.closest('[data-orchestrated-model]')")) throw new Error('Orchestrated model click proxy missing')
-if (!uxControls.includes("event.target.closest('[data-auto-model]')")) throw new Error('Auto local/cloud model profile missing')
-if (!uxControls.includes("label: 'Auto · local/cloud'")) throw new Error('Auto model label regression')
-if (!uxControls.includes('window.CustomOpenCodeUX')) throw new Error('Project defaults cannot select model profiles')
+if (uxControls.includes('data-auto-model') || uxControls.includes('local/cloud')) throw new Error('Automatic local/cloud profile must not exist')
+if (!uxControls.includes('window.CustomOpenCodeUX')) throw new Error('Project defaults cannot select orchestrated profile')
 if (!uxControls.includes("setNativeDelivery('queue')")) throw new Error('Automatic queue compatibility bridge missing')
 if (!uxControls.includes("addEventListener('submit', () => setTimeout(syncComposerAction, 0))")) throw new Error('Composer action must resync after programmatic queue clear')
 if (!uxCss.includes('.delivery{display:none!important}')) throw new Error('Manual Steer/Queue control must stay hidden')
@@ -119,23 +118,24 @@ if (!uxCss.includes('.composer-action.stop{background:#b23a3a')) throw new Error
 if (!uxCss.includes('-webkit-line-clamp:2')) throw new Error('Permission summary must be clamped instead of expanding the layout')
 if (!uxCss.includes('.model-provider-toggle')) throw new Error('Collapsible provider styling missing')
 if (!uxCss.includes('.model-favorite-toggle')) throw new Error('Favorite model control styling missing')
-for (const marker of ["model-provider-collapse-v1", "data-fav", "compareModelEntries", "compareProviderGroups"]) {
+for (const marker of ['model-provider-collapse-v1', 'data-fav', 'compareModelEntries', 'compareProviderGroups']) {
   if (!uiSource.includes(marker)) throw new Error(`Model picker behavior marker missing: ${marker}`)
 }
 for (const marker of [
-  '/client-queue.json', '/client-send.json', '/client-project-settings.json', '/client-auto-route.json',
+  '/client-queue.json', '/client-send.json', '/client-project-settings.json',
   '/api/question/request', 'questionAnswers', 'data-question-custom', 'Разрешать в проекте',
   '/api/session/${encodeURIComponent(state.sessionID)}/children', '/client-git-revert.json',
   'data-revert-hunk', 'workflowStatus', 'orchestrationTrace',
 ]) {
   if (!advanced.includes(marker)) throw new Error(`Advanced workflow marker missing: ${marker}`)
 }
+if (advanced.includes('/client-auto-route.json') || advanced.includes('Auto · local/cloud')) throw new Error('Advanced workflow must not contain automatic local routing')
 for (const marker of ['.question-card', '.queue-list', '.orchestration-trace', '.review-hunk', '.workflow-status']) {
   if (!advancedCss.includes(marker)) throw new Error(`Advanced workflow styling missing: ${marker}`)
 }
 
 const serviceWorker = readFileSync(resolve(root, 'app/sw.js'), 'utf8')
-if (!serviceWorker.includes("custom-opencode-web-v4")) throw new Error('PWA cache generation was not bumped')
+if (!serviceWorker.includes('custom-opencode-web-v4')) throw new Error('PWA cache generation was not bumped')
 if (!serviceWorker.includes("fetch(req,{cache:'no-cache'})")) throw new Error('PWA assets must prefer fresh network responses')
 if (!serviceWorker.includes("event.action==='dismiss'")) throw new Error('Notification dismiss action missing')
 if (serviceWorker.includes('return cached||network')) throw new Error('PWA must not serve stale cache before checking the network')
@@ -143,11 +143,14 @@ if (serviceWorker.includes('return cached||network')) throw new Error('PWA must 
 const workflowServer = readFileSync(resolve(root, 'app/server_workflow.py'), 'utf8')
 const featureServer = readFileSync(resolve(root, 'app/server_features.py'), 'utf8')
 const service = readFileSync(resolve(root, 'systemd/opencode-web-client.service'), 'utf8')
-for (const marker of ['/client-send.json', 'prompt_async', 'payload["system"]', 'features.auto_route']) {
+for (const marker of ['/client-send.json', 'prompt_async', 'body["system"]', 'features._send_backend_prompt']) {
   if (!workflowServer.includes(marker)) throw new Error(`Workflow server marker missing: ${marker}`)
 }
-for (const marker of ['/client-queue.json', '/client-project-settings.json', '/client-auto-route.json', '/client-git-revert.json', 'permissionRules', 'OPENCODE_AUTO_GAME_PROCESSES', 'keep_alive', 'git apply']) {
+for (const marker of ['/client-queue.json', '/client-project-settings.json', '/client-git-revert.json', 'permissionRules', 'git apply']) {
   if (!featureServer.includes(marker)) throw new Error(`Persistent feature server marker missing: ${marker}`)
+}
+for (const forbidden of ['/client-auto-route.json', 'OPENCODE_AUTO_GAME_PROCESSES', 'keep_alive', '_unload_ollama', '_ollama_available']) {
+  if (featureServer.includes(forbidden)) throw new Error(`Local model automation leaked into workflow server: ${forbidden}`)
 }
 if (!service.includes('app/server_workflow.py') || !service.includes('app/server_rag.py')) throw new Error('Production service must compose workflow and RAG layers')
 
@@ -176,4 +179,4 @@ if (agents['build-direct'].system || agents['plan-direct'].system) throw new Err
 const doctor = await loadSource('app/doctor.js')
 if (typeof doctor.openDoctor !== 'function') throw new Error('Doctor UI module does not export openDoctor')
 
-console.log('Web smoke passed: Build/Plan + direct/orchestrated/auto profiles + persistent queue + native questions + project policies + review + orchestration UI')
+console.log('Web smoke passed: Build/Plan + direct/orchestrated profiles + persistent queue + native questions + project policies + review + orchestration UI')
