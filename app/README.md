@@ -11,7 +11,7 @@
 - native slash commands и локальные control-команды `/doctor`, `/rag-start`;
 - isolated quick-session workspaces;
 - `Проекты` → OpenCode projects или безопасный browser папок на host;
-- только `Build / Plan` как пользовательские mode controls;
+- только `Direct / Plan` как пользовательские mode controls;
 - model picker без visible search input, с favorites, сортировкой, collapsible providers и отдельной группой бесплатных моделей;
 - `Qwen 3.8 Max · Оркестратор` выбирается как model profile прямо в picker;
 - contextual composer action вместо двух кнопок и ручного `Steer/Queue`;
@@ -47,15 +47,26 @@ Picker сохраняет существующий `opencode:web:favorites` stat
 - provider sections можно сворачивать, состояние хранится локально;
 - внутри группы сначала favorites, затем выбранная модель, затем alphabetical sort;
 - `Qwen 3.8 Max · Оркестратор` добавляется как отдельный model profile рядом с Alibaba models;
-- обычный `Qwen3.8 Max` остаётся direct model choice.
+- обычный `Qwen3.8 Max` остаётся обычным direct model choice.
 
-## Build / Plan и model profiles
+## Direct / Plan и model profiles
 
-Видимыми остаются только `Build` и `Plan`.
+Видимыми остаются только `Direct` и `Plan`.
 
-Внутри config существуют hidden-from-UX primary agents `build-direct` и `plan-direct`; они нужны, чтобы обычная выбранная модель не наследовала orchestrator prompt и automatic subagent/RAG permissions.
+`Direct` означает обычное выполнение задачи выбранной моделью. `Plan` сохраняет выбранную модель/profile, но запрещает edit и shell.
 
-Выбор обычной модели автоматически переводит текущий mode в direct profile. Выбор `Qwen 3.8 Max · Оркестратор` переводит тот же `Build`/`Plan` в orchestrated profile.
+Оркестрация выбирается не отдельной mode-кнопкой, а специальной моделью `Qwen 3.8 Max · Оркестратор`.
+
+Внутри config существуют четыре technical primary agent ID:
+
+```text
+обычная модель + Direct  → build-direct
+обычная модель + Plan    → plan-direct
+Оркестратор + Direct     → build
+Оркестратор + Plan       → plan
+```
+
+Эти ID являются implementation detail и не должны показываться пользователю как дополнительные режимы.
 
 ## Permission cards
 
@@ -83,7 +94,7 @@ Production/user systemd unit запускает `server_rag.py`.
 - `styles.css` — основной UI;
 - `enhancements.css`, `enhancements.js` — provider limits + slash palette;
 - `ui-enhancements.css`, `ui-enhancements.js` — model catalog + project folder browser;
-- `ux-controls.css`, `ux-controls.js`, `ux-state.js` — Build/Plan model profiles, contextual composer и permission summary;
+- `ux-controls.css`, `ux-controls.js`, `ux-state.js` — Direct/Plan surface, model-selected orchestration, contextual composer и permission summary;
 - `rag-control.js` — client-side `/rag-start` interception/control;
 - `doctor.css`, `doctor.js` — diagnostics UI;
 - `api.js` — OpenCode HTTP adapter/fallbacks;
@@ -139,4 +150,4 @@ python3 server_rag.py
 ../scripts/verify.sh
 ```
 
-Затем проверьте model picker, три состояния composer, permission card, `/doctor`; при настроенном RAG — `/rag-start quick`.
+Затем проверьте `Direct/Plan`, model picker, три состояния composer, permission card, `/doctor`; при настроенном RAG — `/rag-start quick`.
