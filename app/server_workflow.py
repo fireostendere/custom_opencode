@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from urllib.parse import quote, urlsplit
 
+import runtime_resume
 import server_control as control
 import server_features as features
 import server_rag as rag
@@ -34,17 +35,26 @@ def _file_parts(files: list[object]) -> list[dict[str, object]]:
 
 
 def _send_with_project_context(session_id: str, text: str, files: list[object]) -> object:
-    """Prefer async prompt with bounded server-added project/task context."""
+    """Prefer async prompt with bounded context and checkpoint-aware resume."""
     directory = features._session_directory(session_id)
     settings = features.project_settings(directory)
     instructions = str(settings.get("instructions") or "").strip()
     envelope = runtime.context_envelope(features, session_id, instructions)
     context = str(envelope.get("text") or "").strip()
+    effective_text, effective_files, resume = runtime_resume.continuation_payload(runtime.STORE, session_id, text, list(files))
+    if resume:
+        runtime.STORE.event(
+            kind="task.resume_continuation",
+            task_id=str(resume.get("taskID") or "") or None,
+            session_id=session_id,
+            project_dir=directory,
+            data=resume,
+        )
     target = f"/api/session/{quote(session_id, safe='')}/prompt_async"
     parts: list[dict[str, object]] = []
-    if text:
-        parts.append({"type": "text", "text": text})
-    parts.extend(_file_parts(files))
+    if effective_text:
+        parts.append({"type": "text", "text": effective_text})
+    parts.extend(_file_parts(effective_files))
     body: dict[str, object] = {"parts": parts}
     if context:
         body["system"] = (
@@ -57,7 +67,7 @@ def _send_with_project_context(session_id: str, text: str, files: list[object]) 
     except features.BackendHTTPError as exc:
         if exc.status not in (400, 404, 405, 422):
             raise
-    return _ORIGINAL_SEND(session_id, text, files)
+    return _ORIGINAL_SEND(session_id, effective_text, effective_files)
 
 
 # Runtime dispatch and legacy queue facade share the same context-aware send path.
