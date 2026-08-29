@@ -20,19 +20,22 @@ OpenCode остаётся execution/model backend; `custom_opencode` управ�
 - isolated quick workspaces;
 - parallel running states;
 - automatic send / cancel / persistent queue;
-- только `Build / Plan` как execution modes;
+- Build-only пользовательский execution surface;
 - direct/orchestrated model profiles;
 - native question cards с single/multi-select и custom answer;
 - project memory/defaults/permission policy;
-- compact permission cards;
+- session-scoped compact permission cards;
 - advanced Changes/Review с file/hunk revert;
 - orchestration tree;
 - model/context/cost/runtime/RAG/queue status bar;
 - files/images, Markdown/code/tool/reasoning rendering;
 - drafts, deep links и actionable PWA notifications;
-- provider quotas, Doctor, `/rag-start`, project browser.
+- provider quotas, Doctor, `/rag-start`, project browser;
+- mobile drawer с swipe/Back/outside-click dismissal;
+- persisted light/dark/system theme и accent color;
+- reduced-motion-aware microanimations.
 
-Локальные Ollama models остаются manual-only ordinary model entries существующего model picker. Новый workflow layer не реализует local/cloud router и не управляет local runtime.
+Локальные Ollama models остаются manual-only ordinary model entries model picker. Workflow layer не реализует local/cloud router и не управляет local runtime.
 
 ### Server layers
 
@@ -46,7 +49,7 @@ server.py
                 server_workflow.py
 ```
 
-`server.py` — Basic Auth, same-origin proxy, quick-session isolation, scratch cleanup.
+`server.py` — custom cookie auth, optional legacy Basic compatibility, same-origin proxy, quick-session isolation и scratch cleanup.
 
 `server_ext.py` — provider-limit bridges.
 
@@ -60,6 +63,16 @@ server.py
 
 Systemd запускает `app/server_workflow.py`.
 
+## Web auth boundary
+
+Неавторизованный HTML переводится на `/login.html`; API/client endpoints получают JSON `401`. Обычный серверный ответ не содержит `WWW-Authenticate`, поэтому browser-native credential prompt не является основным UX.
+
+После `/auth/login` выдаётся подписанная `HttpOnly; SameSite=Strict` cookie. `Secure` определяется HTTPS/reverse-proxy settings. Remembered login управляет только TTL cookie; password в browser storage не записывается.
+
+Полный текущий route сохраняется перед re-auth, поэтому возврат после login идёт в тот же `#/session/...`.
+
+Legacy Basic compatibility отключена по умолчанию и включается только `OPENCODE_AUTH_ALLOW_BASIC=1`.
+
 ## Persistent workflow state
 
 По умолчанию state находится в:
@@ -70,9 +83,11 @@ $XDG_STATE_HOME/custom-opencode/web-features.json
 
 или `~/.local/state/custom-opencode/web-features.json`.
 
-Файл создаётся с user-only permissions и содержит только workflow metadata: queued prompts/attachments, project preferences и permission rules. Secrets туда не записываются.
+Файл создаётся с user-only permissions и содержит workflow metadata: queued prompts/attachments, project preferences и permission rules. Secrets туда не записываются.
 
 Queue worker живёт внутри production web process. Он может дождаться завершения run и отправить следующий queued prompt, даже если браузер/PWA закрыт.
+
+Browser-only appearance/login UI preferences в этот файл не попадают и хранятся отдельно в local/session storage.
 
 ## Quick sessions и project boundary
 
@@ -82,31 +97,22 @@ Project browser и workflow endpoints используют canonicalized path и
 
 Git revert дополнительно проверяет целевой relative path и для hunk принимает только patch, заголовки которого относятся к выбранному файлу.
 
-## Build / Plan и model profiles
+## Build-only UI и model profiles
 
-Пользовательский execution mode всегда один из:
+Пользовательский execution mode в текущем UI всегда Build. Visible `Build / Plan` переключатель удалён.
 
-```text
-Build | Plan
-```
+Внутри compatibility layer могут существовать `plan`/`plan-direct`, но `access-fix.js`:
 
-Model picker отдельно выбирает execution profile:
+- скрывает agent mode control;
+- переводит активный `plan` обратно в соответствующий Build agent;
+- скрывает project default mode selector и фиксирует его в `build`.
 
-```text
-обычная модель                    → direct
-Qwen 3.8 Max · Оркестрированная   → bounded subagent/RAG delegation
-```
-
-Внутренняя agent matrix:
+Model picker отдельно выбирает profile:
 
 ```text
-обычная модель + Build         → build-direct
-обычная модель + Plan          → plan-direct
-Оркестрированная + Build       → build
-Оркестрированная + Plan        → plan
+обычная модель                    → build-direct
+Qwen 3.8 Max · Оркестрированная   → build
 ```
-
-Agent IDs не показываются пользователю.
 
 Локальный provider остаётся ordinary direct model choice только при реальном ручном выборе пользователя. Project defaults, persistent queue и workflow worker не имеют automatic `ollama/*` route.
 
@@ -120,35 +126,25 @@ active run + text/attachment    → persistent queue
 
 Скрытые native controls остаются compatibility layer, но пользователь не выбирает `Steer/Queue` вручную.
 
-Advanced frontend перехватывает queued submit и отправляет его в `/client-queue.json`; сервер хранит порядок и удаляет item только после успешного принятия backend.
-
 Queue worker отправляет prompt с уже выбранным model/provider текущей session. Он не переключает model и не выполняет model lifecycle actions.
 
 ## Native questions
 
-OpenCode question request не преобразуется в обычный текст. Web UI получает pending native request и показывает:
-
-- header/question;
-- option labels/descriptions;
-- single или multiple selection;
-- собственный текстовый вариант;
-- несколько вопросов в одном request.
-
-Reply отправляется native question endpoint как `answers: string[][]`, после чего agent loop продолжает работу.
+OpenCode question request не преобразуется в обычный текст. Web UI получает pending native request и показывает header/question, options, single/multiple selection и custom text. Reply отправляется native question endpoint как `answers: string[][]`.
 
 ## Project memory и defaults
 
 Project settings привязаны к canonical directory. Persistent instructions при submit передаются отдельным `system` field current OpenCode message API, поэтому не отображаются как часть user message.
 
-Также проект может задать default mode, orchestrated/конкретную cloud model, RAG preference и permission rules.
+Проект может задавать model profile, RAG preference и permission rules. Execution mode в текущем UX принудительно Build.
 
-`auto` и `ollama/*` не принимаются как автоматические project defaults. Старые experimental значения sanitizes в `inherit`. Это не влияет на ручной выбор Ollama в model picker.
-
-Defaults применяются только к пустой/new session, чтобы открытие существующей session не меняло её execution state неожиданно.
+`auto` и `ollama/*` не принимаются как автоматические project defaults. Это не влияет на ручной выбор Ollama в model picker.
 
 ## Permissions
 
-Permission banner показывает короткий summary; raw payload остаётся под details.
+Permission banner привязан к текущей session: approval другого диалога не показывается поверх активной session. После `Разрешить / Отклонить / Всегда` карточка скрывается сразу, а delayed polling не должен возвращать уже resolved request.
+
+Summary строится из action/resource metadata (`команда`, `файл`, `URL`, `подзадача`), raw payload остаётся под details.
 
 Project policy имеет ordered rules:
 
@@ -156,21 +152,23 @@ Project policy имеет ordered rules:
 action glob + resource glob → ask | allow | deny
 ```
 
-`Разрешать в проекте` создаёт конкретное allow-rule из текущего native permission request. Background worker может автоматически ответить только на явно сохранённые `allow/deny`; остальные requests остаются интерактивными.
+R3/R4 control-plane boundaries остаются интерактивными независимо от project allow.
 
-## Changes / Review
+## Appearance layer
 
-Базовый Git/VCS drawer остаётся источником статуса. Review layer строит file/hunk representation поверх session/VCS diff и даёт bounded revert:
+`appearance.js` хранит `{theme, accent}` в `opencode:web:appearance-v1`. `system` использует `prefers-color-scheme`; accent применяется через CSS custom property и автоматически выбирает контрастный foreground.
 
-- tracked file: `git restore --worktree -- <path>`;
-- untracked: удаляется только выбранный contained file;
-- hunk: reverse `git apply` после проверки file headers.
+`appearance.css` загружается последним и переводит legacy dark-only surfaces на palette variables, поэтому светлая тема охватывает core UI, workflow surfaces, review, Doctor, dialogs и sidebar.
 
-## Orchestration trace
+Microanimations ограничены короткими transitions и появлением stateful surfaces. `prefers-reduced-motion` почти полностью отключает motion.
 
-Child/subagent sessions намеренно не возвращаются в sidebar. Текущая root session показывает раскрываемый trace с primary + child nodes, model/agent/status/runtime и RAG marker при использовании knowledge tools.
+## Mobile drawer
 
-## RAG
+Drawer использует synthetic history entry: первый browser/Android Back закрывает sidebar, а не покидает приложение. Также поддерживаются swipe справа налево и tap/click вне панели через scrim/capture handler.
+
+## Orchestration trace и RAG
+
+Child/subagent sessions намеренно не возвращаются в sidebar. Текущая root session показывает trace с primary + child nodes, model/agent/status/runtime и RAG marker при использовании knowledge tools.
 
 `kb` — optional local MCP server. Automatic retrieval разрешён только orchestrated profile; ordinary direct agents сохраняют deny rules на subagent/RAG delegation.
 
@@ -190,12 +188,12 @@ restart services
 real host self-test
 ```
 
-Zero-token smoke дополнительно проверяет persistent settings/queue, запрет automatic local project defaults и safe Git revert. Это важно, потому что CI не может доказать состояние конкретного host/OpenCode/Qdrant.
+Zero-token smoke проверяет persistent settings/queue, запрет automatic local project defaults и safe Git revert. CI не может доказать состояние конкретного host/OpenCode/Qdrant, поэтому host-level Doctor остаётся частью эксплуатации.
 
 ## Security boundaries
 
 - `.env` не tracked;
-- web Basic Auth;
+- custom signed HttpOnly web session; legacy Basic off by default;
 - recommended loopback bind;
 - project root allowlist + symlink containment;
 - scratch containment;
@@ -203,6 +201,6 @@ Zero-token smoke дополнительно проверяет persistent settin
 - local models manual-only, без workflow lifecycle/routing;
 - ordinary direct agents deny automatic subagent/RAG;
 - orchestrated read worker deny-first;
-- project permission automation только из explicit saved rules;
+- project permission automation только из explicit saved rules и в пределах R0-R4 policy;
 - safe bounded Git revert;
 - MCP execution timeout.
