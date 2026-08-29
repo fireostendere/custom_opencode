@@ -10,15 +10,14 @@
 - только два пользовательских режима работы: `Build` и `Plan`;
 - model picker с избранным, сортировкой, сворачиваемыми провайдерами и отдельной группой бесплатных моделей;
 - `Qwen 3.8 Max · Оркестрированная` прямо в model picker;
-- `Auto · local/cloud`: локальный Ollama на свободном ПК и cloud fallback при нагрузке/игре;
 - серверную persistent queue, которая переживает reload/закрытие PWA и поддерживает reorder/delete;
 - одну контекстную кнопку composer: send / cancel / queue;
 - native OpenCode questions: single/multi-select, описания вариантов и собственный текстовый ответ;
 - компактные permission cards и project-level allow/deny policies;
-- Project settings: persistent system instructions, default Build/Plan/model profile, RAG и Auto-routing policy;
+- Project settings: persistent system instructions, default Build/Plan/cloud model profile и RAG policy;
 - Changes/Review: file stats, diff по файлам/hunks, safe revert файла или отдельного hunk;
 - раскрываемое дерево оркестрации с child sessions и RAG marker;
-- компактный status bar: model/context/cost/runtime/route/RAG/queue;
+- компактный status bar: model/context/cost/runtime/RAG/queue;
 - native slash commands;
 - Markdown/code/tool/reasoning renderers;
 - files и clipboard images;
@@ -31,6 +30,8 @@
 - pre-install verifier и post-install zero-LLM-token self-test;
 - user systemd deployment и one-command update.
 
+Локальные Ollama models остаются ровно в прежнем manual-only режиме. Новые workflow-фичи не выбирают, не запускают, не выгружают и не переключают local provider автоматически.
+
 ## Build / Plan и model profiles
 
 `Build` и `Plan` — единственные пользовательские режимы выполнения:
@@ -38,18 +39,14 @@
 - `Build` — обычный рабочий режим выбранной модели с доступными ей edit/shell permissions;
 - `Plan` — read/plan-only режим без edit и shell.
 
-Routing/orchestration выбираются в model picker, а не дополнительными режимами:
+Оркестрация выбирается в model picker, а не дополнительным режимом:
 
 ```text
 Build | Plan
      +
 обычная модель                    → direct
 Qwen 3.8 Max · Оркестрированная   → Max → bounded fast-reader → optional RAG
-Auto · local/cloud                → local Ollama, если ПК свободен
-                                  → cloud fallback, если ПК занят/идёт игра
 ```
-
-`Auto` включается только явным выбором пользователя или как сохранённый default конкретного проекта. Он не делает Ollama глобальным автоматическим backend. При обнаруженной игре/высокой GPU load выбирается cloud model проекта и отправляется best-effort unload локальной Ollama model.
 
 Внутренние OpenCode agent IDs `build`, `plan`, `build-direct`, `plan-direct` являются implementation detail и не должны отображаться как дополнительные пользовательские режимы.
 
@@ -64,6 +61,8 @@ Auto · local/cloud                → local Ollama, если ПК свобод�
 ```
 
 Очередь хранится сервером в feature-state, а не только в памяти открытой вкладки. Поэтому queued prompts продолжают выполняться после reload/закрытия PWA. В status bar можно открыть очередь, удалить сообщение или поменять порядок.
+
+Queue dispatch использует уже выбранную модель текущей session и сам по себе model/provider не меняет.
 
 ## Questions / выбор вариантов
 
@@ -85,10 +84,11 @@ Auto · local/cloud                → local Ollama, если ПК свобод�
 
 - persistent instructions — передаются при отправке как отдельный OpenCode `system` context и не вставляются в видимый user text;
 - default `Build / Plan`;
-- default model/profile (`Auto`, orchestrated или конкретная модель);
+- default orchestrated или конкретная cloud model;
 - `RAG: auto/on/off`;
-- local/cloud модели и GPU threshold для `Auto`;
 - ordered permission rules `action + resource glob → ask/allow/deny`.
+
+Project settings намеренно не содержат local-model automation. Локальную модель можно выбрать только вручную в обычном model picker.
 
 На permission card есть `Разрешать в проекте`, который сохраняет точечное allow rule вместо глобального бесконтрольного `Always`.
 
@@ -173,7 +173,7 @@ Production server stack заканчивается `app/server_workflow.py`, к�
 - рекомендуемый bind — loopback;
 - project browser ограничен `OPENCODE_PROJECT_ROOTS`;
 - quick workspace cleanup защищён containment checks;
-- `Auto` включается только явным model-profile choice/default проекта;
+- local models остаются manual-only и не входят в workflow automation;
 - обычные модели не получают automatic RAG/subagent delegation;
 - RAG ingest не разрешён read-only worker;
 - persistent workflow state создаётся с user-only permissions;
