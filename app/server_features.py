@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """Persistent workflow features layered between server_plus and server_rag.
 
-This module deliberately keeps user-facing workflow state outside OpenCode's
-runtime database. It adds server-backed prompt queues, per-project preferences,
-auto local/cloud routing, project permission policies, and safe git revert
-helpers while delegating every unknown route to server_plus.
+This layer owns server-backed prompt queues, per-project instructions and
+permission policies, plus safe Git revert helpers. Local model lifecycle and
+routing are deliberately not implemented here: manual local-model selection
+remains entirely in the pre-existing OpenCode provider path.
 """
 from __future__ import annotations
 
 import fnmatch
-import http.client
 import json
 import os
 from pathlib import Path
@@ -19,13 +18,12 @@ import tempfile
 import threading
 import time
 from typing import Any
-from urllib.parse import parse_qs, quote, urlencode, urlsplit
-from urllib.request import Request, urlopen
+from urllib.parse import parse_qs, quote, urlsplit
 from uuid import uuid4
 
 import server_plus as baseplus
 
-# Re-export the server_plus surface used by server_rag.py.
+# Re-export server_plus helpers used by the composed production entrypoint.
 ext = baseplus.ext
 REPO_ROOT = baseplus.REPO_ROOT
 BackendHTTPError = baseplus.BackendHTTPError
@@ -42,8 +40,6 @@ WORKER_STARTED = False
 MAX_REQUEST_BYTES = 12 * 1024 * 1024
 MAX_QUEUE_ITEM_BYTES = 10 * 1024 * 1024
 MAX_QUEUE_ITEMS_PER_SESSION = 50
-DEFAULT_LOCAL_MODEL = "ollama/qwen3.8:27b"
-DEFAULT_CLOUD_MODEL = "bailian-cli/qwen3.8-flash"
 INSTRUCTION_LIMIT = 12_000
 RULE_LIMIT = 100
 
@@ -158,47 +154,38 @@ def _sanitize_rule(value: Any) -> dict[str, str] | None:
     return {"action": action, "resource": resource, "effect": effect}
 
 
+def _safe_default_model(value: Any) -> str:
+    model = str(value or "inherit")[:240] or "inherit"
+    # Project automation must not select a local provider on the user's behalf.
+    if model == "auto" or model.startswith("ollama/"):
+        return "inherit"
+    return model
+
+
 def _sanitize_settings(raw: Any, previous: dict[str, Any] | None = None) -> dict[str, Any]:
     previous = dict(previous or {})
     if not isinstance(raw, dict):
-        return previous
+        raw = {}
     result = dict(previous)
+    # Discard any stale experimental local-routing settings from early branch builds.
+    result.pop("autoRouting", None)
     if "instructions" in raw:
         result["instructions"] = str(raw.get("instructions") or "")[:INSTRUCTION_LIMIT]
     if "defaultMode" in raw:
         mode = str(raw.get("defaultMode") or "inherit")
         result["defaultMode"] = mode if mode in {"inherit", "build", "plan"} else "inherit"
     if "defaultModel" in raw:
-        model = str(raw.get("defaultModel") or "inherit")[:240]
-        result["defaultModel"] = model or "inherit"
+        result["defaultModel"] = _safe_default_model(raw.get("defaultModel"))
     if "rag" in raw:
         rag = str(raw.get("rag") or "auto")
         result["rag"] = rag if rag in {"auto", "on", "off"} else "auto"
-    if "autoRouting" in raw and isinstance(raw.get("autoRouting"), dict):
-        current = dict(result.get("autoRouting") or {})
-        source = raw["autoRouting"]
-        if "localModel" in source:
-            current["localModel"] = str(source.get("localModel") or DEFAULT_LOCAL_MODEL)[:240]
-        if "cloudModel" in source:
-            current["cloudModel"] = str(source.get("cloudModel") or DEFAULT_CLOUD_MODEL)[:240]
-        if "gpuBusyPercent" in source:
-            try:
-                current["gpuBusyPercent"] = max(1, min(100, int(source["gpuBusyPercent"])))
-            except (TypeError, ValueError):
-                current["gpuBusyPercent"] = 35
-        result["autoRouting"] = current
     if "permissionRules" in raw:
         rows = raw.get("permissionRules") if isinstance(raw.get("permissionRules"), list) else []
         result["permissionRules"] = [rule for item in rows if (rule := _sanitize_rule(item))][:RULE_LIMIT]
     result.setdefault("instructions", "")
     result.setdefault("defaultMode", "inherit")
-    result.setdefault("defaultModel", "inherit")
+    result["defaultModel"] = _safe_default_model(result.get("defaultModel"))
     result.setdefault("rag", "auto")
-    result.setdefault("autoRouting", {
-        "localModel": DEFAULT_LOCAL_MODEL,
-        "cloudModel": DEFAULT_CLOUD_MODEL,
-        "gpuBusyPercent": 35,
-    })
     result.setdefault("permissionRules", [])
     return result
 
@@ -217,13 +204,15 @@ def update_project_settings(directory: str, update: dict[str, Any]) -> dict[str,
         state = _load_state_unlocked()
         projects = state.setdefault("projects", {})
         previous = _sanitize_settings(projects.get(canonical))
+        update = dict(update or {})
+        update.pop("autoRouting", None)
         if isinstance(update.get("addPermission"), dict):
             rule = _sanitize_rule(update.get("addPermission"))
             if rule:
                 rules = list(previous.get("permissionRules") or [])
                 if rule not in rules:
                     rules.append(rule)
-                update = {**update, "permissionRules": rules}
+                update["permissionRules"] = rules
         if "removePermissionIndex" in update:
             try:
                 index = int(update["removePermissionIndex"])
@@ -232,7 +221,7 @@ def update_project_settings(directory: str, update: dict[str, Any]) -> dict[str,
             rules = list(previous.get("permissionRules") or [])
             if 0 <= index < len(rules):
                 rules.pop(index)
-            update = {**update, "permissionRules": rules}
+            update["permissionRules"] = rules
         current = _sanitize_settings(update, previous)
         projects[canonical] = current
         _save_state_unlocked(state)
@@ -260,7 +249,7 @@ def queue_snapshot(session_id: str | None = None) -> dict[str, Any]:
                     "id": row.get("id"),
                     "text": str(row.get("text") or "")[:500],
                     "files": [str((item or {}).get("name") or "file") for item in (row.get("files") or []) if isinstance(item, dict)],
-                    "profile": row.get("profile") or "direct",
+                    "profile": row.get("profile") if row.get("profile") in {"direct", "orchestrated"} else "direct",
                     "createdAt": row.get("createdAt"),
                 }
                 for row in rows if isinstance(row, dict)
@@ -277,7 +266,9 @@ def enqueue_prompt(payload: dict[str, Any]) -> dict[str, Any]:
     _session_directory(session_id)
     text = str(payload.get("text") or "")
     files = payload.get("files") if isinstance(payload.get("files"), list) else []
-    profile = str(payload.get("profile") or "direct")[:40]
+    profile = str(payload.get("profile") or "direct")
+    if profile not in {"direct", "orchestrated"}:
+        profile = "direct"
     if not text.strip() and not files:
         raise ValueError("empty queue item")
     item = {
@@ -298,7 +289,8 @@ def enqueue_prompt(payload: dict[str, Any]) -> dict[str, Any]:
         rows.append(item)
         state.setdefault("queueErrors", {}).pop(session_id, None)
         _save_state_unlocked(state)
-    return {"ok": True, "item": {k: item[k] for k in ("id", "text", "profile", "createdAt")}, "count": len(rows)}
+        count = len(rows)
+    return {"ok": True, "item": {k: item[k] for k in ("id", "text", "profile", "createdAt")}, "count": count}
 
 
 def delete_queue_item(session_id: str, item_id: str) -> dict[str, Any]:
@@ -318,8 +310,9 @@ def reorder_queue(session_id: str, ids: list[str]) -> dict[str, Any]:
         state = _load_state_unlocked()
         rows = _queue_rows(state, session_id)
         by_id = {str((row or {}).get("id")): row for row in rows if isinstance(row, dict)}
+        requested = set(ids)
         ordered = [by_id[item_id] for item_id in ids if item_id in by_id]
-        ordered.extend(row for row in rows if str((row or {}).get("id")) not in set(ids))
+        ordered.extend(row for row in rows if str((row or {}).get("id")) not in requested)
         state.setdefault("queues", {})[session_id] = ordered
         _save_state_unlocked(state)
         return {"ok": True, "count": len(ordered)}
@@ -348,18 +341,6 @@ def _status_busy(value: Any) -> bool:
     return bool(re.search(r"running|busy|retry|working|pending", str(raw), re.I))
 
 
-def _split_model(value: str, fallback: str) -> dict[str, str]:
-    raw = value if "/" in value else fallback
-    provider, model = raw.split("/", 1)
-    return {"providerID": provider, "id": model}
-
-
-def _switch_session_model(session_id: str, model: dict[str, str]) -> None:
-    _backend_request_json(
-        "POST", f"/api/session/{quote(session_id, safe='')}/model", {"model": model}, timeout=12.0,
-    )
-
-
 def _send_backend_prompt(session_id: str, text: str, files: list[Any]) -> Any:
     target = f"/api/session/{quote(session_id, safe='')}/prompt"
     attempts = (
@@ -368,143 +349,14 @@ def _send_backend_prompt(session_id: str, text: str, files: list[Any]) -> Any:
         {"text": text, "files": files, "delivery": "steer"},
     )
     last: Exception | None = None
-    for payload in attempts:
+    for body in attempts:
         try:
-            return _backend_request_json("POST", target, payload, timeout=30.0)
+            return _backend_request_json("POST", target, body, timeout=30.0)
         except BackendHTTPError as exc:
             last = exc
             if exc.status not in (400, 404, 405, 422):
                 raise
     raise last or RuntimeError("prompt API unavailable")
-
-
-def _process_names() -> set[str]:
-    names: set[str] = set()
-    proc = Path("/proc")
-    if not proc.is_dir():
-        return names
-    for child in proc.iterdir():
-        if not child.name.isdigit():
-            continue
-        try:
-            name = (child / "comm").read_text(encoding="utf-8", errors="ignore").strip().lower()
-            if name:
-                names.add(name)
-        except OSError:
-            continue
-    return names
-
-
-def _game_processes() -> list[str]:
-    raw = ext.base.setting("OPENCODE_AUTO_GAME_PROCESSES", "dota2;cs2;wine64-preloader;wine;proton") or ""
-    return [item.strip().lower() for item in raw.split(";") if item.strip()]
-
-
-def _game_running() -> tuple[bool, str | None]:
-    names = _process_names()
-    for needle in _game_processes():
-        for name in names:
-            if needle == name or needle in name:
-                return True, name
-    return False, None
-
-
-def _gpu_load() -> tuple[int | None, str | None]:
-    probes = [
-        (["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"], "nvidia-smi"),
-        (["rocm-smi", "--showuse", "--json"], "rocm-smi"),
-        (["amd-smi", "metric", "-g", "all"], "amd-smi"),
-    ]
-    for command, source in probes:
-        try:
-            proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2.0, check=False)
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if proc.returncode != 0:
-            continue
-        values = [int(value) for value in re.findall(r"(?<!\d)(\d{1,3})(?:\.\d+)?\s*%", proc.stdout)]
-        if not values and source == "nvidia-smi":
-            values = [int(value) for value in re.findall(r"(?<!\d)(\d{1,3})(?!\d)", proc.stdout)]
-        values = [value for value in values if 0 <= value <= 100]
-        if values:
-            return max(values), source
-    return None, None
-
-
-def _ollama_root() -> str:
-    raw = ext.base.setting("OLLAMA_BASE_URL", "http://localhost:11434/v1") or "http://localhost:11434/v1"
-    return raw[:-3] if raw.rstrip("/").endswith("/v1") else raw.rstrip("/")
-
-
-def _ollama_available() -> bool:
-    try:
-        request = Request(_ollama_root() + "/api/tags", headers={"Accept": "application/json"})
-        with urlopen(request, timeout=1.2) as response:
-            return 200 <= response.status < 300
-    except Exception:
-        return False
-
-
-def _unload_ollama(model: str) -> bool:
-    model_id = model.split("/", 1)[1] if "/" in model else model
-    try:
-        data = json.dumps({"model": model_id, "keep_alive": 0}).encode("utf-8")
-        request = Request(
-            _ollama_root() + "/api/generate",
-            data=data,
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        with urlopen(request, timeout=2.5) as response:
-            response.read(64)
-            return 200 <= response.status < 300
-    except Exception:
-        return False
-
-
-def resource_snapshot(settings: dict[str, Any] | None = None) -> dict[str, Any]:
-    settings = _sanitize_settings(settings)
-    auto = settings.get("autoRouting") or {}
-    threshold = int(auto.get("gpuBusyPercent") or 35)
-    game, process = _game_running()
-    gpu, gpu_source = _gpu_load()
-    local_available = _ollama_available()
-    busy = game or (gpu is not None and gpu >= threshold)
-    reason = f"game:{process}" if game else (f"gpu:{gpu}%" if busy and gpu is not None else ("idle" if not busy else "busy"))
-    return {
-        "busy": busy,
-        "reason": reason,
-        "gameProcess": process,
-        "gpuPercent": gpu,
-        "gpuSource": gpu_source,
-        "gpuBusyPercent": threshold,
-        "localAvailable": local_available,
-    }
-
-
-def auto_route(session_id: str, directory: str | None = None, *, apply: bool = False) -> dict[str, Any]:
-    directory = directory or _session_directory(session_id)
-    settings = project_settings(directory)
-    auto = settings.get("autoRouting") or {}
-    local_name = str(auto.get("localModel") or DEFAULT_LOCAL_MODEL)
-    cloud_name = str(auto.get("cloudModel") or DEFAULT_CLOUD_MODEL)
-    resources = resource_snapshot(settings)
-    use_local = bool(resources.get("localAvailable") and not resources.get("busy"))
-    chosen_name = local_name if use_local else cloud_name
-    if resources.get("busy"):
-        resources["localUnloadRequested"] = _unload_ollama(local_name)
-    model = _split_model(chosen_name, DEFAULT_CLOUD_MODEL)
-    if apply:
-        _switch_session_model(session_id, model)
-    return {
-        "sessionID": session_id,
-        "directory": directory,
-        "model": model,
-        "modelRef": chosen_name,
-        "route": "local" if use_local else "cloud",
-        "resources": resources,
-        "applied": bool(apply),
-    }
 
 
 def _dispatch_one_queue_item(session_id: str, status: dict[str, Any]) -> None:
@@ -517,9 +369,9 @@ def _dispatch_one_queue_item(session_id: str, status: dict[str, Any]) -> None:
             return
         item = dict(rows[0])
     try:
-        directory = _session_directory(session_id)
-        if item.get("profile") == "auto":
-            auto_route(session_id, directory, apply=True)
+        _session_directory(session_id)
+        # The queued prompt uses the model currently selected for the session.
+        # Queue dispatch never changes model/provider and never manages local runtime.
         _send_backend_prompt(session_id, str(item.get("text") or ""), list(item.get("files") or []))
     except Exception as exc:
         with STATE_LOCK:
@@ -691,7 +543,7 @@ def git_revert(payload: dict[str, Any]) -> dict[str, Any]:
     patch = str(payload.get("patch") or "")
     if not patch or len(patch.encode("utf-8")) > 512_000:
         raise ValueError("invalid patch")
-    header_paths = []
+    header_paths: list[str] = []
     for line in patch.splitlines():
         if line.startswith("--- ") or line.startswith("+++ "):
             value = line[4:].split("\t", 1)[0].strip()
@@ -736,7 +588,7 @@ class Handler(baseplus.Handler):
 
     def do_GET(self) -> None:
         parsed = urlsplit(self.path)
-        if parsed.path in {"/client-queue.json", "/client-project-settings.json", "/client-auto-route.json", "/client-features.json"}:
+        if parsed.path in {"/client-queue.json", "/client-project-settings.json", "/client-features.json"}:
             if not self.authenticated():
                 return
             params = parse_qs(parsed.query)
@@ -749,18 +601,10 @@ class Handler(baseplus.Handler):
                     directory = _resolve_directory(params=params)
                     self.json_response({"directory": directory, "settings": project_settings(directory)})
                     return
-                if parsed.path == "/client-auto-route.json":
-                    sid = (params.get("sessionID") or [None])[0]
-                    if not isinstance(sid, str) or not sid:
-                        raise ValueError("sessionID is required")
-                    apply = ((params.get("apply") or ["0"])[0]) in {"1", "true", "yes"}
-                    self.json_response(auto_route(sid, apply=apply))
-                    return
                 state = _with_state_read()
                 self.json_response({
                     "ok": True,
                     "queue": queue_snapshot(),
-                    "resource": resource_snapshot(),
                     "projects": len(state.get("projects") or {}),
                     "statePath": str(_state_path()),
                     "worker": WORKER_STARTED,
@@ -783,7 +627,8 @@ class Handler(baseplus.Handler):
                     return
                 if parsed.path == "/client-project-settings.json":
                     directory = _resolve_directory(payload=payload)
-                    self.json_response(update_project_settings(directory, payload.get("settings") if isinstance(payload.get("settings"), dict) else payload))
+                    source = payload.get("settings") if isinstance(payload.get("settings"), dict) else payload
+                    self.json_response(update_project_settings(directory, source if isinstance(source, dict) else {}))
                     return
                 self.json_response(git_revert(payload))
                 return
