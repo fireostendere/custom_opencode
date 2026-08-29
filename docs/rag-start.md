@@ -1,41 +1,151 @@
 # `/rag-start`
 
-The web client handles `/rag-start` locally. It does not send the command to an LLM and therefore does not consume Qwen/OpenAI tokens.
+`/rag-start` — локальная control-команда web client. Она перехватывается до отправки prompt в OpenCode model runtime и сама по себе не расходует Qwen/OpenAI tokens.
 
-## Modes
+Команда нужна для управляемого запуска/проверки RAG на конкретной машине и для подключения `kb` к текущему OpenCode workspace.
+
+## Режимы
+
+### Полный
 
 ```text
 /rag-start
 /rag-start full
 ```
 
-Full mode:
+Последовательность:
 
-1. locates `mcp-rag` via `MCP_RAG_ROOT`, adjacent `../mcp-rag`, or `~/mcp-rag`;
-2. executes the RAG venv Python module `knowledge_base.runtime`;
-3. checks/starts local Qdrant with bounded timeouts;
-4. verifies non-empty corpus + Qdrant collection;
-5. runs one local retrieval smoke (`DipTrace PCB layout`), using no LLM tokens;
-6. resolves the currently selected OpenCode session to its server-side workspace directory;
-7. dynamically registers/connects `kb` through the current OpenCode MCP API;
-8. verifies the MCP protocol and required tools;
-9. atomically persists only `mcp.servers.kb.disabled=false` in the rendered runtime config so later workspaces/restarts can auto-connect;
-10. opens Doctor after completion so the final runtime state is visible.
+1. обнаружить `mcp-rag` через `MCP_RAG_ROOT`, adjacent `../mcp-rag` или `~/mcp-rag`;
+2. выполнить model-free quick preflight через `knowledge_base.runtime`;
+3. проверить Qdrant;
+4. если local loopback Qdrant остановлен — разрешено поднять только фиксированный Compose service `qdrant`;
+5. проверить непустой registry/corpus и существование Qdrant collection;
+6. только после успешного preflight сделать один локальный retrieval smoke (`DipTrace PCB layout`);
+7. получить выбранный `sessionID` из UI;
+8. server-side запросить у OpenCode directory этой session — arbitrary filesystem path от browser не принимается;
+9. dynamic add/connect `kb` через OpenCode V2 MCP API именно для выбранного workspace;
+10. дождаться `connected` в bounded window;
+11. independent MCP probe: initialization, `list_tools`, `knowledge_status`;
+12. проверить required tools;
+13. только после успешного live connection атомарно сохранить `mcp.servers.kb.disabled=false` в runtime config;
+14. открыть Doctor.
+
+Full mode использует локальный embedding/reranker для smoke retrieval, но не внешний LLM API.
+
+### Быстрый
 
 ```text
 /rag-start quick
 ```
 
-Quick mode skips the embedding/reranker retrieval smoke. It still checks Qdrant, corpus readiness, connects the current workspace, verifies MCP tools and persists enablement.
+Quick mode пропускает embedding/reranker retrieval smoke.
 
-## Failure behavior
+Он всё равно проверяет:
 
-The command is idempotent and protected by a mutex: repeated calls do not create multiple Qdrant containers or concurrent start attempts.
+- наличие RAG runtime;
+- Qdrant readiness/start;
+- registry/corpus;
+- collection;
+- current workspace;
+- dynamic `kb` connection;
+- MCP protocol/tools;
+- persisted enablement после успешного connect.
 
-It never starts a remote Qdrant host, never runs arbitrary Docker services, never rebuilds/ingests the corpus, and never accepts an arbitrary filesystem directory from the browser. The browser sends only the selected `sessionID`; the server resolves the workspace using OpenCode itself.
+Это режим, который используется post-install self-test.
 
-If Docker is unavailable, the RAG venv is missing, the corpus is empty, the index is incompatible, retrieval fails, or `kb` cannot reach `connected`, the command returns a bounded structured failure and opens Doctor instead of looping indefinitely.
+## Idempotence
+
+Повторный вызов не должен создавать несколько Qdrant containers или несколько параллельных startup attempts.
+
+Server использует mutex: одновременно выполняется одна RAG start/check операция.
+
+Если Qdrant уже работает, bootstrap возвращает `already-running` и ничего не перезапускает.
+
+Если `kb` уже connected, повторный connect не нужен.
+
+## Что команда никогда не делает
+
+`/rag-start` не должен:
+
+- запускать remote Qdrant;
+- выполнять arbitrary shell string из browser;
+- запускать произвольный Docker service;
+- делать `ingest-all`;
+- делать rebuild/reindex;
+- удалять Qdrant volume;
+- создавать пустую collection при потерянном индексе;
+- запускать второй standalone `knowledge-mcp` daemon;
+- принимать browser-provided raw project directory;
+- зацикливаться на бесконечных retries.
 
 ## Runtime ownership
 
-OpenCode remains the supervisor of the `knowledge-mcp` stdio process. `/rag-start` does not launch a second standalone MCP daemon. The only infrastructure process it may start is the repository's fixed Qdrant Compose service.
+OpenCode остаётся supervisor stdio server:
+
+```text
+OpenCode
+  └── kb
+       └── bash scripts/rag-mcp.sh
+            └── mcp-rag/.venv/bin/knowledge-mcp
+```
+
+`/rag-start` управляет readiness backing infrastructure и MCP connection state, но не подменяет OpenCode process supervision.
+
+## Missing collection
+
+Если registry содержит corpus, но Qdrant collection отсутствует, состояние считается broken/not-ready.
+
+Health path должен сообщить explicit rebuild-required error. Он не создаёт новую пустую collection и не маскирует потерю vector index.
+
+Rebuild выполняется отдельно по процедуре `mcp-rag`.
+
+## Timeouts
+
+Lifecycle bounded на нескольких уровнях:
+
+- Docker Compose invocation ограничен;
+- Qdrant startup wait ограничен;
+- OpenCode MCP add/connect ограничен;
+- polling `connected` ограничен;
+- MCP execution config ограничен 60 секундами.
+
+Если слой не стал ready в отведённое время, команда возвращает structured failure.
+
+## Где смотреть результат
+
+При успехе UI показывает краткий статус вида:
+
+```text
+RAG готов · <documents> docs · <chunks> chunks · <points> points · MCP connected
+```
+
+После выполнения открывается Doctor, где отдельно видны:
+
+- OpenCode MCP state;
+- direct MCP protocol probe;
+- tools;
+- Qdrant;
+- corpus counts;
+- lifecycle settings.
+
+## Диагностика без UI
+
+В `mcp-rag`:
+
+```bash
+.venv/bin/python -m knowledge_base.runtime --json --no-start
+```
+
+Проверка с разрешённым стартом local Qdrant:
+
+```bash
+.venv/bin/python -m knowledge_base.runtime --json
+```
+
+Полный локальный retrieval smoke:
+
+```bash
+.venv/bin/python -m knowledge_base.runtime --json --search "DipTrace PCB layout"
+```
+
+Эти команды не подключают MCP к OpenCode workspace — это делает именно `/rag-start`/`server_rag.py`.
