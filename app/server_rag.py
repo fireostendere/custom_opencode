@@ -19,10 +19,10 @@ RAG_QUERY = "DipTrace PCB layout"
 
 
 def _v2_workspace_target(path: str, directory: str | None = None) -> str:
-    """Current OpenCode V2 workspace middleware uses ?directory=, not V1 location[]."""
+    """Encode the V2 deep-object location query used by the HTTP API."""
     if not directory:
         return path
-    return f"{path}?{urlencode({'directory': directory})}"
+    return f"{path}?{urlencode({'location[directory]': directory})}"
 
 
 plus._workspace_target = _v2_workspace_target
@@ -44,14 +44,24 @@ def _session_directory(session_id: str | None) -> str:
 
 def _mcp_status(directory: str) -> dict[str, Any]:
     try:
-        value = plus._data(plus._backend_request_json(
-            "GET", _v2_workspace_target("/api/mcp", directory), timeout=15.0))
+        payload = plus._backend_request_json(
+            "GET", _v2_workspace_target("/api/mcp", directory), timeout=15.0)
     except Exception as exc:
         return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
-    if not isinstance(value, dict):
-        return {"status": "failed", "error": "OpenCode returned invalid MCP status"}
-    kb = value.get("kb")
-    return kb if isinstance(kb, dict) else {"status": "missing"}
+    value = plus._data(payload)
+    if isinstance(value, list):
+        for server in value:
+            if not isinstance(server, dict) or server.get("name") != "kb":
+                continue
+            status = server.get("status")
+            return status if isinstance(status, dict) else {"status": "failed"}
+        return {"status": "missing"}
+    # Compatibility with an older beta response shape.
+    if isinstance(value, dict):
+        kb = value.get("kb")
+        if isinstance(kb, dict):
+            return kb
+    return {"status": "failed", "error": "OpenCode returned invalid MCP status"}
 
 
 def _invoke_runtime(runtime: dict[str, object], args: list[str], timeout: float) -> dict[str, Any]:
@@ -119,8 +129,12 @@ def _dynamic_mcp_config() -> dict[str, Any]:
         "type": "local",
         "command": ["bash", str(script)],
         "cwd": str(plus.REPO_ROOT.resolve()),
-        "enabled": True,
-        "timeout": 60_000,
+        "disabled": False,
+        "timeout": {
+            "startup": 10_000,
+            "catalog": 10_000,
+            "execution": 60_000,
+        },
     }
 
 
@@ -167,9 +181,9 @@ def _connect_kb(directory: str) -> dict[str, Any]:
     add_error = None
     try:
         plus._backend_request_json(
-            "POST",
-            _v2_workspace_target("/api/mcp", directory),
-            {"name": "kb", "config": _dynamic_mcp_config()},
+            "PUT",
+            _v2_workspace_target("/api/mcp/kb", directory),
+            {"config": _dynamic_mcp_config()},
             timeout=20.0,
         )
     except plus.BackendHTTPError as exc:

@@ -158,7 +158,7 @@ for marker in ("isFreeModel", "Бесплатные модели", "/client-dire
 for marker in ("OPENCODE_PROJECT_ROOTS", "directory-outside-allowed-roots"):
     if marker not in server_plus_py:
         bad.append(f"project browser boundary missing: {marker}")
-for marker in ("knowledge_base.runtime", "/api/mcp", "enabled\": True", "_persist_kb_enabled", "?{urlencode({'directory': directory})}"):
+for marker in ("knowledge_base.runtime", "/api/mcp", "disabled\": False", "_persist_kb_enabled", "?{urlencode({'location[directory]': directory})}"):
     if marker not in server_rag_py:
         bad.append(f"RAG lifecycle server capability missing: {marker}")
 if "app/server_rag.py" not in service:

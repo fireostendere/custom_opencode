@@ -211,7 +211,10 @@ def _run_rag_probe(mode: str = "status", query: str = "DipTrace PCB layout") -> 
     ]
     if mode == "search":
         command.extend(["--query", query])
-    timeout = 90.0 if mode == "search" else 20.0
+    # FastEmbed/Qdrant imports and MCP initialization can take just over twenty
+    # seconds on a cold WSL process. Keep the probe bounded, but avoid a false
+    # negative at the old 20-second edge.
+    timeout = 180.0 if mode == "search" else 60.0
     try:
         result = subprocess.run(
             command,

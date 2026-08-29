@@ -15,12 +15,13 @@ sys.path.insert(0, str(ROOT / "app"))
 
 import server_rag
 
-assert "directory=" in server_rag._v2_workspace_target("/api/mcp", "/tmp/project")
-assert "location%5Bdirectory%5D" not in server_rag._v2_workspace_target("/api/mcp", "/tmp/project")
+target = server_rag._v2_workspace_target("/api/mcp", "/tmp/project")
+assert "location%5Bdirectory%5D" in target
+assert "?directory=" not in target
 config = server_rag._dynamic_mcp_config()
 assert config["type"] == "local"
-assert config["enabled"] is True
-assert config["timeout"] == 60_000
+assert config["disabled"] is False
+assert config["timeout"]["execution"] == 60_000
 assert config["command"][0] == "bash"
 assert config["command"][1].endswith("scripts/rag-mcp.sh")
 
