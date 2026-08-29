@@ -1,4 +1,3 @@
-import './local-model-boundary.js'
 import {
   ORCHESTRATED_MODEL,
   agentFor,
