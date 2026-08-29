@@ -7,6 +7,7 @@
 - [Установка и обновление](installation.md) — новая установка, миграция существующей установки, self-test, systemd и обновления.
 - [Конфигурация `.env`](configuration.md) — все основные переменные окружения, секреты, пути и рекомендуемые значения.
 - [Архитектура и возможности](architecture.md) — из каких компонентов состоит система и что именно она предоставляет.
+- [Permission control plane](control-plane.md) — R0–R4 risk policy, auto-approval безопасных действий, project rules и audit.
 - [Модели и routing](models-and-routing.md) — Build/Plan, model-selected orchestration, Qwen Max → Flash, ручной Ollama, permissions и стоимость.
 - [Интеграция RAG](rag.md) — что нужно для RAG, как `custom_opencode` связывается с `mcp-rag`, lifecycle и ограничения.
 - [`/rag-start`](rag-start.md) — запуск/проверка RAG из web-клиента без LLM-токенов.
@@ -31,6 +32,8 @@ Browser / PWA
     v
 custom_opencode web proxy
     |
+    +--> permission control plane (R0-R4)
+    |
     +--> OpenCode V2 backend
     |       |
     |       +--> Build / Plan user modes
@@ -54,4 +57,6 @@ custom_opencode web proxy
 
 ## Основной принцип безопасности
 
-RAG, локальные модели и дополнительные интеграции не должны становиться обязательным control-plane. Падение Qdrant, отсутствие Ollama или ошибка retrieval должны деградировать качество/доступность конкретной функции, но не блокировать обычную работу OpenCode.
+Permission control plane детерминирован и не делегирует модели оценку собственной безопасности. R3/R4 остаются интерактивными даже при project `allow`.
+
+RAG, локальные модели и дополнительные интеграции не должны становиться обязательным model-routing control-plane. Падение Qdrant, отсутствие Ollama или ошибка retrieval должны деградировать качество/доступность конкретной функции, но не блокировать обычную работу OpenCode.
