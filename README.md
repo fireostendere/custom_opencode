@@ -7,7 +7,7 @@
 - web/PWA UI для OpenCode sessions;
 - isolated quick-session workspaces;
 - `Проекты → Папки на ПК` с filesystem allowlist и symlink containment;
-- только два пользовательских режима работы: `Build` и `Plan`;
+- только два пользовательских режима работы: `Direct` и `Plan`;
 - model picker с избранным, сортировкой, сворачиваемыми провайдерами и отдельной группой бесплатных моделей;
 - отдельный вариант `Qwen 3.8 Max · Оркестратор` прямо в model picker;
 - автоматическую очередь сообщений без ручного `Steer/Queue` переключателя;
@@ -25,19 +25,28 @@
 - pre-install verifier и post-install zero-LLM-token self-test;
 - user systemd deployment и one-command update.
 
-## Модели и orchestration
+## Direct / Plan и orchestration
 
-Обычная модель из picker работает напрямую в выбранном `Build` или `Plan` режиме: без automatic subagents и без automatic RAG.
+`Direct` и `Plan` — единственные пользовательские режимы выполнения:
 
-Для orchestration выбирается специальная модель:
+- `Direct` — модель может выполнять обычную рабочую задачу с доступными ей edit/shell permissions;
+- `Plan` — read/plan-only режим без edit и shell.
+
+Оркестрация не является отдельным режимом. Она выбирается только через специальную модель в picker:
 
 ```text
+Direct | Plan
+     +
 Qwen 3.8 Max · Оркестратор
         ↓ при необходимости
 fast-reader → Qwen 3.6 Flash
         ↓ при corpus-relevant engineering lookup
 kb MCP → mcp-rag
 ```
+
+Любая обычная модель из picker работает напрямую. `Qwen 3.8 Max · Оркестратор` использует тот же Qwen Max как primary, но разрешает bounded delegation в `fast-reader` и optional RAG.
+
+Внутренние OpenCode agent IDs `build`, `plan`, `build-direct`, `plan-direct` являются implementation detail и не должны отображаться как дополнительные пользовательские режимы.
 
 `fast-reader` — bounded read-only worker для repository exploration, логов и точечного RAG lookup. Он не получает edit/shell права. Финальные решения остаются у Qwen 3.8 Max.
 
@@ -59,7 +68,7 @@ kb MCP → mcp-rag
 
 ## RAG
 
-RAG полностью опционален. Если `mcp-rag` не найден, installer создаёт рабочий OpenCode config с `kb.disabled=true`.
+RAG полностью опционален. Если `mcp-rag` не найден или явно отключён через `MCP_RAG_ENABLED=0`, installer создаёт рабочий OpenCode config с `kb.disabled=true`.
 
 Когда RAG установлен, `/rag-start` может без LLM-токенов проверить/поднять локальный Qdrant, проверить corpus/index, подключить `kb` к текущему workspace и проверить MCP tools.
 
@@ -126,7 +135,7 @@ docs/      пользовательская и эксплуатационная 
 - project browser ограничен `OPENCODE_PROJECT_ROOTS`;
 - quick workspace cleanup защищён containment checks;
 - automatic Ollama отключён;
-- direct models не получают automatic RAG/subagent delegation;
+- обычные модели не получают automatic RAG/subagent delegation;
 - RAG ingest не разрешён read-only worker;
 - MCP execution timeout ограничен;
 - install/update завершается ошибкой, если critical host self-test не прошёл.
