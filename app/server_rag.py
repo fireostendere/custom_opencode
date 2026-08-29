@@ -224,14 +224,19 @@ def run_rag_start(mode: str = "full", session_id: str | None = None) -> dict[str
             }
 
         directory = _session_directory(session_id)
-        persisted = _persist_kb_enabled()
         connection = _connect_kb(directory)
+        persisted = _persist_kb_enabled() if connection.get("ok") else {
+            "ok": False,
+            "changed": False,
+            "skipped": True,
+            "error": "kb was not persisted because the live workspace connection failed",
+        }
         protocol = plus._run_rag_probe("status")
         tools = set(protocol.get("tools") or []) if protocol.get("ok") else set()
         required = {"knowledge_search", "knowledge_get", "knowledge_sources", "knowledge_status"}
         tools_ok = required.issubset(tools)
 
-        ok = bool(connection.get("ok") and protocol.get("ok") and tools_ok)
+        ok = bool(connection.get("ok") and persisted.get("ok") and protocol.get("ok") and tools_ok)
         return {
             "ok": ok,
             "stage": "ready" if ok else "verification",
