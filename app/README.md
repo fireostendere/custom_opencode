@@ -14,12 +14,11 @@
 - только `Build / Plan` как пользовательские mode controls;
 - model picker с favorites, сортировкой, collapsible providers и отдельной группой бесплатных моделей;
 - `Qwen 3.8 Max · Оркестрированная` как model profile;
-- `Auto · local/cloud` как явный model profile;
 - contextual composer action вместо двух кнопок и ручного `Steer/Queue`;
 - server-backed persistent queue с reorder/delete;
 - native question cards: single/multiple choice + custom text answer;
 - compact permission banner + project permission policy;
-- Project settings с system instructions/defaults/RAG/Auto routing;
+- Project settings с system instructions/defaults/RAG policy;
 - Changes/Review с file/hunk diffs и safe revert;
 - expandable orchestration tree с child sessions/RAG marker;
 - compact workflow status bar;
@@ -30,6 +29,8 @@
 - actionable notifications, draft autosave, files/clipboard images, permissions;
 - SSE/status polling и mobile refresh;
 - Doctor + zero-token/paid smoke test UI.
+
+Локальные Ollama models остаются существующей manual-only возможностью обычного model picker. Advanced workflow layer не выбирает local provider программно, не запускает и не выгружает local runtime и не анализирует GPU/игры для model routing.
 
 ## Composer state machine
 
@@ -52,10 +53,9 @@ running + text/attachment    → ↑ persistent queue
 обычная модель + Plan    → plan-direct
 Оркестрированная + Build → build
 Оркестрированная + Plan  → plan
-Auto + Build/Plan        → direct agent + server-selected local/cloud model
 ```
 
-`Auto` не является глобальным router. Он активируется только когда выбран пользователем или сохранён default проекта. Сервер смотрит доступность Ollama, известные game processes и GPU utilization. При busy state выбирается cloud fallback и выполняется best-effort unload локальной модели.
+Обычный выбор локальной модели в model picker по-прежнему является ручным ordinary-model choice и не связан с Project defaults или persistent queue routing.
 
 ## Native questions
 
@@ -76,12 +76,11 @@ Server state привязан к canonical project directory. UI хранит:
 
 - persistent instructions;
 - default Build/Plan;
-- default model/profile;
+- default orchestrated или конкретную cloud model;
 - RAG preference;
-- Auto local/cloud model и GPU threshold;
 - permission rules.
 
-Persistent instructions передаются через `system` field current OpenCode message API и не отображаются внутри user message. Для старого несовместимого backend остаётся prompt compatibility fallback.
+Project defaults намеренно не могут автоматически выбрать `ollama/*`. Persistent instructions передаются через `system` field current OpenCode message API и не отображаются внутри user message. Для старого несовместимого backend остаётся prompt compatibility fallback.
 
 ## Persistent queue
 
@@ -91,11 +90,10 @@ Persistent instructions передаются через `system` field current O
 
 1. проверяет status queued session;
 2. ждёт idle;
-3. применяет Auto route, если item отправлен с profile `auto`;
-4. отправляет следующий prompt через async OpenCode API;
-5. удаляет item только после успешного принятия backend.
+3. отправляет следующий prompt через OpenCode API с уже выбранной для session моделью;
+4. удаляет item только после успешного принятия backend.
 
-Поэтому вкладка/PWA не обязана оставаться открытой.
+Queue worker никогда не меняет model/provider. Поэтому вкладка/PWA не обязана оставаться открытой, а ручной local-model выбор не превращается в automatic routing.
 
 ## Permission policy
 
@@ -123,7 +121,7 @@ action glob + resource glob → ask | allow | deny
 
 Child sessions всё ещё не засоряют sidebar. Они отображаются внутри раскрываемого execution trace текущей root session. Для child показываются agent/model/status/time и RAG marker, если в child trace виден knowledge tool.
 
-Status bar показывает компактно model/profile, context, cost, elapsed time, Auto route, RAG и persistent queue count.
+Status bar показывает компактно model/profile, context, cost, elapsed time, RAG и persistent queue count.
 
 ## Server stack
 
@@ -141,7 +139,7 @@ server.py
 - `server_ext.py` — Qwen/OpenAI rate-limit bridges;
 - `server_plus.py` — constrained host-directory browser + Doctor endpoints;
 - `server_rag.py` — `/rag-start`, V2 MCP workspace connect и persisted RAG enablement;
-- `server_features.py` — persistent queue/project policy/Auto routing/git revert;
+- `server_features.py` — persistent queue/project policy/git revert;
 - `server_workflow.py` — production composition + project system-context send path.
 
 ## Frontend modules
@@ -150,8 +148,8 @@ server.py
 - `styles.css` — основной UI;
 - `enhancements.css`, `enhancements.js` — provider limits + slash palette;
 - `ui-enhancements.css`, `ui-enhancements.js` — model catalog + project folder browser;
-- `ux-controls.css`, `ux-controls.js`, `ux-state.js` — Build/Plan, model profiles, contextual composer, permission summary;
-- `advanced-features.css`, `advanced-features.js` — persistent queue, questions, project settings, Auto status, orchestration trace, advanced review;
+- `ux-controls.css`, `ux-controls.js`, `ux-state.js` — Build/Plan, direct/orchestrated profiles, contextual composer, permission summary;
+- `advanced-features.css`, `advanced-features.js` — persistent queue, questions, project settings, orchestration trace, advanced review;
 - `rag-control.js` — client-side `/rag-start` interception/control;
 - `doctor.css`, `doctor.js` — diagnostics UI;
 - `api.js` — OpenCode HTTP adapter/fallbacks;
@@ -189,4 +187,4 @@ Native OpenCode commands загружаются через `/api/command` и в�
 ../scripts/verify.sh
 ```
 
-Verifier проверяет JavaScript/Python syntax, web smoke, provider/Doctor smoke и zero-token workflow smoke: persistent settings/queue, Auto route и safe Git revert.
+Verifier проверяет JavaScript/Python syntax, web smoke, provider/Doctor smoke и zero-token workflow smoke: persistent settings/queue, запрет automatic local defaults и safe Git revert.
