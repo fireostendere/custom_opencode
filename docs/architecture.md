@@ -2,9 +2,9 @@
 
 ## Что такое custom_opencode
 
-`custom_opencode` не является форком OpenCode. Это host-side комплект вокруг OpenCode V2, который добавляет собственный web/PWA client, переносимую конфигурацию, model routing, persistent workflow state, диагностику, безопасный browser локальных проектов и опциональную связь с `mcp-rag`.
+`custom_opencode` не является форком OpenCode. Это host-side комплект вокруг OpenCode V2, который добавляет собственный web/PWA client, переносимую конфигурацию, persistent workflow state, диагностику, безопасный browser локальных проектов и опциональную связь с `mcp-rag`.
 
-OpenCode остаётся execution/model backend; `custom_opencode` управляет UX, routing policy и host integration.
+OpenCode остаётся execution/model backend; `custom_opencode` управляет UX и host integration.
 
 ## Компоненты
 
@@ -21,16 +21,18 @@ OpenCode остаётся execution/model backend; `custom_opencode` управ�
 - parallel running states;
 - automatic send / cancel / persistent queue;
 - только `Build / Plan` как execution modes;
-- direct/orchestrated/Auto model profiles;
+- direct/orchestrated model profiles;
 - native question cards с single/multi-select и custom answer;
 - project memory/defaults/permission policy;
 - compact permission cards;
 - advanced Changes/Review с file/hunk revert;
 - orchestration tree;
-- model/context/cost/runtime/route/RAG/queue status bar;
+- model/context/cost/runtime/RAG/queue status bar;
 - files/images, Markdown/code/tool/reasoning rendering;
 - drafts, deep links и actionable PWA notifications;
 - provider quotas, Doctor, `/rag-start`, project browser.
+
+Локальные Ollama models остаются manual-only ordinary model entries существующего model picker. Новый workflow layer не реализует local/cloud router и не управляет local runtime.
 
 ### Server layers
 
@@ -52,9 +54,9 @@ server.py
 
 `server_rag.py` — `/rag-start`, MCP workspace routing, dynamic `kb` connect и persisted RAG enablement.
 
-`server_features.py` — persistent queue/project settings, Auto local/cloud policy, project permission rules, safe Git revert и background queue worker.
+`server_features.py` — persistent queue/project settings, project permission rules, safe Git revert и background queue worker.
 
-`server_workflow.py` — production entrypoint. Он композиционно сохраняет RAG routes, добавляет workflow routes, cross-platform resource detection и отправку project memory через OpenCode `system` context.
+`server_workflow.py` — production entrypoint. Он композиционно сохраняет RAG routes, добавляет workflow send path и отправку project memory через OpenCode `system` context.
 
 Systemd запускает `app/server_workflow.py`.
 
@@ -93,34 +95,20 @@ Model picker отдельно выбирает execution profile:
 ```text
 обычная модель                    → direct
 Qwen 3.8 Max · Оркестрированная   → bounded subagent/RAG delegation
-Auto · local/cloud                → dynamic direct model selection
 ```
 
 Внутренняя agent matrix:
 
 ```text
-обычная/Auto + Build         → build-direct
-обычная/Auto + Plan          → plan-direct
-Оркестрированная + Build     → build
-Оркестрированная + Plan      → plan
+обычная модель + Build         → build-direct
+обычная модель + Plan          → plan-direct
+Оркестрированная + Build       → build
+Оркестрированная + Plan        → plan
 ```
 
 Agent IDs не показываются пользователю.
 
-### Auto routing
-
-Auto выбран явно в model picker или сохранён как default проекта. Он не является скрытым глобальным router.
-
-При отправке prompt сервер оценивает:
-
-- доступность Ollama;
-- process names известных игр;
-- GPU utilization;
-- local/cloud model policy проекта.
-
-На Linux/WSL AMD GPU load сначала читается из `gpu_busy_percent`, затем через ROCm/AMD-SMI fallback. В WSL Windows process list дополнительно читается через `powershell.exe`/`tasklist.exe`, поэтому запущенная Windows-игра может перевести Auto в cloud path, даже если OpenCode работает внутри WSL.
-
-При busy/game state выполняется best-effort unload local Ollama model (`keep_alive: 0`). Если local runtime недоступен, Auto просто использует cloud fallback.
+Локальный provider остаётся ordinary direct model choice только при реальном ручном выборе пользователя. Project defaults, persistent queue и workflow worker не имеют automatic `ollama/*` route.
 
 ## Composer и queue
 
@@ -133,6 +121,8 @@ active run + text/attachment    → persistent queue
 Скрытые native controls остаются compatibility layer, но пользователь не выбирает `Steer/Queue` вручную.
 
 Advanced frontend перехватывает queued submit и отправляет его в `/client-queue.json`; сервер хранит порядок и удаляет item только после успешного принятия backend.
+
+Queue worker отправляет prompt с уже выбранным model/provider текущей session. Он не переключает model и не выполняет model lifecycle actions.
 
 ## Native questions
 
@@ -150,7 +140,9 @@ Reply отправляется native question endpoint как `answers: string[
 
 Project settings привязаны к canonical directory. Persistent instructions при submit передаются отдельным `system` field current OpenCode message API, поэтому не отображаются как часть user message.
 
-Также проект может задать default mode/profile, RAG preference, local/cloud models, GPU threshold и permission rules.
+Также проект может задать default mode, orchestrated/конкретную cloud model, RAG preference и permission rules.
+
+`auto` и `ollama/*` не принимаются как автоматические project defaults. Старые experimental значения sanitizes в `inherit`. Это не влияет на ручной выбор Ollama в model picker.
 
 Defaults применяются только к пустой/new session, чтобы открытие существующей session не меняло её execution state неожиданно.
 
@@ -180,7 +172,7 @@ Child/subagent sessions намеренно не возвращаются в side
 
 ## RAG
 
-`kb` — optional local MCP server. Automatic retrieval разрешён только orchestrated profile; ordinary/Auto direct agents сохраняют deny rules на subagent/RAG delegation.
+`kb` — optional local MCP server. Automatic retrieval разрешён только orchestrated profile; ordinary direct agents сохраняют deny rules на subagent/RAG delegation.
 
 Подробнее: [rag.md](rag.md).
 
@@ -198,7 +190,7 @@ restart services
 real host self-test
 ```
 
-Zero-token smoke дополнительно проверяет persistent settings/queue, Auto route и safe Git revert. Это важно, потому что GitHub CI не может доказать состояние конкретного host/OpenCode/Qdrant.
+Zero-token smoke дополнительно проверяет persistent settings/queue, запрет automatic local project defaults и safe Git revert. Это важно, потому что CI не может доказать состояние конкретного host/OpenCode/Qdrant.
 
 ## Security boundaries
 
@@ -208,9 +200,9 @@ Zero-token smoke дополнительно проверяет persistent settin
 - project root allowlist + symlink containment;
 - scratch containment;
 - workflow state user-only;
-- ordinary/Auto direct agents deny automatic subagent/RAG;
+- local models manual-only, без workflow lifecycle/routing;
+- ordinary direct agents deny automatic subagent/RAG;
 - orchestrated read worker deny-first;
 - project permission automation только из explicit saved rules;
 - safe bounded Git revert;
-- MCP execution timeout;
-- no implicit Auto profile: пользователь должен выбрать/сохранить его явно.
+- MCP execution timeout.
