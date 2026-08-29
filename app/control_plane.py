@@ -25,6 +25,9 @@ READ_ACTIONS = {
     "read", "glob", "grep", "list", "lsp",
     "kb_knowledge_search", "kb_knowledge_get", "kb_knowledge_sources", "kb_knowledge_status",
 }
+KB_READ_ACTIONS = {
+    "kb_knowledge_search", "kb_knowledge_get", "kb_knowledge_sources", "kb_knowledge_status",
+}
 WRITE_ACTIONS = {"edit", "write", "patch"}
 SHELL_ACTIONS = {"shell", "bash"}
 
@@ -218,15 +221,15 @@ def classify_permission(
     }
 
     if action in READ_ACTIONS:
-        if action == "read":
-            if not resources:
+        if action not in KB_READ_ACTIONS:
+            if action == "read" and not resources:
                 decision.update(risk="R3", reason="read target is missing from the permission payload")
                 return decision
-            if any(_looks_sensitive(value) for value in resources):
-                decision.update(risk="R4", reason="sensitive file read requires confirmation")
+            if resources and any(_looks_sensitive(value) for value in resources):
+                decision.update(risk="R4", reason="sensitive filesystem read requires confirmation")
                 return decision
-            if any(not _path_within_workspace(value, workspace) for value in resources):
-                decision.update(risk="R3", reason="read target escapes the workspace")
+            if resources and any(not _path_within_workspace(value, workspace) for value in resources):
+                decision.update(risk="R3", reason="filesystem read target escapes the workspace")
                 return decision
         decision.update(effect="allow", auto=True, reply="once", risk="R0", reason="read-only operation")
         return decision
