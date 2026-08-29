@@ -46,6 +46,7 @@ if (body.text !== 'fallback' || body.delivery !== 'steer') throw new Error('Comp
 
 const enhancements = await loadSource('app/enhancements.js')
 if (enhancements.parseSlash('/status')?.command !== 'status') throw new Error('Slash parser failed')
+if (enhancements.parseSlash('/doctor')?.command !== 'doctor') throw new Error('Doctor slash parser failed')
 if (enhancements.parseSlash('/review foo bar')?.arguments !== 'foo bar') throw new Error('Slash arguments parser failed')
 if (enhancements.parseSlash('ordinary text') !== null) throw new Error('Slash parser accepted normal text')
 if (enhancements.commandName({ name:'/init' }) !== 'init') throw new Error('Slash command normalization failed')
@@ -59,4 +60,7 @@ if (ui.isFreeModel({ id:'paid-model', cost:paidCost })) throw new Error('Paid mo
 if (!ui.isFreeModel({ id:'hy3-free' })) throw new Error('Free-ID fallback failed')
 if (!ui.isFreeModel({ id:'big-pickle' })) throw new Error('Big Pickle free fallback failed')
 
-console.log('Web smoke passed: Markdown + prompt contracts + slash parsing + free-model classification')
+const doctor = await loadSource('app/doctor.js')
+if (typeof doctor.openDoctor !== 'function') throw new Error('Doctor UI module does not export openDoctor')
+
+console.log('Web smoke passed: Markdown + prompt contracts + slash/doctor parsing + free-model classification')
