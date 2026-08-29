@@ -105,6 +105,11 @@ for (const marker of ["model-provider-collapse-v1", "data-fav", "compareModelEnt
   if (!uiSource.includes(marker)) throw new Error(`Model picker behavior marker missing: ${marker}`)
 }
 
+const serviceWorker = readFileSync(resolve(root, 'app/sw.js'), 'utf8')
+if (!serviceWorker.includes("custom-opencode-web-v3")) throw new Error('PWA cache generation was not bumped')
+if (!serviceWorker.includes("fetch(req,{cache:'no-cache'})")) throw new Error('PWA assets must prefer fresh network responses')
+if (serviceWorker.includes('return cached||network')) throw new Error('PWA must not serve stale cache before checking the network')
+
 let configText = readFileSync(resolve(root, 'config/opencode.json.template'), 'utf8')
   .replaceAll('__CONFIG_DIR__', '/tmp/opencode-config')
   .replaceAll('__CUSTOM_OPENCODE_ROOT__', '/tmp/custom-opencode')
@@ -130,4 +135,4 @@ if (agents['build-direct'].system || agents['plan-direct'].system) throw new Err
 const doctor = await loadSource('app/doctor.js')
 if (typeof doctor.openDoctor !== 'function') throw new Error('Doctor UI module does not export openDoctor')
 
-console.log('Web smoke passed: prompt/slash/RAG contracts + favorite/collapsible model catalog + contextual composer + direct/orchestrated permissions')
+console.log('Web smoke passed: prompt/slash/RAG contracts + favorite/collapsible model catalog + contextual composer + fresh PWA assets + direct/orchestrated permissions')
