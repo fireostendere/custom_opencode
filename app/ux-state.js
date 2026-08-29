@@ -1,7 +1,7 @@
 export const ORCHESTRATED_MODEL = {
   id: 'qwen3.8-max',
   providerID: 'bailian-cli',
-  label: 'Qwen 3.8 Max · Orchestrated',
+  label: 'Qwen 3.8 Max · Оркестратор',
 }
 
 export function modeFromAgent(agentID = '') {
