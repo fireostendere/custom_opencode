@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import py_compile
 import stat
 import sys
 import tempfile
@@ -13,6 +14,7 @@ os.environ.setdefault("OPENCODE_BACKEND_URL", "http://localhost:9")
 os.environ.setdefault("OPENCODE_BACKEND_PASSWORD", "test")
 os.environ.setdefault("OPENCODE_SCRATCH_DIRECTORY", str(Path(tempfile.gettempdir()) / "custom-opencode-limits-smoke-scratch"))
 sys.path.insert(0, str(ROOT / "app"))
+py_compile.compile(str(ROOT / "scripts/rag-probe.py"), doraise=True)
 
 with tempfile.TemporaryDirectory() as temp:
     fake_codex = Path(temp) / "codex"
@@ -41,7 +43,6 @@ with tempfile.TemporaryDirectory() as temp:
 
     import server_ext
 
-    # Probe status remains available as fallback, but live CLI windows are authoritative.
     server_ext.base.backend_json = lambda method, target: {
         "data": [{"title": "Smoke · Qwen exhausted→08-29 02:00 UTC"}]
     }
@@ -66,4 +67,44 @@ with tempfile.TemporaryDirectory() as temp:
     assert qwen["sevenDay"]["remainingCredits"] == 11_200
     assert qwen["sevenDay"]["resetsAt"] == 2_000_100_000
 
-print("Limits smoke passed: Codex app-server + Bailian Token Plan JSON")
+    import server_plus
+
+    assert server_plus._model_ids({"data": [
+        {"providerID": "bailian-cli", "id": "qwen3.8-max"},
+        {"providerID": "bailian-cli", "id": "qwen3.6-flash"},
+    ]}) == {"bailian-cli/qwen3.8-max", "bailian-cli/qwen3.6-flash"}
+
+    def fake_backend(method, target, payload=None, timeout=20.0):
+        if target.startswith("/api/model"):
+            return {"data": [
+                {"providerID": "bailian-cli", "id": "qwen3.8-max"},
+                {"providerID": "bailian-cli", "id": "qwen3.6-flash"},
+            ]}
+        if target.startswith("/api/mcp"):
+            return {"data": {"kb": {"status": "disabled"}}}
+        raise AssertionError(target)
+
+    server_plus._backend_request_json = fake_backend
+    server_plus._read_runtime_config = lambda: ({
+        "model": "bailian-cli/qwen3.8-max",
+        "agents": {
+            "fast-reader": {"model": "bailian-cli/qwen3.6-flash"},
+            "title": {"model": "bailian-cli/qwen3.6-flash"},
+        },
+    }, "/tmp/opencode.json")
+    server_plus.ext.query_bailian_token_plan = lambda: {"available": True}
+    server_plus._rag_runtime = lambda: {
+        "root": None, "executable": None, "python": None, "available": False,
+    }
+    snapshot = server_plus.doctor_snapshot()
+    checks = {item["id"]: item for item in snapshot["checks"]}
+    assert snapshot["zeroToken"] is True
+    assert checks["backend"]["status"] == "pass"
+    assert checks["max-catalog"]["status"] == "pass"
+    assert checks["flash-catalog"]["status"] == "pass"
+    assert checks["primary-route"]["status"] == "pass"
+    assert checks["flash-route"]["status"] == "pass"
+    assert checks["no-auto-local"]["status"] == "pass"
+    assert checks["mcp-kb"]["status"] == "warn"
+
+print("Limits + Doctor zero-token smoke passed")
