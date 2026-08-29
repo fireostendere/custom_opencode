@@ -12,7 +12,7 @@ Plan
 Orchestration больше не выглядит как третий mode рядом с ними. Она выбирается в model picker как отдельный model profile:
 
 ```text
-Qwen 3.8 Max · Оркестратор
+Qwen 3.8 Max · Orchestrated
 ```
 
 Обычные модели из picker работают напрямую.
@@ -44,7 +44,7 @@ Plan  + Qwen3.8 Flash    → Qwen3.8 Flash direct, read/plan only
 При выборе:
 
 ```text
-Qwen 3.8 Max · Оркестратор
+Qwen 3.8 Max · Orchestrated
 ```
 
 используется тот же underlying model:
@@ -106,16 +106,18 @@ Model picker является главным местом выбора execution
 
 Он поддерживает:
 
-- favorite toggle `★/☆`;
-- favorites-first sorting внутри группы;
-- выбранную модель выше обычных alphabetical entries;
+- favorite toggle `★/☆` у каждой обычной модели;
+- нажатие `★/☆` не выбирает модель;
+- сортировку внутри provider: favorites → выбранная модель → остальные по имени;
+- provider groups с избранным поднимаются выше provider groups без избранного;
+- остальные provider groups сортируются по имени;
 - collapsible provider groups;
-- сохранение collapsed state локально;
+- сохранение collapsed state в `localStorage`;
 - отдельную collapsible группу `Бесплатные модели`;
 - hidden search input, чтобы picker не поднимал мобильную клавиатуру;
-- отдельный entry `Qwen 3.8 Max · Оркестратор` в Alibaba group.
+- отдельный entry `Qwen 3.8 Max · Orchestrated` в Alibaba group.
 
-Нажатие на `★/☆` меняет избранное, но не выбирает модель.
+Favorites используют существующий ключ `opencode:web:favorites`, поэтому обновление UI не должно сбрасывать старое избранное. Состояние свёрнутых provider groups хранится отдельно в `opencode:web:model-provider-collapse-v1`.
 
 ## Automatic queue
 
@@ -166,7 +168,7 @@ deepseek-v4-flash-0731
 
 `qwen3.8-max-preview` — compatibility ID старых sessions, который map-ится на `qwen3.8-max`.
 
-`Qwen 3.8 Max · Оркестратор` не является вторым API model ID. Это UI/profile entry поверх `qwen3.8-max` + orchestrated primary agent.
+`Qwen 3.8 Max · Orchestrated` не является вторым API model ID. Это UI/profile entry поверх `qwen3.8-max` + orchestrated primary agent.
 
 ## Бесплатные модели
 
@@ -220,6 +222,6 @@ Doctor бесплатно проверяет config-level invariants:
 - model IDs присутствуют в catalog;
 - RAG/MCP status при наличии RAG.
 
-Web smoke дополнительно проверяет state machine composer и mapping `Build/Plan × direct/orchestrated`.
+Web smoke дополнительно проверяет state machine composer, mapping `Build/Plan × direct/orchestrated`, model sorting/favorites и наличие collapsible provider UI.
 
 Для реального orchestration E2E остаётся ручной `Router E2E` smoke в Doctor. Он делает настоящий model inference и поэтому помечен как платный.
