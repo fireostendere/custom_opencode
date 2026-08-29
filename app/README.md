@@ -11,15 +11,55 @@
 - native slash commands и локальные control-команды `/doctor`, `/rag-start`;
 - isolated quick-session workspaces;
 - `Проекты` → OpenCode projects или безопасный browser папок на host;
-- model picker без видимого search field и с группой `Бесплатные модели`;
+- только `Build / Plan` как пользовательские mode controls;
+- model picker без visible search input, с favorites, сортировкой, collapsible providers и отдельной группой бесплатных моделей;
+- `Qwen 3.8 Max · Оркестратор` выбирается как model profile прямо в picker;
+- contextual composer action вместо двух кнопок и ручного `Steer/Queue`;
+- compact permission banner с коротким summary и details под раскрытием;
 - rename/delete/fork/duplicate/handoff;
-- deep links, parallel running state, Steer/Queue;
-- Build/Plan, model/provider/favorites/effort;
+- deep links и parallel running state;
 - Markdown/code, tool/reasoning renderers, image previews;
 - Git/VCS drawer, context/cost widget;
 - notifications, draft autosave, files/clipboard images, permissions;
 - SSE/status polling и mobile refresh;
 - Doctor + zero-token/paid smoke test UI.
+
+## Composer state machine
+
+Пользователь не выбирает delivery mode вручную:
+
+```text
+idle                         → ↑ send
+running + empty composer     → × stop
+running + text/attachment    → ↑ queue
+```
+
+Старые native `send`, `stop`, `Steer/Queue` controls остаются внутренним compatibility layer для существующего `app.js`, но скрыты из UI. `ux-controls.js` синхронизирует единственную видимую кнопку с фактическим session state.
+
+## Model picker
+
+Picker сохраняет существующий `opencode:web:favorites` state. Favorite toggle не выбирает модель; после изменения список пересортируется.
+
+Каталог:
+
+- `Бесплатные модели` — отдельная collapsible group;
+- остальные модели группируются по provider;
+- provider sections можно сворачивать, состояние хранится локально;
+- внутри группы сначала favorites, затем выбранная модель, затем alphabetical sort;
+- `Qwen 3.8 Max · Оркестратор` добавляется как отдельный model profile рядом с Alibaba models;
+- обычный `Qwen3.8 Max` остаётся direct model choice.
+
+## Build / Plan и model profiles
+
+Видимыми остаются только `Build` и `Plan`.
+
+Внутри config существуют hidden-from-UX primary agents `build-direct` и `plan-direct`; они нужны, чтобы обычная выбранная модель не наследовала orchestrator prompt и automatic subagent/RAG permissions.
+
+Выбор обычной модели автоматически переводит текущий mode в direct profile. Выбор `Qwen 3.8 Max · Оркестратор` переводит тот же `Build`/`Plan` в orchestrated profile.
+
+## Permission cards
+
+Большой permission payload больше не растягивает всю нижнюю часть экрана. На поверхности показываются action type и короткий извлечённый hint; raw resources/body находятся в `Показать детали` с bounded scroll area.
 
 ## Server stack
 
@@ -42,7 +82,8 @@ Production/user systemd unit запускает `server_rag.py`.
 - `index.html` — application shell;
 - `styles.css` — основной UI;
 - `enhancements.css`, `enhancements.js` — provider limits + slash palette;
-- `ui-enhancements.css`, `ui-enhancements.js` — free-model grouping + project folder browser;
+- `ui-enhancements.css`, `ui-enhancements.js` — model catalog + project folder browser;
+- `ux-controls.css`, `ux-controls.js`, `ux-state.js` — Build/Plan model profiles, contextual composer и permission summary;
 - `rag-control.js` — client-side `/rag-start` interception/control;
 - `doctor.css`, `doctor.js` — diagnostics UI;
 - `api.js` — OpenCode HTTP adapter/fallbacks;
@@ -63,12 +104,6 @@ Production/user systemd unit запускает `server_rag.py`.
 - ограничивает listing.
 
 Browser намеренно не содержит raw path text input.
-
-## Бесплатные модели
-
-Видимый model search input отсутствует, поэтому открытие picker на телефоне не должно автоматически поднимать клавиатуру.
-
-Группа `Бесплатные модели` строится по V2 cost metadata, а при его отсутствии — по небольшому fallback списку IDs.
 
 ## Slash/control commands
 
@@ -104,4 +139,4 @@ python3 server_rag.py
 ../scripts/verify.sh
 ```
 
-Затем проверьте `/doctor`; при настроенном RAG — `/rag-start quick`.
+Затем проверьте model picker, три состояния composer, permission card, `/doctor`; при настроенном RAG — `/rag-start quick`.
