@@ -1,59 +1,73 @@
 # custom_opencode
 
-Переносимый комплект поверх OpenCode V2: собственный ChatGPT-подобный web/PWA client, Alibaba/Qwen routing, безопасная работа с локальными проектами, диагностика/self-test и опциональный инженерный RAG через MCP.
+Переносимый комплект поверх OpenCode V2: собственный ChatGPT-подобный web/PWA client, Alibaba/Qwen routing, серверный Runtime V2/V3 control plane, безопасная работа с локальными проектами, диагностика/self-test и опциональный инженерный RAG через MCP.
 
 ## Что предоставляет
 
-- web/PWA UI для OpenCode sessions;
-- собственную login page вместо browser-native Basic Auth prompt;
-- подписанные `HttpOnly` web sessions, `Запомнить вход`, logout и возврат в исходный dialog после re-auth;
-- isolated quick-session workspaces;
-- `Проекты → Папки на ПК` с filesystem allowlist и symlink containment;
-- Build-only пользовательский execution surface;
-- model picker с избранным, сортировкой, сворачиваемыми провайдерами и отдельной группой бесплатных моделей;
-- `Qwen 3.8 Max · Оркестрированная` прямо в model picker;
-- серверную persistent queue, которая переживает reload/закрытие PWA и поддерживает reorder/delete;
-- одну контекстную кнопку composer: send / cancel / queue;
-- native OpenCode questions: single/multi-select, описания вариантов и собственный текстовый ответ;
-- session-scoped compact permission cards и project-level allow/deny policies;
-- Project settings: persistent system instructions, cloud model profile, RAG policy и permission rules;
-- Changes/Review: file stats, diff по файлам/hunks, safe revert файла или отдельного hunk;
-- раскрываемое дерево оркестрации с child sessions и RAG marker;
-- компактный status bar: model/context/cost/runtime/RAG/queue;
-- light/dark/system theme, preset/custom accent color и сохранение оформления;
+### Web/PWA UX
+
+- custom login page вместо browser-native Basic Auth prompt;
+- signed `HttpOnly; SameSite=Strict` web sessions, `Запомнить вход`, logout и возврат в исходный `#/session/...` после re-auth;
+- root sessions в sidebar и isolated quick-session workspaces;
+- Build-only пользовательский execution surface: visible `Build / Plan` switch удалён;
+- model picker с favorites, collapsible providers, free-model group и server model profiles;
+- одна контекстная кнопка composer: send / cancel / persistent queue;
+- native OpenCode questions: single/multi-select, descriptions и custom answer;
+- session-scoped compact permission cards и project allow/deny policies;
+- Changes/Review: file stats, hunks, safe file/hunk revert;
+- orchestration trace, runtime/RAG/queue/status surfaces;
+- light / dark / system theme;
+- preset и произвольный accent color;
 - reduced-motion-aware микроанимации;
-- mobile drawer со swipe справа налево, Back и tap/click вне панели;
-- сворачиваемую панель provider limits с запоминанием состояния;
-- native slash commands;
-- Markdown/code/tool/reasoning renderers;
-- files и clipboard images;
-- Git/VCS UI, fork/duplicate/handoff, notifications, drafts;
+- mobile drawer: swipe справа налево, browser/Android Back и tap/click вне панели;
+- сворачиваемые provider limits с сохранением состояния;
+- Markdown/code/tool/reasoning renderers, files, clipboard images, Git/VCS UI, drafts, notifications и deep links.
+
+### Server Runtime V2/V3
+
+- SQLite/WAL durable task queue с priority, dependencies, cancel, pause/resume и recovery;
+- checkpoints, event history, artifacts и per-stage token/cost accounting;
+- Task Center и Runtime dashboard;
+- model capability registry и server profiles `qwen3.8-coder`, `qwen3.8-orchestrated`, `qwen3.8-review`, fast path;
+- adaptive local/cloud routing только внутри явно выбранных auto server profiles;
+- AST/symbol repository index, embeddings, dependency graph, bounded Git graph и semantic symbol diff;
+- bounded dynamic context + native OpenCode compaction;
+- pre-execution read/tool-result cache с Git-aware invalidation;
+- large-output artifact storage с range/search;
+- structured mailbox, typed handoff и bounded speculative research;
+- verification pipeline, failure classifier, review gate, loop/stuck/conflict detection;
+- isolated Git worktree tasks, patch ownership и fail-closed merge/cleanup;
+- OpenCode-central MCP Code Mode/lazy loading + server policy/rate-limit/health layer;
+- scoped Secret Broker и enforced sandbox profiles `safe`, `repo-write`, `docker`, `wsl`, gated `full-machine`;
+- session branching, replay без новых model calls, telemetry и remote authenticated task API.
+
+### Knowledge / providers / operations
+
 - Qwen Token Plan и Codex rate-limit sidebar;
-- actionable PWA notifications и deep links к session;
 - orchestration `Qwen 3.8 Max → Qwen 3.6 Flash fast-reader`;
-- optional `mcp-rag` integration через `kb` MCP;
+- optional `mcp-rag` через `kb` MCP;
 - `/rag-start` и `/doctor`;
-- pre-install verifier и post-install zero-LLM-token self-test;
-- user systemd deployment и one-command update.
+- pre-install verifier, Runtime V2/V3 smokes и post-install zero-LLM-token self-test;
+- user systemd deployment и `custom-opencode-update`.
 
-Локальные Ollama models остаются manual-only. Workflow layer не выбирает, не запускает, не выгружает и не переключает local provider автоматически.
+## Build-only UI и model profiles
 
-## Build-only и model profiles
+Пользователь больше не переключает `Build / Plan`: web UI всегда работает в Build. Внутренние OpenCode IDs `plan`/`plan-direct` сохраняются только как upstream compatibility и при попадании в UI переводятся обратно в соответствующий Build profile.
 
-Пользователь больше не выбирает `Build / Plan`: интерфейс всегда работает в Build. Старые `plan`/`plan-direct` остаются только внутренней совместимостью и автоматически переводятся обратно в Build profile.
-
-Оркестрация выбирается model profile, а не execution mode:
+Routing выбирается моделью/profile:
 
 ```text
-обычная модель                    → build-direct
-Qwen 3.8 Max · Оркестрированная   → build → bounded fast-reader → optional RAG
+обычная вручную выбранная модель  → build-direct, модель не меняется автоматически
+qwen3.8-coder                    → Build + adaptive local/cloud server profile
+Qwen 3.8 Max · Оркестрированная  → Build + bounded fast-reader + optional RAG
+qwen3.8-review                   → server read/review profile
 ```
 
-Внутренние OpenCode agent IDs не должны отображаться как отдельные пользовательские режимы.
+Важно: direct/manual selection не перезаписывается scheduler-ом. Автоматический local/cloud routing существует только для server profile с `route=auto`, а не как скрытая замена любой выбранной модели.
 
-## Composer и persistent queue
+Подробнее: [Модели и routing](docs/models-and-routing.md), [Server Runtime V2](docs/server-runtime-v2.md), [Server Runtime V3](docs/server-runtime-v3.md).
 
-Отдельного `Steer / Queue` переключателя в UI нет.
+## Composer и durable queue
 
 ```text
 работы нет                         → ↑ Отправить
@@ -61,72 +75,87 @@ Qwen 3.8 Max · Оркестрированная   → build → bounded fast-re
 работа идёт + есть текст/вложение  → ↑ Отправить в очередь
 ```
 
-Очередь хранится сервером в feature-state, а не только в памяти открытой вкладки. Поэтому queued prompts продолжают выполняться после reload/закрытия PWA.
+Legacy `/client-queue.json` остаётся compatibility facade. В Runtime V2/V3 queued work хранится в SQLite/WAL, переживает reload/restart и поддерживает priority/dependencies/pause/resume/cancel/checkpoints.
 
 ## Авторизация
 
-Обычный web UX использует `/login.html` + `/auth/login`.
+Обычный web UX использует `/login.html` + `/auth/login`, а не Chrome Basic Auth dialog.
 
-После успешного входа сервер выдаёт signed `HttpOnly; SameSite=Strict` cookie. При `Запомнить вход` по умолчанию используется 30-дневный TTL. Пароль приложением в browser storage не сохраняется.
+После успешного входа сервер выдаёт подписанную `HttpOnly; SameSite=Strict` cookie. При `Запомнить вход` по умолчанию используется 30-дневный TTL. Password приложением в browser storage не сохраняется.
 
-Если web session истекла во время работы, клиент сохраняет полный текущий route, включая `#/session/...`, и после повторного входа возвращает пользователя туда же.
+Если session истекла во время работы, `auth-ui.js` сохраняет полный route, включая `#/session/...`, и после login возвращает пользователя туда же.
 
-Legacy Basic Auth выключен по умолчанию (`OPENCODE_AUTH_ALLOW_BASIC=0`) и нужен только старым внешним clients/scripts.
+Legacy Basic compatibility выключена по умолчанию:
+
+```text
+OPENCODE_AUTH_ALLOW_BASIC=0
+```
+
+Она нужна только старым внешним clients/scripts.
 
 ## Оформление и mobile UX
 
-В sidebar `Аккаунт → Настройки` доступны:
+`Аккаунт → Настройки`:
 
-- `Системная / Светлая / Тёмная` тема;
+- `Системная / Светлая / Тёмная`;
 - шесть accent presets;
 - произвольный accent через color picker;
-- сброс оформления.
+- reset к default.
 
-Настройки хранятся локально в браузере и применяются до первого paint, поэтому theme switching не должен сопровождаться заметной вспышкой старой темы.
+Appearance state хранится только в browser storage. Main app применяет `appearance-bootstrap.js` до CSS, поэтому сохранённая тема появляется до первого paint. Accent автоматически получает контрастный foreground.
 
-Микроанимации используются для dialogs, state surfaces, toast, sidebar, focus/press feedback и progress bars. При `prefers-reduced-motion` они практически отключаются.
+Микроанимации короткие и используются для dialogs, toast, state surfaces, progress, sidebar и press/focus feedback. `prefers-reduced-motion: reduce` практически отключает motion.
 
-На mobile sidebar закрывается swipe справа налево, Back и кликом вне drawer. Панель `Лимиты` сворачивается и запоминает состояние.
+На mobile drawer закрывается swipe справа налево, Back и кликом/тапом вне панели. Панель `Лимиты` сворачивается и запоминает состояние.
 
-Подробнее: [`docs/web-ui.md`](docs/web-ui.md).
+Подробнее: [Web UI, авторизация и оформление](docs/web-ui.md).
 
-## Questions / выбор вариантов
+## Permissions
 
-Когда модель вызывает native OpenCode `question`, web client показывает отдельную карточку: single/multi-select, label + description, `Свой вариант…`, несколько вопросов, reject/cancel и PWA notification с deep link.
+Permission card показывается только в session, которой принадлежит pending request. После `Разрешить / Отклонить / Всегда` она скрывается сразу, stale polling не должен возвращать уже resolved request.
 
-Ответ отправляется через native question reply API и продолжает остановленный agent loop.
+Краткое описание показывает конкретное действие — command/path/URL/subtask — вместо сырого payload. Полные детали остаются под disclosure.
 
-## Project settings и permissions
+Server permission control plane остаётся детерминированным. R3/R4 не могут быть понижены model-side или project allow rule.
 
-Кнопка `Project` в header открывает настройки текущей директории:
+## Server Runtime V3
 
-- persistent instructions — передаются отдельным OpenCode `system` context;
-- default orchestrated или конкретная cloud model;
-- `RAG: auto/on/off`;
-- ordered permission rules `action + resource glob → ask/allow/deny`.
+```text
+Browser / PWA / OpenCode clients
+    |
+    v
+server_workflow.py
+    |
+    +--> server_runtime.py      durable task lifecycle / queue / verification
+    +--> runtime_v3.py          context/index/sandbox/RAG/replay/adaptive routing
+    +--> runtime_v3_ext.py      worktree merge / MCP telemetry / runtime APIs
+    +--> runtime_completion.py  previews/cache/retry accounting/remote actions
+    +--> runtime_store.py       SQLite/WAL state
+    +--> permission control plane
+    +--> OpenCode V2 backend + central MCP host
+```
 
-Execution mode в текущем UI фиксирован в Build. Project mode selector скрывается compatibility layer.
+OpenCode остаётся model/tool/session/MCP execution engine; custom runtime добавляет durable orchestration, policy и host integration вокруг него.
 
-Permission card показывается только для текущей session. После ответа она исчезает сразу, а summary объясняет конкретное действие: команда, файл, URL или подзадача; raw payload остаётся под details.
+## Project settings
 
-## Changes / Review
+Project state может задавать persistent system instructions, model/profile, RAG policy и ordered permission rules. Visible execution mode всё равно Build — старый mode field остаётся только compatibility data.
 
-Git drawer остаётся основной точкой просмотра изменений, но поверх него добавлен review layer: количество файлов и `+/-` статистика, file diffs, hunks, bounded file/hunk revert и containment внутри project root.
+Folder browser ограничен `OPENCODE_PROJECT_ROOTS` и canonical/symlink containment.
 
 ## RAG
 
-RAG полностью опционален. Если `mcp-rag` не найден или явно отключён через `MCP_RAG_ENABLED=0`, installer создаёт рабочий OpenCode config с `kb.disabled=true`.
+RAG опционален. При `MCP_RAG_ENABLED=0` или отсутствии usable `mcp-rag` обычные OpenCode/runtime workflows продолжают работать.
 
-Когда RAG установлен, `/rag-start` может без LLM-токенов проверить/поднять локальный Qdrant, проверить corpus/index, подключить `kb` к текущему workspace и проверить MCP tools.
+`/rag-start` может без LLM inference проверить/поднять локальный Qdrant, corpus/index, подключить `kb` к текущему workspace и проверить MCP tools.
 
 ## Быстрый старт
-
-Требуются OpenCode V2, Python 3, Node.js и `systemd --user`.
 
 ```bash
 cp .env.example .env
 # заполнить .env
 ./scripts/verify.sh
+./scripts/verify-runtime-v3.sh
 ./scripts/install.sh
 ```
 
@@ -146,7 +175,7 @@ Installer по умолчанию выполняет pre-install verification и
 
 ## Документация
 
-Полный индекс: [`docs/README.md`](docs/README.md).
+Полный индекс: [docs/README.md](docs/README.md).
 
 Основные разделы:
 
@@ -154,6 +183,8 @@ Installer по умолчанию выполняет pre-install verification и
 - [Конфигурация `.env`](docs/configuration.md)
 - [Web UI, авторизация и оформление](docs/web-ui.md)
 - [Архитектура и возможности](docs/architecture.md)
+- [Server Runtime V2](docs/server-runtime-v2.md)
+- [Server Runtime V3](docs/server-runtime-v3.md)
 - [Модели и routing](docs/models-and-routing.md)
 - [Permission control plane](docs/control-plane.md)
 - [RAG integration](docs/rag.md)
@@ -162,31 +193,15 @@ Installer по умолчанию выполняет pre-install verification и
 - [Эксплуатация и recovery](docs/operations.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
-## Структура
-
-```text
-app/       web client + authenticated proxy + Doctor/RAG/workflow lifecycle
-config/    OpenCode V2 providers, agents, prompts, plugins
-scripts/   verify/install/update/RAG/workflow probes
-systemd/   user service
-docs/      пользовательская и эксплуатационная документация
-```
-
-Production server stack заканчивается `app/server_workflow.py`, который композиционно добавляет persistent workflow endpoints поверх существующих RAG/Doctor/base proxy layers.
-
 ## Security defaults
 
-- secrets и host-specific URLs — только в `.env`;
-- web UI использует signed HttpOnly session cookie; legacy Basic выключен;
-- рекомендуемый bind — loopback;
-- project browser ограничен `OPENCODE_PROJECT_ROOTS`;
-- quick workspace cleanup защищён containment checks;
-- local models остаются manual-only и не входят в workflow automation;
-- обычные модели не получают automatic RAG/subagent delegation;
-- RAG ingest не разрешён read-only worker;
-- persistent workflow state создаётся с user-only permissions;
-- git revert ограничен project root и конкретным path/patch;
-- MCP execution timeout ограничен;
-- install/update завершается ошибкой, если critical host self-test не прошёл.
-
-OpenCode V2 остаётся изменяющимся upstream, поэтому verifier и host-level Doctor являются частью штатной эксплуатации.
+- secrets/host URLs только в private `.env`/trusted service boundary;
+- signed HttpOnly web session; legacy Basic off by default;
+- recommended web bind — loopback или защищённый tailnet/reverse proxy;
+- project/scratch containment;
+- R0–R4 permission floor;
+- direct manual model selection не меняется auto scheduler-ом;
+- scoped secrets не сериализуются в browser/runtime snapshots;
+- sandbox/worktree ownership checks до writable execution;
+- auth/API/HTML responses не кэшируются service worker как offline app shell;
+- install/update fail closed при critical self-test failure.
