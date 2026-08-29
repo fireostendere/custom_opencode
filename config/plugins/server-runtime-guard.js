@@ -7,6 +7,7 @@ const BASE = `http://${WEB_HOST}:${WEB_PORT}`
 const TIMEOUT = Number(process.env.OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS || 1800)
 const SECRET_PREFIXES = (process.env.OPENCODE_SECRET_PREFIXES || "TOKEN_PLAN_;OPENAI_;GITHUB_;MCP_;QDRANT_;HF_").split(";").filter(Boolean)
 const CONTEXT_MARKER = "Server runtime context"
+const CACHEABLE_TOOLS = ["read", "glob", "grep", "list", "lsp", "shell", "bash"]
 
 async function call(path, payload) {
   if (!TOKEN) throw new Error("Runtime plugin token is not configured")
@@ -38,9 +39,52 @@ function hasManagedContext(system) {
   return String(system || "").includes(CONTEXT_MARKER)
 }
 
+function safeCacheTool(name, input) {
+  if (["read", "glob", "grep", "list", "lsp"].includes(name)) return true
+  if (!["shell", "bash"].includes(name)) return name.endsWith("_knowledge_search") || name.endsWith("_knowledge_get") || name.endsWith("_knowledge_sources") || name.endsWith("_knowledge_status")
+  const command = String(input?.command || "").trim().toLowerCase()
+  if (!command || /[;&|><`]|\$\(/.test(command)) return false
+  return ["git status", "git diff", "git log", "git show", "git rev-parse", "git ls-files", "tree", "ls", "pwd"].some((prefix) => command === prefix || command.startsWith(`${prefix} `))
+}
+
+async function wrapCachedTools(ctx) {
+  if (!ctx.tool?.transform) return
+  await ctx.tool.transform((draft) => {
+    const names = new Set(CACHEABLE_TOOLS)
+    try {
+      for (const item of draft.list?.() || []) {
+        const name = String(item?.id || item?.name || "")
+        if (name.endsWith("_knowledge_search") || name.endsWith("_knowledge_get") || name.endsWith("_knowledge_sources") || name.endsWith("_knowledge_status")) names.add(name)
+      }
+    } catch {}
+    for (const name of names) {
+      let existing
+      try { existing = draft.get?.(name) } catch { existing = null }
+      if (!existing || typeof existing.execute !== "function") continue
+      const original = existing.execute
+      draft.update(name, (tool) => {
+        tool.execute = async (input, toolContext) => {
+          if (!safeCacheTool(name, input)) return original(input, toolContext)
+          const sessionID = toolContext?.sessionID || ""
+          const cwd = toolContext?.cwd || ctx.location?.directory || ""
+          try {
+            const hit = await call("/internal/runtime/tool-cache", { op:"get", sessionID, cwd, tool:name, input })
+            if (hit?.hit) return hit.result
+          } catch {}
+          const result = await original(input, toolContext)
+          try { await call("/internal/runtime/tool-cache", { op:"put", sessionID, cwd, tool:name, input, result }) } catch {}
+          return result
+        }
+      })
+    }
+  })
+}
+
 export default Plugin.define({
   id: "custom-opencode.server-runtime-guard",
   setup: async (ctx) => {
+    await wrapCachedTools(ctx)
+
     await ctx.session.hook("request", async (event) => {
       const sessionID = event?.sessionID || event?.session?.id || ""
       if (!sessionID || hasManagedContext(event.system)) return
