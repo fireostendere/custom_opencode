@@ -29,6 +29,9 @@ jobs:
       - name: Full static and runtime verifier
         run: bash scripts/verify.sh
 
+      - name: Runtime V3 architecture verifier
+        run: bash scripts/verify-runtime-v3.sh
+
       - name: Fresh install and update regression
         run: bash scripts/install-regression.sh
 
