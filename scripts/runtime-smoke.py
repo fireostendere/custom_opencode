@@ -73,7 +73,7 @@ with tempfile.TemporaryDirectory() as temp:
     checkpoint = store.checkpoint(second["id"], "planning", summary="plan persisted", data={"step": 1})
     assert checkpoint["stage"] == "planning"
     assert store.checkpoints(second["id"])[0]["summary"] == "plan persisted"
-    assert any(event["kind"] == "checkpoint.created" for event in store.events(task_id=second["id"]))
+    assert any(event["kind"] == "checkpoint.saved" for event in store.events(task_id=second["id"]))
 
     store.memory_set(str(project), "testing", "run smoke before merge", "policy")
     assert store.memory_list(str(project))[0]["key"] == "testing"
