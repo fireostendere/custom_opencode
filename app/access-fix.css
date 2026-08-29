@@ -187,3 +187,66 @@ dialog .workflow-modal.large{
     max-height:calc(100dvh - 14px)!important;
   }
 }
+
+/* Collapsible provider quota panel. */
+.limits-shell{
+  margin:0 8px 8px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:#1d1d1d;
+  overflow:hidden;
+}
+.limits-summary{
+  min-height:38px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  padding:8px 11px;
+  cursor:pointer;
+  list-style:none;
+  user-select:none;
+  color:var(--muted);
+  font-size:11px;
+  font-weight:650;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+}
+.limits-summary::-webkit-details-marker{display:none}
+.limits-summary::after{content:'⌃';font-size:15px;line-height:1;opacity:.75}
+.limits-shell:not([open]) .limits-summary::after{content:'⌄'}
+.limits-shell[open] .limits-summary{border-bottom:1px solid var(--line)}
+.limits-shell .provider-limits{
+  margin:0!important;
+  padding:8px!important;
+  border:0!important;
+  border-radius:0!important;
+  background:transparent!important;
+}
+.limits-shell .provider-limits .quota-title span{display:none}
+.limits-shell .provider-limits .quota-title{min-height:18px;justify-content:flex-end;padding:0}
+
+/* doctor.css sized the inner modal wider than its dialog. Size the dialog itself
+   and align the title, close control and mobile action as one coherent layout. */
+#doctorDialog{width:min(720px,calc(100vw - 28px))}
+#doctorDialog .doctor-modal{width:auto!important;max-width:none;max-height:min(84vh,820px)}
+#doctorDialog .doctor-modal .modal-head>div{flex:1;min-width:0}
+#doctorDialog .doctor-modal .modal-head>.icon{
+  flex:0 0 38px;
+  width:38px;
+  height:38px;
+  padding:0;
+  margin-left:auto;
+  display:grid;
+  place-items:center;
+}
+#doctorDialog .doctor-actions button{min-height:44px}
+
+@media(max-width:760px){
+  .limits-shell{margin:0 8px 7px}
+  #doctorDialog{width:calc(100vw - 20px)!important;max-width:calc(100vw - 20px)!important;margin:auto 10px}
+  #doctorDialog .doctor-modal{padding:14px;max-height:88dvh}
+  #doctorDialog .doctor-content{max-height:68dvh}
+  #doctorDialog .doctor-actions{margin-top:10px}
+  #doctorDialog .doctor-actions button{width:100%}
+}
