@@ -246,6 +246,88 @@
         }
       ]
     },
+    "build-direct": {
+      "mode": "primary",
+      "description": "Direct Build mode. Uses the selected model without automatic subagents or RAG.",
+      "permissions": [
+        {
+          "action": "subagent",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "kb_knowledge_search",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "kb_knowledge_get",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "kb_knowledge_sources",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "kb_knowledge_status",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "kb_knowledge_ingest",
+          "resource": "*",
+          "effect": "deny"
+        }
+      ]
+    },
+    "plan-direct": {
+      "mode": "primary",
+      "description": "Direct Plan mode. Uses the selected model without edits, shell, automatic subagents, or RAG.",
+      "permissions": [
+        {
+          "action": "edit",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "subagent",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "kb_knowledge_search",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "kb_knowledge_get",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "kb_knowledge_sources",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "kb_knowledge_status",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "kb_knowledge_ingest",
+          "resource": "*",
+          "effect": "deny"
+        }
+      ]
+    },
     "title": {
       "mode": "subagent",
       "hidden": true,
