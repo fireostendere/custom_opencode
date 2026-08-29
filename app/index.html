@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/enhancements.css">
   <link rel="stylesheet" href="/ui-enhancements.css">
   <link rel="stylesheet" href="/doctor.css">
+  <link rel="stylesheet" href="/ux-controls.css">
   <title>OpenCode</title>
 </head>
 <body>
@@ -49,10 +50,21 @@
       </section>
 
       <div class="permission-banner" id="permissionBanner" hidden>
-        <div class="permission-text"><strong id="permissionTitle">Требуется разрешение</strong><span id="permissionDetail"></span></div>
-        <button data-permission="reject">Отклонить</button>
-        <button class="primary" data-permission="once">Разрешить</button>
-        <button data-permission="always">Всегда</button>
+        <div class="permission-main">
+          <div class="permission-text">
+            <strong id="permissionTitle">Требуется разрешение</strong>
+            <span id="permissionSummary">Подробности доступны ниже</span>
+          </div>
+          <details class="permission-details" id="permissionDetails">
+            <summary>Показать детали</summary>
+            <pre id="permissionDetail"></pre>
+          </details>
+        </div>
+        <div class="permission-actions">
+          <button data-permission="reject">Отклонить</button>
+          <button class="primary" data-permission="once">Разрешить</button>
+          <button data-permission="always">Всегда</button>
+        </div>
       </div>
 
       <div class="composer-wrap">
@@ -62,7 +74,7 @@
             <button class="control" id="modelButton" disabled>Модель</button>
             <select class="control" id="variantSelect" disabled><option>Effort —</option></select>
           </div>
-          <div class="delivery" id="deliveryControls" hidden>
+          <div class="delivery" id="deliveryControls" hidden aria-hidden="true">
             <button class="delivery-button active" data-delivery="steer">Steer</button>
             <button class="delivery-button" data-delivery="queue">Queue</button>
           </div>
@@ -73,15 +85,16 @@
           <button class="icon attach" id="attachButton" type="button" title="Файл">＋</button>
           <input id="fileInput" type="file" multiple hidden>
           <textarea id="input" rows="1" placeholder="Сообщение…"></textarea>
-          <button class="send" id="send" type="submit" title="Отправить">↑</button>
-          <button class="stop" id="stop" type="button" title="Остановить" hidden>■</button>
+          <button class="send native-composer-action" id="send" type="submit" title="Отправить" aria-hidden="true" tabindex="-1">↑</button>
+          <button class="stop native-composer-action" id="stop" type="button" title="Остановить" hidden aria-hidden="true" tabindex="-1">■</button>
+          <button class="composer-action send" id="composerAction" type="button" title="Отправить" aria-label="Отправить">↑</button>
         </form>
       </div>
     </main>
   </div>
 
   <dialog id="projectDialog"><div class="modal"><div class="modal-head"><h3 id="projectDialogTitle">Выбрать проект</h3><button class="icon" data-close="projectDialog">×</button></div><div id="projectChoices" class="choice-list"></div></div></dialog>
-  <dialog id="modelDialog"><div class="modal"><div class="modal-head"><h3>Модель</h3><button class="icon" data-close="modelDialog">×</button></div><input type="hidden" id="modelSearch" value=""><div id="modelChoices" class="choice-list"></div></div></dialog>
+  <dialog id="modelDialog"><div class="modal model-modal"><div class="modal-head"><h3>Модель</h3><button class="icon" data-close="modelDialog">×</button></div><input type="hidden" id="modelSearch" value=""><div id="modelChoices" class="choice-list model-catalog"></div></div></dialog>
   <dialog id="sessionDialog"><div class="modal"><div class="modal-head"><h3>Сессия</h3><button class="icon" data-close="sessionDialog">×</button></div><div id="sessionActionList" class="action-list"></div></div></dialog>
   <dialog id="renameDialog"><form class="modal" id="renameForm"><div class="modal-head"><h3>Переименовать</h3><button class="icon" type="button" data-close="renameDialog">×</button></div><input class="text-input" id="renameInput" maxlength="200"><div class="modal-actions"><button type="button" data-close="renameDialog">Отмена</button><button class="primary" type="submit">Сохранить</button></div></form></dialog>
   <dialog id="gitDialog"><div class="modal large"><div class="modal-head"><h3>Изменения</h3><button class="icon" data-close="gitDialog">×</button></div><div id="gitSummary" class="panel-summary"></div><div id="gitFiles" class="file-list"></div><div id="gitDiff" class="diff-view"></div></div></dialog>
@@ -95,6 +108,7 @@
   <script type="module" src="/rag-control.js"></script>
   <script type="module" src="/enhancements.js"></script>
   <script type="module" src="/ui-enhancements.js"></script>
+  <script type="module" src="/ux-controls.js"></script>
   <script type="module" src="/doctor.js"></script>
 </body>
 </html>
