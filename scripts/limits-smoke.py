@@ -111,37 +111,43 @@ with tempfile.TemporaryDirectory() as temp:
     assert checks["mcp-kb"]["status"] == "warn"
 
     # Persistent workflow state is server-owned, portable, and contained to an
-    # allowed project root. These checks use no model inference or live backend.
+    # allowed project root. These checks use no model inference or local-model lifecycle.
     project = Path(temp) / "project"
     project.mkdir()
     os.environ["OPENCODE_PROJECT_ROOTS"] = str(project)
     os.environ["CUSTOM_OPENCODE_FEATURE_STATE"] = str(Path(temp) / "features.json")
 
     import server_features
+    import server_workflow
 
     settings_value = server_features.update_project_settings(str(project), {
         "instructions": "run tests before finishing",
         "defaultMode": "plan",
-        "defaultModel": "auto",
+        "defaultModel": "bailian-cli/qwen3.8-max",
         "rag": "on",
-        "autoRouting": {
-            "localModel": "ollama/qwen3.8:27b",
-            "cloudModel": "bailian-cli/qwen3.8-flash",
-            "gpuBusyPercent": 44,
-        },
         "permissionRules": [
             {"action": "shell", "resource": "git status*", "effect": "allow"},
             {"action": "shell", "resource": "rm *", "effect": "deny"},
         ],
     })
     assert settings_value["settings"]["defaultMode"] == "plan"
-    assert settings_value["settings"]["defaultModel"] == "auto"
-    assert settings_value["settings"]["autoRouting"]["gpuBusyPercent"] == 44
+    assert settings_value["settings"]["defaultModel"] == "bailian-cli/qwen3.8-max"
     assert len(settings_value["settings"]["permissionRules"]) == 2
 
+    stripped = server_workflow._strip_local_automation({
+        "defaultModel": "auto",
+        "autoRouting": {"localModel": "ollama/example"},
+        "instructions": "x",
+    })
+    assert stripped["defaultModel"] == "inherit"
+    assert "autoRouting" not in stripped
+    disabled = server_workflow._local_automation_disabled("ses_test", apply=True)
+    assert disabled["enabled"] is False
+    assert disabled["route"] == "unchanged"
+
     server_features._session_directory = lambda session_id: str(project)
-    queued_a = server_features.enqueue_prompt({"sessionID": "ses_test", "text": "first", "files": [], "profile": "auto"})
-    queued_b = server_features.enqueue_prompt({"sessionID": "ses_test", "text": "second", "files": [], "profile": "direct"})
+    queued_a = server_features.enqueue_prompt({"sessionID": "ses_test", "text": "first", "files": [], "profile": "direct"})
+    queued_b = server_features.enqueue_prompt({"sessionID": "ses_test", "text": "second", "files": [], "profile": "orchestrated"})
     queue = server_features.queue_snapshot("ses_test")
     assert queue["count"] == 2
     assert [item["text"] for item in queue["items"]] == ["first", "second"]
@@ -149,22 +155,6 @@ with tempfile.TemporaryDirectory() as temp:
     assert [item["text"] for item in server_features.queue_snapshot("ses_test")["items"]] == ["second", "first"]
     server_features.delete_queue_item("ses_test", queued_b["item"]["id"])
     assert server_features.queue_snapshot("ses_test")["count"] == 1
-
-    switched = []
-    server_features._ollama_available = lambda: True
-    server_features._game_running = lambda: (False, None)
-    server_features._gpu_load = lambda: (8, "smoke")
-    server_features._switch_session_model = lambda sid, model: switched.append((sid, model))
-    route = server_features.auto_route("ses_test", str(project), apply=True)
-    assert route["route"] == "local"
-    assert route["model"]["providerID"] == "ollama"
-    assert switched[-1][0] == "ses_test"
-
-    server_features._game_running = lambda: (True, "dota2")
-    server_features._unload_ollama = lambda model: True
-    route = server_features.auto_route("ses_test", str(project), apply=False)
-    assert route["route"] == "cloud"
-    assert route["resources"]["localUnloadRequested"] is True
 
     subprocess.run(["git", "init", "-q", str(project)], check=True)
     subprocess.run(["git", "-C", str(project), "config", "user.email", "smoke@example.invalid"], check=True)
