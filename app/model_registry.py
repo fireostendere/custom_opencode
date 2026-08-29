@@ -70,8 +70,8 @@ class CapabilityRegistry:
             "direct":{"id":"direct","label":"Selected model","route":"selected","agentBuild":"build-direct","agentPlan":"plan-direct","orchestrated":False,"contextBudget":96000,"sandbox":"repo-write","autoReview":False},
             "qwen3.8-coder":{"id":"qwen3.8-coder","label":"Qwen 3.8 Coder · Auto","route":"auto","cloudModel":cloud,"localModel":local,"agentBuild":"build-direct","agentPlan":"plan-direct","orchestrated":False,"contextBudget":160000,"sandbox":"repo-write","autoReview":"smart","requires":{"tools":True,"coding":.75}},
             "qwen3.8-orchestrated":{"id":"qwen3.8-orchestrated","label":"Qwen 3.8 · Orchestrated","route":"cloud","cloudModel":cloud,"workerModel":fast,"agentBuild":"build","agentPlan":"plan","orchestrated":True,"contextBudget":260000,"sandbox":"repo-write","autoReview":"smart","requires":{"tools":True,"coding":.80,"planning":.85}},
-            "qwen3.8-review":{"id":"qwen3.8-review","label":"Qwen 3.8 · Review","route":"cloud","cloudModel":review,"agentBuild":"build-direct","agentPlan":"plan-direct","orchestrated":False,"contextBudget":128000,"sandbox":"safe","autoReview":False,"requires":{"tools":True,"review":.85}},
-            "qwen3.8-fast":{"id":"qwen3.8-fast","label":"Qwen · Fast path","route":"cloud","cloudModel":fast,"agentBuild":"build-direct","agentPlan":"plan-direct","orchestrated":False,"contextBudget":72000,"sandbox":"safe","autoReview":False,"requires":{"tools":True,"fastPath":True}},
+            "qwen3.8-review":{"id":"qwen3.8-review","label":"Qwen 3.8 · Review","route":"cloud","cloudModel":review,"agentBuild":"plan-direct","agentPlan":"plan-direct","orchestrated":False,"contextBudget":128000,"sandbox":"safe","autoReview":False,"requires":{"tools":True,"review":.85}},
+            "qwen3.8-fast":{"id":"qwen3.8-fast","label":"Qwen · Fast path","route":"cloud","cloudModel":fast,"agentBuild":"plan-direct","agentPlan":"plan-direct","orchestrated":False,"contextBudget":72000,"sandbox":"safe","autoReview":False,"requires":{"tools":True,"fastPath":True}},
         }
     def snapshot(self,stats_getter=None)->dict[str,Any]:
         rows=[]
