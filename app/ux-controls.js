@@ -11,6 +11,7 @@ const $ = (id) => document.getElementById(id)
 let allowingAgentClick = false
 let suppressDirectSwitch = false
 let lastPermissionRaw = ''
+let desiredProfile = null
 
 function agentButtons() {
   return [...document.querySelectorAll('#agentControls [data-agent]')]
@@ -25,7 +26,7 @@ function currentMode() {
 }
 
 function currentProfile() {
-  return profileFromAgent(rawActiveAgent())
+  return desiredProfile || profileFromAgent(rawActiveAgent())
 }
 
 function nativeAgentButton(agentID) {
@@ -48,11 +49,13 @@ function clickNativeAgent(agentID) {
 
 function syncAgentSurface() {
   const mode = currentMode()
+  const rawProfile = profileFromAgent(rawActiveAgent())
+  if (desiredProfile && desiredProfile === rawProfile) desiredProfile = null
   const profile = currentProfile()
   document.documentElement.dataset.modelProfile = profile
   for (const button of agentButtons()) {
     const id = button.dataset.agent || ''
-    button.classList.toggle('ux-hidden-agent', id === 'build-direct' || id === 'plan-direct')
+    button.classList.toggle('ux-hidden-agent', id !== 'build' && id !== 'plan')
     button.classList.toggle('ux-mode-active', (id === 'build' || id === 'plan') && id === mode)
     if (id === 'build') button.textContent = 'Build'
     if (id === 'plan') button.textContent = 'Plan'
@@ -64,9 +67,23 @@ function qwenMaxSelected() {
   return /qwen\s*3[.\s]?8.*max|qwen3\.8-max/i.test(text)
 }
 
+function nativeModelLoaded() {
+  const text = $('modelButton')?.textContent?.trim() || ''
+  return Boolean(text && text !== 'Модель' && !/^Model\b/i.test(text))
+}
+
+function normalizeLegacyProfile() {
+  if (desiredProfile || !nativeModelLoaded()) return
+  if (profileFromAgent(rawActiveAgent()) === 'orchestrated' && !qwenMaxSelected()) {
+    desiredProfile = 'direct'
+    clickNativeAgent(agentFor(currentMode(), 'direct'))
+  }
+}
+
 function syncModelSurface() {
   const button = $('modelButton')
   if (!button) return
+  normalizeLegacyProfile()
   const profile = currentProfile()
   document.documentElement.dataset.modelProfile = profile
   if (profile === 'orchestrated' && qwenMaxSelected()) {
@@ -129,6 +146,7 @@ function chooseOrchestrated() {
   const mode = currentMode()
   const nativeModel = nativeQwenMaxChoice()
   if (!nativeModel) return
+  desiredProfile = 'orchestrated'
   clickNativeAgent(agentFor(mode, 'orchestrated'))
   suppressDirectSwitch = true
   try { nativeModel.click() } finally {
@@ -178,14 +196,16 @@ function installModelProfileProxy() {
     }
     const native = event.target.closest('[data-model][data-provider]')
     if (!native || suppressDirectSwitch || event.target.closest('[data-fav]')) return
-    const mode = currentMode()
-    clickNativeAgent(agentFor(mode, 'direct'))
+    desiredProfile = 'direct'
+    clickNativeAgent(agentFor(currentMode(), 'direct'))
     document.documentElement.dataset.modelProfile = 'direct'
   }, true)
 
-  $('modelButton')?.addEventListener('click', () => {
+  const modelButton = $('modelButton')
+  modelButton?.addEventListener('click', () => {
     document.documentElement.dataset.modelProfile = currentProfile()
   }, true)
+  if (modelButton) new MutationObserver(() => queueMicrotask(syncModelSurface)).observe(modelButton, { childList:true, characterData:true, subtree:true })
 }
 
 function installComposerAction() {
