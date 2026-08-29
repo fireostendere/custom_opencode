@@ -5,7 +5,7 @@ const state = {
   session: null,
   directory: '',
   settings: null,
-  queue: { count: 0, items: [], error: null },
+  queue: { count:0, items:[], error:null },
   queueCounts: {},
   question: null,
   questionKey: '',
@@ -13,7 +13,6 @@ const state = {
   pendingPermission: null,
   children: [],
   childDetails: new Map(),
-  autoRoute: null,
   runStartedAt: null,
   lastDurationMs: 0,
   attachments: [],
@@ -26,11 +25,6 @@ const DEFAULT_SETTINGS = {
   defaultMode: 'inherit',
   defaultModel: 'inherit',
   rag: 'auto',
-  autoRouting: {
-    localModel: 'ollama/qwen3.8:27b',
-    cloudModel: 'bailian-cli/qwen3.8-flash',
-    gpuBusyPercent: 35,
-  },
   permissionRules: [],
 }
 
@@ -113,7 +107,7 @@ function ensureSurfaces() {
     button.id = 'projectSettingsButton'
     button.className = 'header-chip project-settings-open'
     button.type = 'button'
-    button.title = 'Память, routing и permission policy проекта'
+    button.title = 'Память и permission policy проекта'
     button.textContent = 'Project'
     button.hidden = true
     $('gitButton')?.after(button)
@@ -134,11 +128,8 @@ function ensureSurfaces() {
         <div class="workflow-section"><label class="workflow-label" for="projectInstructions">Постоянные инструкции проекта</label><textarea class="workflow-textarea" id="projectInstructions" placeholder="Например: перед завершением запускай pytest; не меняй public API без необходимости"></textarea><div class="workflow-note">Передаются OpenCode как system context, поэтому не засоряют текст пользовательского сообщения.</div></div>
         <div class="workflow-section"><div class="workflow-grid">
           <label><span class="workflow-label">Режим по умолчанию</span><select class="workflow-select" id="projectDefaultMode"><option value="inherit">Не менять</option><option value="build">Build</option><option value="plan">Plan</option></select></label>
-          <label><span class="workflow-label">Модель/profile по умолчанию</span><select class="workflow-select" id="projectDefaultModel"><option value="inherit">Не менять</option><option value="auto">Auto · local/cloud</option><option value="orchestrated">Qwen 3.8 Max · Оркестрированная</option><option value="bailian-cli/qwen3.8-max">Qwen 3.8 Max</option><option value="bailian-cli/qwen3.8-flash">Qwen 3.8 Flash</option><option value="ollama/qwen3.8:27b">Local Qwen 3.8 27B</option></select></label>
+          <label><span class="workflow-label">Модель/profile по умолчанию</span><select class="workflow-select" id="projectDefaultModel"><option value="inherit">Не менять</option><option value="orchestrated">Qwen 3.8 Max · Оркестрированная</option><option value="bailian-cli/qwen3.8-max">Qwen 3.8 Max</option><option value="bailian-cli/qwen3.8-flash">Qwen 3.8 Flash</option></select></label>
           <label><span class="workflow-label">RAG</span><select class="workflow-select" id="projectRag"><option value="auto">Auto</option><option value="on">Всегда подключать</option><option value="off">Не запускать автоматически</option></select></label>
-          <label><span class="workflow-label">GPU busy threshold, %</span><input class="workflow-input" id="projectGpuThreshold" type="number" min="1" max="100"></label>
-          <label><span class="workflow-label">Локальная модель Auto</span><input class="workflow-input" id="projectLocalModel"></label>
-          <label><span class="workflow-label">Cloud fallback Auto</span><input class="workflow-input" id="projectCloudModel"></label>
         </div></div>
         <div class="workflow-section"><div class="modal-head"><div><strong>Permission policy</strong><div class="workflow-note">Первое совпавшее правило: allow / deny. Ask оставляет стандартную карточку.</div></div><button type="button" id="addPermissionRule">+ правило</button></div><div id="projectPermissionRules" class="workflow-rules"></div></div>
         <div class="workflow-actions"><button type="button" data-workflow-close="projectSettingsDialog">Отмена</button><button class="primary" type="submit">Сохранить</button></div>
@@ -168,7 +159,6 @@ async function refreshSelectedSession() {
   state.pendingPermission = null
   state.children = []
   state.childDetails.clear()
-  state.autoRoute = null
   state.attachments = []
   state.attachmentReads = []
   state.runStartedAt = running() ? Date.now() : null
@@ -180,7 +170,7 @@ async function refreshSelectedSession() {
     state.session = session
     state.directory = session?.location?.directory || ''
     $('projectSettingsButton').hidden = !state.directory
-    await Promise.allSettled([loadProjectSettings(), refreshQueue(), refreshQuestions(), refreshOrchestration(), refreshAutoRoute(), refreshPermission()])
+    await Promise.allSettled([loadProjectSettings(), refreshQueue(), refreshQuestions(), refreshOrchestration(), refreshPermission()])
     await applyProjectDefaultsOnce()
     renderAll()
   } catch (error) {
@@ -191,8 +181,7 @@ async function refreshSelectedSession() {
 async function loadProjectSettings() {
   if (!state.sessionID) return
   const value = await request(`/client-project-settings.json?sessionID=${encodeURIComponent(state.sessionID)}`)
-  if (!state.sessionID) return
-  state.settings = { ...DEFAULT_SETTINGS, ...(value?.settings || {}), autoRouting:{ ...DEFAULT_SETTINGS.autoRouting, ...(value?.settings?.autoRouting || {}) } }
+  state.settings = { ...DEFAULT_SETTINGS, ...(value?.settings || {}) }
 }
 
 async function saveProjectSettings(event) {
@@ -208,19 +197,13 @@ async function saveProjectSettings(event) {
     defaultMode: $('projectDefaultMode').value,
     defaultModel: $('projectDefaultModel').value,
     rag: $('projectRag').value,
-    autoRouting: {
-      localModel: $('projectLocalModel').value.trim() || DEFAULT_SETTINGS.autoRouting.localModel,
-      cloudModel: $('projectCloudModel').value.trim() || DEFAULT_SETTINGS.autoRouting.cloudModel,
-      gpuBusyPercent: Number($('projectGpuThreshold').value || 35),
-    },
     permissionRules: rules,
   }
   try {
     const value = await request('/client-project-settings.json', { method:'POST', body:JSON.stringify({ sessionID:state.sessionID, settings }) })
-    state.settings = { ...DEFAULT_SETTINGS, ...(value?.settings || settings), autoRouting:{ ...DEFAULT_SETTINGS.autoRouting, ...(value?.settings?.autoRouting || settings.autoRouting) } }
+    state.settings = { ...DEFAULT_SETTINGS, ...(value?.settings || settings) }
     $('projectSettingsDialog').close()
     toast('Настройки проекта сохранены')
-    refreshAutoRoute()
   } catch (error) { toast(`Настройки проекта: ${error.message}`, 5000) }
 }
 
@@ -241,9 +224,6 @@ function openProjectSettings() {
   $('projectDefaultMode').value = settings.defaultMode || 'inherit'
   $('projectDefaultModel').value = settings.defaultModel || 'inherit'
   $('projectRag').value = settings.rag || 'auto'
-  $('projectGpuThreshold').value = settings.autoRouting?.gpuBusyPercent || 35
-  $('projectLocalModel').value = settings.autoRouting?.localModel || DEFAULT_SETTINGS.autoRouting.localModel
-  $('projectCloudModel').value = settings.autoRouting?.cloudModel || DEFAULT_SETTINGS.autoRouting.cloudModel
   $('projectPermissionRules').innerHTML = ''
   for (const rule of settings.permissionRules || []) addRuleRow(rule)
   $('projectSettingsDialog').showModal()
@@ -262,8 +242,7 @@ async function applyProjectDefaultsOnce() {
   if (settings.defaultMode === 'build' || settings.defaultMode === 'plan') {
     document.querySelector(`#agentControls [data-agent="${settings.defaultMode}"]`)?.click()
   }
-  if (settings.defaultModel === 'auto') window.CustomOpenCodeUX?.setProfile?.('auto')
-  else if (settings.defaultModel === 'orchestrated') window.CustomOpenCodeUX?.setProfile?.('orchestrated')
+  if (settings.defaultModel === 'orchestrated') window.CustomOpenCodeUX?.setProfile?.('orchestrated')
   else if (typeof settings.defaultModel === 'string' && settings.defaultModel.includes('/')) {
     await chooseConcreteModel(settings.defaultModel)
   }
@@ -275,11 +254,10 @@ async function applyProjectDefaultsOnce() {
 async function chooseConcreteModel(ref) {
   const [provider, ...rest] = ref.split('/')
   const model = rest.join('/')
-  if (!provider || !model) return
+  if (!provider || !model || provider === 'ollama') return
   $('modelButton')?.click()
   await new Promise((resolve) => setTimeout(resolve, 40))
-  const choice = document.querySelector(`#modelChoices [data-model="${CSS.escape(model)}"][data-provider="${CSS.escape(provider)}"]`)
-  choice?.click()
+  document.querySelector(`#modelChoices [data-model="${CSS.escape(model)}"][data-provider="${CSS.escape(provider)}"]`)?.click()
 }
 
 function readAttachment(file, slot) {
@@ -299,8 +277,10 @@ function captureFiles(files) {
     if (!file) continue
     const slot = state.attachments.length
     state.attachments.push(null)
-    const promise = readAttachment(file, slot).catch((error) => { state.attachments[slot] = null; console.warn('attachment mirror failed', error) })
-    state.attachmentReads.push(promise)
+    state.attachmentReads.push(readAttachment(file, slot).catch((error) => {
+      state.attachments[slot] = null
+      console.warn('attachment mirror failed', error)
+    }))
   }
 }
 async function awaitAttachments() {
@@ -324,15 +304,13 @@ function clearComposer() {
 async function interceptSubmit(event) {
   if (!state.sessionID) return
   const text = $('input')?.value.trim() || ''
-  // Native/control slash commands have their own interception layers and must
-  // not be converted into ordinary prompt messages by the workflow sender.
   if (text.startsWith('/') && !text.startsWith('//')) return
   const hasAttachmentSurface = Boolean($('attachments') && !$('attachments').hidden && $('attachments').children.length)
   if (!text && !hasAttachmentSurface && !state.attachments.length && !state.attachmentReads.length) return
   event.preventDefault()
   event.stopImmediatePropagation()
   const files = await awaitAttachments()
-  const profile = currentProfile()
+  const profile = currentProfile() === 'orchestrated' ? 'orchestrated' : 'direct'
   try {
     if (running()) {
       await request('/client-queue.json', { method:'POST', body:JSON.stringify({ sessionID:state.sessionID, text, files, profile }) })
@@ -341,14 +319,13 @@ async function interceptSubmit(event) {
       toast('Добавлено в серверную очередь')
       return
     }
-    const sent = await request('/client-send.json', { method:'POST', body:JSON.stringify({ sessionID:state.sessionID, text, files, profile }) })
+    await request('/client-send.json', { method:'POST', body:JSON.stringify({ sessionID:state.sessionID, text, files, profile }) })
     clearComposer()
     if ($('stop')) $('stop').hidden = false
     if (!state.runStartedAt) state.runStartedAt = Date.now()
-    if (sent?.route) state.autoRoute = sent.route
     renderStatus()
-    toast(profile === 'auto' ? `Отправлено · ${state.autoRoute?.route === 'local' ? 'local' : 'cloud'}` : 'Отправлено', 1300)
-    setTimeout(() => refreshOrchestration(), 300)
+    toast('Отправлено', 1300)
+    setTimeout(refreshOrchestration, 300)
   } catch (error) {
     toast(`Отправка: ${error.message}`, 6000)
   }
@@ -394,7 +371,10 @@ function renderQueueDialog() {
 }
 async function deleteQueue(id) {
   if (!state.sessionID) return
-  try { await request(`/client-queue.json?sessionID=${encodeURIComponent(state.sessionID)}&id=${encodeURIComponent(id)}`, { method:'DELETE' }); await refreshQueue() } catch (error) { toast(error.message) }
+  try {
+    await request(`/client-queue.json?sessionID=${encodeURIComponent(state.sessionID)}&id=${encodeURIComponent(id)}`, { method:'DELETE' })
+    await refreshQueue()
+  } catch (error) { toast(error.message) }
 }
 async function moveQueue(index, delta) {
   const items = [...(state.queue?.items || [])]
@@ -411,12 +391,10 @@ function openQueueDialog() { renderQueueDialog(); $('queueDialog')?.showModal() 
 async function questionRequests() {
   if (!state.sessionID || !state.directory) return []
   const q = workspaceQuery()
-  const endpoints = [`/api/question/request${q ? `?${q}` : ''}`, `/api/question${q ? `?${q}` : ''}`]
-  for (const endpoint of endpoints) {
+  for (const endpoint of [`/api/question/request${q ? `?${q}` : ''}`, `/api/question${q ? `?${q}` : ''}`]) {
     try {
       const value = dataOf(await request(endpoint))
-      if (!Array.isArray(value)) continue
-      return value.filter((item) => !item?.sessionID || item.sessionID === state.sessionID)
+      if (Array.isArray(value)) return value.filter((item) => !item?.sessionID || item.sessionID === state.sessionID)
     } catch (error) {
       if (![404,405].includes(error.status)) console.debug('question endpoint', error)
     }
@@ -457,8 +435,6 @@ async function refreshQuestions() {
       renderQuestion()
       if (requestRow) notifyAdvanced('OpenCode ждёт выбора', requestRow.questions[0]?.question || 'Нужно выбрать вариант', `question-${requestRow.id}`)
     } else {
-      // Keep the existing DOM while the same request is pending. Rebuilding it
-      // on every poll would destroy focus and a custom answer being typed.
       state.question = requestRow
     }
   } catch {}
@@ -479,7 +455,11 @@ function renderQuestion() {
     if (!label) return
     if (!question.multiple) selection.selected.clear()
     selection.selected.has(label) ? selection.selected.delete(label) : selection.selected.add(label)
-    if (!question.multiple && selection.selected.size) { selection.custom = ''; const input = host.querySelector(`[data-question-custom="${qIndex}"]`); if (input) input.value = '' }
+    if (!question.multiple && selection.selected.size) {
+      selection.custom = ''
+      const input = host.querySelector(`[data-question-custom="${qIndex}"]`)
+      if (input) input.value = ''
+    }
     syncQuestionSection(qIndex)
   }))
   host.querySelectorAll('[data-question-custom]').forEach((input) => input.addEventListener('input', () => {
@@ -489,10 +469,7 @@ function renderQuestion() {
     syncQuestionSection(qIndex)
   }))
   host.querySelectorAll('[data-question-custom-use]').forEach((button) => button.addEventListener('click', () => {
-    const qIndex = Number(button.dataset.questionCustomUse)
-    const input = host.querySelector(`[data-question-custom="${qIndex}"]`)
-    input?.focus()
-    if (input?.value.trim()) syncQuestionSection(qIndex)
+    host.querySelector(`[data-question-custom="${Number(button.dataset.questionCustomUse)}"]`)?.focus()
   }))
   host.querySelector('[data-question-submit]')?.addEventListener('click', submitQuestion)
   host.querySelectorAll('[data-question-reject]').forEach((button) => button.addEventListener('click', rejectQuestion))
@@ -504,8 +481,7 @@ function syncQuestionSection(qIndex) {
   if (!host || !question || !selection) return
   host.querySelectorAll(`[data-question-option^="${qIndex}:"]`).forEach((button) => {
     const optionIndex = Number(button.dataset.questionOption.split(':')[1])
-    const label = question.options[optionIndex]?.label
-    const selected = selection.selected.has(label)
+    const selected = selection.selected.has(question.options[optionIndex]?.label)
     button.classList.toggle('selected', selected)
     button.querySelector('.question-option-mark').textContent = selected ? '✓' : ''
   })
@@ -538,8 +514,15 @@ async function submitQuestion() {
   for (const [path, body] of attempts) {
     try {
       await request(path, { method:'POST', body:JSON.stringify(body) })
-      state.question = null; state.questionKey = ''; renderQuestion(); toast('Ответ отправлен'); return
-    } catch (error) { lastError = error; if (![400,404,405,422].includes(error.status)) break }
+      state.question = null
+      state.questionKey = ''
+      renderQuestion()
+      toast('Ответ отправлен')
+      return
+    } catch (error) {
+      lastError = error
+      if (![400,404,405,422].includes(error.status)) break
+    }
   }
   toast(`Ответ: ${lastError?.message || 'не удалось отправить'}`, 6000)
 }
@@ -548,9 +531,17 @@ async function rejectQuestion() {
   const sid = state.question.sessionID || state.sessionID
   const qid = state.question.id
   const q = workspaceQuery()
-  const endpoints = [`/api/session/${encodeURIComponent(sid)}/question/request/${encodeURIComponent(qid)}/reject`, `/api/question/${encodeURIComponent(qid)}/reject${q ? `?${q}` : ''}`]
-  for (const path of endpoints) {
-    try { await request(path, { method:'POST', body:'{}' }); state.question = null; state.questionKey = ''; renderQuestion(); toast('Вопрос отклонён'); return } catch (error) { if (![400,404,405].includes(error.status)) break }
+  for (const path of [`/api/session/${encodeURIComponent(sid)}/question/request/${encodeURIComponent(qid)}/reject`, `/api/question/${encodeURIComponent(qid)}/reject${q ? `?${q}` : ''}`]) {
+    try {
+      await request(path, { method:'POST', body:'{}' })
+      state.question = null
+      state.questionKey = ''
+      renderQuestion()
+      toast('Вопрос отклонён')
+      return
+    } catch (error) {
+      if (![400,404,405].includes(error.status)) break
+    }
   }
   toast('Не удалось отклонить вопрос')
 }
@@ -590,11 +581,6 @@ async function allowPermissionInProject() {
     document.querySelector('[data-permission="once"]')?.click()
     toast('Правило сохранено для проекта')
   } catch (error) { toast(`Permission policy: ${error.message}`, 5000) }
-}
-
-async function refreshAutoRoute() {
-  if (!state.sessionID) return
-  try { state.autoRoute = await request(`/client-auto-route.json?sessionID=${encodeURIComponent(state.sessionID)}`); renderStatus() } catch { state.autoRoute = null }
 }
 
 function childStatus(value) {
@@ -667,9 +653,7 @@ function renderStatus() {
   const elapsed = running() && state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''
   const queue = Number(state.queue?.count || 0)
   const rag = state.children.some((child) => state.childDetails.get(child.id)?.rag) || state.settings?.rag === 'on'
-  const auto = currentProfile() === 'auto' ? state.autoRoute : null
-  const routeText = auto ? `${auto.route === 'local' ? 'Local' : 'Cloud'}${auto.resources?.reason && auto.resources.reason !== 'idle' ? ` · ${auto.resources.reason}` : ''}` : ''
-  host.innerHTML = `<span class="wf-pill strong">${escapeHtml(model)}</span>${context ? `<span class="wf-pill">${escapeHtml(context)}</span>` : ''}${cost ? `<span class="wf-pill">${escapeHtml(cost)}</span>` : ''}${elapsed ? `<span class="wf-pill"><span class="wf-dot ${running() ? 'busy' : ''}"></span>${escapeHtml(elapsed)}</span>` : ''}${routeText ? `<span class="wf-pill">Auto: ${escapeHtml(routeText)}</span>` : ''}${rag ? '<span class="wf-pill">RAG ✓</span>' : ''}<button type="button" class="wf-pill clickable" id="queueStatusButton">Очередь ${queue}</button>`
+  host.innerHTML = `<span class="wf-pill strong">${escapeHtml(model)}</span>${context ? `<span class="wf-pill">${escapeHtml(context)}</span>` : ''}${cost ? `<span class="wf-pill">${escapeHtml(cost)}</span>` : ''}${elapsed ? `<span class="wf-pill"><span class="wf-dot ${running() ? 'busy' : ''}"></span>${escapeHtml(elapsed)}</span>` : ''}${rag ? '<span class="wf-pill">RAG ✓</span>' : ''}<button type="button" class="wf-pill clickable" id="queueStatusButton">Очередь ${queue}</button>`
   $('queueStatusButton')?.addEventListener('click', openQueueDialog)
 }
 function renderAll() {
@@ -738,7 +722,11 @@ function renderReview() {
   summary?.querySelector('.review-summary')?.remove()
   if (summary) summary.insertAdjacentHTML('beforeend', `<div class="review-summary"><span class="review-stat">${diffs.length} files</span><span class="review-stat">+${total.add}</span><span class="review-stat">−${total.del}</span></div>`)
   host.innerHTML = diffs.map((item, index) => `<details class="review-file" open><summary><span class="review-file-path">${escapeHtml(item.path)}</span><span class="review-file-stat">+${item.add} −${item.del}</span><span class="review-file-actions"><button type="button" class="workflow-button-danger" data-revert-file="${index}">Отменить файл</button></span></summary>${item.hunks.map((hunk, hIndex) => `<div class="review-hunk"><div class="review-hunk-head"><span>${escapeHtml(hunk.lines[0] || 'hunk')}</span><button type="button" data-revert-hunk="${index}:${hIndex}">Отменить hunk</button></div><pre>${hunk.lines.map((line) => `<span class="${line.startsWith('+') && !line.startsWith('+++') ? 'line-add' : line.startsWith('-') && !line.startsWith('---') ? 'line-del' : ''}">${escapeHtml(line)}</span>`).join('\n')}</pre></div>`).join('') || `<pre>${escapeHtml(item.patch)}</pre>`}</details>`).join('') || '<div class="empty">Изменений нет.</div>'
-  host.querySelectorAll('[data-revert-file]').forEach((button) => button.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); revertReviewFile(Number(button.dataset.revertFile)) }))
+  host.querySelectorAll('[data-revert-file]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    revertReviewFile(Number(button.dataset.revertFile))
+  }))
   host.querySelectorAll('[data-revert-hunk]').forEach((button) => button.addEventListener('click', () => {
     const [fileIndex, hunkIndex] = button.dataset.revertHunk.split(':').map(Number)
     revertReviewHunk(fileIndex, hunkIndex)
@@ -784,7 +772,8 @@ function observeRuntime() {
       state.runStartedAt = null
       setTimeout(() => { refreshQueue(); refreshOrchestration(); loadReview() }, 120)
     }
-    renderStatus(); renderOrchestration()
+    renderStatus()
+    renderOrchestration()
   }).observe(stop, { attributes:true, attributeFilter:['hidden'] })
   const modelButton = $('modelButton')
   if (modelButton) new MutationObserver(renderStatus).observe(modelButton, { childList:true, characterData:true, subtree:true })
@@ -815,7 +804,11 @@ function bindEvents() {
   }, true)
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
-      refreshSelectedSession(); refreshQueue(); refreshQuestions(); refreshOrchestration(); refreshPermission(); refreshAutoRoute()
+      refreshSelectedSession()
+      refreshQueue()
+      refreshQuestions()
+      refreshOrchestration()
+      refreshPermission()
     }
   })
 }
@@ -824,7 +817,7 @@ async function tickFast() {
   if (!document.hidden && state.sessionID) await Promise.allSettled([refreshQuestions(), refreshPermission()])
 }
 async function tickMedium() {
-  if (!document.hidden && state.sessionID) await Promise.allSettled([refreshQueue(), refreshOrchestration(), refreshAutoRoute()])
+  if (!document.hidden && state.sessionID) await Promise.allSettled([refreshQueue(), refreshOrchestration()])
 }
 
 function init() {
