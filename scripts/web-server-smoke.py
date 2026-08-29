@@ -19,6 +19,7 @@ with tempfile.TemporaryDirectory() as temp:
     projects.mkdir()
     os.environ["OPENCODE_SERVER_USERNAME"] = "opencode"
     os.environ["OPENCODE_SERVER_PASSWORD"] = "test"
+    os.environ["OPENCODE_WEB_ALLOW_LOCAL"] = "0"
     os.environ["OPENCODE_BACKEND_URL"] = "http://localhost:9"
     os.environ["OPENCODE_BACKEND_PASSWORD"] = "test"
     os.environ["OPENCODE_SCRATCH_DIRECTORY"] = str(scratch)
