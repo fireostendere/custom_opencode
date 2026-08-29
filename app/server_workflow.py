@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from urllib.parse import quote, urlsplit
 
+import integration_contract
 import runtime_completion
 import runtime_resume
 import runtime_v3
@@ -100,6 +101,11 @@ class Handler(rag.Handler, features.Handler):
 
     def do_GET(self) -> None:
         parsed = urlsplit(self.path)
+        if parsed.path == "/client-integration.json":
+            if not self.authenticated():
+                return
+            self.json_response(integration_contract.contract())
+            return
         if runtime_completion.handle_get(self, parsed, runtime, control, features):
             return
         if runtime_v3_ext.handle_get(self, parsed, runtime, runtime_v3, features):
