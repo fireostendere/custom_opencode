@@ -5,7 +5,7 @@ After=opencode.service
 [Service]
 WorkingDirectory=__CUSTOM_OPENCODE_ROOT__/app
 EnvironmentFile=-__CUSTOM_OPENCODE_ROOT__/.env
-ExecStart=__PYTHON3__ __CUSTOM_OPENCODE_ROOT__/app/server_rag.py
+ExecStart=__PYTHON3__ __CUSTOM_OPENCODE_ROOT__/app/server_workflow.py
 Restart=always
 RestartSec=2
 
