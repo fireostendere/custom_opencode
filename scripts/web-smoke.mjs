@@ -94,7 +94,7 @@ if (ux.permissionSummary('Команда', 'x'.repeat(300)).length > 110) throw 
 if (ux.ORCHESTRATED_MODEL.label !== 'Qwen 3.8 Max · Оркестрированная') throw new Error('Orchestrated model label regression')
 
 const index = readFileSync(resolve(root, 'app/index.html'), 'utf8')
-for (const marker of ['/ux-controls.css', '/ux-controls.js', '/advanced-features.css', '/advanced-features.js', 'id="composerAction"', 'id="permissionDetails"', 'model-catalog']) {
+for (const marker of ['/ux-controls.css', '/ux-controls.js', '/advanced-features.css', '/advanced-features.js', '/runtime-dashboard.css', '/runtime-dashboard.js', 'id="composerAction"', 'id="permissionDetails"', 'model-catalog']) {
   if (!index.includes(marker)) throw new Error(`UX shell marker missing: ${marker}`)
 }
 if ((index.match(/id="composerAction"/g) || []).length !== 1) throw new Error('Composer must expose exactly one contextual action control')
@@ -105,10 +105,12 @@ const uxCss = readFileSync(resolve(root, 'app/ux-controls.css'), 'utf8')
 const uiSource = readFileSync(resolve(root, 'app/ui-enhancements.js'), 'utf8')
 const advanced = readFileSync(resolve(root, 'app/advanced-features.js'), 'utf8')
 const advancedCss = readFileSync(resolve(root, 'app/advanced-features.css'), 'utf8')
+const runtimeDashboard = readFileSync(resolve(root, 'app/runtime-dashboard.js'), 'utf8')
+const runtimeCss = readFileSync(resolve(root, 'app/runtime-dashboard.css'), 'utf8')
 if (!uxControls.includes("button.textContent = 'Build'")) throw new Error('Build must be the user-facing work mode label')
 if (uxControls.includes("button.textContent = 'Direct'")) throw new Error('Direct must not be exposed as a user-facing mode label')
 if (!uxControls.includes("event.target.closest('[data-orchestrated-model]')")) throw new Error('Orchestrated model click proxy missing')
-if (uxControls.includes('data-auto-model') || uxControls.includes('local/cloud')) throw new Error('Automatic local/cloud profile must not exist')
+if (uxControls.includes('data-auto-model') || uxControls.includes('local/cloud')) throw new Error('Automatic local/cloud profile must not exist in legacy UX controls')
 if (!uxControls.includes('window.CustomOpenCodeUX')) throw new Error('Project defaults cannot select orchestrated profile')
 if (!uxControls.includes("setNativeDelivery('queue')")) throw new Error('Automatic queue compatibility bridge missing')
 if (!uxControls.includes("addEventListener('submit', () => setTimeout(syncComposerAction, 0))")) throw new Error('Composer action must resync after programmatic queue clear')
@@ -133,24 +135,34 @@ if (advanced.includes('/client-auto-route.json') || advanced.includes('Auto · l
 for (const marker of ['.question-card', '.queue-list', '.orchestration-trace', '.review-hunk', '.workflow-status']) {
   if (!advancedCss.includes(marker)) throw new Error(`Advanced workflow styling missing: ${marker}`)
 }
+for (const marker of ['/client-model-capabilities.json', '/client-tasks.json', '/client-task-control.json', '/client-resource-status.json', '/client-speculate.json', '/client-task-create.json', 'Task Center', 'qwen3.8-coder']) {
+  if (!runtimeDashboard.includes(marker)) throw new Error(`Runtime dashboard behavior marker missing: ${marker}`)
+}
+for (const marker of ['runtime-task', 'runtime-profile', 'runtime-state']) {
+  if (!runtimeCss.includes(marker)) throw new Error(`Runtime dashboard styling marker missing: ${marker}`)
+}
 
 const serviceWorker = readFileSync(resolve(root, 'app/sw.js'), 'utf8')
-if (!serviceWorker.includes('custom-opencode-web-v4')) throw new Error('PWA cache generation was not bumped')
+if (!serviceWorker.includes('custom-opencode-web-v5')) throw new Error('PWA cache generation was not bumped to runtime-v2 generation')
 if (!serviceWorker.includes("fetch(req,{cache:'no-cache'})")) throw new Error('PWA assets must prefer fresh network responses')
 if (!serviceWorker.includes("event.action==='dismiss'")) throw new Error('Notification dismiss action missing')
 if (serviceWorker.includes('return cached||network')) throw new Error('PWA must not serve stale cache before checking the network')
 
 const workflowServer = readFileSync(resolve(root, 'app/server_workflow.py'), 'utf8')
 const featureServer = readFileSync(resolve(root, 'app/server_features.py'), 'utf8')
+const runtimeServer = readFileSync(resolve(root, 'app/server_runtime.py'), 'utf8')
 const service = readFileSync(resolve(root, 'systemd/opencode-web-client.service'), 'utf8')
-for (const marker of ['/client-send.json', 'prompt_async', 'body["system"]', 'features._send_backend_prompt']) {
+for (const marker of ['/client-send.json', 'prompt_async', 'body["system"]', 'features._send_backend_prompt', 'runtime.install(features)']) {
   if (!workflowServer.includes(marker)) throw new Error(`Workflow server marker missing: ${marker}`)
 }
 for (const marker of ['/client-queue.json', '/client-project-settings.json', '/client-git-revert.json', 'permissionRules', 'git apply']) {
   if (!featureServer.includes(marker)) throw new Error(`Persistent feature server marker missing: ${marker}`)
 }
+for (const marker of ['/client-tasks.json', 'spawn_speculative', 'mcp_gateway', '_create_worktree', 'runtime.recovery_scan', 'agent.loop_detected', 'agent.stuck']) {
+  if (!runtimeServer.includes(marker)) throw new Error(`Runtime server marker missing: ${marker}`)
+}
 for (const forbidden of ['/client-auto-route.json', 'OPENCODE_AUTO_GAME_PROCESSES', 'keep_alive', '_unload_ollama', '_ollama_available']) {
-  if (featureServer.includes(forbidden)) throw new Error(`Local model automation leaked into workflow server: ${forbidden}`)
+  if (featureServer.includes(forbidden)) throw new Error(`Local model automation leaked into legacy workflow server: ${forbidden}`)
 }
 if (!service.includes('app/server_workflow.py') || !service.includes('app/server_rag.py')) throw new Error('Production service must compose workflow and RAG layers')
 
@@ -179,4 +191,4 @@ if (agents['build-direct'].system || agents['plan-direct'].system) throw new Err
 const doctor = await loadSource('app/doctor.js')
 if (typeof doctor.openDoctor !== 'function') throw new Error('Doctor UI module does not export openDoctor')
 
-console.log('Web smoke passed: Build/Plan + direct/orchestrated profiles + persistent queue + native questions + project policies + review + orchestration UI')
+console.log('Web smoke passed: Build/Plan + server model profiles + runtime Task Center + persistent queue + questions + permissions + review + orchestration UI')
