@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RAG lifecycle control layered on top of the existing web server."""
+"""RAG lifecycle and server control-plane endpoints for the web client."""
 from __future__ import annotations
 
 import json
@@ -12,6 +12,7 @@ import time
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
 
+import control_plane
 import server_plus as plus
 
 RAG_START_LOCK = threading.Lock()
@@ -284,9 +285,118 @@ def run_rag_start(mode: str = "full", session_id: str | None = None) -> dict[str
         RAG_START_LOCK.release()
 
 
+def _permission_requests(directory: str) -> list[dict[str, Any]]:
+    payload = plus._backend_request_json(
+        "GET", _v2_workspace_target("/api/permission/request", directory), timeout=15.0)
+    value = plus._data(payload)
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _reply_permission_once(session_id: str, permission_id: str) -> None:
+    sid = quote(session_id, safe="")
+    pid = quote(permission_id, safe="")
+    try:
+        plus._backend_request_json(
+            "POST",
+            f"/api/session/{sid}/permission/{pid}/reply",
+            {"reply": "once"},
+            timeout=15.0,
+        )
+        return
+    except plus.BackendHTTPError as exc:
+        if exc.status != 404:
+            raise
+    plus._backend_request_json(
+        "POST",
+        f"/api/session/{sid}/permissions/{pid}",
+        {"response": "once", "remember": False},
+        timeout=15.0,
+    )
+
+
+def evaluate_permission(session_id: str, permission_id: str) -> dict[str, Any]:
+    """Evaluate an actual pending backend request and auto-reply only if safe.
+
+    The browser supplies only identifiers. Action/resources are fetched again
+    from OpenCode so a modified client cannot label a destructive permission as
+    a harmless read and trick the server into approving it.
+    """
+    workspace = _session_directory(session_id)
+    try:
+        requests = _permission_requests(workspace)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "autoReplied": False,
+            "effect": "ask",
+            "risk": "R3",
+            "reason": f"permission lookup failed: {type(exc).__name__}: {exc}",
+        }
+
+    request = next((item for item in requests if str(item.get("id")) == permission_id and str(item.get("sessionID")) == session_id), None)
+    if request is None:
+        return {"ok": True, "stale": True, "autoReplied": False, "effect": "ask", "reason": "permission is no longer pending"}
+
+    decision = control_plane.classify_permission(request, workspace=workspace)
+    control_plane.audit_decision(
+        decision,
+        request=request,
+        session_id=session_id,
+        permission_id=permission_id,
+    )
+    result = {"ok": True, "autoReplied": False, **decision}
+    if decision.get("effect") != "allow" or decision.get("reply") != "once":
+        return result
+
+    try:
+        _reply_permission_once(session_id, permission_id)
+    except Exception as exc:
+        result["ok"] = False
+        result["error"] = f"auto-reply failed: {type(exc).__name__}: {exc}"
+        return result
+    result["autoReplied"] = True
+    return result
+
+
 class Handler(plus.Handler):
+    def do_GET(self) -> None:
+        parsed = urlsplit(self.path)
+        if parsed.path == "/client-control-plane.json":
+            if not self.authenticated():
+                return
+            self.json_response(control_plane.snapshot())
+            return
+        super().do_GET()
+
     def do_POST(self) -> None:
         parsed = urlsplit(self.path)
+        if parsed.path == "/client-permission-evaluate.json":
+            if not self.authenticated():
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                self.send_error(400, "Invalid Content-Length")
+                return
+            if length < 0 or length > 4096:
+                self.send_error(400, "Invalid permission request size")
+                return
+            try:
+                payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self.send_error(400, "Invalid permission JSON")
+                return
+            session_id = payload.get("sessionID") if isinstance(payload, dict) else None
+            permission_id = payload.get("permissionID") if isinstance(payload, dict) else None
+            if not isinstance(session_id, str) or not session_id or len(session_id) > 256:
+                self.send_error(400, "Invalid session id")
+                return
+            if not isinstance(permission_id, str) or not permission_id or len(permission_id) > 256:
+                self.send_error(400, "Invalid permission id")
+                return
+            self.json_response(evaluate_permission(session_id, permission_id))
+            return
+
         if parsed.path == "/client-rag-start.json":
             if not self.authenticated():
                 return

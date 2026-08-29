@@ -203,6 +203,17 @@ export async function getPermissions(directory) {
   catch { return [] }
 }
 
+export async function evaluatePermission(sessionID, permissionID) {
+  return request('/client-permission-evaluate.json', {
+    method: 'POST',
+    body: JSON.stringify({ sessionID, permissionID }),
+  })
+}
+
+export async function getControlPlane() {
+  return request('/client-control-plane.json')
+}
+
 export async function replyPermission(sessionID, permissionID, reply) {
   const sid = encodeURIComponent(sessionID)
   const pid = encodeURIComponent(permissionID)
