@@ -87,7 +87,7 @@ if (ux.composerActionState({ running:true, hasPayload:true }).kind !== 'queue') 
 if (ux.agentFor('build', 'direct') !== 'build-direct' || ux.agentFor('plan', 'orchestrated') !== 'plan') throw new Error('Build/Plan profile mapping regression')
 if (!ux.permissionSummary('Команда', '{"command":"git status","description":"long"}').includes('git status')) throw new Error('Permission summary did not extract command')
 if (!ux.permissionSummary('question', '{"questions":[{"label":"Сохранить изменения","description":"Сначала сохранить изменения"}]}').startsWith('Нужен выбор:')) throw new Error('Question permission summary is not human-readable')
-if (ux.ORCHESTRATED_MODEL.label !== 'Qwen 3.8 Max · Orchestrated') throw new Error('Orchestrated model label regression')
+if (ux.ORCHESTRATED_MODEL.label !== 'Qwen 3.8 Max · Оркестратор') throw new Error('Orchestrated model label regression')
 
 const index = readFileSync(resolve(root, 'app/index.html'), 'utf8')
 for (const marker of ['/ux-controls.css', '/ux-controls.js', 'id="composerAction"', 'id="permissionDetails"', 'model-catalog']) {
