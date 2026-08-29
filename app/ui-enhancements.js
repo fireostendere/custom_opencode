@@ -166,7 +166,7 @@ let decoratingModels = false
 let modelObserver = null
 async function decorateModelChoices() {
   const root = $('modelChoices')
-  if (!root || decoratingModels || !root.querySelector('[data-model]')) return
+  if (!root || decoratingModels || root.querySelector(':scope > .model-provider-section') || !root.querySelector('[data-model]')) return
   decoratingModels = true
   modelObserver?.disconnect()
   try {
