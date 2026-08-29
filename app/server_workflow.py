@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Production web entrypoint composing RAG, workflow and permission control plane."""
+"""Production web entrypoint composing RAG, workflow, runtime and permissions."""
 from __future__ import annotations
 
 import json
@@ -8,9 +8,11 @@ from urllib.parse import quote, urlsplit
 import server_control as control
 import server_features as features
 import server_rag as rag
+import server_runtime as runtime
 
 
 _ORIGINAL_SEND = features._send_backend_prompt
+runtime.install(features)
 control.install()
 
 
@@ -32,21 +34,23 @@ def _file_parts(files: list[object]) -> list[dict[str, object]]:
 
 
 def _send_with_project_context(session_id: str, text: str, files: list[object]) -> object:
-    """Prefer async prompt so project instructions remain system-only."""
+    """Prefer async prompt with bounded server-added project/task context."""
     directory = features._session_directory(session_id)
     settings = features.project_settings(directory)
     instructions = str(settings.get("instructions") or "").strip()
+    envelope = runtime.context_envelope(features, session_id, instructions)
+    context = str(envelope.get("text") or "").strip()
     target = f"/api/session/{quote(session_id, safe='')}/prompt_async"
     parts: list[dict[str, object]] = []
     if text:
         parts.append({"type": "text", "text": text})
     parts.extend(_file_parts(files))
     body: dict[str, object] = {"parts": parts}
-    if instructions:
+    if context:
         body["system"] = (
-            "Project-specific persistent instructions configured by the user for this workspace. "
-            "Treat them as project policy unless they conflict with higher-priority instructions.\n\n"
-            + instructions
+            "Server-managed bounded context for this workspace/task. It is deduplicated and may include "
+            "project policy, durable decisions, semantic diff, structured mailbox/handoff and cached repository metadata. "
+            "Use it as project/task context unless it conflicts with higher-priority instructions.\n\n" + context
         )
     try:
         return features._backend_request_json("POST", target, body, timeout=30.0)
@@ -56,13 +60,12 @@ def _send_with_project_context(session_id: str, text: str, files: list[object]) 
     return _ORIGINAL_SEND(session_id, text, files)
 
 
-# Persistent queued prompts use the same project-system-context send path while
-# preserving the model/provider already selected for the session.
+# Runtime dispatch and legacy queue facade share the same context-aware send path.
 features._send_backend_prompt = _send_with_project_context
 
 
 class Handler(rag.Handler, features.Handler):
-    """Control-plane routes first, then RAG/workflow/base proxy routes."""
+    """Runtime/control routes first, then RAG/workflow/base proxy routes."""
 
     def json_response(self, value: object, status: int = 200) -> None:
         body = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -75,12 +78,16 @@ class Handler(rag.Handler, features.Handler):
 
     def do_GET(self) -> None:
         parsed = urlsplit(self.path)
+        if runtime.handle_get(self, parsed, features):
+            return
         if control.handle_get(self, parsed):
             return
         super().do_GET()
 
     def do_POST(self) -> None:
         parsed = urlsplit(self.path)
+        if runtime.handle_post(self, parsed, features):
+            return
         if control.handle_post(self, parsed):
             return
         if parsed.path == "/client-send.json":
@@ -95,8 +102,14 @@ class Handler(rag.Handler, features.Handler):
                 files = payload.get("files") if isinstance(payload.get("files"), list) else []
                 if not text.strip() and not files:
                     raise ValueError("empty message")
-                result = _send_with_project_context(session_id, text, files)
-                self.json_response({"ok": True, "result": result})
+                result = runtime.dispatch_immediate(
+                    features,
+                    session_id=session_id,
+                    text=text,
+                    files=files,
+                    profile=str(payload.get("profile") or payload.get("modelProfile") or "direct"),
+                )
+                self.json_response({"ok": True, **result})
             except Exception as exc:
                 self._feature_error(exc)
             return
