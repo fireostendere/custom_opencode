@@ -1,6 +1,7 @@
 /* Persisted appearance layer: light/dark/system theme, accent palette and restrained motion. */
 :root{
   --accent-contrast:#fff;
+  --border:var(--line);
   --surface:#212121;
   --surface-strong:#171717;
   --surface-soft:#2b2b2b;
@@ -57,6 +58,7 @@ body,.main{background:var(--bg);color:var(--text)}
 button{transition:background-color .16s ease,border-color .16s ease,color .16s ease,filter .16s ease,transform .11s ease,box-shadow .16s ease}
 button:active:not(:disabled){transform:scale(.97)}
 .primary,.send,.composer-action.send,.composer-action.queue,.login-submit{color:var(--accent-contrast)!important}
+.question-option.selected .question-option-mark{color:var(--accent-contrast)!important}
 
 .header-chip,.control,.delivery,.mode-group,.composer,.search,.text-input,.workflow-input,.workflow-select,.workflow-textarea,
 .provider-limits,.limits-shell,.quota-provider,.slash-palette,.model-provider-section,.model-provider-toggle,.model-provider-count,
@@ -127,12 +129,14 @@ html[data-theme="light"] .model-provider-toggle{background:var(--surface-input)}
 html[data-theme="light"] .model-provider-toggle:hover{background:var(--surface-hover)}
 html[data-theme="light"] .model-provider-count,html[data-theme="light"] .model-provider-label{background:#e4e4e4;color:#555}
 html[data-theme="light"] .orchestrated-model-choice{background:color-mix(in srgb,var(--accent) 9%,#fff)!important;border-color:color-mix(in srgb,var(--accent) 35%,var(--line))}
-html[data-theme="light"] .code-block,html[data-theme="light"] .tool pre,html[data-theme="light"] .file-content,html[data-theme="light"] .diff-view pre{background:var(--surface-code);border-color:var(--line)}
+html[data-theme="light"] .code-block,html[data-theme="light"] .tool pre,html[data-theme="light"] .file-content,html[data-theme="light"] .diff-view pre,html[data-theme="light"] .review-hunk pre{background:var(--surface-code);border-color:var(--line)}
 html[data-theme="light"] .code-head{background:#e9e9e9}
 html[data-theme="light"] .markdown code.inline{background:#ececec;border-color:#d4d4d4}
 html[data-theme="light"] .permission-banner{background:#fffbe8;border-color:#d6c978}
 html[data-theme="light"] .permission-text span,html[data-theme="light"] .permission-details summary{color:#71672e}
 html[data-theme="light"] .permission-details pre{background:#fffdf2;border-color:#d8cc8b;color:#524b2b}
+html[data-theme="light"] .doctor-check{background:#00000008}
+html[data-theme="light"] .doctor-smoke{border-color:#00000012}
 html[data-theme="light"] .sidebar-scrim{background:#0005}
 html[data-theme="light"] .toast{background:#fff;border-color:#ccc;color:#222;box-shadow:0 10px 34px #0003}
 html[data-theme="light"] .login-shell{background:radial-gradient(700px 420px at 50% -12%,color-mix(in srgb,var(--accent) 10%,transparent),transparent 68%),linear-gradient(180deg,#fafafa 0%,#f2f2f2 100%)}
