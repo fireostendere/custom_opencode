@@ -1,13 +1,8 @@
 # Модели и routing
 
-## Пользовательская модель
+## Пользовательская модель выполнения
 
-В UI есть только два execution mode:
-
-```text
-Build
-Plan
-```
+Текущий web UI фиксирован в `Build`. Переключатель `Build / Plan` скрыт и пользователю не нужен.
 
 Оркестрация выбирается отдельным entry в model picker:
 
@@ -16,24 +11,20 @@ Plan
 Qwen 3.8 Max · Оркестрированная
 ```
 
-Оркестрация не является третьим execution mode.
+То есть выбор состоит из модели/profile, а не из дополнительного execution mode.
 
-## Build / Plan
+## Build-only compatibility
 
-`Build` — рабочий режим с доступными выбранному primary agent edit/shell permissions.
+OpenCode по-прежнему может содержать внутренние agent IDs `build`, `plan`, `build-direct`, `plan-direct`. Для текущего UX они являются implementation detail.
 
-`Plan` — read/plan-only: edit/shell запрещены независимо от model profile.
-
-Внутренняя matrix:
+Visible mapping:
 
 ```text
-обычная модель + Build         → build-direct
-обычная модель + Plan          → plan-direct
-Оркестрированная + Build       → build
-Оркестрированная + Plan        → plan
+обычная модель                    → build-direct
+Qwen 3.8 Max · Оркестрированная   → build
 ```
 
-`build`, `plan`, `build-direct`, `plan-direct` — implementation detail.
+Если старая session или внешний код активирует `plan`/`plan-direct`, frontend переводит её обратно в соответствующий Build profile. Project default mode selector также скрыт и фиксируется в `build`.
 
 ## Direct models
 
@@ -43,15 +34,15 @@ Qwen 3.8 Max · Оркестрированная
 - automatic fast-reader запрещён;
 - automatic RAG tools запрещены.
 
-Например:
+Примеры:
 
 ```text
-Build + Qwen3.8 Max  → Qwen3.8 Max напрямую
-Plan + Qwen3.8 Flash → Qwen3.8 Flash read-only
-Build + Ollama       → local напрямую, только после ручного выбора пользователем
+Qwen3.8 Max  → build-direct, Qwen3.8 Max напрямую
+Qwen3.8 Flash → build-direct, Qwen3.8 Flash напрямую
+Ollama        → build-direct, local напрямую только после ручного выбора
 ```
 
-Локальный provider не входит в новые workflow routing/defaults. Workflow server не проверяет GPU/игры, не стартует и не выгружает Ollama и не переключает session на `ollama/*` автоматически.
+Локальный provider не входит в workflow routing/defaults. Workflow server не проверяет GPU/игры, не стартует и не выгружает Ollama и не переключает session на `ollama/*` автоматически.
 
 ## Оркестрированная модель
 
@@ -81,9 +72,7 @@ Picker поддерживает:
 - special profile entry `Qwen 3.8 Max · Оркестрированная`;
 - сохранение direct/orchestrated profile per session в browser state.
 
-Переключение `Build ↔ Plan` не должно выключать orchestrated profile.
-
-Обычная локальная Ollama model остаётся обычным manual model entry. Никакой дополнительный Auto local/cloud entry этой итерацией не добавляется.
+Обычная локальная Ollama model остаётся обычным manual model entry. Никакой дополнительный Auto local/cloud entry не добавляется.
 
 ## Persistent queue и model state
 
@@ -102,14 +91,14 @@ Profile в queue metadata используется только как UX/trace 
 
 ## Project memory
 
-Project settings могут задавать defaults только для безопасного workflow surface:
+Project settings могут задавать:
 
-- `Build / Plan`;
-- `Qwen 3.8 Max · Оркестрированная`;
-- конкретная поддерживаемая cloud model;
+- orchestrated или конкретную поддерживаемую cloud model;
 - RAG preference;
 - persistent project instructions;
 - permission policy.
+
+Execution mode в текущем UI всегда Build; mode field оставлен только как compatibility data и frontend фиксирует его в `build`.
 
 `auto` и `ollama/*` не принимаются как автоматические project defaults. Если старый experimental feature-state содержит такие значения, server sanitizes их в `inherit`.
 
@@ -156,14 +145,14 @@ edit/shell/ingest/external dirs → deny, кроме явно разрешённ
 
 ## Проверка без платного inference
 
-Zero-token verifier проверяет:
+Zero-token verifier должен проверять:
 
-- Build/Plan mapping;
+- Build-only compatibility mapping;
 - ordinary/orchestrated UI profiles;
 - persistent queue surface;
 - project settings/policies;
 - запрет automatic `auto`/`ollama/*` project defaults;
-- отсутствие local lifecycle/routing hooks в новом workflow server;
+- отсутствие local lifecycle/routing hooks в workflow server;
 - safe Git revert containment;
 - Max/Flash catalog/config invariants;
 - RAG/MCP status при наличии RAG.
