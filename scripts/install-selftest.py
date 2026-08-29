@@ -99,13 +99,40 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         add("runtime-config", False, f"{type(exc).__name__}: {exc}")
 
+    backend_models: set[str] = set()
+
     def backend_check() -> tuple[bool, str]:
         target = server_rag._v2_workspace_target("/api/model", str(base.SCRATCH_ROOT))
         models = plus._backend_request_json("GET", target, timeout=5.0)
+        backend_models.clear()
+        backend_models.update(plus._model_ids(models))
         return models is not None, f"HTTP API reachable at {base.BACKEND_URL}"
 
     ok, detail = retry(backend_check, timeout=20.0)
     add("opencode-backend", ok, detail)
+
+    required_models = {plus.MAX_MODEL, plus.FLASH_MODEL}
+    missing_models = sorted(required_models - backend_models)
+    add(
+        "backend-model-catalog",
+        not missing_models,
+        "Max + Flash available" if not missing_models else "Missing: " + ", ".join(missing_models),
+    )
+
+    try:
+        agents = plus._data(plus._backend_request_json(
+            "GET", server_rag._v2_workspace_target("/api/agent", str(base.SCRATCH_ROOT)), timeout=5.0))
+        agent_ids = {
+            item.get("id") for item in agents or []
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        add(
+            "backend-agent-catalog",
+            "fast-reader" in agent_ids,
+            "fast-reader registered" if "fast-reader" in agent_ids else "fast-reader missing",
+        )
+    except Exception as exc:
+        add("backend-agent-catalog", False, f"{type(exc).__name__}: {exc}")
 
     def web_check() -> tuple[bool, str]:
         host = local_probe_host(str(base.WEB_HOST))

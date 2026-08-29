@@ -131,7 +131,28 @@ ln -sfn "$ROOT/scripts/update.sh" "$BIN_DIR/custom-opencode-update"
 
 systemctl --user daemon-reload
 systemctl --user enable --now opencode-web-client.service
-if command -v opencode2 >/dev/null 2>&1; then timeout 45s opencode2 service restart >/dev/null 2>&1 || true; fi
+if command -v opencode2 >/dev/null 2>&1; then
+  # The shared V2 service is long-lived and does not inherit variables from a
+  # later custom-opencode client. Persist only the variables required to load
+  # this profile and its providers/plugins. `service set env` writes the
+  # service-private, mode-0600 config and stops the service; start it once after
+  # all values are in place.
+  SERVICE_ENV=(
+    OPENCODE_CONFIG_DIR TOKEN_PLAN_API_KEY TOKEN_PLAN_ANTHROPIC_BASE_URL
+    TOKEN_PLAN_OPENAI_BASE_URL TOKEN_PLAN_PROBE_MODEL OLLAMA_BASE_URL
+    OPENCODE_LOCAL_AUTO_START OPENCODE_LOCAL_PROVIDER
+    OPENCODE_LOCAL_ROUTER_URL OPENCODE_LOCAL_ROUTER_START
+    OPENCODE_LOCAL_ROUTER_LOG BAILIAN_CONFIG_PATH
+  )
+  for name in "${SERVICE_ENV[@]}"; do
+    value=${!name:-}
+    if [[ "$name" == OPENCODE_CONFIG_DIR ]]; then value=$CONFIG_DIR; fi
+    if [[ -n "$value" ]]; then
+      timeout 15s opencode2 service set env "$name" "$value" >/dev/null
+    fi
+  done
+  timeout 45s opencode2 service start >/dev/null
+fi
 systemctl --user restart opencode-web-client.service
 
 if [[ "$SELFTEST" != 0 ]]; then

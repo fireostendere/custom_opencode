@@ -65,6 +65,10 @@ done
 for file in "$ROOT/scripts/"*.sh; do
   bash -n "$file"
 done
+if ! grep -q 'opencode2 service set env' "$ROOT/scripts/install.sh"; then
+  echo "installer must persist the active V2 service environment" >&2
+  exit 1
+fi
 
 "$PYTHON3" - "$ROOT" <<'PY'
 from pathlib import Path
