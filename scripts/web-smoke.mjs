@@ -52,6 +52,12 @@ if (enhancements.parseSlash('ordinary text') !== null) throw new Error('Slash pa
 if (enhancements.commandName({ name:'/init' }) !== 'init') throw new Error('Slash command normalization failed')
 if (enhancements.windowLabel(300) !== 'Сессия · 5ч' || enhancements.windowLabel(10080) !== 'Неделя · 7д') throw new Error('Rate-limit window labels failed')
 
+const rag = await loadSource('app/rag-control.js')
+if (rag.parseRagStart('/rag-start')?.mode !== 'full') throw new Error('RAG default start parser failed')
+if (rag.parseRagStart('/rag-start quick')?.mode !== 'quick') throw new Error('RAG quick parser failed')
+if (rag.parseRagStart('/rag-start full')?.mode !== 'full') throw new Error('RAG full parser failed')
+if (rag.parseRagStart('/rag-start nope') !== null) throw new Error('RAG parser accepted unknown mode')
+
 const ui = await loadSource('app/ui-enhancements.js')
 const zeroCost = [{ input:0, output:0, cache:{ read:0, write:0 } }]
 const paidCost = [{ input:0.1, output:0, cache:{ read:0, write:0 } }]
@@ -63,4 +69,4 @@ if (!ui.isFreeModel({ id:'big-pickle' })) throw new Error('Big Pickle free fallb
 const doctor = await loadSource('app/doctor.js')
 if (typeof doctor.openDoctor !== 'function') throw new Error('Doctor UI module does not export openDoctor')
 
-console.log('Web smoke passed: Markdown + prompt contracts + slash/doctor parsing + free-model classification')
+console.log('Web smoke passed: Markdown + prompt contracts + slash/doctor/RAG parsing + free-model classification')
