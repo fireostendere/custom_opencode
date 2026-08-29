@@ -11,8 +11,9 @@ if [[ -z "$NODE" ]]; then echo "node is required" >&2; exit 1; fi
   "$ROOT/app/server.py" "$ROOT/app/server_ext.py" "$ROOT/app/server_plus.py" \
   "$ROOT/app/server_rag.py" "$ROOT/app/server_features.py" "$ROOT/app/server_control.py" \
   "$ROOT/app/server_workflow.py" "$ROOT/app/server_runtime.py" "$ROOT/app/runtime_store.py" \
-  "$ROOT/app/model_registry.py" "$ROOT/app/repo_services.py" \
-  "$ROOT/scripts/rag-probe.py" "$ROOT/scripts/rag-start-smoke.py" "$ROOT/scripts/runtime-smoke.py"
+  "$ROOT/app/model_registry.py" "$ROOT/app/repo_services.py" "$ROOT/app/runtime_resume.py" \
+  "$ROOT/scripts/rag-probe.py" "$ROOT/scripts/rag-start-smoke.py" "$ROOT/scripts/runtime-smoke.py" \
+  "$ROOT/scripts/runtime-resume-smoke.py"
 
 WORKSPACE_TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$WORKSPACE_TEST_ROOT"' EXIT
@@ -68,6 +69,7 @@ done
 "$PYTHON3" "$ROOT/scripts/limits-smoke.py"
 "$PYTHON3" "$ROOT/scripts/rag-start-smoke.py"
 "$PYTHON3" "$ROOT/scripts/runtime-smoke.py"
+"$PYTHON3" "$ROOT/scripts/runtime-resume-smoke.py"
 for file in "$ROOT/scripts/"*.sh; do
   bash -n "$file"
 done
@@ -104,7 +106,7 @@ required_web = [
     "doctor.css", "rag-control.js", "sw.js", "server.py", "server_ext.py",
     "server_plus.py", "server_rag.py", "server_features.py", "server_control.py",
     "server_workflow.py", "server_runtime.py", "runtime_store.py", "model_registry.py",
-    "repo_services.py", "runtime-dashboard.js", "runtime-dashboard.css",
+    "repo_services.py", "runtime_resume.py", "runtime-dashboard.js", "runtime-dashboard.css",
 ]
 for name in required_web:
     if not (root / "app" / name).is_file():
@@ -146,9 +148,11 @@ server_ext_py = (root / "app/server_ext.py").read_text(encoding="utf-8")
 server_plus_py = (root / "app/server_plus.py").read_text(encoding="utf-8")
 server_rag_py = (root / "app/server_rag.py").read_text(encoding="utf-8")
 server_runtime_py = (root / "app/server_runtime.py").read_text(encoding="utf-8")
+server_workflow_py = (root / "app/server_workflow.py").read_text(encoding="utf-8")
 runtime_store_py = (root / "app/runtime_store.py").read_text(encoding="utf-8")
 model_registry_py = (root / "app/model_registry.py").read_text(encoding="utf-8")
 repo_services_py = (root / "app/repo_services.py").read_text(encoding="utf-8")
+runtime_resume_py = (root / "app/runtime_resume.py").read_text(encoding="utf-8")
 local_router_js = (root / "config/plugins/lazy-local-router.js").read_text(encoding="utf-8")
 service = (root / "systemd/opencode-web-client.service").read_text(encoding="utf-8")
 orchestrator = (root / "config/prompts/orchestrator.md").read_text(encoding="utf-8")
@@ -202,6 +206,8 @@ if not (root / "scripts/rag-mcp.sh").is_file():
     bad.append("missing portable RAG MCP launcher")
 if not (root / "scripts/runtime-smoke.py").is_file():
     bad.append("missing runtime-v2 smoke test")
+if not (root / "scripts/runtime-resume-smoke.py").is_file():
+    bad.append("missing runtime resume smoke test")
 if not (root / "docs/server-runtime-v2.md").is_file():
     bad.append("missing server runtime v2 documentation")
 
@@ -223,6 +229,12 @@ for marker in ("class RepoIndexer", "class ContextService", "class ArtifactStore
 for marker in ("recover_inflight", "spawn_speculative", "mcp_gateway", "_create_worktree", "agent.loop_detected", "agent.stuck", "review.decision", "verification.code_failure"):
     if marker not in server_runtime_py:
         bad.append(f"server runtime integration marker missing: {marker}")
+for marker in ("runtime_resume.continuation_payload", "task.resume_continuation", "effective_files"):
+    if marker not in server_workflow_py:
+        bad.append(f"checkpoint resume wiring marker missing: {marker}")
+for marker in ("Continue the existing task", "dispatchCount", "attachmentsReplayed"):
+    if marker not in runtime_resume_py:
+        bad.append(f"checkpoint resume policy marker missing: {marker}")
 
 ipv4 = re.compile(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)")
 secrets = [
@@ -328,5 +340,5 @@ if not any(rule.get("action") == "kb_knowledge_ingest" and rule.get("effect") ==
 
 if bad:
     raise SystemExit("\n".join(bad))
-print(f"Verification passed; runtime-v2 + Max->Flash router + bounded RAG lifecycle + Alibaba Personal models: {len(expected)} current + {len(compat_ids)} compatibility ID")
+print(f"Verification passed; runtime-v2 + checkpoint resume + Max->Flash router + bounded RAG lifecycle + Alibaba Personal models: {len(expected)} current + {len(compat_ids)} compatibility ID")
 PY
