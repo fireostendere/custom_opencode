@@ -110,15 +110,12 @@ with tempfile.TemporaryDirectory() as temp:
     assert checks["no-auto-local"]["status"] == "pass"
     assert checks["mcp-kb"]["status"] == "warn"
 
-    # Persistent workflow state is server-owned, portable, and contained to an
-    # allowed project root. These checks use no model inference or local-model lifecycle.
     project = Path(temp) / "project"
     project.mkdir()
     os.environ["OPENCODE_PROJECT_ROOTS"] = str(project)
     os.environ["CUSTOM_OPENCODE_FEATURE_STATE"] = str(Path(temp) / "features.json")
 
     import server_features
-    import server_workflow
 
     settings_value = server_features.update_project_settings(str(project), {
         "instructions": "run tests before finishing",
@@ -134,16 +131,14 @@ with tempfile.TemporaryDirectory() as temp:
     assert settings_value["settings"]["defaultModel"] == "bailian-cli/qwen3.8-max"
     assert len(settings_value["settings"]["permissionRules"]) == 2
 
-    stripped = server_workflow._strip_local_automation({
+    stale = server_features.update_project_settings(str(project), {
         "defaultModel": "auto",
         "autoRouting": {"localModel": "ollama/example"},
-        "instructions": "x",
     })
-    assert stripped["defaultModel"] == "inherit"
-    assert "autoRouting" not in stripped
-    disabled = server_workflow._local_automation_disabled("ses_test", apply=True)
-    assert disabled["enabled"] is False
-    assert disabled["route"] == "unchanged"
+    assert stale["settings"]["defaultModel"] == "inherit"
+    assert "autoRouting" not in stale["settings"]
+    local_default = server_features.update_project_settings(str(project), {"defaultModel": "ollama/qwen3.8:27b"})
+    assert local_default["settings"]["defaultModel"] == "inherit"
 
     server_features._session_directory = lambda session_id: str(project)
     queued_a = server_features.enqueue_prompt({"sessionID": "ses_test", "text": "first", "files": [], "profile": "direct"})
