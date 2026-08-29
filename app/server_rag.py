@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time
 from typing import Any
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import server_plus as plus
 
@@ -33,8 +33,9 @@ plus._workspace_target = _v2_workspace_target
 def _session_directory(session_id: str | None) -> str:
     if session_id:
         try:
+            sid = quote(session_id, safe="")
             value = plus._data(plus._backend_request_json(
-                "GET", f"/api/session/{session_id}", timeout=15.0))
+                "GET", f"/api/session/{sid}", timeout=15.0))
             directory = ((value or {}).get("location") or {}).get("directory") if isinstance(value, dict) else None
             if isinstance(directory, str) and directory:
                 return directory
