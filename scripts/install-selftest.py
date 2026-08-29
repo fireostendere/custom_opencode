@@ -10,12 +10,11 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
 import time
-from typing import Any
+from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
@@ -26,6 +25,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rag-enabled", action="store_true")
     parser.add_argument("--json", action="store_true")
     return parser
+
+
+def retry(check: Callable[[], tuple[bool, str]], timeout: float = 20.0,
+          interval: float = 0.5) -> tuple[bool, str]:
+    deadline = time.monotonic() + max(0.1, timeout)
+    last = (False, "not checked")
+    while True:
+        try:
+            last = check()
+        except Exception as exc:
+            last = (False, f"{type(exc).__name__}: {exc}")
+        if last[0] or time.monotonic() >= deadline:
+            return last
+        time.sleep(interval)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,19 +54,20 @@ def main(argv: list[str] | None = None) -> int:
             "detail": detail,
         })
 
-    try:
+    def service_check() -> tuple[bool, str]:
         active = subprocess.run(
             ["systemctl", "--user", "is-active", "opencode-web-client.service"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=10,
+            timeout=5,
             check=False,
         )
         state = (active.stdout or active.stderr or "unknown").strip()
-        add("web-service", active.returncode == 0 and state == "active", state)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        add("web-service", False, f"{type(exc).__name__}: {exc}")
+        return active.returncode == 0 and state == "active", state
+
+    ok, detail = retry(service_check, timeout=15.0)
+    add("web-service", ok, detail)
 
     try:
         import server_rag
@@ -75,28 +89,32 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         add("runtime-config", False, f"{type(exc).__name__}: {exc}")
 
-    try:
+    def backend_check() -> tuple[bool, str]:
         target = server_rag._v2_workspace_target("/api/model", str(base.SCRATCH_ROOT))
-        models = plus._backend_request_json("GET", target, timeout=15.0)
-        add("opencode-backend", models is not None, f"HTTP API reachable at {base.BACKEND_URL}")
-    except Exception as exc:
-        add("opencode-backend", False, f"{type(exc).__name__}: {exc}")
+        models = plus._backend_request_json("GET", target, timeout=5.0)
+        return models is not None, f"HTTP API reachable at {base.BACKEND_URL}"
 
-    try:
+    ok, detail = retry(backend_check, timeout=20.0)
+    add("opencode-backend", ok, detail)
+
+    def web_check() -> tuple[bool, str]:
         host = str(base.WEB_HOST)
         if host in {"0.0.0.0", "::", "[::]"}:
             host = "127.0.0.1"
-        connection = http.client.HTTPConnection(host, int(base.WEB_PORT), timeout=8)
+        connection = http.client.HTTPConnection(host, int(base.WEB_PORT), timeout=4)
         try:
             connection.request("GET", "/", headers={"Authorization": base.CLIENT_AUTH})
             response = connection.getresponse()
             body = response.read(64 * 1024)
-            ok = response.status == 200 and b"OpenCode" in body
-            add("web-http", ok, f"HTTP {response.status} on {host}:{base.WEB_PORT}")
+            return (
+                response.status == 200 and b"OpenCode" in body,
+                f"HTTP {response.status} on {host}:{base.WEB_PORT}",
+            )
         finally:
             connection.close()
-    except Exception as exc:
-        add("web-http", False, f"{type(exc).__name__}: {exc}")
+
+    ok, detail = retry(web_check, timeout=20.0)
+    add("web-http", ok, detail)
 
     if args.rag_enabled:
         try:
