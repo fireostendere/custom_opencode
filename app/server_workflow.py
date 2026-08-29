@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from urllib.parse import quote, urlsplit
 
+import runtime_completion
 import runtime_resume
 import runtime_v3
 import runtime_v3_ext
@@ -19,6 +20,7 @@ runtime.install(features)
 runtime_v3.install(runtime, features)
 runtime_v3_ext.install(runtime, runtime_v3, features)
 control.install()
+runtime_completion.install(runtime, runtime_v3, control, features)
 
 
 def _file_parts(files: list[object]) -> list[dict[str, object]]:
@@ -98,6 +100,8 @@ class Handler(rag.Handler, features.Handler):
 
     def do_GET(self) -> None:
         parsed = urlsplit(self.path)
+        if runtime_completion.handle_get(self, parsed, runtime, control, features):
+            return
         if runtime_v3_ext.handle_get(self, parsed, runtime, runtime_v3, features):
             return
         if runtime_v3.handle_get(self, parsed, runtime, features):
@@ -110,6 +114,8 @@ class Handler(rag.Handler, features.Handler):
 
     def do_POST(self) -> None:
         parsed = urlsplit(self.path)
+        if runtime_completion.handle_post(self, parsed, runtime, control, features):
+            return
         if runtime_v3_ext.handle_post(self, parsed, runtime, runtime_v3, features):
             return
         if runtime_v3.handle_post(self, parsed, runtime, features):
