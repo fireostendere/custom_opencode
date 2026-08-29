@@ -34,8 +34,8 @@
 - параллельные running states;
 - automatic delivery: send / stop / queue без ручного Steer/Queue toggle;
 - одна контекстная action button в composer;
-- только `Build/Plan` как пользовательские execution modes;
-- direct model profile или `Qwen 3.8 Max · Оркестратор` через model picker;
+- только `Direct/Plan` как пользовательские execution modes;
+- orchestration выбирается специальным `Qwen 3.8 Max · Оркестратор` через model picker;
 - favorites-first model sorting и collapsible providers;
 - compact permission cards с raw payload под раскрытием;
 - rename/delete/fork/duplicate/project handoff;
@@ -116,7 +116,7 @@ Browser:
 
 После выбора создаётся обычная OpenCode session с `location.directory` выбранного проекта.
 
-## Model picker и execution profile
+## Direct / Plan и model picker
 
 Видимый search input удалён, чтобы model picker на мобильном не вызывал клавиатуру.
 
@@ -124,13 +124,32 @@ Catalog UI сохраняет favorites и предоставляет collapsibl
 
 Группа `Бесплатные модели` определяется в первую очередь по model cost metadata. Если upstream build не отдаёт cost, используется небольшой fallback по ID.
 
-Обычный model entry означает direct execution. Специальный UI entry:
+Пользователь выбирает только execution mode:
+
+```text
+Direct | Plan
+```
+
+и отдельно модель.
+
+Обычный model entry означает direct execution выбранной моделью. Специальный UI entry:
 
 ```text
 Qwen 3.8 Max · Оркестратор
 ```
 
-использует тот же `bailian-cli/qwen3.8-max`, но переключает внутренний primary agent на orchestrated `build`/`plan`, где разрешён bounded `fast-reader` и optional RAG. Direct profile использует внутренние `build-direct`/`plan-direct` agents без automatic subagents/RAG; эти IDs скрыты из mode selector.
+включает orchestration поверх того же `bailian-cli/qwen3.8-max`.
+
+Внутренняя матрица OpenCode agents:
+
+```text
+обычная модель + Direct        → build-direct
+обычная модель + Plan          → plan-direct
+Оркестратор + Direct           → build
+Оркестратор + Plan             → plan
+```
+
+Эти agent IDs являются implementation detail и скрыты за двумя пользовательскими mode controls.
 
 ## Composer state machine
 
@@ -171,7 +190,7 @@ Credentials остаются на host. Browser получает только н
 
 `custom_opencode` не держит отдельный RAG daemon. Из инфраструктурных процессов RAG использует Qdrant.
 
-Automatic retrieval разрешён только orchestrated model profile. Direct agents явно запрещают `kb_knowledge_*` tools.
+Automatic retrieval разрешён только orchestrated model profile. Обычные model profiles явно запрещают `kb_knowledge_*` tools.
 
 Подробнее: [rag.md](rag.md).
 
@@ -200,7 +219,7 @@ real host self-test
 - recommended loopback bind;
 - project root allowlist;
 - scratch containment;
-- direct agents deny automatic subagent/RAG;
+- ordinary model profiles deny automatic subagent/RAG;
 - orchestrated read worker permission deny-first;
 - RAG ingest permission-gated;
 - MCP execution timeout;
