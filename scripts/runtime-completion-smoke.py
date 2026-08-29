@@ -22,11 +22,13 @@ with tempfile.TemporaryDirectory() as temp:
 
     preview=runtime_completion.permission_preview({"action":"shell","resources":["rm -rf build"]},str(project))
     assert preview.startswith("Удалить 7 объектов"),preview
+    assert "build/" in preview,preview
     write_preview=runtime_completion.permission_preview({"action":"write","resources":["build/a","build/b"]},str(project))
     assert "2 файла" in write_preview and "build/" in write_preview,write_preview
     assert runtime_completion._cacheable("read",{"path":"README.md"})
     assert runtime_completion._cacheable("shell",{"command":"git status --short"})
     assert not runtime_completion._cacheable("shell",{"command":"git status; rm -rf build"})
+    assert not runtime_completion._cacheable("shell",{"command":"lsof"})
 
     store=RuntimeStore(root/"runtime.sqlite3"); store.initialize()
     runtime=SimpleNamespace(STORE=store,_usage_stage=lambda task:"implementation")
@@ -36,7 +38,7 @@ with tempfile.TemporaryDirectory() as temp:
     assert runtime._usage_stage({"kind":"verification-fix","metadata":{"repairOf":"t0"}})=="wasted_retries"
     assert runtime._usage_stage({"kind":"prompt","metadata":{}})=="implementation"
     decision=control.decision_for({"action":"shell","resources":["rm -rf build"]},str(project))
-    assert decision["preview"].startswith("Удалить 7 объектов")
+    assert decision["preview"].startswith("Удалить 7 объектов") and "build/" in decision["preview"]
 
     source=store.create_task(task_id="source-task",session_id="source",project_dir=str(project),text="source")
     store.checkpoint(source["id"],"implementation",summary="implemented alpha",data={"files":["a.py"]})
@@ -57,4 +59,4 @@ with tempfile.TemporaryDirectory() as temp:
     assert inbox and inbox[0]["type"]=="handoff"
     assert store.checkpoints(target["id"])[0]["stage"]=="branch-state-merged"
 
-print("Runtime completion smoke passed: permission preview + safe pre-exec cache policy + wasted retries + branch-state handoff")
+print("Runtime completion smoke passed: semantic permission preview + precise pre-exec cache + wasted retries + branch-state handoff")
