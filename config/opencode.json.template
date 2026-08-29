@@ -1,9 +1,38 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "model": "bailian-cli/qwen3.8-max",
+  "mcp": {
+    "timeout": {
+      "startup": 10000,
+      "catalog": 10000,
+      "execution": 60000
+    },
+    "servers": {
+      "kb": {
+        "type": "local",
+        "command": ["bash", "__CUSTOM_OPENCODE_ROOT__/scripts/rag-mcp.sh"],
+        "cwd": "__CUSTOM_OPENCODE_ROOT__",
+        "disabled": __RAG_DISABLED__,
+        "codemode": false,
+        "timeout": {
+          "startup": 10000,
+          "catalog": 10000,
+          "execution": 60000
+        }
+      }
+    }
+  },
+  "permissions": [
+    {
+      "action": "kb_knowledge_ingest",
+      "resource": "*",
+      "effect": "ask"
+    }
+  ],
   "providers": {
     "ollama": {
       "package": "aisdk:@ai-sdk/openai-compatible",
-      "name": "Local Ollama (RX 9070 XT hybrid)",
+      "name": "Local Ollama · manual only",
       "settings": {
         "baseURL": "{env:OLLAMA_BASE_URL}",
         "apiKey": "ollama",
@@ -112,7 +141,7 @@
           "settings": {
             "thinking": {
               "type": "enabled",
-              "budgetTokens": 8192
+              "budgetTokens": 2048
             }
           }
         },
@@ -186,8 +215,8 @@
         },
         {
           "action": "subagent",
-          "resource": "local-reader",
-          "effect": "ask"
+          "resource": "fast-reader",
+          "effect": "allow"
         }
       ]
     },
@@ -212,22 +241,23 @@
         },
         {
           "action": "subagent",
-          "resource": "local-reader",
-          "effect": "ask"
+          "resource": "fast-reader",
+          "effect": "allow"
         }
       ]
     },
     "title": {
       "mode": "subagent",
       "hidden": true,
-      "model": "opencode/hy3-free",
+      "model": "bailian-cli/qwen3.6-flash",
       "system": "You generate session titles. Given the conversation, output ONE short title: 2-5 words, in the same language the user writes in (Russian stays Russian). Plain text only: no quotes, no colons, no markdown, no trailing period."
     },
-    "local-reader": {
-      "description": "Read-only local worker for repository exploration, log analysis, file and symbol search, error extraction, and short factual summaries. Use it only for bounded mechanical reading tasks.",
+    "fast-reader": {
+      "description": "Cheap cloud read-only worker on Qwen Flash for repository exploration, log analysis, exact search, RAG evidence lookup, and short factual summaries. Never edits files or runs shell commands.",
       "mode": "subagent",
-      "model": "opencode/hy3-free",
+      "model": "bailian-cli/qwen3.6-flash",
       "steps": 12,
+      "system": "Do bounded read-only work. Prefer exact evidence over speculation. Use kb_knowledge_search/get only when the task needs engineering, datasheet, PCB, DipTrace, or other corpus evidence. RAG is optional: if it errors or times out, report that once and continue from repository evidence. Preserve source/title/page/section when summarizing RAG results. Never ingest new material unless the parent explicitly asks for ingestion.",
       "permissions": [
         {
           "action": "*",
@@ -275,6 +305,26 @@
           "effect": "allow"
         },
         {
+          "action": "kb_knowledge_search",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "kb_knowledge_get",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "kb_knowledge_sources",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "kb_knowledge_status",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
           "action": "external_directory",
           "resource": "*",
           "effect": "deny"
@@ -282,6 +332,40 @@
         {
           "action": "external_directory",
           "resource": "~/ai/logs/**",
+          "effect": "allow"
+        }
+      ]
+    },
+    "local-reader": {
+      "description": "Compatibility alias for old sessions. Read-only cloud worker; new orchestration uses fast-reader.",
+      "mode": "subagent",
+      "hidden": true,
+      "model": "bailian-cli/qwen3.6-flash",
+      "steps": 8,
+      "permissions": [
+        {
+          "action": "*",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "glob",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "grep",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "list",
+          "resource": "*",
           "effect": "allow"
         }
       ]

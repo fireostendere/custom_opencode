@@ -7,6 +7,8 @@
   <link rel="manifest" href="/site.webmanifest">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/enhancements.css">
+  <link rel="stylesheet" href="/ui-enhancements.css">
+  <link rel="stylesheet" href="/doctor.css">
   <title>OpenCode</title>
 </head>
 <body>
@@ -14,13 +16,14 @@
     <aside class="sidebar" id="sidebar">
       <div class="side-top">
         <button class="primary" id="newSession">+ Новая</button>
-        <button class="icon" id="chooseProject" title="Создать в проекте">▣</button>
+        <button class="project-button" id="chooseProject" title="Открыть проект или папку на ПК">Проекты</button>
         <button class="icon" id="refresh" title="Обновить">↻</button>
       </div>
       <div class="provider-limits" id="providerLimits" aria-live="polite">
         <div class="quota-title"><span>Лимиты</span></div>
         <div class="quota-note">Загрузка…</div>
       </div>
+      <button class="doctor-open" id="doctorButton" type="button">Диагностика</button>
       <div class="side-tools">
         <input class="search" id="search" placeholder="Поиск сессий…" autocomplete="off">
         <label class="check"><input id="showArchived" type="checkbox"> Архив</label>
@@ -78,16 +81,19 @@
   </div>
 
   <dialog id="projectDialog"><div class="modal"><div class="modal-head"><h3 id="projectDialogTitle">Выбрать проект</h3><button class="icon" data-close="projectDialog">×</button></div><div id="projectChoices" class="choice-list"></div></div></dialog>
-  <dialog id="modelDialog"><div class="modal"><div class="modal-head"><h3>Модель</h3><button class="icon" data-close="modelDialog">×</button></div><input class="search wide" id="modelSearch" placeholder="Поиск модели…"><div id="modelChoices" class="choice-list"></div></div></dialog>
+  <dialog id="modelDialog"><div class="modal"><div class="modal-head"><h3>Модель</h3><button class="icon" data-close="modelDialog">×</button></div><input type="hidden" id="modelSearch" value=""><div id="modelChoices" class="choice-list"></div></div></dialog>
   <dialog id="sessionDialog"><div class="modal"><div class="modal-head"><h3>Сессия</h3><button class="icon" data-close="sessionDialog">×</button></div><div id="sessionActionList" class="action-list"></div></div></dialog>
   <dialog id="renameDialog"><form class="modal" id="renameForm"><div class="modal-head"><h3>Переименовать</h3><button class="icon" type="button" data-close="renameDialog">×</button></div><input class="text-input" id="renameInput" maxlength="200"><div class="modal-actions"><button type="button" data-close="renameDialog">Отмена</button><button class="primary" type="submit">Сохранить</button></div></form></dialog>
   <dialog id="gitDialog"><div class="modal large"><div class="modal-head"><h3>Изменения</h3><button class="icon" data-close="gitDialog">×</button></div><div id="gitSummary" class="panel-summary"></div><div id="gitFiles" class="file-list"></div><div id="gitDiff" class="diff-view"></div></div></dialog>
   <dialog id="fileDialog"><div class="modal large"><div class="modal-head"><h3 id="fileTitle">Файл</h3><button class="icon" data-close="fileDialog">×</button></div><pre class="file-content" id="fileContent"></pre></div></dialog>
   <dialog id="usageDialog"><div class="modal"><div class="modal-head"><h3>Контекст и расходы</h3><button class="icon" data-close="usageDialog">×</button></div><div id="usageDetails"></div></div></dialog>
+  <dialog id="doctorDialog"><div class="modal doctor-modal"><div class="modal-head"><div><h3>Диагностика</h3><div class="doctor-head-meta" id="doctorGenerated"></div></div><button class="icon" data-close="doctorDialog">×</button></div><div id="doctorContent" class="doctor-content"></div><div class="doctor-actions"><button type="button" id="doctorRefresh">Обновить бесплатные проверки</button></div></div></dialog>
   <dialog id="confirmDialog"><div class="modal"><div class="modal-head"><h3 id="confirmTitle">Подтверждение</h3></div><p id="confirmText"></p><div class="modal-actions"><button id="confirmCancel">Отмена</button><button class="danger" id="confirmOk">Продолжить</button></div></div></dialog>
 
   <div class="toast" id="toast" hidden></div>
   <script type="module" src="/app.js"></script>
   <script type="module" src="/enhancements.js"></script>
+  <script type="module" src="/ui-enhancements.js"></script>
+  <script type="module" src="/doctor.js"></script>
 </body>
 </html>

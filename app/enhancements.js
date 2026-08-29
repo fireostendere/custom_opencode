@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id)
 const COMMAND_CACHE_MS = 60_000
 const commandCache = new Map()
+const LOCAL_COMMANDS = [{ name:'doctor', description:'Открыть диагностику OpenCode, моделей, Router и RAG', local:true }]
 let paletteItems = []
 let paletteIndex = 0
 let limitsTimer = null
@@ -151,7 +152,9 @@ async function loadCommands(force = false) {
   const params = new URLSearchParams()
   if (directory) params.set('location[directory]', directory)
   const raw = dataOf(await request(`/api/command${params.size ? `?${params}` : ''}`))
-  const items = (Array.isArray(raw) ? raw : []).map((item) => typeof item === 'string' ? { name:item } : item).filter((item) => commandName(item))
+  const remote = (Array.isArray(raw) ? raw : []).map((item) => typeof item === 'string' ? { name:item } : item).filter((item) => commandName(item))
+  const remoteNames = new Set(remote.map((item) => commandName(item).toLowerCase()))
+  const items = [...LOCAL_COMMANDS.filter((item) => !remoteNames.has(commandName(item).toLowerCase())), ...remote]
   commandCache.set(directory, { at:Date.now(), items })
   return items
 }
@@ -244,10 +247,17 @@ export function parseSlash(value) {
 async function executeSlash(value) {
   const parsed = parseSlash(value)
   if (!parsed) return
+  const input = $('input')
+  if (parsed.command.toLowerCase() === 'doctor') {
+    input.value = ''
+    input.dispatchEvent(new Event('input', { bubbles:true }))
+    closePalette()
+    window.dispatchEvent(new CustomEvent('custom-opencode:doctor'))
+    return
+  }
   const sessionID = await ensureSessionID()
   const body = { command:parsed.command, arguments:parsed.arguments }
   await request(`/api/session/${encodeURIComponent(sessionID)}/command`, { method:'POST', body:JSON.stringify(body) })
-  const input = $('input')
   input.value = ''
   input.dispatchEvent(new Event('input', { bubbles:true }))
   closePalette()

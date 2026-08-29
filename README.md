@@ -1,61 +1,101 @@
 # custom_opencode
 
-Переносимый комплект OpenCode V2 с отдельным веб-интерфейсом.
+Переносимый комплект OpenCode V2 с отдельным web/PWA-интерфейсом, Alibaba Token Plan routing, локальным engineering RAG и ручным fallback на локальные модели.
 
 ## Что входит
 
-- ChatGPT-подобный web/PWA-клиент со всеми локальными сессиями;
-- быстрые сессии без выбора проекта;
-- выбор Build/Plan, модели, провайдера и effort до создания сессии;
-- локальные и удалённые модели из каталога OpenCode;
-- файлы, вставка скриншотов, удаление сессий;
-- SSE-поток ответа, рассуждений и вызовов инструментов;
-- подтверждение разрешений OpenCode из браузера;
-- конфигурация агентов, CLI-настройки, обработчик событий и плагины;
-- systemd user-service и установщик.
+- ChatGPT-подобный web/PWA-клиент с root-сессиями OpenCode;
+- изолированные quick-session workspaces;
+- открытие уже существующей папки/проекта на ПК из web UI;
+- Build/Plan, model/provider/effort controls;
+- отдельная группа бесплатных моделей в model picker;
+- sidebar limits для Qwen Token Plan и OpenAI/Codex;
+- native slash commands `/...` с подсказками;
+- файлы, clipboard images, Markdown/code, tool/reasoning renderers;
+- SSE/status updates, permissions, notifications, draft autosave;
+- Git/VCS drawer, fork/duplicate/handoff;
+- Alibaba Qwen Max → paid Flash orchestration;
+- optional local engineering RAG через MCP;
+- локальный Ollama остаётся доступен только как ручной model choice;
+- systemd user-service, installer и verifier.
+
+## Model routing
+
+Автоматический путь теперь не зависит от локальной модели:
+
+- primary/default: `bailian-cli/qwen3.8-max`;
+- дешёвый bounded read-only worker: `bailian-cli/qwen3.6-flash` (`fast-reader`);
+- session title worker: `bailian-cli/qwen3.6-flash`;
+- `local-reader` сохранён только как hidden compatibility alias для старых сессий, но тоже переведён на `qwen3.6-flash`;
+- `ollama/*` не используется ни одним автоматическим agent route.
+
+`fast-reader` предназначен для поиска файлов/символов, чтения логов, механического repository exploration и точечного RAG retrieval. Он не получает edit/shell права и не должен принимать архитектурные или security-sensitive решения. Primary `qwen3.8-max` остаётся владельцем финального решения, изменений и проверки.
+
+Локальный provider `ollama` остаётся в model catalog только для явного ручного выбора. `lazy-local-router` теперь смотрит на реальный provider ID `ollama`, но auto-start выключен по умолчанию (`OPENCODE_LOCAL_AUTO_START=0`) и ограничен health timeout. Поэтому отсутствие/падение локального inference больше не является частью критического пути автоматической работы.
+
+## RAG integration
+
+`config/opencode.json.template` содержит V2 MCP server `kb`. Installer ищет RAG checkout в следующем порядке:
+
+1. `MCP_RAG_ROOT`;
+2. соседний `../mcp-rag`;
+3. `~/mcp-rag`.
+
+Executable можно явно задать через `MCP_RAG_BIN`. Если working MCP executable не найден, installer рендерит `kb.disabled=true`: OpenCode запускается нормально без RAG.
+
+Когда RAG доступен:
+
+- transport — local stdio через `scripts/rag-mcp.sh`;
+- startup/catalog timeout — 10 секунд;
+- execution timeout — 60 секунд вместо длинного upstream default;
+- read-only `knowledge_search/get/sources/status` разрешены `fast-reader`;
+- `knowledge_ingest` для read-only worker заблокирован; для primary mutation остаётся permission-gated;
+- orchestrator использует RAG только для corpus-relevant задач: datasheet/appnote, PCB/layout, DipTrace, indexed technical videos и т. п.;
+- RAG error/timeout не должен блокировать основной task и не должен запускать retry loop.
+
+Сам `mcp-rag` дополнительно выгружает FastEmbed embedding/reranker после idle grace period и имеет короткий Qdrant timeout. MCP process остаётся лёгким и подключённым, чтобы discovery не ломался; тяжёлые модели живут только когда реально нужен retrieval.
 
 ## Native OpenCode V2 config
 
-`config/opencode.json.template` хранится в нативном формате OpenCode V2: `providers`,
-`package`, `settings`, `capabilities`, `agents`, `system` и упорядоченные
-`permissions`. Это важно, потому что `opencode2` умеет читать V1-конфиг, но некоторые
-старые поля модели (например `reasoning`) в V2 намеренно игнорируются.
+`config/opencode.json.template` хранится в V2-формате: `providers`, `package`, `settings`, `capabilities`, `agents`, ordered `permissions`, `mcp.servers` и V2 timeout contract.
 
-`AGENTS.md` устанавливается в глобальный каталог OpenCode и обнаруживается V2
-автоматически. Поле `instructions` в JSON не используется: текущий V2 сохраняет его,
-но пока не подмешивает перечисленные файлы в контекст модели.
+Installer рендерит только runtime placeholders (`__CONFIG_DIR__`, `__CUSTOM_OPENCODE_ROOT__`, `__RAG_DISABLED__`) и затем валидирует итоговый JSON перед записью в OpenCode config.
+
+`AGENTS.md` устанавливается в глобальный каталог OpenCode и обнаруживается V2 автоматически.
 
 ## Web session workspaces
 
-Быстрые сессии больше не работают все вместе прямо в одном `~/opencode-scratch`.
-Web proxy принимает этот путь только как scratch-root и при создании каждой новой
-quick-сессии подменяет его на отдельный каталог вида
-`~/opencode-scratch/session-<random>`. Поэтому файлы, временные артефакты и локальные
-инструкции одной быстрой сессии не оказываются рабочим окружением следующей.
+Quick-сессии не разделяют один filesystem workspace. Web proxy принимает `OPENCODE_SCRATCH_DIRECTORY` как root и при создании каждой quick-сессии выделяет отдельный `session-<random>` с containment checks.
 
-В сайдбар web-клиента все такие каталоги логически объединяются в группу `Быстрые`,
-а дочерние сессии subagent-ов не выводятся как самостоятельные пользовательские
-чаты. Реальный `location.directory` каждой root-сессии при этом остаётся отдельным,
-так что OpenCode продолжает работать в правильном workspace.
+В sidebar такие сессии логически объединяются в `Быстрые`, child/subagent sessions скрываются. При удалении очищается только безопасно распознанный дочерний scratch-каталог; root и любые пути вне scratch удалить этим механизмом нельзя.
 
-При удалении новой quick-сессии proxy сначала получает её сохранённый location и
-после успешного удаления сессии очищает только этот дочерний каталог. Есть жёсткая
-проверка containment: сам scratch-root и любые пути вне него удалить через этот
-механизм нельзя. Старые сессии, исторически созданные прямо в общем scratch-root,
-остаются доступными и намеренно не мигрируются автоматически.
+## Открытие существующего проекта
 
-`./scripts/verify.sh` содержит self-check этой логики: создание изолированного
-workspace, фильтрацию child-session, виртуальную группу `Быстрые` и безопасную
-очистку дочернего каталога.
+Кнопка `Проекты` в web UI показывает уже известные OpenCode проекты и пункт `Папки на ПК`.
+
+Folder browser:
+
+- не содержит текстового поля пути;
+- навигация только кнопками по директориям;
+- показывает только директории, не содержимое файлов;
+- скрывает dot-directories;
+- разрешает только пути внутри `OPENCODE_PROJECT_ROOTS`;
+- canonicalizes symlinks и не показывает symlink, уходящий за разрешённый root;
+- после `Открыть эту папку` создаёт новую OpenCode session с `location.directory` выбранной папки.
+
+По умолчанию `OPENCODE_PROJECT_ROOTS=~`. Для более узкой поверхности лучше перечислить только каталоги с проектами через `;`, например `~/code;~/projects`.
+
+## Model picker
+
+Поле поиска моделей удалено из UI (оставлен hidden compatibility input, чтобы не ломать основной client code). На телефоне открытие model picker больше не должно автоматически поднимать клавиатуру.
+
+Сверху появляется группа `Бесплатные модели`. Сначала она определяется по V2 model cost metadata: все input/output/cache costs должны быть нулевыми. Если upstream build не отдаёт cost metadata, используется ограниченный fallback по free model ID. Поэтому временная ротация бесплатного каталога OpenCode не требует постоянного hardcode полного списка.
 
 ## Alibaba Cloud Model Studio
 
-Этот комплект настроен под личную подписку **Token Plan Personal Pro**, а не Team
-Edition. Provider ID `bailian-cli` сохранён ради совместимости с существующими
-сессиями и web-favorites, но сам каталог соответствует актуальному Personal allowlist
-для OpenCode.
+Provider `bailian-cli` настроен под Token Plan Personal Pro и сохраняет этот ID ради совместимости с существующими сессиями/favorites.
 
-Текущие text/vision модели Personal Edition, опубликованные Alibaba для OpenCode:
+Personal catalog:
 
 - `qwen3.8-max`;
 - `qwen3.8-flash`;
@@ -67,55 +107,39 @@ Edition. Provider ID `bailian-cli` сохранён ради совместим�
 - `deepseek-v4-pro-0813`;
 - `deepseek-v4-flash-0731`.
 
-Модели, доступные только через Team/Coding Plan, намеренно не показываются в
-Personal model picker: это предотвращает выбор model ID, который Personal key не
-обязан принимать.
+`qwen3.8-max-preview` остаётся compatibility catalog ID и через `modelID` направляется в актуальный `qwen3.8-max`.
 
-Официальный пример Alibaba пока использует синтаксис OpenCode V1. В этом репозитории
-он переведён в нативный V2 по migration contract OpenCode: AI SDK package получает
-префикс `aisdk:`, provider `options` становятся `settings`, а model `modalities` —
-`capabilities`. Tool capability задана явно для всех моделей, используемых через
-OpenCode.
+API key хранится только в приватном `.env`. Image/video/speech generation не смешивается с обычным LLM model picker и должна подключаться через соответствующие Skills/extensions.
 
-`qwen3.8-max-preview` оставлен только как compatibility catalog ID для старых сессий;
-через V2 `modelID` он отправляет актуальный `qwen3.8-max`. Новые сессии следует
-создавать на `qwen3.8-max` или другой актуальной Personal-модели.
+## Sidebar provider limits
 
-API key хранится только в `TOKEN_PLAN_API_KEY` в приватном `.env`. Плагин проверки
-квоты сначала использует этот env, а при его отсутствии может прочитать Bailian
-config из `BAILIAN_CONFIG_PATH` (по умолчанию `~/.bailian/config.json`). Endpoint и
-probe-модель также настраиваются через `.env`.
+- Qwen: `bl usage token-plan --output json` → 5h/7d usage, remaining %, approximate remaining credits и reset;
+- OpenAI/Codex: local `codex app-server` RPC `account/rateLimits/read` → primary/secondary windows и reset;
+- browser получает только нормализованный snapshot без OAuth/API credentials;
+- cache default 60 секунд.
 
-Personal Token Plan также включает image/video generation и Harness capabilities,
-но Alibaba требует подключать такие генераторы через Skill/extension mechanism, а
-не помещать их в обычный OpenCode chat model picker. Поэтому они не смешиваются с
-LLM provider catalog.
+## Slash commands
+
+В composer `/` открывает context-aware список из `GET /api/command`. Показываются command name, description и upstream hints (`$1`, `$ARGUMENTS`, ...). Выполнение идёт через native `POST /api/session/:id/command`, а не как обычный prompt. `//text` экранирует slash-команду и отправляет `/text` как сообщение.
 
 ## Секреты и сетевые адреса
 
-Все пароли, ключи, локальные, LAN и tailnet-адреса хранятся только в `.env`.
-Файл исключён из Git. Для передачи репозитория другому человеку используйте
-`.env.example`; личный `.env` передавайте отдельно только через защищённый канал.
+Пароли, ключи и локальные/LAN/tailnet адреса находятся только в `.env`; файл исключён из Git. `scripts/verify.sh` проверяет syntax, common secrets, literal IPv4, personal absolute paths, provider allowlist и ключевые architecture invariants.
 
-`./scripts/verify.sh` проверяет синтаксис Python/JavaScript/shell, ищет literal IPv4,
-персональные абсолютные home-пути и распространённые форматы секретов, включая
-Alibaba Token Plan `sk-sp-*`. Также он проверяет точный Personal model allowlist,
-переменные endpoint/API key и запрещает возврат к V1-only полям provider/model/agent.
+Web proxy использует Basic Auth. Для недоверенной сети его следует держать только за TLS/Tailscale/reverse proxy, а не публиковать plaintext HTTP напрямую.
 
 ## Переносимые пути
 
-Следующие пути можно переопределить в `.env`, не меняя код:
+Основные env:
 
-- `OPENCODE_CONFIG_DIR` — глобальный config OpenCode;
-- `OPENCODE_AUTH_FILE` — auth.json OpenCode;
-- `OPENCODE_SERVICE_FILE` — файл discovery общего V2 backend;
-- `OPENCODE_LEGACY_AUTH_FILE` — legacy env с backend auth;
-- `OPENCODE_CONFIG_BACKUP_DIR` — каталог резервных копий конфигурации;
-- `BAILIAN_CONFIG_PATH` — локальный config Bailian CLI;
-- `OPENCODE_SCRATCH_DIRECTORY` — корень изолированных quick-session workspaces.
-
-Путь к `python3` не фиксируется в systemd unit: установщик определяет его через
-`command -v python3` и подставляет при установке.
+- `OPENCODE_CONFIG_DIR` — global OpenCode config;
+- `OPENCODE_AUTH_FILE` — OpenCode auth storage;
+- `OPENCODE_SERVICE_FILE` — V2 backend discovery;
+- `OPENCODE_SCRATCH_DIRECTORY` — quick-session root;
+- `OPENCODE_PROJECT_ROOTS` — разрешённые roots web folder browser;
+- `MCP_RAG_ROOT`, `MCP_RAG_BIN` — local RAG checkout/executable;
+- `BAILIAN_CONFIG_PATH` — Bailian CLI config;
+- `OPENCODE_LOCAL_AUTO_START` — optional manual-local lazy start.
 
 ## Установка
 
@@ -128,35 +152,25 @@ cp .env.example .env
 ./scripts/install.sh
 ```
 
-После установки запускайте OpenCode командой `custom-opencode`, чтобы переменные
-локальных и удалённых провайдеров загрузились из `.env`.
+После установки запускайте OpenCode через `custom-opencode`.
 
-## Структура
-
-- `app/` — веб-интерфейс и same-origin proxy;
-- `config/` — шаблон OpenCode, агенты, prompts и плагины;
-- `systemd/` — пользовательский сервис;
-- `scripts/` — установка и проверка.
+Если `mcp-rag` лежит рядом с `custom_opencode` и имеет `.venv/bin/knowledge-mcp`, installer подключит его автоматически. Иначе задайте `MCP_RAG_ROOT`/`MCP_RAG_BIN` и повторно запустите install/update.
 
 ## Обновление
-
-После клонирования репозиторий становится единственным источником веб-клиента,
-сервера-прокси, плагинов и конфигурации. Не редактируйте копию в `~/.local`.
 
 ```bash
 custom-opencode-update
 ```
 
-Команда делает `git pull --ff-only`, синхронизирует конфигурацию и плагины,
-перезапускает общий V2-сервис и веб-клиент. После ручного `git pull` запустите
-эту команду или `./scripts/install.sh`.
+Команда делает `git pull --ff-only`, повторно рендерит config, проверяет наличие RAG и перезапускает V2/web services.
 
-## Известные места для следующей проверки
+## Структура
 
-- `lazy-local-router` по умолчанию ждёт provider ID `llama-router`, тогда как
-  текущий шаблон локального провайдера называется `ollama`. До унификации этих
-  двух конфигураций lazy-start может не срабатывать для локальной модели.
-- Web proxy использует Basic Auth поверх HTTP. Для внешнего доступа его следует
-  держать за TLS/Tailscale/reverse proxy, а не публиковать напрямую в недоверенную сеть.
-- OpenCode V2 всё ещё beta; перед обновлением upstream стоит прогонять
-  `./scripts/verify.sh` и smoke-test web/API/plugin hooks.
+- `app/` — web client, same-origin proxy, rate-limit bridge и safe project browser;
+- `config/` — V2 config, agents, orchestrator prompt, plugins;
+- `systemd/` — user service;
+- `scripts/` — install/update/verify и RAG launcher.
+
+## Что всё ещё требует runtime smoke на конкретной машине
+
+OpenCode V2 остаётся beta. После upstream upgrade стоит прогонять `./scripts/verify.sh` и короткий end-to-end smoke: Max primary → Flash subagent, RAG search с запущенным/остановленным Qdrant, model picker на телефоне и открытие реальной project directory через web UI.
