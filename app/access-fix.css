@@ -1,0 +1,142 @@
+/* Branch-local visual cleanup for the compact composer. Keep controls in the
+   same functional groups at the same visual height and remove the obsolete
+   Build/Plan switch without changing the underlying build agent plumbing. */
+.mode-group,
+#agentControls{
+  display:none!important;
+}
+
+.composer-meta{
+  align-items:center;
+  margin-bottom:8px;
+}
+
+.controls{
+  flex:0 1 430px;
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+  overflow:visible;
+}
+
+#modelButton,
+#variantSelect{
+  width:100%;
+  max-width:none;
+  min-width:0;
+  height:44px;
+  min-height:44px;
+  padding:0 12px;
+  border-radius:12px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  line-height:1;
+}
+
+#modelButton{
+  display:block;
+  text-align:center;
+}
+
+.permission-actions{
+  align-items:stretch;
+}
+
+.permission-actions button{
+  min-width:108px;
+  min-height:44px;
+}
+
+.composer{
+  align-items:center;
+  gap:6px;
+  min-height:60px;
+  padding:6px;
+  border-radius:16px;
+}
+
+.composer textarea{
+  min-height:46px;
+  padding:12px 4px;
+  scrollbar-width:none;
+}
+
+.composer textarea::-webkit-scrollbar{
+  display:none;
+}
+
+.attach,
+.composer-action{
+  flex:0 0 46px!important;
+  width:46px!important;
+  height:46px!important;
+  border-radius:50%!important;
+}
+
+.attach{
+  padding:0!important;
+  display:grid;
+  place-items:center;
+  background:#3a3a3a!important;
+  color:#d9d9d9!important;
+  font-size:22px!important;
+  line-height:1;
+}
+
+.composer-action{
+  font-size:23px;
+}
+
+.composer-action.stop{
+  font-size:27px;
+}
+
+@media(max-width:760px){
+  .composer-meta{
+    display:block;
+    margin-bottom:7px;
+  }
+
+  .controls{
+    width:100%;
+    max-width:none;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:8px;
+  }
+
+  #modelButton,
+  #variantSelect{
+    width:100%;
+    max-width:none;
+    height:44px;
+    min-height:44px;
+  }
+
+  .permission-actions{
+    width:100%;
+    display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    gap:6px;
+  }
+
+  .permission-actions button{
+    min-width:0;
+    width:100%;
+    min-height:44px;
+    padding:8px 6px;
+  }
+
+  .composer{
+    min-height:60px;
+    padding:6px;
+    gap:6px;
+  }
+
+  .attach,
+  .composer-action{
+    flex-basis:46px!important;
+    width:46px!important;
+    height:46px!important;
+  }
+}
