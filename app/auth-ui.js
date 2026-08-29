@@ -1,15 +1,27 @@
 const nativeFetch = window.fetch.bind(window)
+const RESUME_KEY = 'opencode:web:auth-resume-v1'
 let redirectingToLogin = false
 
-function loginTarget() {
-  const next = `${location.pathname}${location.search}${location.hash}` || '/'
-  return `/login.html?next=${encodeURIComponent(next)}`
+function currentAppTarget() {
+  const value = `${location.pathname}${location.search}${location.hash}` || '/'
+  if (!value.startsWith('/') || value.startsWith('//') || value.startsWith('/login')) return '/'
+  return value
+}
+
+function rememberResume(target) {
+  try { sessionStorage.setItem(RESUME_KEY, target) } catch {}
+}
+
+function loginTarget(target = currentAppTarget()) {
+  return `/login.html?next=${encodeURIComponent(target)}`
 }
 
 function redirectToLogin() {
   if (redirectingToLogin || location.pathname === '/login.html') return
   redirectingToLogin = true
-  location.replace(loginTarget())
+  const target = currentAppTarget()
+  rememberResume(target)
+  location.replace(loginTarget(target))
 }
 
 window.fetch = async (...args) => {
@@ -49,13 +61,15 @@ async function refreshAuthState({ redirect = true } = {}) {
 
 logoutButton?.addEventListener('click', async () => {
   if (logoutButton.disabled) return
+  const target = currentAppTarget()
+  rememberResume(target)
   logoutButton.disabled = true
   const previous = logoutButton.textContent
   logoutButton.textContent = 'Выход…'
   try {
     await nativeFetch('/auth/logout', { method:'POST', credentials:'same-origin', cache:'no-store' })
   } finally {
-    location.replace('/login.html')
+    location.replace(loginTarget(target))
     setTimeout(() => {
       logoutButton.disabled = false
       logoutButton.textContent = previous

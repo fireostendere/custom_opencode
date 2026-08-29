@@ -76,11 +76,12 @@ if (sidebar && menu) {
   document.body.append(scrim)
   scrim.addEventListener('click', () => closeSidebar())
 
-  // Capture the menu click before the legacy handler toggles the sidebar without
-  // creating a history entry. This is what makes Android/browser Back close the
-  // drawer instead of leaving the page/app.
+  // Capture navigation before the legacy sidebar handler. Besides the visual
+  // scrim, explicitly treat every tap/click outside the drawer as dismissal so
+  // mobile browsers cannot leave a dead area that fails to close the sidebar.
   document.addEventListener('click', (event) => {
-    const menuButton = event.target.closest?.('#menu')
+    const target = event.target
+    const menuButton = target?.closest?.('#menu')
     if (menuButton && mobileQuery.matches) {
       event.preventDefault()
       event.stopImmediatePropagation()
@@ -88,9 +89,22 @@ if (sidebar && menu) {
       return
     }
 
+    if (
+      mobileQuery.matches &&
+      sidebarOpen() &&
+      target instanceof Node &&
+      !sidebar.contains(target) &&
+      !menu.contains(target)
+    ) {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      closeSidebar()
+      return
+    }
+
     // Selecting a chat while the drawer owns a synthetic history entry should
     // consume that entry first, otherwise Back would need an extra press later.
-    const sessionButton = event.target.closest?.('[data-session]')
+    const sessionButton = target?.closest?.('[data-session]')
     if (sessionButton && mobileQuery.matches && sidebarOpen() && history.state?.[SIDEBAR_STATE_KEY]) {
       event.preventDefault()
       event.stopImmediatePropagation()
