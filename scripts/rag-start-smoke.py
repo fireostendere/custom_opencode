@@ -24,6 +24,33 @@ assert config["timeout"] == 60_000
 assert config["command"][0] == "bash"
 assert config["command"][1].endswith("scripts/rag-mcp.sh")
 
+# Full mode must never enter retrieval before a model-free readiness preflight.
+server_rag.plus._rag_runtime = lambda: {
+    "available": True, "python": "/fake/python", "root": "/fake/rag",
+}
+runtime_calls = []
+def fake_runtime(runtime, args, timeout):
+    runtime_calls.append(list(args))
+    if len(runtime_calls) == 1:
+        return {"ok": True, "collectionReady": True, "corpusReady": True}
+    return {"ok": True, "retrieval": {"ok": True}}
+server_rag._invoke_runtime = fake_runtime
+full = server_rag._run_runtime_start("full")
+assert full["ok"] is True
+assert runtime_calls[0] == ["--wait", "20"]
+assert runtime_calls[1][0] == "--no-start"
+assert "--search" in runtime_calls[1]
+
+runtime_calls.clear()
+def failed_preflight(runtime, args, timeout):
+    runtime_calls.append(list(args))
+    return {"ok": False, "collectionReady": False}
+server_rag._invoke_runtime = failed_preflight
+failed = server_rag._run_runtime_start("full")
+assert failed["ok"] is False
+assert len(runtime_calls) == 1
+
+# End-to-end control-flow smoke uses mocks only: no real backend/config/Docker.
 server_rag._run_runtime_start = lambda mode: {
     "ok": True,
     "registry": {"documents": 500, "chunks": 1234},
@@ -50,4 +77,4 @@ assert result["persisted"]["changed"] is True
 assert result["protocol"]["requiredToolsReady"] is True
 assert result["mcp"]["action"] == "connected"
 
-print("RAG start smoke passed: V2 query + selected workspace + persistence + MCP ready flow")
+print("RAG start smoke passed: preflight gate + V2 workspace + persistence + MCP ready flow")
