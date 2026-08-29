@@ -1,68 +1,8 @@
-const LIMITS_STORAGE_KEY = 'opencode:web:limits-collapsed-v1'
 const SIDEBAR_STATE_KEY = '__customOpenCodeSidebar'
 const mobileQuery = window.matchMedia('(max-width: 760px)')
-
-let limitsCollapsed = false
-try { limitsCollapsed = localStorage.getItem(LIMITS_STORAGE_KEY) === '1' } catch {}
-
-function persistLimitsState() {
-  try { localStorage.setItem(LIMITS_STORAGE_KEY, limitsCollapsed ? '1' : '0') } catch {}
-}
-
-function decorateLimits() {
-  const panel = document.getElementById('providerLimits')
-  if (!panel) return
-  panel.dataset.collapsed = limitsCollapsed ? 'true' : 'false'
-
-  const title = panel.querySelector('.quota-title')
-  if (!title) return
-  title.setAttribute('role', 'button')
-  title.setAttribute('tabindex', '0')
-  title.setAttribute('aria-expanded', String(!limitsCollapsed))
-  title.title = limitsCollapsed ? 'Развернуть лимиты' : 'Свернуть лимиты'
-
-  let toggle = title.querySelector('.quota-collapse')
-  if (!toggle) {
-    toggle = document.createElement('button')
-    toggle.type = 'button'
-    toggle.className = 'quota-collapse'
-    const refresh = title.querySelector('#quotaRefresh')
-    if (refresh) title.insertBefore(toggle, refresh)
-    else title.append(toggle)
-  }
-
-  const glyph = limitsCollapsed ? '⌄' : '⌃'
-  if (toggle.textContent !== glyph) toggle.textContent = glyph
-  const label = limitsCollapsed ? 'Развернуть лимиты' : 'Свернуть лимиты'
-  toggle.setAttribute('aria-label', label)
-  toggle.title = label
-
-  if (!title.dataset.collapseBound) {
-    title.dataset.collapseBound = '1'
-    const activate = (event) => {
-      if (event.target.closest('#quotaRefresh')) return
-      limitsCollapsed = !limitsCollapsed
-      persistLimitsState()
-      decorateLimits()
-    }
-    title.addEventListener('click', activate)
-    title.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' && event.key !== ' ') return
-      if (event.target.closest('#quotaRefresh')) return
-      event.preventDefault()
-      activate(event)
-    })
-  }
-}
-
-const limitsPanel = document.getElementById('providerLimits')
-if (limitsPanel) {
-  new MutationObserver(() => queueMicrotask(decorateLimits)).observe(limitsPanel, { childList:true })
-  decorateLimits()
-}
-
 const sidebar = document.getElementById('sidebar')
 const menu = document.getElementById('menu')
+
 let sidebarHistoryActive = false
 let waitingForSidebarPop = false
 let afterSidebarClose = null
@@ -79,7 +19,7 @@ function setSidebarVisual(open) {
   document.body.classList.toggle('mobile-sidebar-open', open)
   const scrim = document.getElementById('sidebarScrim')
   if (scrim) scrim.hidden = !open
-  if (menu) menu.setAttribute('aria-expanded', String(open))
+  menu?.setAttribute('aria-expanded', String(open))
 }
 
 function cleanSidebarState(state = history.state) {
@@ -110,6 +50,7 @@ function closeSidebar(after = null) {
     if (after) queueMicrotask(after)
     return
   }
+
   afterSidebarClose = after
   setSidebarVisual(false)
 
@@ -123,7 +64,7 @@ function closeSidebar(after = null) {
 }
 
 if (sidebar && menu) {
-  // A stale overlay history entry can survive a hard reload; never let it trap Back.
+  // Do not keep an orphaned overlay entry after a hard reload.
   if (history.state?.[SIDEBAR_STATE_KEY]) {
     history.replaceState(cleanSidebarState(), '', location.href)
   }
@@ -135,6 +76,9 @@ if (sidebar && menu) {
   document.body.append(scrim)
   scrim.addEventListener('click', () => closeSidebar())
 
+  // Capture the menu click before the legacy handler toggles the sidebar without
+  // creating a history entry. This is what makes Android/browser Back close the
+  // drawer instead of leaving the page/app.
   document.addEventListener('click', (event) => {
     const menuButton = event.target.closest?.('#menu')
     if (menuButton && mobileQuery.matches) {
@@ -144,6 +88,8 @@ if (sidebar && menu) {
       return
     }
 
+    // Selecting a chat while the drawer owns a synthetic history entry should
+    // consume that entry first, otherwise Back would need an extra press later.
     const sessionButton = event.target.closest?.('[data-session]')
     if (sessionButton && mobileQuery.matches && sidebarOpen() && history.state?.[SIDEBAR_STATE_KEY]) {
       event.preventDefault()
@@ -160,9 +106,9 @@ if (sidebar && menu) {
     sidebarHistoryActive = false
   })
 
+  // Native-feeling right-to-left dismissal. Vertical scrolling remains intact.
   sidebar.addEventListener('pointerdown', (event) => {
-    if (!mobileQuery.matches || !sidebarOpen()) return
-    if (event.pointerType === 'mouse') return
+    if (!mobileQuery.matches || !sidebarOpen() || event.pointerType === 'mouse') return
     swipeStart = { id:event.pointerId, x:event.clientX, y:event.clientY, at:performance.now() }
   })
 
