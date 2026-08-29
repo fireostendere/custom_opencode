@@ -69,8 +69,9 @@ fi
 
 if [[ "$SELFTEST" != 0 ]]; then
   echo "==> Pre-install verification"
-  "$PYTHON3" -m py_compile "$ROOT/scripts/install-selftest.py"
+  "$PYTHON3" -m py_compile "$ROOT/scripts/install-selftest.py" "$ROOT/scripts/install-runtime-v3-selftest.py"
   "$ROOT/scripts/verify.sh"
+  "$ROOT/scripts/verify-runtime-v3.sh"
 fi
 
 install -d "$UNIT_DIR" "$BIN_DIR" "$SCRATCH_DIR" "$(dirname "$AUTH_FILE")"
@@ -200,6 +201,7 @@ if [[ "$SELFTEST" != 0 ]]; then
     SELFTEST_ARGS+=(--rag-enabled)
   fi
   "$PYTHON3" "$ROOT/scripts/install-selftest.py" "${SELFTEST_ARGS[@]}"
+  "$PYTHON3" "$ROOT/scripts/install-runtime-v3-selftest.py"
 fi
 
 echo "Installed. Start OpenCode with: custom-opencode"
