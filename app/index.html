@@ -4,9 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#171717">
-  <script>
-    (()=>{try{const p=JSON.parse(localStorage.getItem('opencode:web:appearance-v1')||'null')||{};const m=['system','light','dark'].includes(p.theme)?p.theme:'system';const t=m==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):m;document.documentElement.dataset.theme=t;document.documentElement.dataset.themeMode=m;if(/^#[0-9a-f]{6}$/i.test(p.accent||''))document.documentElement.style.setProperty('--accent',p.accent.toLowerCase())}catch{}})()
-  </script>
+  <script src="/appearance-bootstrap.js"></script>
   <link rel="manifest" href="/site.webmanifest">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/enhancements.css">
