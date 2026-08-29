@@ -39,10 +39,14 @@ cp .env.example .env
 
 ```text
 OPENCODE_SERVER_PASSWORD=<strong local password>
+OPENCODE_AUTH_ALLOW_BASIC=0
+OPENCODE_AUTH_COOKIE_SECURE=auto
 TOKEN_PLAN_API_KEY=<Alibaba Token Plan key>
 CUSTOM_OPENCODE_INSTALL_SELFTEST=1
 OPENCODE_LOCAL_AUTO_START=0
 ```
+
+`OPENCODE_AUTH_ALLOW_BASIC=0` оставляет обычный browser UX на custom login page без native Chrome Basic Auth prompt. Если UI публикуется через HTTPS reverse proxy, `OPENCODE_AUTH_COOKIE_SECURE=auto` обычно достаточно при корректном `X-Forwarded-Proto`/`Forwarded`.
 
 Если RAG находится не рядом с репозиторием, задайте абсолютные пути:
 
@@ -74,6 +78,23 @@ Installer:
 
 Успешная установка заканчивается `Self-test PASS`.
 
+## Первый web-вход
+
+Откройте URL `custom_opencode` в браузере. Для удалённого клиента должна появиться собственная страница `OpenCode → Вход`, а не системный Chrome login/password dialog.
+
+Используйте:
+
+```text
+username = OPENCODE_SERVER_USERNAME   # default opencode
+password = OPENCODE_SERVER_PASSWORD
+```
+
+`Запомнить вход` создаёт только долгоживущую подписанную HttpOnly cookie; приложение не сохраняет пароль в localStorage. По умолчанию remembered session действует 30 дней.
+
+При локальном loopback-доступе и `OPENCODE_WEB_ALLOW_LOCAL=1` login может быть пропущен — это штатный local bypass.
+
+После входа UI settings находятся в sidebar: `Аккаунт → Настройки`. Тема и accent сохраняются только в текущем browser profile.
+
 ## Что проверяет install self-test
 
 До изменений на диске запускается полный `scripts/verify.sh`: Python/JS/bash syntax, web smoke, router/config invariants, project-browser boundaries, RAG mocked lifecycle, secret/path guards.
@@ -81,7 +102,7 @@ Installer:
 После рестарта проверяется реальная машина:
 
 - `opencode-web-client.service` находится в `active`;
-- `server_rag.py` импортируется с текущим runtime config;
+- production web composition импортируется с текущим runtime config;
 - OpenCode backend отвечает;
 - authenticated web endpoint отвечает HTTP 200;
 - если RAG обнаружен — выполняется эквивалент `/rag-start quick`: Qdrant/corpus + `kb` MCP + required tools.
@@ -155,6 +176,10 @@ git pull --ff-only
 Сверьте существующий `.env` с новым `.env.example`: добавьте отсутствующие keys, но сохраните реальные credentials и рабочие пути. Особое внимание:
 
 ```text
+OPENCODE_AUTH_SESSION_SECONDS
+OPENCODE_AUTH_REMEMBER_SECONDS
+OPENCODE_AUTH_COOKIE_SECURE
+OPENCODE_AUTH_ALLOW_BASIC=0
 MCP_RAG_ROOT
 MCP_RAG_BIN
 OPENCODE_PROJECT_ROOTS
@@ -171,6 +196,8 @@ CUSTOM_OPENCODE_INSTALL_SELFTEST=1
 ```
 
 Не используйте `git reset --hard`, `docker compose down -v` или RAG rebuild как обычный шаг миграции.
+
+Существующие browser drafts/theme settings остаются browser-local. Старая Basic-auth credential cache браузера больше не является источником состояния новой web session.
 
 ## Обновление
 
@@ -191,7 +218,15 @@ systemctl --user status opencode-web-client.service --no-pager
 custom-opencode --version || true
 ```
 
-В web UI откройте `Диагностика` или `/doctor`. Если используется RAG, выполните сначала:
+В web UI откройте `Диагностика` или `/doctor`. Для UI-smoke дополнительно проверьте:
+
+- login/logout и `Запомнить вход` с удалённого origin;
+- возврат после re-auth в текущий `#/session/...`;
+- light/dark/system theme;
+- mobile drawer через tap вне панели, swipe и Back;
+- `prefers-reduced-motion` при необходимости accessibility-проверки.
+
+Если используется RAG, выполните сначала:
 
 ```text
 /rag-start quick
