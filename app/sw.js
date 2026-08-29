@@ -1,4 +1,4 @@
-const CACHE='custom-opencode-web-v5'
+const CACHE='custom-opencode-web-v6'
 const STATIC_RE=/\.(?:js|css|webmanifest|png|svg|ico)$/
 
 self.addEventListener('install',()=>self.skipWaiting())
@@ -11,7 +11,7 @@ self.addEventListener('fetch',(event)=>{
   const req=event.request
   if(req.method!=='GET')return
   const url=new URL(req.url)
-  if(url.origin!==location.origin||url.pathname.startsWith('/api/')||url.pathname.startsWith('/client-'))return
+  if(url.origin!==location.origin||url.pathname.startsWith('/api/')||url.pathname.startsWith('/client-')||url.pathname.startsWith('/internal/'))return
   if(url.pathname==='/'||url.pathname==='/index.html'||STATIC_RE.test(url.pathname))event.respondWith((async()=>{
     const cache=await caches.open(CACHE)
     const cached=await cache.match(req)
