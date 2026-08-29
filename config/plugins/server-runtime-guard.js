@@ -34,9 +34,15 @@ function stripSecrets(env) {
   }
 }
 
+function systemText(item) {
+  if (typeof item === "string") return item
+  if (item && typeof item === "object" && typeof item.text === "string") return item.text
+  return ""
+}
+
 function hasManagedContext(system) {
-  if (Array.isArray(system)) return system.some((item) => String(item || "").includes(CONTEXT_MARKER))
-  return String(system || "").includes(CONTEXT_MARKER)
+  if (Array.isArray(system)) return system.some((item) => systemText(item).includes(CONTEXT_MARKER))
+  return systemText(system).includes(CONTEXT_MARKER)
 }
 
 function safeCacheTool(name, input) {
@@ -85,7 +91,7 @@ export default Plugin.define({
   setup: async (ctx) => {
     await wrapCachedTools(ctx)
 
-    await ctx.session.hook("request", async (event) => {
+    await ctx.session.hook("context", async (event) => {
       const sessionID = event?.sessionID || event?.session?.id || ""
       if (!sessionID || hasManagedContext(event.system)) return
       try {
@@ -93,9 +99,7 @@ export default Plugin.define({
         const text = managed?.text || ""
         if (text) {
           const block = `${CONTEXT_MARKER} (deduplicated, budgeted, checkpoint/RAG/repo aware):\n${text}`
-          if (Array.isArray(event.system)) event.system.push(block)
-          else if (typeof event.system === "string") event.system = `${event.system}\n\n${block}`
-          else event.system = block
+          if (Array.isArray(event.system)) event.system.push({ text: block })
         }
       } catch {
         // Context injection is additive: native OpenCode context remains usable while web runtime restarts.
