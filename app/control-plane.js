@@ -33,6 +33,11 @@ function ensureRiskSurface() {
   return row
 }
 
+function hideRiskSurface() {
+  const row = ensureRiskSurface()
+  if (row) row.hidden = true
+}
+
 function renderDecision(decision) {
   const row = ensureRiskSurface()
   if (!row) return
@@ -70,8 +75,9 @@ async function autoEvaluate(sid, decision) {
       body:JSON.stringify({ sessionID:sid, permissionID:decision.permissionID }),
     })
     if (result?.autoReplied) {
-      const banner = $('permissionBanner')
-      if (banner) banner.hidden = true
+      const permissionBanner = $('permissionBanner')
+      if (permissionBanner) permissionBanner.hidden = true
+      hideRiskSurface()
     }
   } catch (error) {
     console.warn('permission auto-evaluate failed', error)
@@ -83,16 +89,15 @@ async function autoEvaluate(sid, decision) {
 async function tick() {
   if (document.hidden) return
   const sid = sessionID()
-  if (!sid) {
-    const row = ensureRiskSurface()
-    if (row) row.hidden = true
+  const permissionBanner = $('permissionBanner')
+  if (!sid || !permissionBanner || permissionBanner.hidden) {
+    hideRiskSurface()
     return
   }
   try {
     const decision = await request(`/client-permission-risk.json?sessionID=${encodeURIComponent(sid)}`)
     if (decision?.stale || !decision?.risk) {
-      const row = ensureRiskSurface()
-      if (row) row.hidden = true
+      hideRiskSurface()
       return
     }
     renderDecision(decision)
@@ -105,7 +110,7 @@ async function tick() {
 
 window.addEventListener('hashchange', () => { lastAttemptKey = ''; tick() })
 document.addEventListener('visibilitychange', () => { if (!document.hidden) tick() })
-const banner = $('permissionBanner')
-if (banner) new MutationObserver(tick).observe(banner, { attributes:true, attributeFilter:['hidden'] })
+const permissionBanner = $('permissionBanner')
+if (permissionBanner) new MutationObserver(tick).observe(permissionBanner, { attributes:true, attributeFilter:['hidden'] })
 setInterval(tick, 800)
 tick()
