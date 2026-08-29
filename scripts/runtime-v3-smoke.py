@@ -75,7 +75,7 @@ with tempfile.TemporaryDirectory() as temp:
     else: raise AssertionError("full-machine ran without explicit opt-in")
 
     artifacts=ArtifactStore(store); gateway=ToolGateway(store,artifacts,sandbox,broker)
-    t1=store.create_task(task_id="t1",session_id="s1",project_dir=str(project),text="edit",metadata={"sandbox":"repo-write"},baseline=baseline)
+    t1=store.create_task(task_id="t1",session_id="s1",project_dir=str(project),text="Engine alpha edit",metadata={"sandbox":"repo-write"},baseline=baseline)
     t2=store.create_task(task_id="t2",session_id="s2",project_dir=str(project),text="other",metadata={"sandbox":"repo-write"},baseline=baseline)
     store.transition(t1["id"],"submitted"); store.transition(t2["id"],"submitted")
     assert gateway.before({"sessionID":"s1","tool":"edit","input":{"path":"src.py"}})["allow"]
