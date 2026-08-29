@@ -28,7 +28,8 @@ for marker in \
 done
 
 for marker in \
-  '@opencode-ai/plugin/v2/promise' \
+  '@opencode-ai/plugin' \
+  'Plugin.define({' \
   'ctx.session.hook("context"' \
   'ctx.tool.hook("execute.before"' \
   'ctx.tool.hook("execute.after"' \
