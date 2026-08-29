@@ -39,11 +39,11 @@ SECRET_ASSIGNMENT_RE = re.compile(
 )
 
 SAFE_SIMPLE_COMMANDS = {
-    "ls", "pwd", "cat", "head", "tail", "wc", "stat", "file", "tree",
+    "ls", "pwd", "cat", "head", "tail", "wc", "stat", "tree",
     "rg", "grep", "du", "df", "uname", "whoami", "which", "realpath", "readlink",
 }
 SAFE_GIT_SUBCOMMANDS = {
-    "status", "diff", "log", "show", "rev-parse", "ls-files", "grep", "remote", "tag",
+    "status", "diff", "log", "show", "rev-parse", "ls-files", "grep", "remote",
 }
 WORKSPACE_COMPUTE_PREFIXES = (
     ("pytest",),
@@ -154,11 +154,18 @@ def _shell_risk(command: str, preset: str, workspace: str | None) -> tuple[str, 
         return "R3", False, "shell command could not be parsed safely"
     if not argv:
         return "R3", False, "empty shell command"
+    if "/" in argv[0] or "\\" in argv[0]:
+        return "R3", False, "path-qualified executable requires confirmation"
 
     executable = Path(argv[0]).name
     unsafe_path = _unsafe_path_argument(argv, workspace)
     if unsafe_path:
         return "R4" if _looks_sensitive(unsafe_path) else "R3", False, "command references a path outside the workspace or a sensitive path"
+
+    if executable == "rg" and any(arg == "--pre" or arg.startswith("--pre=") for arg in argv[1:]):
+        return "R3", False, "ripgrep preprocessor can execute another command"
+    if executable == "tree" and any(arg == "-o" or arg.startswith("--output") for arg in argv[1:]):
+        return "R3", False, "tree output option can mutate the filesystem"
 
     if executable in SAFE_SIMPLE_COMMANDS:
         return "R0", True, f"read-only command: {executable}"
@@ -167,7 +174,9 @@ def _shell_risk(command: str, preset: str, workspace: str | None) -> tuple[str, 
         if argv[1] == "remote" and argv[2:] not in ([], ["-v"], ["--verbose"]):
             return "R3", False, "git remote mutation requires confirmation"
         if any(arg == "-o" or arg.startswith("--output") for arg in argv[2:]):
-            return "R3", False, "git output redirection can mutate the filesystem"
+            return "R3", False, "git output option can mutate the filesystem"
+        if any(arg in {"--ext-diff", "--textconv"} or arg.startswith("--open-files-in-pager") for arg in argv[2:]):
+            return "R3", False, "git option can execute an external helper"
         return "R0", True, f"read-only git {argv[1]}"
 
     if executable in {"python", "python3", "node", "npm", "pnpm", "bun", "git"} and len(argv) == 2 and argv[1] in {"--version", "-V"}:
@@ -205,9 +214,18 @@ def classify_permission(
     }
 
     if action in READ_ACTIONS:
-        if action == "read" and any(_looks_sensitive(value) for value in resources):
-            decision.update(risk="R4", reason="sensitive file read requires confirmation")
-            return decision
+        if action == "read":
+            if not resources:
+                decision.update(risk="R3", reason="read target is missing from the permission payload")
+                return decision
+            if any(_looks_sensitive(value) for value in resources):
+                decision.update(risk="R4", reason="sensitive file read requires confirmation")
+                return decision
+            for value in resources:
+                candidate = Path(value).expanduser()
+                if candidate.is_absolute() and not _path_within_workspace(str(candidate), workspace):
+                    decision.update(risk="R3", reason="absolute read target is outside the workspace")
+                    return decision
         decision.update(effect="allow", auto=True, reply="once", risk="R0", reason="read-only operation")
         return decision
 
