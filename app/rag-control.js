@@ -10,6 +10,11 @@ function toast(text, ms = 4000) {
   el._ragTimer = setTimeout(() => { el.hidden = true }, ms)
 }
 
+function sessionIdFromHash() {
+  const match = /^#\/session\/([^/?]+)/.exec(location.hash)
+  return match ? decodeURIComponent(match[1]) : null
+}
+
 export function parseRagStart(value) {
   const match = /^\/rag-start(?:\s+(quick|full))?\s*$/i.exec(String(value || ''))
   return match ? { mode: (match[1] || 'full').toLowerCase() } : null
@@ -36,7 +41,7 @@ async function startRag(mode) {
     const response = await fetch('/client-rag-start.json', {
       method: 'POST',
       headers: { 'Content-Type':'application/json' },
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify({ mode, sessionID: sessionIdFromHash() }),
     })
     const body = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(body?.error || `${response.status} ${response.statusText}`)
