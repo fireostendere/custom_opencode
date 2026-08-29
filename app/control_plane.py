@@ -96,20 +96,13 @@ def _looks_sensitive(value: str) -> bool:
 
 
 def _path_within_workspace(value: str, workspace: str | None) -> bool:
-    # Relative paths are interpreted by OpenCode inside the workspace. Absolute
-    # paths must be provably contained before they may be auto-approved.
-    try:
-        candidate = Path(value).expanduser()
-    except (TypeError, ValueError):
-        return False
-    if not candidate.is_absolute():
-        return True
     if not workspace:
         return False
     try:
         root = Path(workspace).expanduser().resolve(strict=False)
-        resolved = candidate.resolve(strict=False)
-    except (OSError, RuntimeError):
+        candidate = Path(value).expanduser()
+        resolved = candidate.resolve(strict=False) if candidate.is_absolute() else (root / candidate).resolve(strict=False)
+    except (OSError, RuntimeError, TypeError, ValueError):
         return False
     return resolved == root or root in resolved.parents
 
@@ -133,8 +126,7 @@ def _unsafe_path_argument(argv: list[str], workspace: str | None) -> str | None:
             continue
         if _looks_sensitive(arg):
             return arg
-        candidate = Path(arg).expanduser()
-        if candidate.is_absolute() and not _path_within_workspace(str(candidate), workspace):
+        if not _path_within_workspace(arg, workspace):
             return arg
     return None
 
@@ -221,11 +213,9 @@ def classify_permission(
             if any(_looks_sensitive(value) for value in resources):
                 decision.update(risk="R4", reason="sensitive file read requires confirmation")
                 return decision
-            for value in resources:
-                candidate = Path(value).expanduser()
-                if candidate.is_absolute() and not _path_within_workspace(str(candidate), workspace):
-                    decision.update(risk="R3", reason="absolute read target is outside the workspace")
-                    return decision
+            if any(not _path_within_workspace(value, workspace) for value in resources):
+                decision.update(risk="R3", reason="read target escapes the workspace")
+                return decision
         decision.update(effect="allow", auto=True, reply="once", risk="R0", reason="read-only operation")
         return decision
 
