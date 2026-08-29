@@ -69,7 +69,10 @@ fi
 
 if [[ "$SELFTEST" != 0 ]]; then
   echo "==> Pre-install verification"
-  "$PYTHON3" -m py_compile "$ROOT/scripts/install-selftest.py" "$ROOT/scripts/install-runtime-v3-selftest.py"
+  "$PYTHON3" -m py_compile \
+    "$ROOT/scripts/install-selftest.py" \
+    "$ROOT/scripts/install-runtime-v3-selftest.py" \
+    "$ROOT/scripts/pin-orchestrated-recent.py"
   "$ROOT/scripts/verify.sh"
   "$ROOT/scripts/verify-runtime-v3.sh"
 fi
@@ -154,6 +157,7 @@ cat >"$BIN_DIR/custom-opencode" <<EOF
 set -a
 source "$ROOT/.env"
 set +a
+"$PYTHON3" "$ROOT/scripts/pin-orchestrated-recent.py" >/dev/null 2>&1 || true
 if command -v opencode2 >/dev/null 2>&1; then
   exec env -u OPENCODE_CONFIG_DIR opencode2 "\$@"
 fi
