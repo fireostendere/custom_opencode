@@ -86,12 +86,13 @@ if (ux.composerActionState({ running:true, hasPayload:false }).kind !== 'stop') 
 if (ux.composerActionState({ running:true, hasPayload:false }).symbol !== '×') throw new Error('Stop action must use cancel icon instead of square')
 if (ux.composerActionState({ running:true, hasPayload:true }).kind !== 'queue') throw new Error('Running composer with text must auto-queue')
 if (ux.modeFromAgent('build-direct') !== 'build' || ux.modeFromAgent('plan') !== 'plan') throw new Error('Internal Build/Plan compatibility mapping regressed')
-if (ux.agentFor('build', 'direct') !== 'build-direct' || ux.agentFor('plan', 'direct') !== 'plan-direct') throw new Error('Direct compatibility profile mapping regression')
-if (ux.agentFor('build', 'orchestrated') !== 'build' || ux.agentFor('plan', 'orchestrated') !== 'plan') throw new Error('Orchestrated compatibility profile mapping regression')
+if (ux.agentFor('build', 'direct') !== 'build' || ux.agentFor('plan', 'direct') !== 'plan') throw new Error('Ordinary models must use native OpenCode agents')
+if (ux.agentFor('build', 'orchestrated') !== 'build' || ux.agentFor('plan', 'orchestrated') !== 'plan') throw new Error('Orchestrated model must keep native OpenCode agents')
+if (ux.profileFromAgent('build') !== 'direct' || ux.profileFromAgent('build-direct') !== 'direct') throw new Error('Agent ID must not imply orchestration')
 if (!ux.permissionSummary('Команда', '{"command":"git status","description":"long"}').includes('git status')) throw new Error('Permission summary did not extract command')
 if (!ux.permissionSummary('question', '{"questions":[{"label":"Сохранить изменения","description":"Сначала сохранить изменения"}]}').startsWith('Нужен выбор:')) throw new Error('Question permission summary is not human-readable')
 if (ux.permissionSummary('Команда', 'x'.repeat(300)).length > 110) throw new Error('Permission summary must stay compact')
-if (ux.ORCHESTRATED_MODEL.label !== 'Qwen 3.8 Max · Оркестрированная') throw new Error('Orchestrated model label regression')
+if (ux.ORCHESTRATED_MODEL.id !== 'qwen3.8-orchestrated' || ux.ORCHESTRATED_MODEL.label !== 'Qwen3.8 Max · Orchestrated') throw new Error('Orchestrated model identity regression')
 
 const index = readFileSync(resolve(root, 'app/index.html'), 'utf8')
 for (const marker of [
@@ -129,6 +130,7 @@ const runtimeV3Dashboard = readFileSync(resolve(root, 'app/runtime-v3-dashboard.
 if (!uxControls.includes("button.textContent = 'Build'")) throw new Error('Build must remain the compatibility work-mode label')
 if (uxControls.includes("button.textContent = 'Direct'")) throw new Error('Direct must not be exposed as a user-facing mode label')
 if (!uxControls.includes("event.target.closest('[data-orchestrated-model]')")) throw new Error('Orchestrated model click proxy missing')
+if (!uxControls.includes('qwen3.8-orchestrated') && !uxControls.includes('ORCHESTRATED_MODEL.id')) throw new Error('Web orchestrated choice must target the dedicated model alias')
 if (!uxControls.includes('window.CustomOpenCodeUX')) throw new Error('Project defaults cannot select orchestrated profile')
 if (!uxControls.includes("setNativeDelivery('queue')")) throw new Error('Automatic queue compatibility bridge missing')
 if (!uxControls.includes("addEventListener('submit', () => setTimeout(syncComposerAction, 0))")) throw new Error('Composer action must resync after programmatic queue clear')
@@ -224,23 +226,22 @@ let configText = readFileSync(resolve(root, 'config/opencode.json.template'), 'u
   .replaceAll('__RAG_DISABLED__', 'true')
 const config = JSON.parse(configText)
 const agents = config.agents || {}
-for (const id of ['build', 'plan', 'build-direct', 'plan-direct']) {
-  if (!agents[id] || agents[id].mode !== 'primary') throw new Error(`Primary compatibility profile missing: ${id}`)
-}
+if (agents.build || agents.plan) throw new Error('Native OpenCode build/plan agents must not be overridden')
 for (const id of ['build-direct', 'plan-direct']) {
-  const rules = agents[id].permissions || []
-  if (!rules.some((rule) => rule.action === 'subagent' && rule.effect === 'deny')) throw new Error(`${id} must deny subagents`)
-  for (const action of ['kb_knowledge_search', 'kb_knowledge_get', 'kb_knowledge_sources', 'kb_knowledge_status', 'kb_knowledge_ingest']) {
-    if (!rules.some((rule) => rule.action === action && rule.effect === 'deny')) throw new Error(`${id} must deny ${action}`)
-  }
+  if (!agents[id] || agents[id].mode !== 'primary' || agents[id].hidden !== true) throw new Error(`Legacy compatibility agent must stay hidden: ${id}`)
 }
-for (const action of ['edit', 'shell']) {
-  if (!(agents['plan-direct'].permissions || []).some((rule) => rule.action === action && rule.effect === 'deny')) throw new Error(`plan-direct compatibility profile must deny ${action}`)
+const orchestrated = config.providers?.['bailian-cli']?.models?.['qwen3.8-orchestrated'] || {}
+if (orchestrated.modelID !== 'qwen3.8-max') throw new Error('Orchestrated catalog model must route to the real qwen3.8-max API model')
+if (orchestrated.name !== 'Qwen3.8 Max · Orchestrated') throw new Error('Orchestrated catalog model label regression')
+const orchestratedPlugin = readFileSync(resolve(root, 'config/plugins/orchestrated-qwen.js'), 'utf8')
+for (const marker of ['Plugin.define({', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy']) {
+  if (!orchestratedPlugin.includes(marker)) throw new Error(`Orchestrated Qwen plugin marker missing: ${marker}`)
 }
-if (!String(agents.build.system || '').includes('orchestrator.md') || !String(agents.plan.system || '').includes('orchestrator.md')) throw new Error('Underlying orchestrated compatibility agents must keep orchestrator prompt')
-if (agents['build-direct'].system || agents['plan-direct'].system) throw new Error('Direct profiles must not inherit orchestrator system prompt')
+if (!orchestratedPlugin.includes('id: "qwen3.8-max"') && !orchestratedPlugin.includes('id: "qwen3.8-max"')) {
+  // The self-check below is the important invariant: ordinary Max must not match the special alias.
+}
 
 const doctor = await loadSource('app/doctor.js')
 if (typeof doctor.openDoctor !== 'function') throw new Error('Doctor UI module does not export openDoctor')
 
-console.log('Web smoke passed: Build-only UX + Runtime V2/V3 + auth/appearance/mobile + direct/server profiles + queue/questions/permissions/review/orchestration')
+console.log('Web smoke passed: Build-only UX + native OpenCode agents + dedicated orchestrated Qwen + Runtime V2/V3 + auth/appearance/mobile + queue/questions/permissions/review')

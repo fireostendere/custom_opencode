@@ -155,6 +155,7 @@ model_registry_py = (root / "app/model_registry.py").read_text(encoding="utf-8")
 repo_services_py = (root / "app/repo_services.py").read_text(encoding="utf-8")
 runtime_resume_py = (root / "app/runtime_resume.py").read_text(encoding="utf-8")
 local_router_js = (root / "config/plugins/lazy-local-router.js").read_text(encoding="utf-8")
+orchestrated_plugin_js = (root / "config/plugins/orchestrated-qwen.js").read_text(encoding="utf-8")
 service = (root / "systemd/opencode-web-client.service").read_text(encoding="utf-8")
 orchestrator = (root / "config/prompts/orchestrator.md").read_text(encoding="utf-8")
 
@@ -203,6 +204,9 @@ if 'OPENCODE_LOCAL_PROVIDER || "ollama"' not in local_router_js or "OPENCODE_LOC
     bad.append("local router must stay manual/opt-in outside server runtime profiles")
 if "qwen3.8-max" not in orchestrator or "qwen3.6-flash" not in orchestrator or "RAG is optional" not in orchestrator:
     bad.append("orchestrator must define Max -> Flash and optional-RAG policy")
+for marker in ('Plugin.define({', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy'):
+    if marker not in orchestrated_plugin_js:
+        bad.append(f"orchestrated Qwen plugin marker missing: {marker}")
 if not (root / "scripts/rag-mcp.sh").is_file():
     bad.append("missing portable RAG MCP launcher")
 if not (root / "scripts/runtime-smoke.py").is_file():
@@ -318,12 +322,13 @@ expected = {
     "qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash",
     "glm-5.2", "deepseek-v4-pro", "deepseek-v4-pro-0813", "deepseek-v4-flash-0731",
 }
+special_ids = {"qwen3.8-orchestrated"}
 compat_ids = {"qwen3.8-max-preview"}
 models_map = provider.get("models", {}) if isinstance(provider, dict) else {}
 models = set(models_map)
 missing = sorted(expected - models)
 if missing: bad.append("Alibaba Token Plan Personal models missing: " + ", ".join(missing))
-unexpected = sorted(models - expected - compat_ids)
+unexpected = sorted(models - expected - special_ids - compat_ids)
 if unexpected: bad.append("Alibaba models not in current Personal allowlist: " + ", ".join(unexpected))
 if provider.get("name") != "Alibaba Cloud Model Studio · Token Plan Personal Pro": bad.append("Alibaba provider must identify Token Plan Personal Pro")
 if provider.get("package") != "aisdk:@ai-sdk/anthropic": bad.append("Alibaba V2 provider must use aisdk:@ai-sdk/anthropic")
@@ -341,6 +346,9 @@ for model_id, model in models_map.items():
     if not caps.get("input") or "text" not in caps["input"]: bad.append(f"Alibaba model missing text input capability: {model_id}")
 compat = models_map.get("qwen3.8-max-preview", {})
 if compat.get("modelID") != "qwen3.8-max": bad.append("legacy qwen3.8-max-preview session alias must map to qwen3.8-max")
+special = models_map.get("qwen3.8-orchestrated", {})
+if special.get("modelID") != "qwen3.8-max": bad.append("orchestrated Qwen catalog alias must map to qwen3.8-max")
+if special.get("name") != "Qwen3.8 Max · Orchestrated": bad.append("orchestrated Qwen catalog alias has unexpected label")
 ollama = providers.get("ollama", {})
 if ollama.get("package") != "aisdk:@ai-sdk/openai-compatible": bad.append("local Ollama V2 provider must use aisdk:@ai-sdk/openai-compatible")
 
@@ -354,10 +362,17 @@ for agent_id, agent in agents.items():
     if found: bad.append(f"legacy V1 agent fields in {agent_id}: {', '.join(found)}")
     rules = agent.get("permissions", [])
     if rules and not isinstance(rules, list): bad.append(f"agent permissions must be ordered V2 array: {agent_id}")
-    model_ref = str(agent.get("model") or "")
-    if model_ref.startswith("ollama/"):
+    model_ref_value = str(agent.get("model") or "")
+    if model_ref_value.startswith("ollama/"):
         bad.append(f"automatic agent must not route to local Ollama: {agent_id}")
 if config.get("default_agent") != "build": bad.append("default_agent must remain build")
+for native_id in ("build", "plan"):
+    if native_id in agents:
+        bad.append(f"native OpenCode agent must not be overridden: {native_id}")
+for legacy_id in ("build-direct", "plan-direct"):
+    legacy_agent = agents.get(legacy_id) or {}
+    if legacy_agent.get("mode") != "primary" or legacy_agent.get("hidden") is not True:
+        bad.append(f"legacy direct agent must remain hidden compatibility-only: {legacy_id}")
 for agent_id in ("fast-reader", "local-reader", "title"):
     if (agents.get(agent_id) or {}).get("model") != "bailian-cli/qwen3.6-flash":
         bad.append(f"{agent_id} must use paid qwen3.6-flash")
@@ -373,5 +388,5 @@ if not any(rule.get("action") == "kb_knowledge_ingest" and rule.get("effect") ==
 
 if bad:
     raise SystemExit("\n".join(bad))
-print(f"Verification passed; runtime-v2 + checkpoint resume + Max->Flash router + bounded RAG lifecycle + Alibaba Personal models: {len(expected)} current + {len(compat_ids)} compatibility ID")
+print(f"Verification passed; native Build/Plan + dedicated orchestrated Qwen + runtime-v2/checkpoint resume + bounded RAG lifecycle + Alibaba Personal models: {len(expected)} current + {len(special_ids)} orchestrated alias + {len(compat_ids)} compatibility ID")
 PY

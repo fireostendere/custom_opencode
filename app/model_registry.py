@@ -41,7 +41,7 @@ def _cost_class(model: dict[str, Any], ref: str) -> str:
 
 
 def _quality_hints(ref: str) -> dict[str, Any]:
-    low=ref.lower(); flash="flash" in low; qwen_max="qwen3.8-max" in low; codeish=any(token in low for token in ("qwen","deepseek","codex","gpt"))
+    low=ref.lower(); flash="flash" in low; qwen_max="qwen3.8-max" in low or "qwen3.8-orchestrated" in low; codeish=any(token in low for token in ("qwen","deepseek","codex","gpt"))
     return {"fastPath":flash,"coding":.92 if qwen_max else .82 if codeish else .65,"review":.94 if qwen_max else .78 if codeish else .62,"planning":.95 if qwen_max else .76 if flash else .72}
 
 
@@ -65,13 +65,13 @@ class CapabilityRegistry:
     def models(self)->list[dict[str,Any]]: return sorted(self._models.values(),key=lambda item:(item["providerID"],item["name"].casefold()))
     def get(self,ref:str)->dict[str,Any]|None: return self._models.get(ref)
     def profiles(self)->dict[str,dict[str,Any]]:
-        local=os.environ.get("OPENCODE_LOCAL_CODER_MODEL","ollama/qwen3.8:27b").strip(); cloud=os.environ.get("OPENCODE_CLOUD_CODER_MODEL","bailian-cli/qwen3.8-max").strip(); fast=os.environ.get("OPENCODE_FAST_MODEL","bailian-cli/qwen3.6-flash").strip(); review=os.environ.get("OPENCODE_REVIEW_MODEL","bailian-cli/qwen3.8-max").strip()
+        local=os.environ.get("OPENCODE_LOCAL_CODER_MODEL","ollama/qwen3.8:27b").strip(); cloud=os.environ.get("OPENCODE_CLOUD_CODER_MODEL","bailian-cli/qwen3.8-max").strip(); orchestrated=os.environ.get("OPENCODE_ORCHESTRATED_MODEL","bailian-cli/qwen3.8-orchestrated").strip(); fast=os.environ.get("OPENCODE_FAST_MODEL","bailian-cli/qwen3.6-flash").strip(); review=os.environ.get("OPENCODE_REVIEW_MODEL","bailian-cli/qwen3.8-max").strip()
         return {
-            "direct":{"id":"direct","label":"Selected model","route":"selected","agentBuild":"build-direct","agentPlan":"plan-direct","orchestrated":False,"contextBudget":96000,"sandbox":"repo-write","autoReview":False},
-            "qwen3.8-coder":{"id":"qwen3.8-coder","label":"Qwen 3.8 Coder · Auto","route":"auto","cloudModel":cloud,"localModel":local,"agentBuild":"build-direct","agentPlan":"plan-direct","orchestrated":False,"contextBudget":160000,"sandbox":"repo-write","autoReview":"smart","requires":{"tools":True,"coding":.75}},
-            "qwen3.8-orchestrated":{"id":"qwen3.8-orchestrated","label":"Qwen 3.8 · Orchestrated","route":"cloud","cloudModel":cloud,"workerModel":fast,"agentBuild":"build","agentPlan":"plan","orchestrated":True,"contextBudget":260000,"sandbox":"repo-write","autoReview":"smart","requires":{"tools":True,"coding":.80,"planning":.85}},
-            "qwen3.8-review":{"id":"qwen3.8-review","label":"Qwen 3.8 · Review","route":"cloud","cloudModel":review,"agentBuild":"plan-direct","agentPlan":"plan-direct","orchestrated":False,"contextBudget":128000,"sandbox":"safe","autoReview":False,"requires":{"tools":True,"review":.85}},
-            "qwen3.8-fast":{"id":"qwen3.8-fast","label":"Qwen · Fast path","route":"cloud","cloudModel":fast,"agentBuild":"plan-direct","agentPlan":"plan-direct","orchestrated":False,"contextBudget":72000,"sandbox":"safe","autoReview":False,"requires":{"tools":True,"fastPath":True}},
+            "direct":{"id":"direct","label":"Selected model","route":"selected","agentBuild":"build","agentPlan":"plan","orchestrated":False,"contextBudget":96000,"sandbox":"repo-write","autoReview":False},
+            "qwen3.8-coder":{"id":"qwen3.8-coder","label":"Qwen 3.8 Coder · Auto","route":"auto","cloudModel":cloud,"localModel":local,"agentBuild":"build","agentPlan":"plan","orchestrated":False,"contextBudget":160000,"sandbox":"repo-write","autoReview":"smart","requires":{"tools":True,"coding":.75}},
+            "qwen3.8-orchestrated":{"id":"qwen3.8-orchestrated","label":"Qwen 3.8 · Orchestrated","route":"cloud","cloudModel":orchestrated,"workerModel":fast,"agentBuild":"build","agentPlan":"plan","orchestrated":True,"contextBudget":260000,"sandbox":"repo-write","autoReview":"smart","requires":{"tools":True,"coding":.80,"planning":.85}},
+            "qwen3.8-review":{"id":"qwen3.8-review","label":"Qwen 3.8 · Review","route":"cloud","cloudModel":review,"agentBuild":"build","agentPlan":"plan","orchestrated":False,"contextBudget":128000,"sandbox":"safe","autoReview":False,"requires":{"tools":True,"review":.85}},
+            "qwen3.8-fast":{"id":"qwen3.8-fast","label":"Qwen · Fast path","route":"cloud","cloudModel":fast,"agentBuild":"build","agentPlan":"plan","orchestrated":False,"contextBudget":72000,"sandbox":"safe","autoReview":False,"requires":{"tools":True,"fastPath":True}},
         }
     def snapshot(self,stats_getter=None)->dict[str,Any]:
         rows=[]

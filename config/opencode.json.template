@@ -88,6 +88,22 @@
             "effort": "xhigh"
           }
         },
+        "qwen3.8-orchestrated": {
+          "modelID": "qwen3.8-max",
+          "name": "Qwen3.8 Max · Orchestrated",
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 983616,
+            "output": 131072
+          },
+          "settings": {
+            "effort": "xhigh"
+          }
+        },
         "qwen3.8-flash": {
           "name": "Qwen3.8 Flash",
           "capabilities": {
@@ -204,51 +220,10 @@
   },
   "default_agent": "build",
   "agents": {
-    "build": {
-      "mode": "primary",
-      "system": "{file:__CONFIG_DIR__/prompts/orchestrator.md}",
-      "permissions": [
-        {
-          "action": "subagent",
-          "resource": "*",
-          "effect": "deny"
-        },
-        {
-          "action": "subagent",
-          "resource": "fast-reader",
-          "effect": "allow"
-        }
-      ]
-    },
-    "plan": {
-      "mode": "primary",
-      "system": "{file:__CONFIG_DIR__/prompts/orchestrator.md}",
-      "permissions": [
-        {
-          "action": "edit",
-          "resource": "*",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "*",
-          "effect": "deny"
-        },
-        {
-          "action": "subagent",
-          "resource": "*",
-          "effect": "deny"
-        },
-        {
-          "action": "subagent",
-          "resource": "fast-reader",
-          "effect": "allow"
-        }
-      ]
-    },
     "build-direct": {
       "mode": "primary",
-      "description": "Direct Build mode. Uses the selected model without automatic subagents or RAG.",
+      "hidden": true,
+      "description": "Legacy compatibility ID for old direct Build sessions.",
       "permissions": [
         {
           "action": "subagent",
@@ -284,7 +259,8 @@
     },
     "plan-direct": {
       "mode": "primary",
-      "description": "Direct Plan mode. Uses the selected model without edits, shell, automatic subagents, or RAG.",
+      "hidden": true,
+      "description": "Legacy compatibility ID for old direct Plan sessions.",
       "permissions": [
         {
           "action": "edit",

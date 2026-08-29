@@ -38,7 +38,7 @@ function agentButtons() {
   return [...document.querySelectorAll('#agentControls [data-agent]')]
 }
 function rawActiveAgent() {
-  return agentButtons().find((button) => button.classList.contains('active'))?.dataset.agent || 'build-direct'
+  return agentButtons().find((button) => button.classList.contains('active'))?.dataset.agent || 'build'
 }
 function currentMode() {
   return modeFromAgent(rawActiveAgent())
@@ -65,8 +65,6 @@ function clickNativeAgent(agentID) {
 
 function syncAgentSurface() {
   const mode = currentMode()
-  const rawProfile = profileFromAgent(rawActiveAgent())
-  if (desiredProfile && desiredProfile === rawProfile) desiredProfile = null
   const profile = currentProfile()
   document.documentElement.dataset.modelProfile = profile
   document.documentElement.dataset.executionMode = mode
@@ -80,21 +78,9 @@ function syncAgentSurface() {
   }
 }
 
-function qwenMaxSelected() {
+function orchestratedModelSelected() {
   const text = $('modelButton')?.textContent || ''
-  return /qwen\s*3[.\s]?8.*max|qwen3\.8-max/i.test(text)
-}
-function nativeModelLoaded() {
-  const text = $('modelButton')?.textContent?.trim() || ''
-  return Boolean(text && text !== 'Модель' && !/^Model\b/i.test(text))
-}
-function normalizeLegacyProfile() {
-  if (desiredProfile || !nativeModelLoaded()) return
-  if (profileFromAgent(rawActiveAgent()) === 'orchestrated' && !qwenMaxSelected()) {
-    desiredProfile = 'direct'
-    persistProfile('direct')
-    clickNativeAgent(agentFor(currentMode(), 'direct'))
-  }
+  return /qwen\s*3[.\s]?8.*orchestrat|qwen3\.8-orchestrated|оркестр/i.test(text)
 }
 function syncOrchestratedChoiceLabel() {
   const title = document.querySelector('#modelChoices [data-orchestrated-model] .choice-title')
@@ -106,10 +92,9 @@ function syncOrchestratedChoiceLabel() {
 function syncModelSurface() {
   const button = $('modelButton')
   if (!button) return
-  normalizeLegacyProfile()
   const profile = currentProfile()
   document.documentElement.dataset.modelProfile = profile
-  if (profile === 'orchestrated' && qwenMaxSelected()) {
+  if (profile === 'orchestrated' && orchestratedModelSelected()) {
     if (button.textContent !== ORCHESTRATED_MODEL.label) button.textContent = ORCHESTRATED_MODEL.label
     button.title = 'Qwen 3.8 Max с автоматической делегацией дешёвому read-only worker и optional RAG'
   } else {
@@ -159,12 +144,12 @@ function syncPermission() {
   }
 }
 
-function nativeQwenMaxChoice() {
-  return document.querySelector('#modelChoices [data-model="qwen3.8-max"][data-provider="bailian-cli"]')
+function nativeOrchestratedChoice() {
+  return document.querySelector(`#modelChoices [data-model="${ORCHESTRATED_MODEL.id}"][data-provider="${ORCHESTRATED_MODEL.providerID}"]`)
 }
 function chooseOrchestrated() {
   const mode = currentMode()
-  const nativeModel = nativeQwenMaxChoice()
+  const nativeModel = nativeOrchestratedChoice()
   if (!nativeModel) return
   desiredProfile = 'orchestrated'
   persistProfile('orchestrated')
@@ -226,6 +211,13 @@ function installModelProfileProxy() {
     }
     const native = event.target.closest('[data-model][data-provider]')
     if (!native || suppressDirectSwitch || event.target.closest('[data-fav]')) return
+    if (native.dataset.provider === ORCHESTRATED_MODEL.providerID && native.dataset.model === ORCHESTRATED_MODEL.id) {
+      desiredProfile = 'orchestrated'
+      persistProfile('orchestrated')
+      clickNativeAgent(agentFor(currentMode(), 'orchestrated'))
+      document.documentElement.dataset.modelProfile = 'orchestrated'
+      return
+    }
     chooseDirect()
   }, true)
 

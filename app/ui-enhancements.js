@@ -215,13 +215,14 @@ async function decorateModelChoices() {
     })).sort(compareProviderGroups)
 
     for (const group of providerGroups) {
+      const hasDedicatedOrchestrated = group.entries.some((entry) => entry.key === 'bailian-cli/qwen3.8-orchestrated')
       root.append(providerSection({
         id: group.id,
         label: group.label,
         entries: group.entries,
         collapsed,
         providerLabels,
-        orchestrated: group.id === 'bailian-cli' && group.entries.some((entry) => entry.key === 'bailian-cli/qwen3.8-max'),
+        orchestrated: group.id === 'bailian-cli' && !hasDedicatedOrchestrated && group.entries.some((entry) => entry.key === 'bailian-cli/qwen3.8-max'),
       }))
     }
   } catch (error) {

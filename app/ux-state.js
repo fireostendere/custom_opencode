@@ -1,25 +1,21 @@
 export const ORCHESTRATED_MODEL = {
-  id: 'qwen3.8-max',
+  id: 'qwen3.8-orchestrated',
   providerID: 'bailian-cli',
-  label: 'Qwen 3.8 Max · Оркестрированная',
+  label: 'Qwen3.8 Max · Orchestrated',
 }
 
-// User-facing execution modes are Build and Plan. The underlying OpenCode
-// primary agent IDs stay build/plan for the orchestrated profile and
-// build-direct/plan-direct for the ordinary model profile.
+// Build/Plan remain native OpenCode agents. Legacy *-direct IDs are accepted only
+// when reading old sessions; model selection no longer switches primary agents.
 export function modeFromAgent(agentID = '') {
   return String(agentID).startsWith('plan') ? 'plan' : 'build'
 }
 
-export function profileFromAgent(agentID = '') {
-  if (agentID === 'build-direct' || agentID === 'plan-direct') return 'direct'
-  if (agentID === 'build' || agentID === 'plan') return 'orchestrated'
+export function profileFromAgent(_agentID = '') {
   return 'direct'
 }
 
-export function agentFor(mode = 'build', profile = 'direct') {
-  const baseAgent = mode === 'plan' ? 'plan' : 'build'
-  return profile === 'orchestrated' ? baseAgent : `${baseAgent}-direct`
+export function agentFor(mode = 'build', _profile = 'direct') {
+  return mode === 'plan' ? 'plan' : 'build'
 }
 
 export function composerActionState({ running = false, hasPayload = false } = {}) {
