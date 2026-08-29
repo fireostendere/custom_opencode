@@ -54,8 +54,8 @@ if (enhancements.windowLabel(300) !== 'Сессия · 5ч' || enhancements.wind
 
 const rag = await loadSource('app/rag-control.js')
 if (rag.parseRagStart('/rag-start')?.mode !== 'full') throw new Error('RAG default start parser failed')
-if (rag.parseRagStart('/rag-start quick')?.mode !== 'quick') throw new Error('RAG quick parser failed')
-if (rag.parseRagStart('/rag-start full')?.mode !== 'full') throw new Error('RAG full parser failed')
+if (rag.parseRagStart('/rag-start quick')?.mode !== 'quick') throw new Error('RAG quick start parser failed')
+if (rag.parseRagStart('/rag-start full')?.mode !== 'full') throw new Error('RAG full start parser failed')
 if (rag.parseRagStart('/rag-start nope') !== null) throw new Error('RAG parser accepted unknown mode')
 
 const ui = await loadSource('app/ui-enhancements.js')
@@ -66,7 +66,17 @@ if (ui.isFreeModel({ id:'paid-model', cost:paidCost })) throw new Error('Paid mo
 if (!ui.isFreeModel({ id:'hy3-free' })) throw new Error('Free-ID fallback failed')
 if (!ui.isFreeModel({ id:'big-pickle' })) throw new Error('Big Pickle free fallback failed')
 
+const ux = await loadSource('app/ux-state.js')
+if (ux.composerActionState({ running:false, hasPayload:false }).kind !== 'send') throw new Error('Idle composer must show send')
+if (ux.composerActionState({ running:true, hasPayload:false }).kind !== 'stop') throw new Error('Running empty composer must show stop')
+if (ux.composerActionState({ running:true, hasPayload:true }).kind !== 'queue') throw new Error('Running composer with text must auto-queue')
+if (ux.agentFor('build', 'direct') !== 'build-direct' || ux.agentFor('plan', 'orchestrated') !== 'plan') throw new Error('Build/Plan profile mapping regression')
+if (!ux.permissionSummary('Команда', '{"command":"git status","description":"long"}').includes('git status')) throw new Error('Permission summary did not extract command')
+if (ux.ORCHESTRATED_MODEL.label !== 'Qwen 3.8 Max · Оркестратор') throw new Error('Orchestrated model label regression')
+readFileSync(resolve(root, 'app/ux-controls.js'), 'utf8')
+readFileSync(resolve(root, 'app/ux-controls.css'), 'utf8')
+
 const doctor = await loadSource('app/doctor.js')
 if (typeof doctor.openDoctor !== 'function') throw new Error('Doctor UI module does not export openDoctor')
 
-console.log('Web smoke passed: Markdown + prompt contracts + slash/doctor/RAG parsing + free-model classification')
+console.log('Web smoke passed: Markdown + prompt contracts + slash/doctor/RAG + model catalog + contextual composer/orchestration states')
