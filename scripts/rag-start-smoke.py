@@ -30,18 +30,24 @@ server_rag._run_runtime_start = lambda mode: {
     "qdrant": {"qdrant": {"reachable": True, "collectionExists": True, "indexedPoints": 1234}},
     "retrieval": {"ok": mode == "full"},
 }
+server_rag._session_directory = lambda session_id: "/tmp/selected-project" if session_id else "/tmp/scratch"
+server_rag._persist_kb_enabled = lambda: {"ok": True, "changed": True, "path": "/tmp/opencode.json"}
 server_rag._connect_kb = lambda directory: {
-    "ok": True, "action": "connected", "status": {"status": "connected"},
+    "ok": directory == "/tmp/selected-project",
+    "action": "connected",
+    "status": {"status": "connected"},
 }
 server_rag.plus._run_rag_probe = lambda mode: {
     "ok": True,
     "tools": ["knowledge_search", "knowledge_get", "knowledge_sources", "knowledge_status", "knowledge_ingest"],
     "status": {"qdrant_reachable": True},
 }
-result = server_rag.run_rag_start("full")
+result = server_rag.run_rag_start("full", session_id="ses_smoke")
 assert result["ok"] is True
 assert result["stage"] == "ready"
+assert result["workspace"] == "/tmp/selected-project"
+assert result["persisted"]["changed"] is True
 assert result["protocol"]["requiredToolsReady"] is True
 assert result["mcp"]["action"] == "connected"
 
-print("RAG start smoke passed: V2 workspace query + dynamic MCP config + ready flow")
+print("RAG start smoke passed: V2 query + selected workspace + persistence + MCP ready flow")
