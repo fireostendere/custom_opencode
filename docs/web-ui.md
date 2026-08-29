@@ -33,9 +33,9 @@ Legacy Basic Auth можно включить только для старых �
 
 Настройки хранятся только в браузере под ключом `opencode:web:appearance-v1`. Это не project/server state и не содержит секретов.
 
-`Системная` тема отслеживает `prefers-color-scheme` и меняется без reload. Небольшой inline bootstrap в `<head>` применяет сохранённую тему до загрузки основного CSS, чтобы избежать заметной вспышки неправильной темы.
+`Системная` тема отслеживает `prefers-color-scheme` и меняется без reload. Небольшой synchronous `appearance-bootstrap.js` в `<head>` применяет сохранённую тему до загрузки основного CSS, чтобы избежать заметной вспышки неправильной темы и не нарушать правило main app без inline JavaScript.
 
-Login page использует те же сохранённые theme/accent preferences без публикации auth-protected application assets до входа.
+Login page использует те же сохранённые theme/accent preferences до первого paint. Login bootstrap остаётся self-contained, чтобы страница входа не зависела от auth-protected application modules.
 
 ## Микроанимации
 
