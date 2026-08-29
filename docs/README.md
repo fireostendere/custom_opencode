@@ -5,10 +5,11 @@
 ## С чего начать
 
 - [Установка и обновление](installation.md) — новая установка, миграция существующей установки, self-test, systemd и обновления.
-- [Конфигурация `.env`](configuration.md) — все основные переменные окружения, секреты, пути и рекомендуемые значения.
+- [Конфигурация `.env`](configuration.md) — web auth/session settings, секреты, пути и рекомендуемые значения.
+- [Web UI, авторизация и оформление](web-ui.md) — login, remembered session, mobile drawer, темы, accent colors и микроанимации.
 - [Архитектура и возможности](architecture.md) — из каких компонентов состоит система и что именно она предоставляет.
 - [Permission control plane](control-plane.md) — R0–R4 risk policy, auto-approval безопасных действий, project rules и audit.
-- [Модели и routing](models-and-routing.md) — Build/Plan, model-selected orchestration, Qwen Max → Flash, ручной Ollama, permissions и стоимость.
+- [Модели и routing](models-and-routing.md) — Build-only UI, model-selected orchestration, Qwen Max → Flash, ручной Ollama, permissions и стоимость.
 - [Интеграция RAG](rag.md) — что нужно для RAG, как `custom_opencode` связывается с `mcp-rag`, lifecycle и ограничения.
 - [`/rag-start`](rag-start.md) — запуск/проверка RAG из web-клиента без LLM-токенов.
 - [Doctor](doctor.md) — бесплатные health checks и ручные платные E2E smoke tests.
@@ -29,6 +30,8 @@
 ```text
 Browser / PWA
     |
+    +--> custom login -> signed HttpOnly web session
+    |
     v
 custom_opencode web proxy
     |
@@ -36,7 +39,7 @@ custom_opencode web proxy
     |
     +--> OpenCode V2 backend
     |       |
-    |       +--> Build / Plan user modes
+    |       +--> Build-only user execution surface
     |       +--> ordinary selected models (direct execution)
     |       +--> Qwen 3.8 Max · Оркестрированная
     |               |
@@ -58,5 +61,7 @@ custom_opencode web proxy
 ## Основной принцип безопасности
 
 Permission control plane детерминирован и не делегирует модели оценку собственной безопасности. R3/R4 остаются интерактивными даже при project `allow`.
+
+Web password не хранится в browser storage: remembered login использует только подписанную HttpOnly cookie. Legacy Basic Auth выключен по умолчанию и нужен только для старых внешних клиентов.
 
 RAG, локальные модели и дополнительные интеграции не должны становиться обязательным model-routing control-plane. Падение Qdrant, отсутствие Ollama или ошибка retrieval должны деградировать качество/доступность конкретной функции, но не блокировать обычную работу OpenCode.
