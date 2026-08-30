@@ -13,6 +13,7 @@ from model_registry import (  # noqa: E402
     ALIBABA_PROVIDER,
     CANONICAL_EFFORTS,
     CapabilityRegistry,
+    ResourceScheduler,
     effort_plan,
     role_models,
     validate_provider_ref,
@@ -25,6 +26,15 @@ EXPECTED_ROLES = {
     "reviewer": "bailian-cli/deepseek-v4-pro-0813",
     "long_horizon": "bailian-cli/glm-5.2",
 }
+EXPECTED_PROFILES = {
+    "direct",
+    "fast",
+    "build",
+    "architect",
+    "critical",
+    "research",
+    "long-horizon",
+}
 
 # Make the smoke deterministic even when a developer has role overrides locally.
 for name in (
@@ -33,8 +43,7 @@ for name in (
     "OPENCODE_READER_MODEL",
     "OPENCODE_REVIEW_MODEL",
     "OPENCODE_LONG_HORIZON_MODEL",
-    "OPENCODE_CLOUD_CODER_MODEL",
-    "OPENCODE_FAST_MODEL",
+    "OPENCODE_ORCHESTRATED_MODEL",
 ):
     os.environ.pop(name, None)
 
@@ -69,6 +78,7 @@ assert effort_plan("bailian-cli/glm-5.2", "max")["settings"] == {"effort": "max"
 
 registry = CapabilityRegistry([])
 profiles = registry.profiles()
+assert set(profiles) == EXPECTED_PROFILES
 assert profiles["fast"]["builderModel"] == EXPECTED_ROLES["reader"]
 assert profiles["build"]["builderModel"] == EXPECTED_ROLES["builder"]
 assert profiles["build"]["readerModel"] == EXPECTED_ROLES["reader"]
@@ -81,6 +91,14 @@ assert profiles["critical"]["effortPolicy"]["planner"]["default"] == "max"
 assert profiles["critical"]["effortPolicy"]["reviewer"]["default"] == "max"
 assert profiles["long-horizon"]["builderModel"] == EXPECTED_ROLES["long_horizon"]
 
+# Routing is deterministic and provider-pinned. There is no alternate-device path.
+scheduler = ResourceScheduler()
+build_route = scheduler.decide(profiles["build"])
+assert build_route.selected_model == EXPECTED_ROLES["builder"]
+assert build_route.mode == "provider-pinned"
+manual = scheduler.decide(profiles["direct"], selected_model="openai/example")
+assert manual.selected_model == "openai/example"
+
 # Parse the installer template after resolving its deliberate non-JSON placeholder.
 template = (ROOT / "config" / "opencode.json.template").read_text(encoding="utf-8")
 config = json.loads(template.replace("__RAG_DISABLED__", "true"))
@@ -89,8 +107,10 @@ models = alibaba["models"]
 agents = config["agents"]
 assert alibaba["name"] == "Alibaba Cloud"
 
+
 def variants(model: str) -> dict[str, dict]:
     return {str(row["id"]): row for row in models[model].get("variants", [])}
+
 
 q38max = variants("qwen3.8-max")
 q38flash = variants("qwen3.8-flash")
@@ -118,6 +138,7 @@ assert agents["role-reviewer"]["model"] == "bailian-cli/deepseek-v4-pro-0813#hig
 assert agents["role-reviewer-max"]["model"] == "bailian-cli/deepseek-v4-pro-0813#max"
 assert agents["role-long-horizon"]["model"] == "bailian-cli/glm-5.2#high"
 assert agents["role-long-horizon-max"]["model"] == "bailian-cli/glm-5.2#max"
+assert "local-reader" not in agents
 assert "qwen3.6-flash" not in agents["fast-reader"]["model"]
 
 prompt = (ROOT / "config" / "prompts" / "orchestrator.md").read_text(encoding="utf-8")
@@ -132,4 +153,31 @@ for token in (
 ):
     assert token.casefold() in prompt.casefold(), token
 
-print("Model routing/effort smoke passed: Alibaba provider lock + role models + effort variants + bounded role agents")
+# The removed router must not creep back into source/config/docs. Manual provider
+# support is intentionally outside this assertion; only automatic routing terms are forbidden.
+forbidden = (
+    "OPENCODE_LOCAL_CODER_MODEL",
+    "OPENCODE_LOCAL_AUTO_START",
+    "OPENCODE_LOCAL_PROVIDER",
+    "OPENCODE_LOCAL_ROUTER_URL",
+    "OPENCODE_LOCAL_ROUTER_START",
+    "OPENCODE_LOCAL_ROUTER_LOG",
+    "OPENCODE_RESOURCE_SCHEDULER",
+    "OPENCODE_GAME_PROCESSES",
+    "OPENCODE_CLOUD_CODER_MODEL",
+    "OPENCODE_FAST_MODEL",
+    '"localModel"',
+    'route="auto"',
+)
+checked_paths = (
+    ROOT / ".env.example",
+    ROOT / "app" / "model_registry.py",
+    ROOT / "config" / "prompts" / "orchestrator.md",
+    ROOT / "docs" / "model-routing-effort.md",
+)
+for path in checked_paths:
+    text = path.read_text(encoding="utf-8")
+    for token in forbidden:
+        assert token not in text, f"legacy routing token {token!r} remains in {path.relative_to(ROOT)}"
+
+print("Model routing/effort smoke passed: Alibaba provider lock + role models + effort variants + no legacy local routing")
