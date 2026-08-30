@@ -47,6 +47,9 @@ jobs:
       - name: TUI limits regression
         run: node scripts/tui-regression.mjs
 
+      - name: TUI model selector regression
+        run: node scripts/model-selector-smoke.mjs
+
       - name: Install packaged OpenCode 2 beta
         run: npm install -g @opencode-ai/cli@beta
 
