@@ -39,6 +39,7 @@ _login_lock = threading.Lock()
 _login_failures: dict[str, list[float]] = {}
 _revoked_lock = threading.Lock()
 _revoked_tokens: dict[str, float] = {}
+_REVOCATION_NAMESPACE = "web-auth-revoked"
 
 
 def _file_parts(files: list[object]) -> list[dict[str, object]]:
@@ -157,20 +158,36 @@ def _prune_revocations(now: float | None = None) -> None:
 
 
 def _revoke_token(token: str) -> None:
+    """Revoke a cookie both immediately and across web-server restarts."""
     if not token:
         return
     base = rag.plus.ext.base
+    fingerprint = _token_fingerprint(token)
+    ttl = float(base.AUTH_REMEMBER_SECONDS)
     _prune_revocations()
     with _revoked_lock:
-        _revoked_tokens[_token_fingerprint(token)] = time.time() + float(base.AUTH_REMEMBER_SECONDS)
+        _revoked_tokens[fingerprint] = time.time() + ttl
+    # RuntimeStore cache is SQLite/WAL backed, so logout remains effective after
+    # a service restart. The in-memory map above is an immediate fallback if the
+    # durable store is temporarily unavailable during shutdown/recovery.
+    try:
+        runtime.STORE.cache_set(_REVOCATION_NAMESPACE, fingerprint, True, ttl_seconds=ttl)
+    except Exception:
+        pass
 
 
 def _token_revoked(token: str) -> bool:
     if not token:
         return False
+    fingerprint = _token_fingerprint(token)
     _prune_revocations()
     with _revoked_lock:
-        return _token_fingerprint(token) in _revoked_tokens
+        if fingerprint in _revoked_tokens:
+            return True
+    try:
+        return bool(runtime.STORE.cache_get(_REVOCATION_NAMESPACE, fingerprint))
+    except Exception:
+        return False
 
 
 class Handler(rag.Handler, features.Handler):
@@ -283,8 +300,6 @@ class Handler(rag.Handler, features.Handler):
         if runtime_v3_ext.handle_post(self, parsed, runtime, runtime_v3, features):
             return
         if runtime_v3.handle_post(self, parsed, runtime, features):
-            return
-        if runtime.handle_post(self, parsed, features):
             return
         if control.handle_post(self, parsed):
             return
