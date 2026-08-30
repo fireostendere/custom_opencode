@@ -1,66 +1,74 @@
 /**
  * Self-contained limits helper for the OpenCode TUI.
  *
- * Queries `codex` (ChatGPT) and `bl` (Alibaba Cloud) CLI tools directly
- * — no Python dependency.  Results are cached for 60 seconds.
+ * Queries `codex` (ChatGPT) and `bl` (Alibaba Cloud) directly, keeps one
+ * single-flight refresh for every TUI consumer, and owns the periodic timer
+ * through reference counting so unloading one panel cannot stop another.
  */
-import { spawn, execSync } from "node:child_process"
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+import { accessSync, constants as fsConstants } from "node:fs"
+import { delimiter, join } from "node:path"
+import { spawn } from "node:child_process"
 
 const QWEN_FIVE_HOUR_LIMIT = 12_000
 const QWEN_SEVEN_DAY_LIMIT = 40_000
-const CACHE_TTL = 60_000 // 1 minute
-const REFRESH_INTERVAL = 120_000 // 2 minutes
+const CACHE_TTL = 60_000
+const REFRESH_INTERVAL = 120_000
+const COMMAND_TIMEOUT_MS = Math.max(
+  500,
+  Math.min(30_000, Number(process.env.OPENCODE_TUI_LIMITS_COMMAND_TIMEOUT_MS || 10_000) || 10_000),
+)
+const MAX_STDOUT_BYTES = 1_000_000
 
-// ---------------------------------------------------------------------------
-// Binary resolution
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve a binary path.  Checks the environment variable, then `which`.
- * @param {string} envName - e.g. "CODEX_BIN"
- * @param {string} exeName - e.g. "codex"
- * @returns {string | null}
- */
-function resolveBinary(envName, exeName) {
-  const fromEnv = process.env[envName]
-  if (fromEnv) return fromEnv
+function executable(path) {
+  if (!path) return false
   try {
-    return execSync(`which ${exeName}`, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim()
+    accessSync(path, fsConstants.X_OK)
+    return true
   } catch {
-    return null
+    return false
   }
 }
 
-// ---------------------------------------------------------------------------
-// Codex (ChatGPT) rate limits via JSON-RPC over stdin/stdout
-// ---------------------------------------------------------------------------
+/** Resolve a binary without invoking a shell. */
+function resolveBinary(envName, exeName) {
+  const fromEnv = process.env[envName]
+  if (fromEnv) return executable(fromEnv) ? fromEnv : null
+  for (const dir of String(process.env.PATH || "").split(delimiter)) {
+    if (!dir) continue
+    const candidate = join(dir, exeName)
+    if (executable(candidate)) return candidate
+  }
+  return null
+}
 
-/**
- * Read JSON-RPC responses from the child process, filtering by id.
- * Returns the `result` field of the matching response.
- * @param {import("node:child_process").ChildProcess} child
- * @param {number} expectedId
- * @param {number} timeout
- * @returns {Promise<object>}
- */
+function terminateChild(child) {
+  if (!child || child.exitCode != null || child.killed) return
+  try { child.kill("SIGTERM") } catch {}
+  const killer = setTimeout(() => {
+    if (child.exitCode == null) {
+      try { child.kill("SIGKILL") } catch {}
+    }
+  }, 500)
+  killer.unref?.()
+}
+
 function readJsonRpc(child, expectedId, timeout) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error("Timeout"))
-    }, timeout)
-
-    /** @type {string} */
+    let settled = false
     let buffer = ""
+    const finish = (fn, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      fn(value)
+    }
+    const timer = setTimeout(
+      () => finish(reject, new Error("Timeout")),
+      Math.min(timeout, COMMAND_TIMEOUT_MS),
+    )
+    timer.unref?.()
 
-    /** Process any complete lines currently in the buffer. */
-    function processBuffer() {
+    const processBuffer = () => {
       let idx = buffer.indexOf("\n")
       while (idx !== -1) {
         const line = buffer.slice(0, idx).trim()
@@ -68,107 +76,74 @@ function readJsonRpc(child, expectedId, timeout) {
         try {
           const parsed = JSON.parse(line)
           if (parsed.id === expectedId) {
-            clearTimeout(timer)
-            if (parsed.error) {
-              reject(new Error(parsed.error.message || "Codex RPC error"))
-            } else {
-              resolve(parsed.result !== undefined ? parsed.result : parsed)
-            }
+            if (parsed.error) finish(reject, new Error(parsed.error.message || "Codex RPC error"))
+            else finish(resolve, parsed.result !== undefined ? parsed.result : parsed)
             return
           }
-        } catch {
-          // Skip non-JSON or garbage lines.
-        }
+        } catch {}
         idx = buffer.indexOf("\n")
       }
     }
 
     child.stdout.on("data", (chunk) => {
+      if (settled) return
       buffer += chunk
+      if (buffer.length > MAX_STDOUT_BYTES) {
+        finish(reject, new Error("Codex response too large"))
+        return
+      }
       processBuffer()
     })
-
-    child.on("error", (err) => {
-      clearTimeout(timer)
-      reject(err)
-    })
-    child.on("close", (code) => {
-      clearTimeout(timer)
-      reject(new Error(`Codex exited ${code}`))
+    child.once("error", (error) => finish(reject, error))
+    child.once("close", (code) => {
+      if (!settled) finish(reject, new Error(`Codex exited ${code}`))
     })
   })
 }
 
-/**
- * Query codex app-server for rate limits.
- * @param {string} binary - path to the codex binary
- * @returns {Promise<object>}
- */
 async function queryCodex(binary) {
-  const child = spawn(binary, ["app-server"], {
-    stdio: ["pipe", "pipe", "ignore"],
-  })
-
+  const child = spawn(binary, ["app-server"], { stdio: ["pipe", "pipe", "ignore"] })
+  const watchdog = setTimeout(() => terminateChild(child), COMMAND_TIMEOUT_MS + 1000)
+  watchdog.unref?.()
   try {
-    // --- initialize ---------------------------------------------------------
-    child.stdin.write(
-      JSON.stringify({
-        method: "initialize",
-        id: 1,
-        params: {
-          clientInfo: {
-            name: "custom_opencode_tui",
-            title: "custom_opencode TUI limits",
-            version: "1",
-          },
+    child.stdin.write(JSON.stringify({
+      method: "initialize",
+      id: 1,
+      params: {
+        clientInfo: {
+          name: "custom_opencode_tui",
+          title: "custom_opencode TUI limits",
+          version: "1",
         },
-      }) + "\n",
-    )
+      },
+    }) + "\n")
     await readJsonRpc(child, 1, 5000)
-
-    // --- initialized notification ------------------------------------------
-    child.stdin.write(
-      JSON.stringify({ method: "initialized", params: {} }) + "\n",
-    )
-
-    // --- account/rateLimits/read -------------------------------------------
-    child.stdin.write(
-      JSON.stringify({
-        method: "account/rateLimits/read",
-        id: 2,
-        params: {},
-      }) + "\n",
-    )
-    const result = await readJsonRpc(child, 2, 10000)
+    child.stdin.write(JSON.stringify({ method: "initialized", params: {} }) + "\n")
+    child.stdin.write(JSON.stringify({
+      method: "account/rateLimits/read",
+      id: 2,
+      params: {},
+    }) + "\n")
+    const result = await readJsonRpc(child, 2, COMMAND_TIMEOUT_MS)
     return normalizeCodexResult(result)
-  } catch {
-    return { available: false, reason: "codex-rate-limits-unavailable" }
-  } finally {
-    try {
-      child.kill()
-    } catch {
-      // Already dead.
+  } catch (error) {
+    return {
+      available: false,
+      reason: error?.message === "Timeout" ? "codex-rate-limits-timeout" : "codex-rate-limits-unavailable",
     }
+  } finally {
+    clearTimeout(watchdog)
+    terminateChild(child)
   }
 }
 
-/**
- * Normalize the raw codex rate-limits response.
- * @param {object} result
- * @returns {object}
- */
 function normalizeCodexResult(result) {
-  if (!result || typeof result !== "object")
-    return { available: false, reason: "invalid-response" }
-
+  if (!result || typeof result !== "object") return { available: false, reason: "invalid-response" }
   const byId = result.rateLimitsByLimitId || {}
   let snapshot = byId.codex
-  if (!snapshot && Object.keys(byId).length > 0)
-    snapshot = Object.values(byId)[0]
+  if (!snapshot && Object.keys(byId).length > 0) snapshot = Object.values(byId)[0]
   if (!snapshot) snapshot = result.rateLimits
-  if (!snapshot || typeof snapshot !== "object")
-    return { available: false, reason: "no-rate-limit-snapshot" }
-
+  if (!snapshot || typeof snapshot !== "object") return { available: false, reason: "no-rate-limit-snapshot" }
   return {
     available: true,
     planType: snapshot.planType || undefined,
@@ -176,127 +151,91 @@ function normalizeCodexResult(result) {
     limitName: snapshot.limitName || "Codex",
     primary: normalizeWindow(snapshot.primary),
     secondary: normalizeWindow(snapshot.secondary),
-    credits: snapshot.credits ? snapshot.credits : undefined,
+    credits: snapshot.credits || undefined,
     rateLimitReachedType: snapshot.rateLimitReachedType || undefined,
     spendControlReached: snapshot.spendControlReached || undefined,
   }
 }
 
-/**
- * Normalize a rate-limit window object.
- * @param {object | undefined} window
- * @returns {object | null}
- */
 function normalizeWindow(window) {
-  if (!window || typeof window !== "object") return null
-  const used = window.usedPercent
-  if (typeof used !== "number") return null
-  const usedPercent = Math.min(100, Math.max(0, Math.round(used)))
+  if (!window || typeof window !== "object" || typeof window.usedPercent !== "number") return null
+  const usedPercent = Math.min(100, Math.max(0, Math.round(window.usedPercent)))
   return {
     usedPercent,
     remainingPercent: 100 - usedPercent,
-    windowDurationMins:
-      typeof window.windowDurationMins === "number"
-        ? window.windowDurationMins
-        : null,
+    windowDurationMins: typeof window.windowDurationMins === "number" ? window.windowDurationMins : null,
     resetsAt: typeof window.resetsAt === "number" ? window.resetsAt : null,
   }
 }
 
-// ---------------------------------------------------------------------------
-// Bailian (Alibaba Cloud) usage via `bl` CLI
-// ---------------------------------------------------------------------------
-
-/**
- * Query bailian CLI for token-plan usage.
- * @param {string} binary - path to the bl binary
- * @returns {Promise<object>}
- */
 async function queryBailian(binary) {
   return new Promise((resolve) => {
     const child = spawn(binary, ["usage", "token-plan", "--output", "json"], {
       stdio: ["ignore", "pipe", "ignore"],
     })
-
+    let settled = false
     let stdout = ""
-    child.stdout.on("data", (chunk) => (stdout += chunk))
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = setTimeout(() => {
+      terminateChild(child)
+      finish({ available: false, reason: "bailian-cli-timeout" })
+    }, COMMAND_TIMEOUT_MS)
+    timer.unref?.()
 
-    child.on("error", () => {
-      resolve({ available: false, reason: "bailian-cli-unavailable" })
+    child.stdout.on("data", (chunk) => {
+      if (settled) return
+      stdout += chunk
+      if (stdout.length > MAX_STDOUT_BYTES) {
+        terminateChild(child)
+        finish({ available: false, reason: "bailian-response-too-large" })
+      }
     })
-
-    child.on("close", (code) => {
+    child.once("error", () => finish({ available: false, reason: "bailian-cli-unavailable" }))
+    child.once("close", (code) => {
+      if (settled) return
       if (code !== 0) {
-        resolve({ available: false, reason: "bailian-cli-error" })
+        finish({ available: false, reason: "bailian-cli-error" })
         return
       }
       try {
         const payload = JSON.parse(stdout.trim())
         if (!payload || typeof payload !== "object") {
-          resolve({ available: false, reason: "invalid-response" })
+          finish({ available: false, reason: "invalid-response" })
           return
         }
-        resolve(normalizeBailianResult(payload))
+        finish(normalizeBailianResult(payload))
       } catch {
-        resolve({ available: false, reason: "invalid-json" })
+        finish({ available: false, reason: "invalid-json" })
       }
     })
   })
 }
 
-/**
- * Normalize the bailian token-plan usage response.
- * @param {object} payload
- * @returns {object}
- */
 function normalizeBailianResult(payload) {
-  const planName =
-    payload.planName ||
-    payload.tierName ||
-    payload.plan ||
-    payload.planType ||
-    "Token Plan Personal Pro"
-  const fiveHour = bailianWindow(
-    payload.per5HourPercentage,
-    payload.per5HourResetTime,
-    QWEN_FIVE_HOUR_LIMIT,
-    300,
-  )
-  const sevenDay = bailianWindow(
-    payload.per1WeekPercentage,
-    payload.per1WeekResetTime,
-    QWEN_SEVEN_DAY_LIMIT,
-    10_080,
-  )
-  if (!fiveHour && !sevenDay)
-    return { available: true, state: "unknown", planName }
+  const planName = payload.planName || payload.tierName || payload.plan || payload.planType || "Token Plan Personal Pro"
+  const fiveHour = bailianWindow(payload.per5HourPercentage, payload.per5HourResetTime, QWEN_FIVE_HOUR_LIMIT, 300)
+  const sevenDay = bailianWindow(payload.per1WeekPercentage, payload.per1WeekResetTime, QWEN_SEVEN_DAY_LIMIT, 10_080)
+  if (!fiveHour && !sevenDay) return { available: true, state: "unknown", planName }
   return {
     available: true,
     source: "bailian-cli",
     state: "ok",
     planName,
-    fiveHour:
-      fiveHour || { limit: QWEN_FIVE_HOUR_LIMIT, windowDurationMins: 300 },
-    sevenDay:
-      sevenDay || { limit: QWEN_SEVEN_DAY_LIMIT, windowDurationMins: 10_080 },
+    fiveHour: fiveHour || { limit: QWEN_FIVE_HOUR_LIMIT, windowDurationMins: 300 },
+    sevenDay: sevenDay || { limit: QWEN_SEVEN_DAY_LIMIT, windowDurationMins: 10_080 },
   }
 }
 
-/**
- * Build a bailian window object.
- * @param {number | undefined} ratio
- * @param {number | undefined} resetTimeMs - epoch milliseconds
- * @param {number} limit
- * @param {number} minutes
- * @returns {object | null}
- */
 function bailianWindow(ratio, resetTimeMs, limit, minutes) {
   if (typeof ratio !== "number") return null
   const usedRatio = Math.min(1, Math.max(0, ratio))
-  const usedPercent = Math.round(usedRatio * 1000) / 10 // 1 decimal
+  const usedPercent = Math.round(usedRatio * 1000) / 10
   const remainingPercent = Math.round((1 - usedRatio) * 1000) / 10
-  let resetsAt = null
-  if (typeof resetTimeMs === "number") resetsAt = Math.round(resetTimeMs / 1000)
   return {
     limit,
     usedCredits: Math.round(limit * usedRatio),
@@ -304,49 +243,21 @@ function bailianWindow(ratio, resetTimeMs, limit, minutes) {
     usedPercent,
     remainingPercent,
     windowDurationMins: minutes,
-    resetsAt,
+    resetsAt: typeof resetTimeMs === "number" ? Math.round(resetTimeMs / 1000) : null,
   }
 }
 
-// ---------------------------------------------------------------------------
-// Alibaba "Night Plan" promo (ночная скидка −50%)
-// ---------------------------------------------------------------------------
-
-/** Beijing is UTC+8 year-round (no DST). */
 const BEIJING_OFFSET_MS = 8 * 3600 * 1000
-/** Promo window: 22:00 → 08:00 Beijing time, minutes of day. */
 const NIGHT_START_MIN = 22 * 60
 const NIGHT_END_MIN = 8 * 60
 
-/**
- * Status of the Alibaba "Night Plan" promo: every day 22:00–08:00 Beijing
- * time, Credits consumption for the listed models is charged at 50%.
- *
- * There is no API that exposes the promo state — billing decides it by the
- * request submission time in Beijing time, so the status is computed
- * deterministically from the clock.
- * @param {number} [nowMs]
- * @returns {{
- *   active: boolean,
- *   discount: number,
- *   minutesToToggle: number,
- *   togglesAtMs: number,
- *   models: string[],
- * }}
- */
 export function getNightPromoStatus(nowMs = Date.now()) {
   const bj = new Date(nowMs + BEIJING_OFFSET_MS)
   const minOfDay = bj.getUTCHours() * 60 + bj.getUTCMinutes()
   const active = minOfDay >= NIGHT_START_MIN || minOfDay < NIGHT_END_MIN
-  let minutesToToggle
-  if (active) {
-    minutesToToggle =
-      minOfDay >= NIGHT_START_MIN
-        ? 24 * 60 - minOfDay + NIGHT_END_MIN // after 22:00 → until 08:00
-        : NIGHT_END_MIN - minOfDay // after midnight → until 08:00
-  } else {
-    minutesToToggle = NIGHT_START_MIN - minOfDay // daytime → until 22:00
-  }
+  const minutesToToggle = active
+    ? (minOfDay >= NIGHT_START_MIN ? 24 * 60 - minOfDay + NIGHT_END_MIN : NIGHT_END_MIN - minOfDay)
+    : NIGHT_START_MIN - minOfDay
   return {
     active,
     discount: 0.5,
@@ -356,93 +267,70 @@ export function getNightPromoStatus(nowMs = Date.now()) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Cache and public API
-// ---------------------------------------------------------------------------
-
-/** @type {{ codex: object, qwen: object }} */
 const EMPTY = { codex: { available: false }, qwen: { available: false } }
-
 let cache = { at: 0, data: EMPTY }
-let refreshTimer = /** @type {ReturnType<typeof setInterval> | null} */ (null)
-/** @type {Array<() => void>} */
-let listeners = []
-let refreshPending = /** @type {Promise<object> | null} */ (null)
+let refreshTimer = null
+let refreshOwners = 0
+let refreshPending = null
+const listeners = new Set()
 
-/**
- * Spawn the CLI tools, parse their output, and update the cache.
- * @returns {Promise<object>}
- */
 async function refresh() {
   const codexBin = resolveBinary("CODEX_BIN", "codex")
   const blBin = resolveBinary("BAILIAN_CLI_BIN", "bl")
-
   const [codex, qwen] = await Promise.all([
-    codexBin
-      ? queryCodex(codexBin)
-      : { available: false, reason: "codex-not-found" },
-    blBin
-      ? queryBailian(blBin)
-      : { available: false, reason: "bailian-cli-not-found" },
+    codexBin ? queryCodex(codexBin) : { available: false, reason: "codex-not-found" },
+    blBin ? queryBailian(blBin) : { available: false, reason: "bailian-cli-not-found" },
   ])
-
   const data = { codex, qwen }
   cache = { at: Date.now(), data }
-  listeners.forEach((fn) => fn())
+  for (const listener of [...listeners]) {
+    try { listener() } catch {}
+  }
   return data
 }
 
-/**
- * Return the latest cached limits, refreshing if the TTL has expired.
- * @returns {Promise<object>}
- */
-export async function getLimits() {
-  if (Date.now() - cache.at < CACHE_TTL) return cache.data
+function requestRefresh(force = false) {
+  if (!force && Date.now() - cache.at < CACHE_TTL) return Promise.resolve(cache.data)
   if (refreshPending) return refreshPending
-  refreshPending = refresh().finally(() => {
-    refreshPending = null
-  })
+  refreshPending = refresh().finally(() => { refreshPending = null })
   return refreshPending
 }
 
-/**
- * Synchronous snapshot of the cache (for initial render).
- * @returns {object}
- */
+export async function getLimits() {
+  return requestRefresh(false)
+}
+
 export function getLimitsSync() {
   return cache.data
 }
 
-/**
- * Register a callback that fires when the limits cache changes.
- * Returns an unsubscribe function.
- * @param {() => void} fn
- * @returns {() => void}
- */
 export function onLimitsChange(fn) {
-  listeners.push(fn)
-  return () => {
-    listeners = listeners.filter((f) => f !== fn)
-  }
+  listeners.add(fn)
+  return () => listeners.delete(fn)
 }
 
-/**
- * Start periodic background refresh.  Safe to call multiple times.
- */
 export function startAutoRefresh() {
+  refreshOwners += 1
   if (refreshTimer) return
   refreshTimer = setInterval(() => {
-    refresh().catch(() => {})
+    requestRefresh(true).catch(() => {})
   }, REFRESH_INTERVAL)
   refreshTimer.unref?.()
 }
 
-/**
- * Stop the background refresh timer.
- */
 export function stopAutoRefresh() {
-  if (refreshTimer) {
-    clearInterval(refreshTimer)
-    refreshTimer = null
+  refreshOwners = Math.max(0, refreshOwners - 1)
+  if (refreshOwners > 0 || !refreshTimer) return
+  clearInterval(refreshTimer)
+  refreshTimer = null
+}
+
+/** Small diagnostic surface used by regression tests and the doctor. */
+export function getAutoRefreshState() {
+  return {
+    owners: refreshOwners,
+    active: Boolean(refreshTimer),
+    pending: Boolean(refreshPending),
+    timeoutMs: COMMAND_TIMEOUT_MS,
   }
 }
