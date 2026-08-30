@@ -7,10 +7,13 @@ or changing standalone storage tooling:
 - dependencies must reference existing tasks;
 - dependency updates cannot introduce cycles;
 - task states follow the runtime's explicit lifecycle rather than accepting an
-  arbitrary valid-state jump.
+  arbitrary valid-state jump;
+- invariant check + mutation is serialized inside the web-server process so
+  concurrent worker/control requests cannot race past the checks.
 """
 from __future__ import annotations
 
+import threading
 from typing import Any, Iterable
 
 
@@ -77,31 +80,36 @@ def install(store: Any) -> None:
     original_create = store.create_task
     original_update = store.update_task
     original_transition = store.transition
+    invariant_lock = threading.RLock()
 
     def create_task(*, dependencies=(), task_id=None, **kwargs):
-        deps = _unique_dependencies(dependencies, str(task_id) if task_id else None)
-        _validate_existing(store, deps)
-        return original_create(dependencies=deps, task_id=task_id, **kwargs)
+        with invariant_lock:
+            deps = _unique_dependencies(dependencies, str(task_id) if task_id else None)
+            _validate_existing(store, deps)
+            return original_create(dependencies=deps, task_id=task_id, **kwargs)
 
     def update_task(task_id: str, *, dependencies=None, **kwargs):
-        if dependencies is None:
-            return original_update(task_id, dependencies=None, **kwargs)
-        deps = _unique_dependencies(dependencies, task_id)
-        _validate_existing(store, deps)
-        _validate_cycle(store, task_id, deps)
-        return original_update(task_id, dependencies=deps, **kwargs)
+        with invariant_lock:
+            if dependencies is None:
+                return original_update(task_id, dependencies=None, **kwargs)
+            deps = _unique_dependencies(dependencies, task_id)
+            _validate_existing(store, deps)
+            _validate_cycle(store, task_id, deps)
+            return original_update(task_id, dependencies=deps, **kwargs)
 
     def transition(task_id: str, state: str, **kwargs):
-        task = store.get_task(task_id)
-        if task is None:
-            raise KeyError(task_id)
-        current = str(task.get("state") or "")
-        target = str(state)
-        if current != target and target not in ALLOWED_TRANSITIONS.get(current, set()):
-            raise ValueError(f"invalid task transition: {current} -> {target}")
-        return original_transition(task_id, target, **kwargs)
+        with invariant_lock:
+            task = store.get_task(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            current = str(task.get("state") or "")
+            target = str(state)
+            if current != target and target not in ALLOWED_TRANSITIONS.get(current, set()):
+                raise ValueError(f"invalid task transition: {current} -> {target}")
+            return original_transition(task_id, target, **kwargs)
 
     store.create_task = create_task
     store.update_task = update_task
     store.transition = transition
     store._workflow_invariants_installed = True
+    store._workflow_invariant_lock = invariant_lock
