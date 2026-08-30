@@ -74,10 +74,13 @@ if [[ "$SELFTEST" != 0 ]]; then
     "$ROOT/scripts/install-runtime-v3-selftest.py" \
     "$ROOT/scripts/rag-live-regression.py" \
     "$ROOT/scripts/runtime-invariants-smoke.py" \
+    "$ROOT/scripts/model-routing-effort-smoke.py" \
     "$ROOT/scripts/pin-orchestrated-recent.py" \
-    "$ROOT/app/runtime_invariants.py"
+    "$ROOT/app/runtime_invariants.py" \
+    "$ROOT/app/model_registry.py"
   "$ROOT/scripts/verify.sh"
   "$ROOT/scripts/verify-runtime-v3.sh"
+  "$PYTHON3" "$ROOT/scripts/model-routing-effort-smoke.py"
 fi
 
 install -d "$UNIT_DIR" "$BIN_DIR" "$SCRATCH_DIR" "$(dirname "$AUTH_FILE")"
@@ -201,6 +204,9 @@ if command -v opencode2 >/dev/null 2>&1; then
     QWEN_QUOTA_PROBE_ENABLED OPENCODE_WEB_PORT OPENCODE_SERVER_PASSWORD
     OPENCODE_RUNTIME_PLUGIN_TOKEN OPENCODE_RUNTIME_PLUGIN_HOST
     OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS OPENCODE_SECRET_PREFIXES
+    OPENCODE_PLANNER_MODEL OPENCODE_BUILDER_MODEL OPENCODE_READER_MODEL
+    OPENCODE_REVIEW_MODEL OPENCODE_LONG_HORIZON_MODEL
+    OPENCODE_CLOUD_CODER_MODEL OPENCODE_FAST_MODEL
   )
   for name in "${SERVICE_ENV[@]}"; do
     value=${!name:-}
@@ -222,6 +228,7 @@ if [[ "$SELFTEST" != 0 ]]; then
   "$PYTHON3" "$ROOT/scripts/install-selftest.py" "${SELFTEST_ARGS[@]}"
   "$PYTHON3" "$ROOT/scripts/install-runtime-v3-selftest.py"
   "$PYTHON3" "$ROOT/scripts/runtime-invariants-smoke.py"
+  "$PYTHON3" "$ROOT/scripts/model-routing-effort-smoke.py"
   if [[ "$RAG_DISABLED" == false ]]; then
     echo "==> Live RAG retrieval regression (zero LLM tokens)"
     "$PYTHON3" "$ROOT/scripts/rag-live-regression.py"
