@@ -21,12 +21,12 @@ with tempfile.TemporaryDirectory() as temp:
     os.environ["MCP_SMOKE_TOKEN"]="never-serialize-this"
     os.environ["OPENCODE_LOOP_LIMIT"]="3"
     os.environ["OPENCODE_TOOL_ARTIFACT_THRESHOLD"]="256"
-    os.environ["OPENCODE_RESOURCE_SCHEDULER"]="auto"
 
+    from model_registry import CapabilityRegistry,ResourceScheduler
     from runtime_store import RuntimeStore
     from repo_services import ArtifactStore,ContextService,RepoIndexer,git_snapshot
     from runtime_v3 import (
-        AdaptiveResourceScheduler,BranchStateService,DynamicContextManager,ReplayService,
+        BranchStateService,DynamicContextManager,ReplayService,
         SandboxManager,ScopedSecretBroker,SemanticRepoIndexer,SharedRAGService,ToolGateway,
     )
 
@@ -95,21 +95,17 @@ with tempfile.TemporaryDirectory() as temp:
             assert attempt==2; break
     else: raise AssertionError("loop detector did not block repeated mutation")
 
-    class FakeRegistry:
-        def models(self):
-            return [
-                {"ref":"ollama/local","tools":True,"coding":.82,"planning":.7,"review":.7,"costClass":"local"},
-                {"ref":"bailian-cli/qwen3.8-max","tools":True,"coding":.93,"planning":.95,"review":.95,"costClass":"premium"},
-                {"ref":"bailian-cli/qwen3.6-flash","tools":True,"coding":.76,"planning":.72,"review":.7,"fastPath":True,"costClass":"cheap"},
-            ]
-    store.add_usage(task_id="t1",model_ref="bailian-cli/qwen3.8-max",stage="implementation",latency_ms=2000,success=True)
-    scheduler=AdaptiveResourceScheduler(FakeRegistry(),store)
-    scheduler.game_state=lambda:(False,[]); scheduler.pressure=lambda:(False,.1); scheduler.local_available=lambda force=False:True; scheduler.gpu_snapshot=lambda:{"utilization":10.,"vramPercent":20.,"pressureHigh":False}
-    decision=scheduler.decide({"id":"coder","route":"auto","localModel":"ollama/local","cloudModel":"bailian-cli/qwen3.8-max","requires":{"tools":True,"coding":.75}})
-    assert decision.selected_model in {"ollama/local","bailian-cli/qwen3.8-max"}
-    scheduler.gpu_snapshot=lambda:{"utilization":99.,"vramPercent":95.,"pressureHigh":True}
-    constrained=scheduler.decide({"id":"coder-gpu","route":"auto","localModel":"ollama/local","cloudModel":"bailian-cli/qwen3.8-max","requires":{"tools":True,"coding":.75}})
-    assert constrained.selected_model and not constrained.selected_model.startswith("ollama/")
+    registry=CapabilityRegistry([
+        {"providerID":"bailian-cli","id":"qwen3.8-max","name":"Qwen3.8 Max","capabilities":{"tools":True,"input":["text","image"]},"limit":{"context":983616}},
+        {"providerID":"bailian-cli","id":"qwen3.7-plus","name":"Qwen3.7 Plus","capabilities":{"tools":True,"input":["text","image"]},"limit":{"context":1000000}},
+        {"providerID":"bailian-cli","id":"qwen3.8-flash","name":"Qwen3.8 Flash","capabilities":{"tools":True,"input":["text","image"]},"limit":{"context":983616}},
+        {"providerID":"bailian-cli","id":"deepseek-v4-pro-0813","name":"DeepSeek V4 Pro 0813","capabilities":{"tools":True,"input":["text"]},"limit":{"context":262144}},
+        {"providerID":"bailian-cli","id":"glm-5.2","name":"GLM-5.2","capabilities":{"tools":True,"input":["text"]},"limit":{"context":262144}},
+    ])
+    profiles=registry.profiles(); scheduler=ResourceScheduler()
+    assert scheduler.decide(profiles["build"]).selected_model=="bailian-cli/qwen3.7-plus"
+    assert scheduler.decide(profiles["fast"]).selected_model=="bailian-cli/qwen3.8-flash"
+    assert scheduler.decide(profiles["direct"],selected_model="openai/example").selected_model=="openai/example"
 
     class FakeFeatures:
         def __init__(self): self.calls=[]; self.forks=0
@@ -137,7 +133,7 @@ with tempfile.TemporaryDirectory() as temp:
     legacy_index=RepoIndexer(store); legacy_context=ContextService(store,legacy_index)
     rag=SharedRAGService(store); manager=DynamicContextManager(store,indexer,rag)
     runtime_stub=SimpleNamespace(REGISTRY=SimpleNamespace(
-        profiles=lambda:{"direct":{"contextBudget":32000}},
+        profiles=lambda:{"direct":{"contextPolicy":{"mode":"model-aware","targetRatio":.72}}},
         get=lambda ref:{"context":64000} if ref else None,
     ),CONTEXT=legacy_context)
     context=manager.envelope(fake,runtime_stub,"s1","run tests",rag_mode="off")
@@ -159,4 +155,4 @@ with tempfile.TemporaryDirectory() as temp:
     merged=branches.merge(fake,"source-session","target-session")
     assert merged["ok"] and merged["sourceTasks"]>=1
 
-print("Runtime V3 smoke passed: AST/embeddings/diff + sandbox/broker/gateway + adaptive scheduler + compaction + replay/branching")
+print("Runtime V3 smoke passed: AST/embeddings/diff + sandbox/broker/gateway + provider-pinned routing + compaction + replay/branching")
