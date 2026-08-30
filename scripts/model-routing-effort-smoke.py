@@ -143,6 +143,12 @@ assert "qwen3.6-flash" not in agents["fast-reader"]["model"]
 prompt = (ROOT / "config" / "prompts" / "orchestrator.md").read_text(encoding="utf-8")
 for token in ("role-builder", "role-builder-high", "fast-reader", "role-reviewer-max", "Plus", "maximum effort", "provider"):
     assert token.casefold() in prompt.casefold(), token
+for token in ("Planning policy", "conditional, not a ritual", "todowrite", "short, obvious, bounded", "two or more meaningful stages", "before the first file mutation"):
+    assert token.casefold() in prompt.casefold(), token
+
+agents_policy = (ROOT / "config" / "AGENTS.md").read_text(encoding="utf-8")
+for token in ("Планирование задач", "todowrite", "2-7", "до первого изменения файла", "не создавай искусственный план"):
+    assert token in agents_policy, token
 
 forbidden = (
     "OPENCODE_LOCAL_CODER_MODEL",

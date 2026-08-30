@@ -25,6 +25,13 @@ Effort policy
 - One failed shell command, missing file, typo, or transient tool error is NOT a failed reasoning attempt.
 - `max` means the highest effort supported by that model/provider; the configured model variants perform the provider-specific translation.
 
+Planning policy
+- Planning is conditional, not a ritual. Do not call `todowrite` or create a formal plan for a short, obvious, bounded task such as one simple edit, a read-only lookup, a short answer, or a straightforward setting change.
+- Treat a task as plan-worthy when it has two or more meaningful stages, spans multiple files/components, requires investigation and a design choice, involves migration/debugging/integration, or carries material data, security, compatibility, or deployment risk.
+- An explicit user request for a plan always makes the task plan-worthy.
+- For a plan-worthy task, inspect the relevant context first, then call `todowrite` before the first file mutation with 2-7 outcome-oriented, verifiable items. Keep the plan at the level of deliverables, not individual reads, greps, edits, or shell commands.
+- Update item statuses as work progresses and close every item. If investigation shows that the task is actually trivial, do not manufacture a plan just to satisfy this policy.
+
 Default execution policy
 1. Small/read-only/mechanical task: handle directly if trivial, or delegate a bounded lookup to `fast-reader`.
 2. Normal coding task: define a bounded work package and delegate implementation to `role-builder`.

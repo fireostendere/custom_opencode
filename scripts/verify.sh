@@ -171,6 +171,7 @@ local_router_js = (root / "config/plugins/lazy-local-router.js").read_text(encod
 orchestrated_plugin_js = (root / "config/plugins/orchestrated-qwen.js").read_text(encoding="utf-8")
 service = (root / "systemd/opencode-web-client.service").read_text(encoding="utf-8")
 orchestrator = (root / "config/prompts/orchestrator.md").read_text(encoding="utf-8")
+agents_policy = (root / "config/AGENTS.md").read_text(encoding="utf-8")
 
 feature_markers = {
     "markdown/code UI": "renderMarkdown",
@@ -218,6 +219,12 @@ if 'OPENCODE_LOCAL_PROVIDER || "ollama"' not in local_router_js or "OPENCODE_LOC
 for token in ("qwen3.8-max", "qwen3.8-flash#low", "qwen3.7-plus#medium", "deepseek-v4-pro-0813#high", "glm-5.2", "RAG policy"):
     if token not in orchestrator:
         bad.append(f"orchestrator must keep the provider-pinned role stack / RAG policy token: {token}")
+for token in ("Planning policy", "conditional, not a ritual", "todowrite", "short, obvious, bounded", "two or more meaningful stages", "before the first file mutation"):
+    if token not in orchestrator:
+        bad.append(f"orchestrator must keep conditional todo planning: {token}")
+for token in ("Планирование задач", "todowrite", "2-7", "до первого изменения файла", "не создавай искусственный план"):
+    if token not in agents_policy:
+        bad.append(f"global agent policy must keep conditional todo planning: {token}")
 for marker in ('Plugin.define({', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy'):
     if marker not in orchestrated_plugin_js:
         bad.append(f"orchestrated Qwen plugin marker missing: {marker}")
