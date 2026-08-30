@@ -9,12 +9,19 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
+
+
+def _search_payload(value: object) -> dict[str, object] | None:
+    """Normalize direct FastMCP dicts and compatibility result wrappers."""
+    if not isinstance(value, dict):
+        return None
+    nested = value.get("result")
+    return nested if isinstance(nested, dict) else value
 
 
 def main() -> int:
@@ -47,8 +54,11 @@ def main() -> int:
     probe = server_rag.plus._run_rag_probe("search", args.query)
     required = {"knowledge_search", "knowledge_get", "knowledge_sources", "knowledge_status"}
     tools = set(probe.get("tools") or []) if isinstance(probe, dict) else set()
-    search = probe.get("search") if isinstance(probe, dict) else None
-    search_ready = search not in (None, "", [], {})
+    raw_search = probe.get("search") if isinstance(probe, dict) else None
+    search = _search_payload(raw_search)
+    hits = search.get("hits") if isinstance(search, dict) else None
+    search_error = search.get("error") if isinstance(search, dict) else "invalid search response"
+    search_ready = not search_error and isinstance(hits, list) and len(hits) > 0
     ok = bool(probe.get("ok") and required.issubset(tools) and search_ready)
 
     output = {
@@ -58,7 +68,9 @@ def main() -> int:
         "runtime": result.get("runtime"),
         "mcp": result.get("mcp"),
         "protocol": result.get("protocol"),
-        "search": search,
+        "search": raw_search,
+        "searchHitCount": len(hits) if isinstance(hits, list) else 0,
+        "searchError": search_error,
         "tools": sorted(tools),
     }
     if args.json:
