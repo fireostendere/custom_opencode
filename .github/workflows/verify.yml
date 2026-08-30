@@ -32,6 +32,9 @@ jobs:
       - name: Runtime V3 architecture verifier
         run: bash scripts/verify-runtime-v3.sh
 
+      - name: Runtime workflow invariants
+        run: python3 scripts/runtime-invariants-smoke.py
+
       - name: Fresh install and update regression
         run: bash scripts/install-regression.sh
 
