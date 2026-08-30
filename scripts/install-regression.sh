@@ -17,7 +17,7 @@ OPENCODE_SERVER_USERNAME=opencode
 OPENCODE_SERVER_PASSWORD=test
 OPENCODE_WEB_HOST=localhost
 OPENCODE_WEB_PORT=4098
-OPENCODE_WEB_ALLOW_LOCAL=1
+OPENCODE_WEB_ALLOW_LOCAL=0
 OPENCODE_SCRATCH_DIRECTORY=$HOME_DIR/scratch
 OPENCODE_PROJECT_ROOTS=$TMP/projects
 CUSTOM_OPENCODE_FEATURE_STATE=$HOME_DIR/.local/state/custom-opencode/web-features.json
@@ -50,6 +50,14 @@ exit 0
 EOF
 chmod +x "$FAKE_BIN/systemctl"
 
+# Seed files left by older TUI revisions. A fresh install/update must remove
+# renamed top-level copies instead of allowing the loader to discover both.
+mkdir -p "$HOME_DIR/.config/opencode/plugins/tui"
+printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-header.js"
+printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-panels.js"
+printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/model-selector.js"
+printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-helper.js"
+
 # Fresh install: no real OpenCode service, model call or systemd user manager.
 CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
   bash "$COPY/scripts/install.sh" >"$TMP/install.out"
@@ -59,6 +67,7 @@ SERVICE="$HOME_DIR/.config/systemd/user/opencode-web-client.service"
 WRAPPER="$HOME_DIR/.local/bin/custom-opencode"
 UPDATER="$HOME_DIR/.local/bin/custom-opencode-update"
 RUNTIME_GUARD="$HOME_DIR/.config/opencode/plugins/server-runtime-guard.js"
+TUI_DIR="$HOME_DIR/.config/opencode/plugins/tui"
 [[ -f "$CONFIG" ]] || { echo "fresh install did not render config" >&2; exit 1; }
 [[ -f "$SERVICE" ]] || { echo "fresh install did not render systemd unit" >&2; exit 1; }
 [[ -x "$WRAPPER" ]] || { echo "fresh install did not create executable wrapper" >&2; exit 1; }
@@ -67,6 +76,23 @@ RUNTIME_GUARD="$HOME_DIR/.config/opencode/plugins/server-runtime-guard.js"
 grep -Fq "$COPY/app/server_workflow.py" "$SERVICE"
 grep -Fq 'systemctl --user enable --now opencode-web-client.service' "$LOG"
 grep -Fq 'systemctl --user restart opencode-web-client.service' "$LOG"
+
+for stale in limits-header.js limits-panels.js model-selector.js limits-helper.js; do
+  [[ ! -e "$TUI_DIR/$stale" ]] || { echo "stale TUI plugin survived install: $stale" >&2; exit 1; }
+done
+python3 - "$COPY/config/plugins/tui" "$TUI_DIR" <<'PY'
+from pathlib import Path
+import sys
+source,target=map(Path,sys.argv[1:])
+def files(root):
+    return sorted(str(path.relative_to(root)) for path in root.rglob('*') if path.is_file())
+expected=files(source)
+actual=files(target)
+assert actual == expected, (expected,actual)
+for rel in expected:
+    assert (source/rel).read_bytes() == (target/rel).read_bytes(), rel
+print('TUI install tree matches source exactly:', ', '.join(expected))
+PY
 
 python3 - "$CONFIG" "$COPY" <<'PY'
 import json, sys
@@ -115,7 +141,7 @@ grep -Fxq 'git merge --ff-only FETCH_HEAD' "$LOG"
 grep -Fq 'systemctl --user restart opencode-web-client.service' "$LOG"
 grep -Fq 'Updated from origin/main' "$TMP/update.out"
 
-# The update must preserve the V3 render and plugin installation path.
+# The update must preserve the V3 render and exact TUI installation path.
 python3 - "$CONFIG" <<'PY'
 import json,sys
 config=json.load(open(sys.argv[1],encoding='utf-8'))
@@ -124,5 +150,13 @@ assert config['compaction']['auto'] is True
 assert config['tool_output']['max_bytes'] == 48000
 PY
 [[ -f "$RUNTIME_GUARD" ]]
+python3 - "$COPY/config/plugins/tui" "$TUI_DIR" <<'PY'
+from pathlib import Path
+import sys
+source,target=map(Path,sys.argv[1:])
+def files(root): return sorted(str(path.relative_to(root)) for path in root.rglob('*') if path.is_file())
+assert files(source) == files(target)
+for rel in files(source): assert (source/rel).read_bytes() == (target/rel).read_bytes(), rel
+PY
 
-echo "Install/update regression passed: isolated V3 render + Code Mode/compaction + pinned origin/main updater + service restart"
+echo "Install/update regression passed: isolated V3 render + exact TUI tree + Code Mode/compaction + pinned origin/main updater"
