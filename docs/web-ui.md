@@ -10,9 +10,11 @@ Web-клиент больше не использует browser-native Basic Aut
 - `SameSite=Strict` включён всегда;
 - `Secure` определяется автоматически по `X-Forwarded-Proto`/`Forwarded` либо задаётся явно;
 - изменение web password инвалидирует старые session cookies, потому что ключ подписи производен от текущего credential;
-- `Выйти` очищает cookie и auth-sensitive cache.
+- `Выйти` очищает cookie, auth-sensitive cache и отзывает текущий token на время жизни server process.
 
 Переключатель `Запомнить вход` сохраняет только пользовательское предпочтение и имя пользователя в localStorage. Долгоживущая cookie по умолчанию действует 30 дней; обычная session cookie имеет серверный TTL 24 часа и не получает `Max-Age`.
+
+Неудачные попытки входа имеют bounded server-side throttle. Это не заменяет firewall/Tailscale ACL, но не позволяет бесконечно параллельно перебирать web credential через один client identity.
 
 Если сессия истекла во время работы, клиент запоминает полный текущий route, включая `#/session/...`, открывает login и после успешного входа возвращает пользователя в тот же диалог.
 
@@ -20,7 +22,17 @@ Legacy Basic Auth можно включить только для старых �
 
 ## Локальный bypass
 
-При `OPENCODE_WEB_ALLOW_LOCAL=1` loopback-клиент может работать без login cookie. В sidebar такой доступ помечается как локальный, а кнопка logout скрывается.
+Default — `OPENCODE_WEB_ALLOW_LOCAL=0`: даже прямой loopback требует login cookie.
+
+Если `OPENCODE_WEB_ALLOW_LOCAL=1` включён вручную, passwordless bypass действует только для **прямого** localhost-запроса, где одновременно:
+
+- TCP peer loopback;
+- `Host` указывает на loopback/localhost;
+- отсутствуют `Forwarded`, `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`.
+
+Это принципиально важно для topology `телефон → Tailscale/Caddy/nginx → 127.0.0.1:4098`: локальный reverse proxy сам подключается с loopback, но его удалённый пользователь **не** получает localhost bypass и обязан пройти обычный login.
+
+Для любого LAN/tailnet/reverse-proxy deployment оставляйте `OPENCODE_WEB_ALLOW_LOCAL=0`.
 
 ## Настройки оформления
 
@@ -60,15 +72,31 @@ UI использует короткие transition/animation только дл�
 - закрывается тапом по затемнённой области или любым кликом вне drawer;
 - выбор session корректно потребляет synthetic history entry, поэтому лишний Back после навигации не нужен.
 
-## Минимальные E2E
+## Web regression
 
-Два коротких Playwright-сценария проверяют desktop model picker и mobile permission banner:
+Репозиторий содержит два уровня browser regression.
+
+Короткие live-сценарии для уже запущенного пользовательского инстанса:
 
 ```bash
 python3 scripts/web-e2e.py
+python3 scripts/browser-smoke.py
+python3 scripts/live-web-smoke.py
 ```
 
-URL можно переопределить через `OPENCODE_E2E_URL`. Логин берётся из `.env` или переменных `OPENCODE_SERVER_USERNAME` и `OPENCODE_SERVER_PASSWORD`. Ответ permission в тесте перехватывается браузером и не отправляется реальному OpenCode.
+Они используют URL/credential из `.env`; permission response в `web-e2e.py` перехватывается браузером и не отправляется реальному OpenCode.
+
+Для CI используется изолированный deterministic fixture:
+
+```bash
+python3 scripts/web-security-smoke.py
+python3 scripts/queue-badge-convergence.py
+python3 scripts/web-fixture-e2e.py
+```
+
+`web-fixture-e2e.py` запускает настоящий production `server_workflow.Handler` и настоящий JS/CSS UI против маленького in-process V2 fixture backend. Он не вызывает модель, не тратит токены и проверяет desktop/mobile login, session navigation, model picker, permission lifecycle, composer, appearance и mobile drawer.
+
+`web-security-smoke.py` отдельно фиксирует regression на reverse-proxy localhost bypass, replay cookie после logout и login throttle.
 
 ## Лимиты и диалоги
 
