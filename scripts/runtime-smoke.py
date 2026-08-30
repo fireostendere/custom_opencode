@@ -15,9 +15,6 @@ with tempfile.TemporaryDirectory() as temp:
     temp_root = Path(temp)
     runtime_db = temp_root / "state" / "runtime.sqlite3"
     os.environ["CUSTOM_OPENCODE_RUNTIME_DB"] = str(runtime_db)
-    os.environ["OPENCODE_PROCESS_SNAPSHOT"] = "steam.exe;game.exe"
-    os.environ["OPENCODE_GAME_PROCESSES"] = "game.exe"
-    os.environ["OPENCODE_RESOURCE_SCHEDULER"] = "auto"
     os.environ["MCP_SMOKE_TOKEN"] = "runtime-smoke-secret"
 
     from model_registry import CapabilityRegistry, ResourceScheduler
@@ -53,7 +50,7 @@ with tempfile.TemporaryDirectory() as temp:
         session_id="ses_first",
         project_dir=str(project),
         text="first",
-        profile="qwen3.8-coder",
+        profile="build",
         priority=5,
         baseline=baseline,
     )
@@ -89,10 +86,10 @@ with tempfile.TemporaryDirectory() as temp:
     assert mail["type"] == "finding"
     assert store.mailbox_receive(second["id"])[0]["payload"]["text"] == "shared finding"
 
-    store.add_usage(task_id=first["id"], model_ref="bailian-cli/qwen3.8-max", stage="implementation", input_tokens=120, output_tokens=30, latency_ms=250, success=True)
+    store.add_usage(task_id=first["id"], model_ref="bailian-cli/qwen3.7-plus", stage="implementation", input_tokens=120, output_tokens=30, latency_ms=250, success=True)
     usage = store.usage_summary(first["id"])
     assert usage["total"]["inputTokens"] == 120
-    assert store.model_stats("bailian-cli/qwen3.8-max")["samples"] >= 1
+    assert store.model_stats("bailian-cli/qwen3.7-plus")["samples"] >= 1
 
     catalog = [
         {
@@ -104,10 +101,31 @@ with tempfile.TemporaryDirectory() as temp:
         },
         {
             "providerID": "bailian-cli",
-            "id": "qwen3.6-flash",
-            "name": "Qwen3.6 Flash",
-            "capabilities": {"tools": True, "input": ["text"]},
+            "id": "qwen3.7-plus",
+            "name": "Qwen3.7 Plus",
+            "capabilities": {"tools": True, "input": ["text", "image"]},
+            "limit": {"context": 1000000},
+        },
+        {
+            "providerID": "bailian-cli",
+            "id": "qwen3.8-flash",
+            "name": "Qwen3.8 Flash",
+            "capabilities": {"tools": True, "input": ["text", "image"]},
             "limit": {"context": 983616},
+        },
+        {
+            "providerID": "bailian-cli",
+            "id": "deepseek-v4-pro-0813",
+            "name": "DeepSeek V4 Pro 0813",
+            "capabilities": {"tools": True, "input": ["text"]},
+            "limit": {"context": 262144},
+        },
+        {
+            "providerID": "bailian-cli",
+            "id": "glm-5.2",
+            "name": "GLM-5.2",
+            "capabilities": {"tools": True, "input": ["text"]},
+            "limit": {"context": 262144},
         },
     ]
     registry = CapabilityRegistry(catalog)
@@ -115,13 +133,14 @@ with tempfile.TemporaryDirectory() as temp:
     assert max_caps and max_caps["vision"] is True and max_caps["tools"] is True
     assert max_caps["contextClass"] == "huge" and max_caps["review"] >= 0.9
     profiles = registry.profiles()
-    assert {"qwen3.8-coder", "qwen3.8-orchestrated", "qwen3.8-review"}.issubset(profiles)
+    assert {"direct", "fast", "build", "architect", "critical", "research", "long-horizon"} == set(profiles)
 
     scheduler = ResourceScheduler()
-    scheduler.local_available = lambda force=False: True  # deterministic smoke, no network
-    constrained = scheduler.decide(profiles["qwen3.8-coder"])
-    assert constrained.game_detected is True
-    assert constrained.selected_model == profiles["qwen3.8-coder"]["cloudModel"]
+    build_route = scheduler.decide(profiles["build"])
+    assert build_route.mode == "provider-pinned"
+    assert build_route.selected_model == "bailian-cli/qwen3.7-plus"
+    fast_route = scheduler.decide(profiles["fast"])
+    assert fast_route.selected_model == "bailian-cli/qwen3.8-flash"
     direct = scheduler.decide(profiles["direct"], selected_model="manual/model")
     assert direct.selected_model == "manual/model"
 
@@ -164,8 +183,6 @@ with tempfile.TemporaryDirectory() as temp:
     assert broker.resolve("MCP_SMOKE_TOKEN", scope="test") == "runtime-smoke-secret"
     assert "runtime-smoke-secret" not in json.dumps(broker.snapshot())
 
-    # Worktree isolation is fail-closed: clean managed worktrees can be removed,
-    # dirty ones are deliberately refused by server_runtime._remove_worktree().
     server_runtime.STORE = store
     worktree_task_id = "t_worktree_smoke"
     worktree = server_runtime._create_worktree(str(project), worktree_task_id)
@@ -219,4 +236,4 @@ with tempfile.TemporaryDirectory() as temp:
     assert gateway["lazyCatalog"] is True
     assert gateway["detail"]["tools"] == ["kb_knowledge_get", "kb_knowledge_search"]
 
-print("Server runtime v2 smoke passed: durable tasks + profiles/scheduler + repo/context/artifacts + worktrees/speculation/MCP metadata")
+print("Server runtime v2 smoke passed: durable tasks + provider-pinned profiles + repo/context/artifacts + worktrees/speculation/MCP metadata")
