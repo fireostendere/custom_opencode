@@ -133,7 +133,7 @@ with tempfile.TemporaryDirectory() as temp:
     assert max_caps and max_caps["vision"] is True and max_caps["tools"] is True
     assert max_caps["contextClass"] == "huge" and max_caps["review"] >= 0.9
     profiles = registry.profiles()
-    assert {"direct", "fast", "build", "architect", "critical", "research", "long-horizon"} == set(profiles)
+    assert {"direct", "fast", "build", "architect", "critical", "review", "research", "long-horizon"} == set(profiles)
 
     scheduler = ResourceScheduler()
     build_route = scheduler.decide(profiles["build"])
@@ -141,6 +141,8 @@ with tempfile.TemporaryDirectory() as temp:
     assert build_route.selected_model == "bailian-cli/qwen3.7-plus"
     fast_route = scheduler.decide(profiles["fast"])
     assert fast_route.selected_model == "bailian-cli/qwen3.8-flash"
+    review_route = scheduler.decide(profiles["review"])
+    assert review_route.selected_model == "bailian-cli/deepseek-v4-pro-0813"
     direct = scheduler.decide(profiles["direct"], selected_model="manual/model")
     assert direct.selected_model == "manual/model"
 
