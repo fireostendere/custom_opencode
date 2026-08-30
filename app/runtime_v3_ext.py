@@ -147,7 +147,7 @@ def mcp_snapshot(runtime:Any,v3mod:Any,features:Any,directory:str)->dict[str,Any
 
 def handle_get(handler:Any,parsed:Any,runtime:Any,v3mod:Any,features:Any)->bool:
     if parsed.path not in {"/client-mcp-gateway-v3.json","/client-runtime-telemetry.json"}: return False
-    if not handler.authenticated(): return True
+    if not handler.authenticated(): handler.unauthorized(); return True
     params=parse_qs(parsed.query)
     try:
         sid=str((params.get("sessionID") or [""])[0]); directory=features._session_directory(sid) if sid else features._canonical_directory(str((params.get("directory") or [""])[0]))
@@ -163,7 +163,7 @@ def handle_get(handler:Any,parsed:Any,runtime:Any,v3mod:Any,features:Any)->bool:
 
 def handle_post(handler:Any,parsed:Any,runtime:Any,v3mod:Any,features:Any)->bool:
     if parsed.path not in {"/client-task-sandbox.json","/client-worktree-merge.json","/client-mailbox.json","/client-decision.json","/client-project-memory-v3.json"}: return False
-    if not handler.authenticated(): return True
+    if not handler.authenticated(): handler.unauthorized(); return True
     try:
         payload=handler._feature_body(); v3=v3mod.instance(runtime,features)
         if parsed.path=="/client-task-sandbox.json":

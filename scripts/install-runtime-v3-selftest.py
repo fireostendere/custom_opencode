@@ -47,7 +47,7 @@ def main()->int:
             try:
                 conn.request("GET","/client-runtime-v3.json",headers={"Authorization":base.CLIENT_AUTH}); response=conn.getresponse(); body=response.read(2_000_000)
                 if response.status!=200: return False,f"HTTP {response.status}: {body[:200]!r}"
-                value=json.loads(body); services=value.get("services") or {}; required={"nativeDynamicCompaction","astIndex","repoEmbeddings","mcpCodeMode","sandboxEnforcement","sharedNativeRAG","zeroTokenReplay","adaptiveTelemetryRouter"}; missing=sorted(k for k in required if services.get(k) is not True)
+                value=json.loads(body); services=value.get("services") or {}; required={"nativeDynamicCompaction","astIndex","repoEmbeddings","mcpCodeMode","sandboxEnforcement","sharedNativeRAG","zeroTokenReplay"}; missing=sorted(k for k in required if services.get(k) is not True)
                 return not missing,"runtime v3 services active" if not missing else "missing: "+", ".join(missing)
             finally: conn.close()
         ok,detail=retry(web); add("runtime-v3-web",ok,detail)

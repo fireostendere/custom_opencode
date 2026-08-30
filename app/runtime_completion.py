@@ -202,7 +202,7 @@ def _json_body(handler: Any, limit: int=2_000_000) -> dict[str,Any]:
 
 def handle_get(handler: Any, parsed: Any, runtime: Any, control: Any, features: Any) -> bool:
     if parsed.path!="/client-remote-status.json": return False
-    if not handler.authenticated(): return True
+    if not handler.authenticated(): handler.unauthorized(); return True
     try:
         params=parse_qs(parsed.query); sid=str((params.get("sessionID") or [""])[0]); tasks=runtime.STORE.list_tasks(session_id=sid,limit=100) if sid else runtime.STORE.list_tasks(limit=100); permissions=[]
         if sid:
@@ -221,7 +221,7 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, control: Any, features:
     if parsed.path not in {"/internal/runtime/tool-cache","/client-remote-action.json"}: return False
     if parsed.path=="/internal/runtime/tool-cache":
         if not _internal_auth(handler): handler.json_response({"ok":False,"error":"forbidden"},status=403); return True
-    elif not handler.authenticated(): return True
+    elif not handler.authenticated(): handler.unauthorized(); return True
     try:
         payload=_json_body(handler)
         if parsed.path=="/internal/runtime/tool-cache":

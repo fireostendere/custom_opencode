@@ -430,7 +430,7 @@ class ReplayService:
     def __init__(self,store:RuntimeStore,artifacts:ArtifactStore): self.store=store; self.artifacts=artifacts
     def capture(self,features:Any,task:dict[str,Any])->dict[str,Any]|None:
         sid=str(task.get("session_id") or "")
-        try: messages=features._data(features._backend_request_json("GET",f"/api/session/{quote(sid,safe='')}/message?limit=500",timeout=15.))
+        try: messages=features._data(features._backend_request_json("GET",f"/api/session/{quote(sid,safe='')}/message?limit=200",timeout=15.))
         except Exception: return None
         artifact=self.artifacts.put(task_id=task["id"],project_dir=task.get("project_dir"),kind="run-replay",title="Recorded OpenCode run",content=json.dumps(messages if isinstance(messages,list) else [],ensure_ascii=False,default=str),summary="Recorded messages/tool results for zero-token replay",mime="application/json"); self.store.event(kind="replay.captured",task_id=task["id"],session_id=sid,project_dir=task.get("project_dir"),data={"artifactID":artifact["id"]}); return artifact
     def replay(self,task_id:str)->dict[str,Any]:
@@ -493,7 +493,7 @@ def runtime_snapshot(runtime:Any,features:Any,directory:str|None=None)->dict[str
 
 def handle_get(handler:Any,parsed:Any,runtime:Any,features:Any)->bool:
     if parsed.path not in {"/client-runtime-v3.json","/client-repo-index-v3.json","/client-replay.json","/client-runtime-events.json"}: return False
-    if not handler.authenticated(): return True
+    if not handler.authenticated(): handler.unauthorized(); return True
     from urllib.parse import parse_qs
     params=parse_qs(parsed.query)
     try:
@@ -517,7 +517,7 @@ def handle_post(handler:Any,parsed:Any,runtime:Any,features:Any)->bool:
     if parsed.path not in internal|public: return False
     if parsed.path in internal:
         if not _internal_auth(handler): handler.json_response({"ok":False,"error":"forbidden"},status=403); return True
-    elif not handler.authenticated(): return True
+    elif not handler.authenticated(): handler.unauthorized(); return True
     try:
         payload=_json_body(handler); v3=instance(runtime,features)
         if parsed.path=="/internal/runtime/tool-before": result=v3.gateway.before(payload)

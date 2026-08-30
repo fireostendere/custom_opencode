@@ -286,11 +286,13 @@ def snapshot() -> dict[str, Any]:
 def handle_get(handler: Any, parsed: Any) -> bool:
     if parsed.path == "/client-control-plane.json":
         if not handler.authenticated():
+            handler.unauthorized()
             return True
         handler.json_response(snapshot())
         return True
     if parsed.path == "/client-permission-risk.json":
         if not handler.authenticated():
+            handler.unauthorized()
             return True
         params = parse_qs(parsed.query)
         session_id = str((params.get("sessionID") or [""])[0])
@@ -306,6 +308,7 @@ def handle_post(handler: Any, parsed: Any) -> bool:
     if parsed.path != "/client-permission-evaluate.json":
         return False
     if not handler.authenticated():
+        handler.unauthorized()
         return True
     try:
         payload = handler._feature_body(4096)

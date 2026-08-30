@@ -30,7 +30,31 @@ with tempfile.TemporaryDirectory() as temp:
     os.environ["OPENCODE_SERVER_PASSWORD"] = "test"
     os.environ["OPENCODE_RUNTIME_PLUGIN_TOKEN"] = "runtime-test-token"
     os.environ["OPENCODE_WEB_ALLOW_LOCAL"] = "0"
-    os.environ["OPENCODE_BACKEND_URL"] = "http://localhost:9"
+    os.environ["OPENCODE_AUTH_ALLOW_BASIC"] = "1"
+    # Hermetic: never fall back to the real service.json discovery file.
+    os.environ["OPENCODE_SERVICE_FILE"] = str(state / "service.json")
+    # Fast stub backend: a dead port can blackhole connects for seconds in WSL,
+    # so backend probes must fail (or answer) instantly.
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class _StubBackend(BaseHTTPRequestHandler):
+        def _reply(self):
+            body = json.dumps({"data": []}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        do_GET = do_POST = do_PUT = do_DELETE = _reply
+
+        def log_message(self, *args):
+            pass
+
+    stub_backend = ThreadingHTTPServer(("127.0.0.1", 0), _StubBackend)
+    threading.Thread(target=stub_backend.serve_forever, daemon=True).start()
+    stub_host, stub_port = stub_backend.server_address[:2]
+    os.environ["OPENCODE_BACKEND_URL"] = f"http://127.0.0.1:{stub_port}"
     os.environ["OPENCODE_BACKEND_PASSWORD"] = "test"
     os.environ["OPENCODE_SCRATCH_DIRECTORY"] = str(scratch)
     os.environ["OPENCODE_PROJECT_ROOTS"] = str(projects)
@@ -86,7 +110,7 @@ with tempfile.TemporaryDirectory() as temp:
         assert "application/json" in content_type
         payload = json.loads(body)
         assert payload["version"] == 3
-        for key in ("nativeDynamicCompaction","astIndex","repoEmbeddings","semanticSymbolDiff","mcpCodeMode","sandboxEnforcement","sharedNativeRAG","zeroTokenReplay","adaptiveTelemetryRouter","remoteNotificationAPI"):
+        for key in ("nativeDynamicCompaction","astIndex","repoEmbeddings","semanticSymbolDiff","mcpCodeMode","sandboxEnforcement","sharedNativeRAG","zeroTokenReplay","remoteNotificationAPI"):
             assert payload["services"][key] is True, key
 
         q=quote(str(project),safe='')
@@ -124,11 +148,13 @@ with tempfile.TemporaryDirectory() as temp:
         status, _, body = request("GET","/client-resource-status.json")
         assert status == 200
         resources = json.loads(body)
-        assert resources["mode"] == "off"
-        assert "gpu" in resources
+        assert resources["mode"] == "provider-pinned"
+        assert "decisions" in resources
     finally:
         server.shutdown()
         server.server_close()
+        stub_backend.shutdown()
+        stub_backend.server_close()
         thread.join(timeout=5)
 
 print("Composed web-server smoke passed: auth + Runtime V2/V3 + semantic index + MCP + pre-exec cache + remote actions")

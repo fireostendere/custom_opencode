@@ -20,7 +20,8 @@ import shutil
 import sys
 import threading
 import time
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import SplitResult
 
 
 ROOT = Path(__file__).resolve().parent
@@ -29,6 +30,7 @@ DEFAULT_LEGACY_AUTH_FILE = Path.home() / ".config/opencode/mobile-server.env"
 SCRATCH_PROJECT_ID = "__custom_opencode_quick__"
 SCRATCH_PROJECT_NAME = "Быстрые"
 SESSION_DELETE_RE = re.compile(r"^/api/session/[^/]+$")
+SESSION_ANY_RE = re.compile(r"^/api/session/([^/]+)")
 AUTH_COOKIE_NAME = "opencode_session"
 PUBLIC_PATHS = {"/login.html", "/login.css", "/login.js"}
 
@@ -340,6 +342,72 @@ def session_directory(path: str) -> str | None:
     location = session.get("location") if isinstance(session, dict) else None
     directory = location.get("directory") if isinstance(location, dict) else None
     return directory if isinstance(directory, str) else None
+
+
+_SESSION_DIR_CACHE: dict[str, str] = {}
+_SESSION_DIR_LOCK = threading.Lock()
+
+
+def cached_session_directory(session_id: str) -> str | None:
+    """Return the backend session directory, caching per session id."""
+    with _SESSION_DIR_LOCK:
+        cached = _SESSION_DIR_CACHE.get(session_id)
+    if cached is not None:
+        return cached
+    payload = backend_json("GET", f"/api/session/{quote(session_id)}")
+    if not isinstance(payload, dict):
+        return None
+    session = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    location = session.get("location") if isinstance(session, dict) else None
+    directory = location.get("directory") if isinstance(location, dict) else None
+    if not isinstance(directory, str):
+        return None
+    with _SESSION_DIR_LOCK:
+        _SESSION_DIR_CACHE[session_id] = directory
+    return directory
+
+
+def forget_session_directory(session_id: str) -> None:
+    with _SESSION_DIR_LOCK:
+        _SESSION_DIR_CACHE.pop(session_id, None)
+
+
+def heal_missing_scratch_directory(value: object) -> None:
+    """Recreate a scratch session directory that was removed out-of-band.
+
+    The backend resolves the session workspace before serving most session
+    endpoints; a missing directory makes those calls fail until the session
+    is deleted. Recreating the empty directory restores access.
+    """
+    candidate = resolve_directory(value)
+    if candidate is None or candidate == SCRATCH_ROOT or SCRATCH_ROOT not in candidate.parents:
+        return
+    if candidate.exists():
+        return
+    try:
+        candidate.mkdir(parents=True, mode=0o700)
+    except OSError as exc:
+        sys.stderr.write(f"Не удалось восстановить scratch-каталог {candidate}: {exc}\n")
+
+
+def heal_request_scratch(command: str, parsed: SplitResult) -> None:
+    """Best-effort healing for any request touching a session or directory."""
+    if command == "DELETE":
+        return
+    try:
+        if parsed.query:
+            query = parse_qs(parsed.query)
+            for key in ("directory", "sessionID"):
+                for value in query.get(key, []):
+                    if key == "directory":
+                        heal_missing_scratch_directory(value)
+                    else:
+                        heal_missing_scratch_directory(cached_session_directory(value))
+        match = SESSION_ANY_RE.match(parsed.path)
+        if match:
+            heal_missing_scratch_directory(cached_session_directory(match.group(1)))
+    except Exception as exc:  # noqa: BLE001 - healing must never break proxying
+        sys.stderr.write(f"heal_request_scratch проигнорирован: {exc}\n")
 
 
 def mark_quick_session(session: object) -> object:
@@ -691,6 +759,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.command == "DELETE" and SESSION_DELETE_RE.fullmatch(parsed.path):
             cleanup_after_delete = session_directory(parsed.path)
+        else:
+            heal_request_scratch(self.command, parsed)
 
         target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
         headers = {
@@ -738,6 +808,9 @@ class Handler(BaseHTTPRequestHandler):
                     allocated_scratch = None
             if cleanup_after_delete and success:
                 cleanup_scratch_directory(cleanup_after_delete)
+                delete_match = SESSION_ANY_RE.match(parsed.path)
+                if delete_match:
+                    forget_session_directory(delete_match.group(1))
             if content_type.startswith("application/json"):
                 response_body = transform_json_response(self.command, parsed.path, response_body)
 

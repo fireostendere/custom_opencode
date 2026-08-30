@@ -82,7 +82,7 @@ def queue_snapshot(session_id:str|None=None)->dict[str,Any]:
 
 
 def _usage_totals(features:Any,session_id:str)->dict[str,Any]:
-    try: value=features._data(features._backend_request_json("GET",f"/api/session/{quote(session_id,safe='')}/message?limit=1000",timeout=12.0))
+    try: value=features._data(features._backend_request_json("GET",f"/api/session/{quote(session_id,safe='')}/message?limit=200",timeout=12.0))
     except Exception: return {"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"cost":0.0,"signature":""}
     totals={"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"cost":0.0}; digest=[]
     for row in value if isinstance(value,list) else []:
@@ -448,7 +448,7 @@ def runtime_snapshot(features:Any,directory:str|None=None)->dict[str,Any]:
 def handle_get(handler:Any,parsed:Any,features:Any)->bool:
     paths={"/client-runtime.json","/client-tasks.json","/client-task.json","/client-task-events.json","/client-model-capabilities.json","/client-resource-status.json","/client-repo-index.json","/client-artifact.json","/client-project-memory.json","/client-decisions.json","/client-mcp-gateway.json"}
     if parsed.path not in paths: return False
-    if not handler.authenticated(): return True
+    if not handler.authenticated(): handler.unauthorized(); return True
     params=parse_qs(parsed.query)
     try:
         sid=(params.get("sessionID") or [None])[0]; directory=features._session_directory(str(sid)) if sid else (params.get("directory") or [None])[0]; directory=features._canonical_directory(str(directory)) if directory else None
@@ -487,7 +487,7 @@ def handle_get(handler:Any,parsed:Any,features:Any)->bool:
 def handle_post(handler:Any,parsed:Any,features:Any)->bool:
     paths={"/client-task-control.json","/client-task-create.json","/client-project-memory.json","/client-decisions.json","/client-mailbox.json","/client-speculate.json","/client-artifact.json"}
     if parsed.path not in paths: return False
-    if not handler.authenticated(): return True
+    if not handler.authenticated(): handler.unauthorized(); return True
     try:
         payload=_read_json(handler)
         if parsed.path=="/client-task-control.json": handler.json_response(task_control(features,payload))

@@ -79,7 +79,7 @@ export async function getContext(sessionID) {
     return Array.isArray(value) ? value : []
   } catch (error) {
     if (error.status !== 404) throw error
-    const value = dataOf(await request(`/api/session/${encodeURIComponent(sessionID)}/message?limit=1000`))
+    const value = dataOf(await request(`/api/session/${encodeURIComponent(sessionID)}/message?limit=200`))
     return Array.isArray(value) ? value.map(normalizeModernMessage) : []
   }
 }
