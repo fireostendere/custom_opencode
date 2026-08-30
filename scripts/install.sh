@@ -67,6 +67,28 @@ if [[ "$RAG_MODE" != 0 ]]; then
   fi
 fi
 
+# Ponytail: managed upstream checkout. It is enabled by default; an unavailable
+# enabled checkout is an installation failure, not a silent feature downgrade.
+PONYTAIL_ENABLED=${PONYTAIL_ENABLED:-1}
+PONYTAIL_DEFAULT_MODE=${PONYTAIL_DEFAULT_MODE:-full}
+case "$PONYTAIL_ENABLED" in
+  0|1) ;;
+  *)
+    echo "PONYTAIL_ENABLED must be 0 or 1" >&2
+    exit 1
+    ;;
+esac
+if [[ "$PONYTAIL_ENABLED" == 1 ]]; then
+  case "$PONYTAIL_DEFAULT_MODE" in
+    off|lite|full|ultra) ;;
+    *)
+      echo "PONYTAIL_DEFAULT_MODE must be one of: off, lite, full, ultra" >&2
+      exit 1
+      ;;
+  esac
+fi
+PONYTAIL_PLUGIN_PATH=""
+
 if [[ "$SELFTEST" != 0 ]]; then
   echo "==> Pre-install verification"
   "$PYTHON3" -m py_compile \
@@ -81,6 +103,26 @@ if [[ "$SELFTEST" != 0 ]]; then
   "$ROOT/scripts/verify.sh"
   "$ROOT/scripts/verify-runtime-v3.sh"
   "$PYTHON3" "$ROOT/scripts/model-routing-effort-smoke.py"
+fi
+
+if [[ "$PONYTAIL_ENABLED" == 1 ]]; then
+  source "$ROOT/scripts/ponytail-provision.sh"
+  ponytail_provision
+  PONYTAIL_PLUGIN_PATH="$PONYTAIL_PROVISIONED_DIR/.opencode/plugins/ponytail.mjs"
+fi
+
+# Ponytail deliberately keeps this state in its XDG config location, independent
+# of the optional OpenCode config override used when opencode2 is absent.
+if [[ "$PONYTAIL_ENABLED" == 1 ]]; then
+  PONYTAIL_STATE="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/.ponytail-active"
+  if [[ -L "$PONYTAIL_STATE" || -d "$PONYTAIL_STATE" ]]; then
+    echo "ponytail: refusing unsafe state path: $PONYTAIL_STATE" >&2
+    exit 1
+  fi
+  if [[ ! -e "$PONYTAIL_STATE" ]]; then
+    install -d "$(dirname "$PONYTAIL_STATE")"
+    (umask 022; printf '%s\n' "$PONYTAIL_DEFAULT_MODE" >"$PONYTAIL_STATE")
+  fi
 fi
 
 install -d "$UNIT_DIR" "$BIN_DIR" "$SCRATCH_DIR" "$(dirname "$AUTH_FILE")"
@@ -121,14 +163,19 @@ if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
     done < <(cd "$ROOT/config/plugins/tui" && find . -type f -print0)
   fi
   install -m 0644 "$ROOT"/config/themes/*.json "$CONFIG_DIR/themes/"
-  "$PYTHON3" - "$ROOT/config/opencode.json.template" "$CONFIG_DIR/opencode.json" "$CONFIG_DIR" "$ROOT" "$RAG_DISABLED" <<'PY'
+  "$PYTHON3" - "$ROOT/config/opencode.json.template" "$CONFIG_DIR/opencode.json" "$CONFIG_DIR" "$ROOT" "$RAG_DISABLED" "$PONYTAIL_PLUGIN_PATH" <<'PY'
 import json, sys
-source, target, config_dir, root, rag_disabled = sys.argv[1:]
+source, target, config_dir, root, rag_disabled, ponytail_plugin = sys.argv[1:]
 text = open(source, encoding="utf-8").read()
-text = text.replace("__CONFIG_DIR__", config_dir)
-text = text.replace("__CUSTOM_OPENCODE_ROOT__", root)
+def json_string_value(value):
+    return json.dumps(value, ensure_ascii=False)[1:-1]
+text = text.replace("__CONFIG_DIR__", json_string_value(config_dir))
+text = text.replace("__CUSTOM_OPENCODE_ROOT__", json_string_value(root))
 text = text.replace("__RAG_DISABLED__", rag_disabled)
+text = text.replace("__PONYTAIL_PLUGIN_PATH__", json_string_value(ponytail_plugin))
 config = json.loads(text)
+if not ponytail_plugin:
+    config.pop("plugins", None)
 # Runtime V3 relies on native durable compaction and Code Mode. Code Mode keeps
 # MCP schemas out of the provider tool list until the namespace is actually used.
 config["compaction"] = {"auto": True, "keep": {"tokens": 12000}, "buffer": 24000}
@@ -141,7 +188,6 @@ with open(target, "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
 fi
-
 "$PYTHON3" - "$AUTH_FILE" <<'PY'
 import json, os, sys
 target = sys.argv[1]
@@ -206,7 +252,7 @@ if command -v opencode2 >/dev/null 2>&1; then
     OPENCODE_RUNTIME_PLUGIN_HOST OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS
     OPENCODE_SECRET_PREFIXES OPENCODE_PLANNER_MODEL OPENCODE_BUILDER_MODEL
     OPENCODE_READER_MODEL OPENCODE_REVIEW_MODEL OPENCODE_LONG_HORIZON_MODEL
-    OPENCODE_ORCHESTRATED_MODEL
+    OPENCODE_ORCHESTRATED_MODEL PONYTAIL_DEFAULT_MODE
   )
   for name in "${SERVICE_ENV[@]}"; do
     value=${!name:-}

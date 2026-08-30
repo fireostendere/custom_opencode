@@ -16,6 +16,9 @@ skip() { SKIPS=$((SKIPS + 1)); printf 'SKIP %s\n' "$1"; }
 step "Static/runtime verifier"
 bash scripts/verify.sh
 
+step "Ponytail managed checkout regression"
+bash scripts/ponytail-provision-regression.sh
+
 step "Runtime V3 verifier"
 bash scripts/verify-runtime-v3.sh
 

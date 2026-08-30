@@ -40,8 +40,15 @@ QWEN_QUOTA_PROBE_ENABLED=0
 OLLAMA_BASE_URL=http://localhost:11434/v1
 OPENCODE_LOCAL_AUTO_START=0
 OPENCODE_LOCAL_PROVIDER=ollama
+PONYTAIL_ENABLED=0
+PONYTAIL_DEFAULT_MODE=full
 EOF
 chmod 0600 "$COPY/.env"
+
+# Keep XDG state/data outside the real user profile and exercise Ponytail's
+# XDG state convention rather than relying on HOME's default paths.
+export XDG_CONFIG_HOME="$HOME_DIR/xdg-config"
+export XDG_DATA_HOME="$HOME_DIR/xdg-data"
 
 cat >"$FAKE_BIN/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -49,6 +56,13 @@ printf 'systemctl %s\n' "$*" >>"${CUSTOM_OPENCODE_REGRESSION_LOG:?}"
 exit 0
 EOF
 chmod +x "$FAKE_BIN/systemctl"
+
+cat >"$FAKE_BIN/opencode2" <<'EOF'
+#!/usr/bin/env bash
+printf 'opencode2 %s\n' "$*" >>"${CUSTOM_OPENCODE_REGRESSION_LOG:?}"
+exit 0
+EOF
+chmod +x "$FAKE_BIN/opencode2"
 
 # Seed files left by older TUI revisions. A fresh install/update must remove
 # renamed top-level copies instead of allowing the loader to discover both.
@@ -100,7 +114,7 @@ import json, sys
 from pathlib import Path
 path, root = map(Path, sys.argv[1:])
 text = path.read_text(encoding='utf-8')
-for marker in ('__CONFIG_DIR__','__CUSTOM_OPENCODE_ROOT__','__RAG_DISABLED__'):
+for marker in ('__CONFIG_DIR__','__CUSTOM_OPENCODE_ROOT__','__RAG_DISABLED__','__PONYTAIL_PLUGIN_PATH__'):
     assert marker not in text, marker
 config = json.loads(text)
 kb = ((config.get('mcp') or {}).get('servers') or {}).get('kb') or {}
@@ -110,6 +124,9 @@ assert config.get('model') == 'bailian-cli/qwen3.8-max'
 assert config.get('compaction') == {'auto': True, 'keep': {'tokens': 12000}, 'buffer': 24000}
 assert config.get('tool_output') == {'max_lines': 1600, 'max_bytes': 48000}
 assert str(root / 'scripts' / 'rag-mcp.sh') in (kb.get('command') or [])
+# When PONYTAIL_ENABLED=0, the V2 plugins field should be absent or empty.
+plugin_list = config.get('plugins') or []
+assert plugin_list == [] or plugin_list == [''], f"Expected no ponytail plugin when disabled, got: {plugin_list}"
 PY
 
 grep -Fq 'ctx.tool.hook("execute.before"' "$RUNTIME_GUARD"
@@ -159,5 +176,54 @@ def files(root): return sorted(str(path.relative_to(root)) for path in root.rglo
 assert files(source) == files(target)
 for rel in files(source): assert (source/rel).read_bytes() == (target/rel).read_bytes(), rel
 PY
+
+# Enabled Ponytail install: provision a local upstream and verify the V2
+# plugins entry point plus first-install-only mode persistence.
+rm -f "$FAKE_BIN/git"
+PONYTAIL_WORK="$TMP/ponytail-work"
+PONYTAIL_UPSTREAM="$TMP/ponytail-upstream.git"
+PONYTAIL_CHECKOUT="$XDG_DATA_HOME/opencode/ponytail"
+mkdir -p "$PONYTAIL_WORK/.opencode/plugins" "$PONYTAIL_WORK/hooks" "$PONYTAIL_WORK/skills/ponytail"
+printf '%s\n' 'export default async function ponytailStub() { return {}; }' >"$PONYTAIL_WORK/.opencode/plugins/ponytail.mjs"
+printf '%s\n' 'module.exports = { parseCommandFile: () => null };' >"$PONYTAIL_WORK/.opencode/plugins/ponytail-frontmatter.cjs"
+printf '%s\n' "module.exports = { getPonytailInstructions: () => '' };" >"$PONYTAIL_WORK/hooks/ponytail-instructions.js"
+printf '%s\n' "module.exports = { getDefaultMode: () => 'full', normalizePersistedMode: (mode) => mode };" >"$PONYTAIL_WORK/hooks/ponytail-config.js"
+printf '%s\n' '# Ponytail test skill' >"$PONYTAIL_WORK/skills/ponytail/SKILL.md"
+( cd "$PONYTAIL_WORK" && git init -q --initial-branch=main && git config user.email ponytail@test && git config user.name ponytail && git add -A && git commit -q -m 'initial ponytail' )
+git clone -q --bare "$PONYTAIL_WORK" "$PONYTAIL_UPSTREAM"
+PONYTAIL_PIN=$(git -C "$PONYTAIL_WORK" rev-parse HEAD)
+sed -i \
+  -e 's/^PONYTAIL_ENABLED=.*/PONYTAIL_ENABLED=1/' \
+  -e 's/^PONYTAIL_DEFAULT_MODE=.*/PONYTAIL_DEFAULT_MODE=lite/' \
+  "$COPY/.env"
+cat >>"$COPY/.env" <<EOF
+PONYTAIL_UPSTREAM_URL=$PONYTAIL_UPSTREAM
+PONYTAIL_PIN_COMMIT=$PONYTAIL_PIN
+EOF
+
+CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+  bash "$COPY/scripts/install.sh" >"$TMP/ponytail-install.out"
+
+python3 - "$CONFIG" "$PONYTAIL_CHECKOUT" "$XDG_CONFIG_HOME" <<'PY'
+import json, sys
+from pathlib import Path
+config_path, checkout, config_home = map(Path, sys.argv[1:])
+config = json.loads(config_path.read_text(encoding='utf-8'))
+entry = str(checkout / '.opencode/plugins/ponytail.mjs')
+assert config.get('plugins') == [entry], config.get('plugins')
+assert 'plugin' not in config
+state = config_home / 'opencode/.ponytail-active'
+assert state.read_text(encoding='utf-8').strip() == 'lite'
+PY
+
+# A later install may change the configured default but must not overwrite the
+# user's active mode.
+sed -i 's/^PONYTAIL_DEFAULT_MODE=.*/PONYTAIL_DEFAULT_MODE=ultra/' "$COPY/.env"
+CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+  bash "$COPY/scripts/install.sh" >"$TMP/ponytail-reinstall.out"
+[[ "$(cat "$XDG_CONFIG_HOME/opencode/.ponytail-active")" == lite ]] || {
+  echo "Ponytail reinstall overwrote the active mode" >&2
+  exit 1
+}
 
 echo "Install/update regression passed: isolated V3 render + exact TUI tree + Code Mode/compaction + pinned origin/main updater"

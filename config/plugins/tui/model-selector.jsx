@@ -19,13 +19,52 @@
  * never a jump target).
  *
  * From the home screen (no session) the dialog highlights the directory
- * default model, and choosing a model shows a toast instead of switching,
- * because there is no session to switch.
+ * default model, and choosing a model creates the first session with the
+ * selected model and its saved variant.
  */
 import { Plugin } from "@opencode-ai/plugin/tui"
 
 const RECENT_LIMIT = 10
 const OPENAI_PROVIDERS = new Set(["openai", "chatgpt"])
+
+function modelKey(providerID, modelID) {
+  return `${providerID}/${modelID}`
+}
+
+function modelVariants(model) {
+  if (Array.isArray(model?.variants)) return model.variants
+  return Object.entries(model?.variants ?? {}).map(([id, value]) => ({ id, ...value }))
+}
+
+async function loadPreferredVariants() {
+  try {
+    if (!globalThis.Bun?.file) return {}
+    const home = typeof process !== "undefined" ? process.env.HOME : ""
+    const stateHome = typeof process !== "undefined" && process.env.XDG_STATE_HOME
+      ? process.env.XDG_STATE_HOME
+      : home
+        ? `${home}/.local/state`
+        : ""
+    if (!stateHome) return {}
+    const data = await globalThis.Bun.file(`${stateHome}/opencode/model.json`).json()
+    return Object.fromEntries(
+      Object.entries(data?.variant ?? {}).filter(
+        ([, variant]) => typeof variant === "string" && variant !== "default",
+      ),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function preferredVariant(model, preferences) {
+  const candidate =
+    preferences[modelKey(model.providerID, model.id)] ??
+    preferences[modelKey(model.providerID, model.modelID)]
+  return modelVariants(model).some((variant) => variant.id === candidate)
+    ? candidate
+    : undefined
+}
 
 // Role-routed orchestration stack (docs/model-routing-effort.md): the
 // provider-pinned planner/builder/reader/reviewer/long-horizon models plus
@@ -235,12 +274,15 @@ export default Plugin.define({
         let models = []
         let providers = []
         try {
-          const [modelsResult, providersResult] = await Promise.all([
+          const [modelsResult, providersResult, preferredVariants] = await Promise.all([
             context.client.model.list(locDir),
             context.client.provider.list(locDir),
+            loadPreferredVariants(),
           ])
           models = modelsResult.data ?? []
           providers = providersResult.data ?? []
+
+          jump.preferredVariants = preferredVariants
         } catch {
           context.ui.toast.show({
             message: "Failed to load model list",
@@ -310,25 +352,40 @@ export default Plugin.define({
             // Recent history is non-critical.
           }
 
-          if (!sessionID) {
-            context.ui.toast.show({
-              message: "Open a session to switch models",
-              variant: "warning",
-            })
-            return
+          const selected = models.find(
+            (item) => item.providerID === result.providerID && item.id === result.modelID,
+          )
+          const variant = selected && preferredVariant(selected, jump.preferredVariants ?? {})
+          const model = {
+            id: result.modelID,
+            providerID: result.providerID,
+            ...(variant ? { variant } : {}),
           }
 
           try {
-            await context.client.session.switchModel({
-              sessionID,
-              model: {
-                id: result.modelID,
-                providerID: result.providerID,
-              },
-            })
+            if (!sessionID) {
+              // The home composer has no public draft-model setter. Create the
+              // session with the selected model so the next prompt uses it.
+              const session = await context.client.session.create({
+                model,
+                location: { directory: location.directory },
+              })
+              if (!session?.id) throw new Error("Session was not created")
+              context.ui.router.navigate({
+                type: "session",
+                sessionID: session.id,
+              })
+            } else {
+              await context.client.session.switchModel({
+                sessionID,
+                model,
+              })
+            }
           } catch {
             context.ui.toast.show({
-              message: "Failed to switch model",
+              message: sessionID
+                ? "Failed to switch model"
+                : "Failed to create session with selected model",
               variant: "error",
             })
           }

@@ -182,6 +182,23 @@ RAG опционален. При `MCP_RAG_ENABLED=0` или отсутствии
 
 `/rag-start` может без LLM inference проверить/поднять Qdrant, corpus/index, подключить `kb` к текущему workspace и проверить MCP tools.
 
+## Ponytail
+
+В комплект включён OpenCode V2 plugin [Ponytail](https://github.com/DietrichGebert/ponytail) с фиксированным reviewed commit `2ed6c52c9d7e5e56942508591085fd45dea277d3`. По умолчанию installer:
+
+- клонирует upstream в `$XDG_DATA_HOME/opencode/ponytail` или `~/.local/share/opencode/ponytail`;
+- подключает его entry point через V2-поле `plugins` в глобальном `opencode.json`;
+- сохраняет выбранный режим в `~/.config/opencode/.ponytail-active` только при первой установке;
+- не копирует upstream skills, commands или hooks в конфигурацию этого репозитория.
+
+Режим по умолчанию — `full`. В OpenCode доступны `/ponytail`, `/ponytail lite`, `/ponytail full`, `/ponytail ultra` и `/ponytail off`. Для сознательного отключения интеграции задайте `PONYTAIL_ENABLED=0` в `.env`; checkout при этом не удаляется.
+
+Provisioning завершается ошибкой при неверном origin, dirty checkout, уходе с `main`, недоступном pin или попытке non-fast-forward обновления. Локальная проверка этого контракта:
+
+```bash
+./scripts/ponytail-provision-regression.sh
+```
+
 ## Быстрый старт
 
 ```bash

@@ -4,23 +4,22 @@
  * for the OpenCode TUI.
  *
  * Adds three independently hideable areas:
- *   - Лимиты: ChatGPT + Alibaba rate-limit windows in the session sidebar
+ *   - Лимиты: ChatGPT + Alibaba rate-limit windows in the session sidebar;
+ *     the whole sidebar can be collapsed with the right-edge chevron
  *   - Лимиты (начальный экран): the same data as a collapsible strip on the
- *     right edge of the start screen (the same edge as the session sidebar).
- *     Collapsed by default, it is a vertical bar with a chevron; clicking
- *     the chevron expands the full limits panel, clicking the header
- *     chevron collapses it back.
+ *     right edge of the home screen.  The session view uses the native
+ *     sidebar so it composes with Context, MCP and the other built-in panels.
  *   - План: a collapsible strip on the LEFT edge, present on every screen
  *     and bound to the current dialog.  In a session it shows that
  *     session's latest todowrite plan; on the start screen it shows the
  *     plan of the most recently updated session.  Progress bar
  *     (completed/total, percent) + todo list + session footer.
  *
- * Each edge strip is a thin bar with a chevron (the panel opens away from
- * the edge); both start collapsed on every launch.  Toggle with a
+ * Each custom edge strip is a thin bar with a chevron (the panel opens away
+ * from the edge); both start collapsed on every launch.  Toggle with a
  * chevron/header click (mouse) or the "Панели" commands in the palette
  * (ctrl+alt+l toggles the limits panels, ctrl+alt+t the plan strip).  The
- * whole sidebar can additionally be hidden with the built-in
+ * native session sidebar has its own right-edge chevron and uses the built-in
  * `session.sidebar.toggle` command (<leader>b).
  *
  * NOTE: TUI plugins that contain JSX must use the `.jsx`/`.tsx` extension,
@@ -232,16 +231,27 @@ export default Plugin.define({
       setPlanVersion((version) => version + 1)
     })
 
-    // Persistent collapse state.  `home` is the start-screen limits strip
-    // and `plan` is the left-edge plan strip; both start collapsed.
+    // Persistent collapse state.  `home` is the start-screen limits strip;
+    // `limits` controls the session-sidebar section; `plan` is the left-edge
+    // plan strip.  All panels start collapsed.
     const [state, updateState] = context.storage.store("limits-panels.state", {
       initial: { limits: true, plan: false, home: false },
     })
 
+    // The native sidebar owns its visibility state.  Keep only the local
+    // chevron direction here; the built-in command remains the source of
+    // truth for the actual layout.
+    const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false)
+    function toggleSidebar() {
+      context.keymap.dispatch("session.sidebar.toggle")
+      setSidebarCollapsed((collapsed) => !collapsed)
+    }
+
     // The edge strips must greet every launch collapsed, so drop any
     // "expanded" value persisted by the previous run.
-    if (state.home === true || state.plan === true) {
+    if (state.limits === true || state.home === true || state.plan === true) {
       updateState((draft) => {
+        draft.limits = false
         draft.home = false
         draft.plan = false
       })
@@ -269,6 +279,13 @@ export default Plugin.define({
     /** @param {number} x 1-based cursor column */
     function cursorUnderStrip(x) {
       if (state.plan === true && x <= PLAN_STRIP_COLS) return true
+      if (
+        sidebarCollapsed() &&
+        context.ui.router.current()?.type === "session" &&
+        x > renderer.width - 2
+      ) {
+        return true
+      }
       if (
         state.home === true &&
         context.ui.router.current()?.type === "home" &&
@@ -495,13 +512,9 @@ export default Plugin.define({
     }
 
     /**
-     * Collapsible "Лимиты" strip for the start screen.  The home route has
-     * no sidebar, so the panel is pinned to the same (right) edge as an
-     * absolutely positioned overlay rendered from the `app` slot.  A thin
-     * bar with a vertically centered chevron is always visible: ◂ while
-     * collapsed, ▸ while expanded.  Clicking the chevron toggles the panel,
-     * which opens to the left of the bar; the header chevron collapses it
-     * as well.  The strip always starts collapsed on launch.
+     * Collapsible "Лимиты" strip for the home screen.  Sessions render the
+     * limits section inside the native sidebar below, preventing it from
+     * covering the built-in Context/MCP panel.
      */
     function HomeLimitsStrip() {
       const [hover, setHover] = createSignal(false)
@@ -548,6 +561,40 @@ export default Plugin.define({
                 <span>{expanded() ? "▸" : "◂"}</span>
               </text>
             </box>
+          </box>
+        </Show>
+      )
+    }
+
+    /**
+     * A handle for the native session sidebar.  It stays on the right edge
+     * after the sidebar is hidden, so the same mouse target can restore it.
+     */
+    function SidebarToggleHandle() {
+      const [hover, setHover] = createSignal(false)
+      const isSession = () => context.ui.router.current()?.type === "session"
+      return (
+        <Show when={isSession()}>
+          <box
+            position="absolute"
+            top={0}
+            right={0}
+            width={2}
+            height="100%"
+            zIndex={1500}
+            border={["left"]}
+            borderColor={hover() ? theme.text.default : theme.text.subdued}
+            backgroundColor={theme.background.default}
+            flexDirection="column"
+            justifyContent="center"
+            alignItems="center"
+            onMouseOver={() => setHover(true)}
+            onMouseOut={() => setHover(false)}
+            onMouseDown={toggleSidebar}
+          >
+            <text fg={hover() ? theme.text.default : theme.text.subdued}>
+              <span>{sidebarCollapsed() ? "◂" : "▸"}</span>
+            </text>
           </box>
         </Show>
       )
@@ -796,8 +843,7 @@ export default Plugin.define({
               group: "Панели",
               bind: "ctrl+alt+l",
               palette: true,
-              // Home screen has no sidebar, so toggle the panel that belongs
-              // to the current route.
+              // Keep the home and session edge-panel state independent.
               run: () => {
                 const route = context.ui.router.current()
                 toggle(route?.type === "home" ? "home" : "limits")
@@ -813,22 +859,20 @@ export default Plugin.define({
             },
           ],
         }))
-        return [<HomeLimitsStrip />, <PlanStrip />]
+        return [<SidebarToggleHandle />, <HomeLimitsStrip />, <PlanStrip />]
       },
     })
 
-    // Limits stay in the stock sidebar.
+    // Session routes already own the right sidebar.  Add limits to that
+    // layout-managed slot instead of placing a second panel over it.
     const unclaim = context.ui.slot({
       prepend: "sidebar.content",
-      render: () => {
-        const data = limits()
-        return (
-          <box flexDirection="column" gap={1} paddingTop={1}>
-            {sectionHeader("Лимиты", state.limits, () => toggle("limits"))}
-            <Show when={state.limits}>{limitsBody(data)}</Show>
-          </box>
-        )
-      },
+      render: () => (
+        <box flexDirection="column" gap={1} paddingTop={1}>
+          {sectionHeader("Лимиты", state.limits, () => toggle("limits"))}
+          <Show when={state.limits}>{limitsBody(limits())}</Show>
+        </box>
+      ),
     })
 
     return () => {

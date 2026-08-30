@@ -180,12 +180,17 @@ async function loadDraftControls() {
   catch(error){toast(`Настройки: ${error.message}`)}
 }
 function applyControls(catalog){state.agents=catalog.agents;state.models=catalog.models;state.providers=catalog.providers;state.defaultModel=catalog.fallback;renderControls();renderUsage()}
+function modelVariants(model){
+  const variants=Array.isArray(model?.variants)?model.variants:Object.entries(model?.variants||{}).map(([id,v])=>({id,...v}))
+  if(!variants.some((v)=>v.id==='xhigh' ) && (model?.settings?.effort==='xhigh'||variants.some((v)=>v.settings?.effort==='xhigh'))) variants.push({id:'xhigh',settings:{effort:'xhigh'}})
+  return variants
+}
 function renderControls(){
   const agentID=state.selected?.agent||(!state.selected&&state.draftAgent)||state.agents.find((a)=>a.id==='build')?.id||state.agents[0]?.id
   $('agentControls').innerHTML=state.agents.map((agent)=>`<button type="button" class="${agent.id===agentID?'active':''}" data-agent="${escapeHtml(agent.id)}">${escapeHtml(agent.name||agent.id)}</button>`).join('')
   document.querySelectorAll('[data-agent]').forEach((b)=>b.addEventListener('click',()=>changeAgent(b.dataset.agent)))
   const ref=activeModelRef(), model=activeModel(); $('modelButton').disabled=!state.models.length; $('modelButton').textContent=model?.name||ref?.id||'Модель'
-  const variants=Array.isArray(model?.variants)?model.variants:Object.entries(model?.variants||{}).map(([id,v])=>({id,...v}))
+  const variants=modelVariants(model)
   $('variantSelect').innerHTML=variants.length?`<option value="">Effort: default</option>${variants.map((v)=>`<option value="${escapeHtml(v.id)}">Effort: ${escapeHtml(v.id)}</option>`).join('')}`:'<option value="">Effort: —</option>'
   $('variantSelect').value=ref?.variant||''; $('variantSelect').disabled=!variants.length
 }

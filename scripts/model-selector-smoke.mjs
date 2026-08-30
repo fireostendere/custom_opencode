@@ -18,10 +18,22 @@ const plugin = (await import(moduleUrl)).default
 assert.equal(plugin.id, 'custom.model-selector')
 assert.equal(typeof plugin.setup, 'function')
 
+globalThis.Bun = {
+  file() {
+    return {
+      async json() {
+        return { variant: { 'bailian-cli/qwen-flash': 'medium' } }
+      },
+    }
+  },
+}
+
 const layers = []
 let dialogOptions = null
 const dialogCurrents = []
 let switched = null
+let created = null
+let navigated = null
 let persisted = null
 let cleared = 0
 let selectCalls = 0
@@ -38,7 +50,7 @@ const recentState = {
 
 const models = [
   { providerID: 'bailian-cli', id: 'qwen3.8-max', name: 'Qwen Max', enabled: true, status: 'active', cost: [{ input: 0.1 }] },
-  { providerID: 'bailian-cli', id: 'qwen-flash', name: 'Qwen Flash', enabled: true, status: 'active', cost: [{ input: 0.01 }] },
+  { providerID: 'bailian-cli', id: 'qwen-flash', name: 'Qwen Flash', enabled: true, status: 'active', cost: [{ input: 0.01 }], variants: [{ id: 'low' }, { id: 'medium' }] },
   { providerID: 'bailian-cli', id: 'qwen3.7-plus', name: 'Qwen Plus', enabled: true, status: 'active', cost: [{ input: 0.04 }] },
   { providerID: 'openai', id: 'gpt-test', name: 'GPT Test', enabled: true, status: 'active', cost: [{ input: 0.2 }] },
   { providerID: 'opencode', id: 'free-model', name: 'Free Model', enabled: true, status: 'active', cost: [{ input: 0 }] },
@@ -63,7 +75,10 @@ const context = {
     },
   },
   ui: {
-    router: { current: () => route },
+    router: {
+      current: () => route,
+      navigate: (value) => { navigated = value },
+    },
     dialog: {
       async select(value) {
         dialogOptions = value.options
@@ -101,7 +116,13 @@ const context = {
       default: async () => ({ data: { providerID: 'bailian-cli', id: 'qwen3.8-max' } }),
     },
     provider: { list: async () => ({ data: providers }) },
-    session: { switchModel: async (value) => { switched = value } },
+    session: {
+      switchModel: async (value) => { switched = value },
+      create: async (value) => {
+        created = value
+        return { id: 'ses_home' }
+      },
+    },
   },
   keymap: {
     layer(factory) {
@@ -134,7 +155,7 @@ assert.deepEqual(dialogCurrents[0], current)
 assert.deepEqual(dialogCurrents[1], { providerID: 'openai', modelID: 'gpt-test' })
 assert.deepEqual(switched, {
   sessionID: 'ses_test',
-  model: { id: 'qwen-flash', providerID: 'bailian-cli' },
+  model: { id: 'qwen-flash', providerID: 'bailian-cli', variant: 'medium' },
 })
 assert.deepEqual(persisted[0], { providerID: 'bailian-cli', modelID: 'qwen-flash' })
 assert.equal(persisted.filter((item) => item.providerID === 'bailian-cli' && item.modelID === 'qwen-flash').length, 1)
@@ -161,18 +182,24 @@ assert.deepEqual(
   ['qwen-flash'],
 )
 
-// ── Scenario 2: home screen → highlight default model, warn instead of switching ──
+// ── Scenario 2: home screen → create the first session with selected model ──
 route = { type: 'home' }
 simulateJump = false
 switched = null
+created = null
+navigated = null
 persisted = null
 dialogCurrents.length = 0
 toasts.length = 0
 command.run()
-await poll(() => toasts.length > 0)
+await poll(() => created !== null)
 assert.equal(switched, null, 'home screen selection must not call switchModel')
 assert.deepEqual(dialogCurrents[0], current, 'home screen must highlight the default model')
-assert.equal(toasts[0].variant, 'warning')
+assert.deepEqual(created, {
+  model: { id: 'qwen-flash', providerID: 'bailian-cli', variant: 'medium' },
+  location: { directory: '/tmp/project' },
+})
+assert.deepEqual(navigated, { type: 'session', sessionID: 'ses_home' })
 
 // ── Scenario 3: Shift+Up from an unknown category lands on the last section ──
 route = { type: 'session', sessionID: 'ses_test' }
@@ -199,7 +226,7 @@ assert.deepEqual(dialogCurrents[1], { providerID: 'other', modelID: 'z-model' })
 context.ui.dialog.select = originalSelect
 
 cleanup()
-console.log('TUI model selector smoke passed: native dialog + categories + dedupe + recent + switchModel + jump reopen + home guard')
+console.log('TUI model selector smoke passed: native dialog + categories + dedupe + recent + switchModel + jump reopen + home session creation')
 
 async function poll(check) {
   for (let i = 0; i < 200 && !check(); i++) {

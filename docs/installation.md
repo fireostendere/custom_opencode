@@ -13,6 +13,8 @@
 
 Для Alibaba/Qwen нужен Token Plan/API credential. Для sidebar usage желательно наличие Bailian CLI `bl`.
 
+Для включённого Ponytail нужен сетевой доступ к его GitHub upstream при первой установке или обновлении managed checkout.
+
 RAG необязателен. Для него дополнительно нужны Docker + Compose, Python >= 3.10 и checkout `mcp-rag` с рабочим `.venv/bin/knowledge-mcp`.
 
 ## Рекомендуемое расположение
@@ -44,6 +46,8 @@ OPENCODE_AUTH_COOKIE_SECURE=auto
 TOKEN_PLAN_API_KEY=<Alibaba Token Plan key>
 CUSTOM_OPENCODE_INSTALL_SELFTEST=1
 OPENCODE_LOCAL_AUTO_START=0
+PONYTAIL_ENABLED=1
+PONYTAIL_DEFAULT_MODE=full
 ```
 
 `OPENCODE_AUTH_ALLOW_BASIC=0` оставляет обычный browser UX на custom login page без native Chrome Basic Auth prompt. Если UI публикуется через HTTPS reverse proxy, `OPENCODE_AUTH_COOKIE_SECURE=auto` обычно достаточно при корректном `X-Forwarded-Proto`/`Forwarded`.
@@ -66,17 +70,34 @@ Installer:
 
 1. загружает `.env`;
 2. обнаруживает RAG;
-3. при включённом self-test выполняет pre-install verifier до записи конфигов;
-4. создаёт/обновляет user systemd unit;
-5. рендерит актуальный OpenCode V2 config;
-6. делает backup существующего `opencode.json`;
-7. устанавливает `AGENTS.md`, prompts и plugins;
-8. аккуратно дополняет auth storage только реально заданными credential fields;
-9. создаёт `~/.local/bin/custom-opencode` и `custom-opencode-update`;
-10. перезапускает web/OpenCode services;
-11. выполняет post-install zero-LLM-token self-test.
+3. валидирует и provision-ит pinned Ponytail checkout, если он включён;
+4. при включённом self-test выполняет pre-install verifier до записи конфигов;
+5. создаёт/обновляет user systemd unit;
+6. рендерит актуальный OpenCode V2 config;
+7. делает backup существующего `opencode.json`;
+8. устанавливает `AGENTS.md`, prompts и plugins;
+9. аккуратно дополняет auth storage только реально заданными credential fields;
+10. создаёт `~/.local/bin/custom-opencode` и `custom-opencode-update`;
+11. перезапускает web/OpenCode services;
+12. выполняет post-install zero-LLM-token self-test.
 
 Успешная установка заканчивается `Self-test PASS`.
+
+## Ponytail checkout
+
+Installer управляет отдельным checkout `DietrichGebert/ponytail` на reviewed commit `2ed6c52c9d7e5e56942508591085fd45dea277d3`. Путь по умолчанию — `$XDG_DATA_HOME/opencode/ponytail` или `~/.local/share/opencode/ponytail`. В конфигурацию OpenCode попадает только абсолютный путь к `.opencode/plugins/ponytail.mjs`; upstream `skills/`, `commands/` и `hooks/` не копируются в `~/.config/opencode`.
+
+Provisioning fail-closed проверяет origin, ветку `main`, чистоту checkout, наличие обязательных файлов, принадлежность pin к `origin/main` и fast-forward-only обновление. Неиспользуемые локальные коммиты и изменения не перезаписываются.
+
+Состояние режима хранится в `~/.config/opencode/.ponytail-active` либо в соответствующем `$XDG_CONFIG_HOME/opencode`. Первый install записывает `PONYTAIL_DEFAULT_MODE` только если state-файла ещё нет; последующие install/update пользовательский режим не меняют. `/ponytail ...` меняет его явно.
+
+Чтобы отключить plugin без удаления managed checkout:
+
+```text
+PONYTAIL_ENABLED=0
+```
+
+Для отдельно одобренного upstream/pin доступны `PONYTAIL_UPSTREAM_URL`, `PONYTAIL_PIN_COMMIT` (только полный 40-символьный SHA) и `PONYTAIL_CHECKOUT_DIR`. Непросмотренный pin подменять не следует.
 
 ## Первый web-вход
 

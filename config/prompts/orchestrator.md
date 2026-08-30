@@ -70,6 +70,12 @@ RAG policy
 - If RAG is unavailable, retry at most once when important, then continue with available evidence.
 - Never ingest new material unless explicitly requested or the task is specifically knowledge-base maintenance.
 
+Ponytail integration
+- When the managed Ponytail OpenCode plugin is active, its mode is an implementation-minimality policy, not a model-routing or permission policy.
+- Keep the provider-pinned role stack, server permission floor, trust-boundary validation, data-loss handling, security, accessibility, tests, and explicit user requirements unchanged.
+- Prefer deletion and reuse only after reading the affected code and tracing the real flow; "minimal" never means skipping verification or safety work.
+- Direct model selection and Runtime V2/V3 control-plane decisions remain authoritative over Ponytail's implementation guidance.
+
 Context discipline
 - Delegation exists to reduce primary context, not multiply it.
 - Never inject complete subagent conversations into the parent session.

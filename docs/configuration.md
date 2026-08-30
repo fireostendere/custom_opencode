@@ -143,6 +143,22 @@ MCP_RAG_BIN=
 
 В режиме `auto`/`1` installer ищет RAG через explicit path, соседний checkout и стандартный user location. Для production-like установки лучше задавать explicit `MCP_RAG_ROOT` и `MCP_RAG_BIN`.
 
+## Ponytail
+
+```text
+PONYTAIL_ENABLED=1
+PONYTAIL_DEFAULT_MODE=full
+# PONYTAIL_UPSTREAM_URL=https://github.com/DietrichGebert/ponytail.git
+# PONYTAIL_PIN_COMMIT=2ed6c52c9d7e5e56942508591085fd45dea277d3
+# PONYTAIL_CHECKOUT_DIR=
+```
+
+`PONYTAIL_ENABLED=1` включает managed OpenCode V2 plugin и делает provisioning обязательным. `0` убирает plugin из отрендеренного `opencode.json`, но не удаляет его checkout. `PONYTAIL_DEFAULT_MODE` принимает `off`, `lite`, `full` или `ultra` и записывается только при отсутствии `.ponytail-active`.
+
+По умолчанию используется pinned upstream commit `2ed6c52c9d7e5e56942508591085fd45dea277d3`. Installer принимает только полный SHA и обновляет существующий checkout только fast-forward-ом после проверки origin `https://github.com/DietrichGebert/ponytail.git`, ветки `main`, чистого состояния и того, что pin является предком `origin/main`.
+
+Состояние режима находится в `$XDG_CONFIG_HOME/opencode/.ponytail-active` или `~/.config/opencode/.ponytail-active`. Менять режим во время работы можно командами `/ponytail`, `/ponytail lite`, `/ponytail full`, `/ponytail ultra` и `/ponytail off`.
+
 ## Repository index
 
 ```text

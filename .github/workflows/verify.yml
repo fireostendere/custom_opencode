@@ -29,6 +29,9 @@ jobs:
       - name: Full static and runtime verifier
         run: bash scripts/verify.sh
 
+      - name: Ponytail provisioning safety regression
+        run: bash scripts/ponytail-provision-regression.sh
+
       - name: Runtime V3 architecture verifier
         run: bash scripts/verify-runtime-v3.sh
 

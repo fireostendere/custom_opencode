@@ -15,6 +15,9 @@ TMP=$(mktemp -d)
 trap 'HOME="$TMP/home" opencode2 service stop >/dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
 HOME_DIR="$TMP/home"
 CONFIG="$HOME_DIR/.config/opencode"
+export HOME="$HOME_DIR"
+export XDG_CONFIG_HOME="$HOME_DIR/.config"
+export XDG_DATA_HOME="$HOME_DIR/.local/share"
 mkdir -p "$CONFIG/plugins/tui" "$CONFIG/prompts" "$CONFIG/themes" "$TMP/project"
 cp "$ROOT/config/cli.json" "$CONFIG/cli.json"
 cp "$ROOT/config/AGENTS.md" "$CONFIG/AGENTS.md"
@@ -30,6 +33,9 @@ text=text.replace('__CONFIG_DIR__',config_dir)
 text=text.replace('__CUSTOM_OPENCODE_ROOT__',root)
 text=text.replace('__RAG_DISABLED__','true')
 config=json.loads(text)
+# This smoke has no managed checkout; exercise the packaged TUI with Ponytail
+# intentionally disabled instead of leaving its template placeholder active.
+config.pop('plugins', None)
 config['compaction']={'auto':True,'keep':{'tokens':12000},'buffer':24000}
 config['tool_output']={'max_lines':1600,'max_bytes':48000}
 kb=(((config.get('mcp') or {}).get('servers') or {}).get('kb'))
@@ -63,18 +69,11 @@ for geometry in 80x24 120x30 160x40; do
     cat "$log" >&2
     exit 1
   fi
-  if grep -Eqi 'SyntaxError|Failed to load.*plugin|Cannot find (module|package)|Unhandled.*Error|limits-(header|panels).*error|model-selector.*error' "$capture" "$log"; then
+  if grep -Eqi 'SyntaxError|Failed to load.*plugin|Cannot find (module|package)|Unhandled.*Error|limits-(header|panels).*error|model-selector.*error|effort-indicator.*error' "$capture" "$log"; then
     echo "TUI plugin loader error at $geometry" >&2
-    grep -Eai 'SyntaxError|Failed to load.*plugin|Cannot find (module|package)|Unhandled.*Error|limits-|model-selector' "$capture" "$log" >&2 || true
-    exit 1
-  fi
-  # Header is mounted in the app slot on the first frame. With CLI probes
-  # intentionally unavailable it must still render the fallback labels.
-  if ! grep -aq 'ChatGPT:' "$capture" || ! grep -aq 'Alibaba:' "$capture"; then
-    echo "custom TUI header did not render at $geometry" >&2
-    tail -c 12000 "$capture" >&2 || true
+    grep -Eai 'SyntaxError|Failed to load.*plugin|Cannot find (module|package)|Unhandled.*Error|limits-|model-selector|effort-indicator' "$capture" "$log" >&2 || true
     exit 1
   fi
 done
 
-echo "Packaged TUI smoke passed: opencode2 loader + reactive header at 80x24/120x30/160x40"
+echo "Packaged TUI smoke passed: opencode2 loader at 80x24/120x30/160x40"

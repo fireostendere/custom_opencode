@@ -73,6 +73,19 @@ done
 for file in "$ROOT/scripts/"*.sh; do
   bash -n "$file"
 done
+# Ponytail provisioning script must exist and be sourceable.
+if [[ ! -f "$ROOT/scripts/ponytail-provision.sh" ]]; then
+  echo "ponytail provisioning script missing" >&2
+  exit 1
+fi
+if ! source "$ROOT/scripts/ponytail-provision.sh"; then
+  echo "ponytail provisioning script is not sourceable" >&2
+  exit 1
+fi
+if ! declare -f ponytail_provision >/dev/null; then
+  echo "ponytail provisioning script does not export ponytail_provision()" >&2
+  exit 1
+fi
 if ! grep -q 'service set env' "$ROOT/scripts/install.sh"; then
   echo "installer must persist the active V2 service environment" >&2
   exit 1
@@ -299,7 +312,17 @@ config_text = (root / "config/opencode.json.template").read_text(encoding="utf-8
 config_text = config_text.replace("__CONFIG_DIR__", "/tmp/opencode-config")
 config_text = config_text.replace("__CUSTOM_OPENCODE_ROOT__", "/tmp/custom-opencode")
 config_text = config_text.replace("__RAG_DISABLED__", "true")
+# Ponytail plugin placeholder: verifier substitutes a stub path.
+ponytail_plugin = "/tmp/opencode/ponytail/.opencode/plugins/ponytail.mjs"
+config_text = config_text.replace(
+    "__PONYTAIL_PLUGIN_PATH__",
+    json.dumps(ponytail_plugin, ensure_ascii=False)[1:-1],
+)
 config = json.loads(config_text)
+if config.get("plugins") != [ponytail_plugin]:
+    bad.append("OpenCode V2 config must expose the managed Ponytail entry point via plugins")
+if "plugin" in config:
+    bad.append("legacy singular V1 plugin field must not be present")
 for legacy in ("provider", "agent", "permission"):
     if legacy in config: bad.append(f"legacy V1 top-level field in OpenCode config: {legacy}")
 if "instructions" in config:
