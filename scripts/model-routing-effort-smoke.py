@@ -32,11 +32,11 @@ EXPECTED_PROFILES = {
     "build",
     "architect",
     "critical",
+    "review",
     "research",
     "long-horizon",
 }
 
-# Make the smoke deterministic even when a developer has role overrides locally.
 for name in (
     "OPENCODE_PLANNER_MODEL",
     "OPENCODE_BUILDER_MODEL",
@@ -53,7 +53,6 @@ for ref in EXPECTED_ROLES.values():
     ok, error = validate_provider_ref(ref, ALIBABA_PROVIDER)
     assert ok, error
 
-# Provider lock: orchestration Qwen/DeepSeek/GLM must not silently escape Bailian.
 for bad in (
     "openrouter/qwen3.8-max",
     "openrouter/deepseek-v4-pro-0813",
@@ -63,7 +62,6 @@ for bad in (
     ok, _ = validate_provider_ref(bad)
     assert not ok, bad
 
-# Canonical effort -> provider-specific request semantics.
 assert effort_plan("bailian-cli/qwen3.8-max", "low")["settings"] == {"effort": "low"}
 assert effort_plan("bailian-cli/qwen3.8-max", "medium")["settings"] == {"effort": "medium"}
 assert effort_plan("bailian-cli/qwen3.8-max", "high")["settings"] == {"effort": "xhigh"}
@@ -89,17 +87,19 @@ assert profiles["architect"]["plannerModel"] == EXPECTED_ROLES["planner"]
 assert profiles["critical"]["reviewerModel"] == EXPECTED_ROLES["reviewer"]
 assert profiles["critical"]["effortPolicy"]["planner"]["default"] == "max"
 assert profiles["critical"]["effortPolicy"]["reviewer"]["default"] == "max"
+assert profiles["review"]["cloudModel"] == EXPECTED_ROLES["reviewer"]
+assert profiles["review"]["hidden"] is True
 assert profiles["long-horizon"]["builderModel"] == EXPECTED_ROLES["long_horizon"]
 
-# Routing is deterministic and provider-pinned. There is no alternate-device path.
 scheduler = ResourceScheduler()
 build_route = scheduler.decide(profiles["build"])
 assert build_route.selected_model == EXPECTED_ROLES["builder"]
 assert build_route.mode == "provider-pinned"
+review_route = scheduler.decide(profiles["review"])
+assert review_route.selected_model == EXPECTED_ROLES["reviewer"]
 manual = scheduler.decide(profiles["direct"], selected_model="openai/example")
 assert manual.selected_model == "openai/example"
 
-# Parse the installer template after resolving its deliberate non-JSON placeholder.
 template = (ROOT / "config" / "opencode.json.template").read_text(encoding="utf-8")
 config = json.loads(template.replace("__RAG_DISABLED__", "true"))
 alibaba = config["providers"][ALIBABA_PROVIDER]
@@ -110,7 +110,6 @@ assert alibaba["name"] == "Alibaba Cloud"
 
 def variants(model: str) -> dict[str, dict]:
     return {str(row["id"]): row for row in models[model].get("variants", [])}
-
 
 q38max = variants("qwen3.8-max")
 q38flash = variants("qwen3.8-flash")
@@ -142,19 +141,9 @@ assert "local-reader" not in agents
 assert "qwen3.6-flash" not in agents["fast-reader"]["model"]
 
 prompt = (ROOT / "config" / "prompts" / "orchestrator.md").read_text(encoding="utf-8")
-for token in (
-    "role-builder",
-    "role-builder-high",
-    "fast-reader",
-    "role-reviewer-max",
-    "Plus",
-    "maximum effort",
-    "provider",
-):
+for token in ("role-builder", "role-builder-high", "fast-reader", "role-reviewer-max", "Plus", "maximum effort", "provider"):
     assert token.casefold() in prompt.casefold(), token
 
-# The removed router must not creep back into source/config/docs. Manual provider
-# support is intentionally outside this assertion; only automatic routing terms are forbidden.
 forbidden = (
     "OPENCODE_LOCAL_CODER_MODEL",
     "OPENCODE_LOCAL_AUTO_START",
@@ -164,20 +153,30 @@ forbidden = (
     "OPENCODE_LOCAL_ROUTER_LOG",
     "OPENCODE_RESOURCE_SCHEDULER",
     "OPENCODE_GAME_PROCESSES",
+    "OPENCODE_RESOURCE_PAUSE_COMMAND",
+    "OPENCODE_RESOURCE_RESUME_COMMAND",
     "OPENCODE_CLOUD_CODER_MODEL",
     "OPENCODE_FAST_MODEL",
     '"localModel"',
     'route="auto"',
+    "AdaptiveResourceScheduler",
+    "qwen3.8-coder",
+    "qwen3.8-review",
+    "qwen3.8-fast",
 )
 checked_paths = (
     ROOT / ".env.example",
     ROOT / "app" / "model_registry.py",
+    ROOT / "app" / "server_runtime.py",
+    ROOT / "app" / "runtime_v3.py",
     ROOT / "config" / "prompts" / "orchestrator.md",
     ROOT / "docs" / "model-routing-effort.md",
+    ROOT / "docs" / "models-and-routing.md",
+    ROOT / "docs" / "server-runtime-v3.md",
 )
 for path in checked_paths:
     text = path.read_text(encoding="utf-8")
     for token in forbidden:
-        assert token not in text, f"legacy routing token {token!r} remains in {path.relative_to(ROOT)}"
+        assert token not in text, f"retired routing token {token!r} remains in {path.relative_to(ROOT)}"
 
-print("Model routing/effort smoke passed: Alibaba provider lock + role models + effort variants + no legacy local routing")
+print("Model routing/effort smoke passed: provider lock + role models + effort variants + retired router removed")
