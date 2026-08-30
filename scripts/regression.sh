@@ -19,6 +19,9 @@ bash scripts/verify.sh
 step "Runtime V3 verifier"
 bash scripts/verify-runtime-v3.sh
 
+step "Model routing / effort regression"
+python3 scripts/model-routing-effort-smoke.py
+
 step "Fresh install/update regression"
 bash scripts/install-regression.sh
 

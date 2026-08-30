@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Runtime V3 completion layer for custom OpenCode.
 
-Adds adaptive routing, dynamic native compaction, AST/embedding repository indexes,
-shared RAG retrieval, tool/MCP policy hooks, sandbox enforcement, notifications,
-and replay/state-branch helpers on top of server_runtime V2.
+Adds provider-pinned role orchestration support, dynamic native compaction,
+AST/embedding repository indexes, shared RAG retrieval, tool/MCP policy hooks,
+sandbox enforcement, notifications, and replay/state-branch helpers on top of
+server_runtime V2.
 """
 from __future__ import annotations
 
@@ -27,7 +28,6 @@ from urllib import request as urlrequest
 from urllib.error import URLError
 from urllib.parse import quote
 
-from model_registry import ResourceDecision, ResourceScheduler
 from repo_services import ArtifactStore, git_snapshot
 from runtime_store import RuntimeStore, now_ms
 
@@ -41,36 +41,59 @@ SYMBOL_JS=re.compile(r"^\s*(?:export\s+)?(?:(?:async\s+)?function\s+|class\s+|(?
 WORD_RE=re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,63}")
 ENGINEERING_HINT=re.compile(r"(?i)\b(pcb|schematic|datasheet|diptrace|voltage|current|mosfet|pmic|usb|uart|esp32|i2c|spi|rf|power|signal integrity|layout|footprint|component)\b")
 
+
 def _inside(path:Path,root:Path)->bool:
-    try: path.resolve(strict=False).relative_to(root.resolve(strict=False)); return True
-    except (ValueError,OSError,RuntimeError): return False
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False)); return True
+    except (ValueError,OSError,RuntimeError):
+        return False
+
 
 def _run(cwd:Path,argv:list[str],timeout:float=15.)->subprocess.CompletedProcess[str]:
     return subprocess.run(argv,cwd=str(cwd),stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=timeout,check=False)
 
-def _tokenize(text:str)->list[str]: return [m.group(0).casefold() for m in WORD_RE.finditer(text)]
+
+def _tokenize(text:str)->list[str]:
+    return [m.group(0).casefold() for m in WORD_RE.finditer(text)]
+
+
 def _hash_embedding(text:str,dims:int=96)->list[float]:
     vec=[0.]*dims
     for token in _tokenize(text):
-        value=int.from_bytes(hashlib.blake2b(token.encode(),digest_size=8).digest(),"big"); idx=value%dims; sign=-1. if (value>>8)&1 else 1.; vec[idx]+=sign*(1.+min(3.,len(token)/12.))
-    norm=math.sqrt(sum(v*v for v in vec)) or 1.; return [round(v/norm,6) for v in vec]
-def _cosine(a:list[float],b:list[float])->float: return sum(x*y for x,y in zip(a,b)) if a and b and len(a)==len(b) else 0.
+        value=int.from_bytes(hashlib.blake2b(token.encode(),digest_size=8).digest(),"big")
+        idx=value%dims; sign=-1. if (value>>8)&1 else 1.; vec[idx]+=sign*(1.+min(3.,len(token)/12.))
+    norm=math.sqrt(sum(v*v for v in vec)) or 1.
+    return [round(v/norm,6) for v in vec]
+
+
+def _cosine(a:list[float],b:list[float])->float:
+    return sum(x*y for x,y in zip(a,b)) if a and b and len(a)==len(b) else 0.
+
+
 def _embedding(texts:list[str])->tuple[str,list[list[float]]]:
     mode=os.environ.get("OPENCODE_REPO_EMBEDDINGS","auto").strip().lower()
     if mode not in {"off","hash","hashed"}:
         try:
             from sentence_transformers import SentenceTransformer  # type: ignore
-            model_name=os.environ.get("OPENCODE_REPO_EMBED_MODEL","sentence-transformers/all-MiniLM-L6-v2"); model=SentenceTransformer(model_name); rows=model.encode(texts,normalize_embeddings=True,show_progress_bar=False)
+            model_name=os.environ.get("OPENCODE_REPO_EMBED_MODEL","sentence-transformers/all-MiniLM-L6-v2")
+            model=SentenceTransformer(model_name)
+            rows=model.encode(texts,normalize_embeddings=True,show_progress_bar=False)
             return model_name,[[round(float(v),6) for v in row] for row in rows]
-        except Exception: pass
+        except Exception:
+            pass
     return "hashed-lexical-v1",[_hash_embedding(text) for text in texts]
+
+
 def _resolve_relative_import(source:str,target:str,files:set[str])->str|None:
-    if not target.startswith("."): return None
+    if not target.startswith("."):
+        return None
     base=Path(source).parent/target
     for candidate in (base,base.with_suffix(".py"),base.with_suffix(".js"),base.with_suffix(".ts"),base.with_suffix(".tsx"),base/"index.js",base/"index.ts",base/"__init__.py"):
         normalized=str(candidate.as_posix()).lstrip("./")
-        if normalized in files: return normalized
+        if normalized in files:
+            return normalized
     return None
+
 
 class SemanticRepoIndexer:
     VERSION=3
@@ -173,6 +196,7 @@ class SemanticRepoIndexer:
             if any(not(end<s or start>e) for start,end in ranges): impacted.append({k:symbol.get(k) for k in ("path","name","qualified","kind","line","endLine")})
         changed_files=sorted(changed_lines); return {"baseline":baseline,"current":current,"changedFiles":changed_files,"changedSymbols":impacted[:500],"changedLineRanges":{k:v[:100] for k,v in changed_lines.items()},"summary":f"{len(changed_files)} files / {len(impacted)} impacted symbols"}
 
+
 class ScopedSecretBroker:
     def __init__(self): self.prefixes=tuple(x for x in os.environ.get("OPENCODE_SECRET_PREFIXES","TOKEN_PLAN_;OPENAI_;GITHUB_;MCP_;QDRANT_;HF_").split(";") if x); self.rules=self._rules(); self._leases={}; self._lock=threading.Lock()
     def _rules(self):
@@ -201,6 +225,7 @@ class ScopedSecretBroker:
     def snapshot(self)->dict[str,Any]:
         names=sorted(name for name in os.environ if any(name.startswith(prefix) for prefix in self.prefixes) and os.environ.get(name)); return {"availableRefs":names,"plaintextExposed":False,"scoped":True,"configuredScopes":sorted(self.rules)}
 
+
 class SandboxManager:
     PROFILES={"safe","repo-write","full-machine","docker","wsl"}
     def __init__(self): self.docker_image=os.environ.get("OPENCODE_SANDBOX_DOCKER_IMAGE","python:3.12-slim")
@@ -227,38 +252,6 @@ class SandboxManager:
             return {"command":f"{shlex.quote(wsl)} --cd {shlex.quote(root)} -- /bin/sh -lc {shlex.quote(command)}","cwd":root,"shell":"/bin/sh"}
         return {"command":command,"cwd":root,"shell":"/bin/sh"}
 
-class AdaptiveResourceScheduler(ResourceScheduler):
-    def __init__(self,registry:Any,store:RuntimeStore): super().__init__(); self.registry=registry; self.store=store; self._hold={}
-    def gpu_snapshot(self)->dict[str,Any]:
-        busy=[]; used=total=0
-        for card in Path("/sys/class/drm").glob("card*/device"):
-            try:
-                p=card/"gpu_busy_percent"
-                if p.is_file(): busy.append(float(p.read_text().strip()))
-                u,t=card/"mem_info_vram_used",card/"mem_info_vram_total"
-                if u.is_file() and t.is_file(): used+=int(u.read_text().strip()); total+=int(t.read_text().strip())
-            except (OSError,ValueError): pass
-        util=max(busy) if busy else None; vram=(used/total*100.) if total else None; threshold=float(os.environ.get("OPENCODE_GPU_BUSY_THRESHOLD","80")); vram_threshold=float(os.environ.get("OPENCODE_GPU_VRAM_THRESHOLD","85")); return {"utilization":util,"vramPercent":vram,"pressureHigh":(util is not None and util>=threshold) or (vram is not None and vram>=vram_threshold)}
-    def _score(self,model:dict[str,Any],profile:dict[str,Any])->float:
-        pid=str(profile.get("id") or ""); quality="review" if "review" in pid else "planning" if profile.get("orchestrated") else "coding"; score=float(model.get(quality) or .5); stats=self.store.model_stats(str(model.get("ref") or ""))
-        if stats.get("successRate") is not None: score+=(float(stats["successRate"])-.5)*.45
-        if int(stats.get("samples") or 0)>=5 and stats.get("avgLatencyMs"): score-=min(.18,float(stats["avgLatencyMs"])/180000.)
-        score+={"free":.12,"local":.10,"cheap":.07,"standard":0.,"premium":-.03}.get(str(model.get("costClass") or "standard"),0.); return score
-    def decide(self,profile:dict[str,Any],*,selected_model:str|None=None)->ResourceDecision:
-        base=super().decide(profile,selected_model=selected_model)
-        if str(profile.get("route") or "selected")=="selected" or os.environ.get("OPENCODE_RESOURCE_SCHEDULER","auto").lower() in {"off","observe"}: return base
-        gpu=self.gpu_snapshot(); constrained=base.game_detected or base.pressure_high or bool(gpu.get("pressureHigh")); requires=profile.get("requires") if isinstance(profile.get("requires"),dict) else {}; candidates=[]
-        for model in self.registry.models():
-            ref=str(model.get("ref") or "")
-            if not ref or (requires.get("tools") and not model.get("tools")) or (requires.get("fastPath") and not model.get("fastPath")) or (constrained and ref.startswith("ollama/")): continue
-            if any(isinstance(v,(int,float)) and float(model.get(k) or 0)<float(v) for k,v in requires.items() if k in {"coding","planning","review"}): continue
-            candidates.append((self._score(model,profile),ref))
-        if not candidates: return base
-        candidates.sort(reverse=True); chosen=candidates[0][1]; pid=str(profile.get("id") or ""); hold=self._hold.get(pid); hold_seconds=float(os.environ.get("OPENCODE_ROUTER_HYSTERESIS_SECONDS","45"))
-        if hold and time.monotonic()-hold[1]<hold_seconds and not constrained and any(ref==hold[0] for _,ref in candidates): chosen=hold[0]
-        else: self._hold[pid]=(chosen,time.monotonic())
-        return ResourceDecision(base.mode,pid,chosen,"adaptive telemetry score"+("; host/GPU constrained" if constrained else "; host idle"),base.game_detected,base.pressure_high or bool(gpu.get("pressureHigh")),base.local_available,base.processes,base.load_ratio)
-    def snapshot(self,profiles:dict[str,dict[str,Any]])->dict[str,Any]: result=super().snapshot(profiles); result["gpu"]=self.gpu_snapshot(); result["adaptive"]=True; return result
 
 class SharedRAGService:
     def __init__(self,store:RuntimeStore): self.store=store
@@ -285,22 +278,52 @@ class SharedRAGService:
         self.store.cache_set("shared-rag",key,value,ttl_seconds=ttl); return value
     def search(self,features:Any,query:str,top_k:int=3)->Any: return self.call(features,"knowledge_search",{"query":query[:4000],"top_k":max(1,min(8,int(top_k)))})
 
+
 class DynamicContextManager:
     def __init__(self,store:RuntimeStore,indexer:SemanticRepoIndexer,rag:SharedRAGService): self.store=store; self.indexer=indexer; self.rag=rag
     def _active_tokens(self,features:Any,sid:str)->tuple[int,list[Any]]:
         try: value=features._data(features._backend_request_json("GET",f"/api/session/{quote(sid,safe='')}/context",timeout=10.))
         except Exception: return 0,[]
         rows=value if isinstance(value,list) else []; return max(1,len(json.dumps(rows,ensure_ascii=False,default=str))//4),rows
-    def _budget(self,runtime:Any,task:dict[str,Any]|None)->tuple[int,int]:
-        profile=runtime.REGISTRY.profiles().get(str(task.get("profile")) if task else "direct",runtime.REGISTRY.profiles()["direct"]); target=int(profile.get("contextBudget") or 96000); route=task.get("route") if isinstance(task,dict) and isinstance(task.get("route"),dict) else {}; model=runtime.REGISTRY.get(str(route.get("selectedModel") or "")) if route else None; limit=int((model or {}).get("context") or target*2); reserve=max(16000,min(80000,int(limit*.12))); return min(target,max(16000,limit-reserve)),reserve
+    def _budget(self,runtime:Any,task:dict[str,Any]|None)->tuple[int,int,int,str|None,int]:
+        profiles=runtime.REGISTRY.profiles(); profile=profiles.get(str(task.get("profile")) if task else "direct",profiles["direct"])
+        policy=profile.get("contextPolicy") if isinstance(profile.get("contextPolicy"),dict) else {}
+        try: ratio=float(policy.get("targetRatio") or .72)
+        except (TypeError,ValueError): ratio=.72
+        ratio=max(.50,min(.90,ratio))
+        route=task.get("route") if isinstance(task,dict) and isinstance(task.get("route"),dict) else {}
+        selected=str(route.get("selectedModel") or "") if route else ""
+        candidate=selected or str(profile.get("cloudModel") or profile.get("builderModel") or profile.get("plannerModel") or profile.get("readerModel") or profile.get("reviewerModel") or "")
+        model=runtime.REGISTRY.get(candidate) if candidate else None
+        limit=int((model or {}).get("context") or 128000)
+        reserve=max(16000,min(131072,int(limit*.12)))
+        hard=max(16000,limit-reserve)
+        budget=max(16000,min(hard,int(limit*ratio)))
+        default_growth=max(8000,min(40000,int(limit*.03)))
+        min_growth=max(1000,int(policy.get("minGrowthBeforeRecompact") or default_growth))
+        return budget,reserve,limit,candidate or None,min_growth
     def maybe_compact(self,features:Any,runtime:Any,sid:str,task:dict[str,Any]|None)->dict[str,Any]:
-        active,rows=self._active_tokens(features,sid); budget,reserve=self._budget(runtime,task); triggered=False; key=f"{sid}:{budget}"; recent=self.store.cache_get("compaction-cooldown",key)
-        if active>budget and recent is None:
+        active,rows=self._active_tokens(features,sid); budget,reserve,limit,model_ref,min_growth=self._budget(runtime,task); triggered=False
+        completed=[r for r in rows if isinstance(r,dict) and r.get("type")=="compaction" and r.get("status")=="completed"]
+        pending=[r for r in rows if isinstance(r,dict) and r.get("type")=="compaction" and str(r.get("status") or "").lower() in {"pending","running","in_progress","requested"}]
+        key=sid; state=self.store.cache_get("context-compaction-state",key) or {}; completed_count=len(completed); now=now_ms()
+        if int(state.get("completedCount") or 0)!=completed_count:
+            state={"completedCount":completed_count,"baselineTokens":active,"lastRequestTokens":None,"lastRequestAt":0}
+        baseline=int(state.get("baselineTokens") or 0); last_request_tokens=state.get("lastRequestTokens"); last_request_at=int(state.get("lastRequestAt") or 0)
+        growth=max(0,active-baseline)
+        enough_growth=(last_request_tokens is None and growth>=min_growth) or (isinstance(last_request_tokens,(int,float)) and active-int(last_request_tokens)>=min_growth)
+        first_over_budget=last_request_tokens is None and baseline==0
+        interval_ok=not last_request_at or now-last_request_at>=180000
+        if active>budget and not pending and interval_ok and (first_over_budget or enough_growth):
             for endpoint in (f"/api/session/{quote(sid,safe='')}/compact",f"/api/session/{quote(sid,safe='')}/summarize"):
                 try: features._backend_request_json("POST",endpoint,{},timeout=12.); triggered=True; break
                 except Exception: continue
-            self.store.cache_set("compaction-cooldown",key,{"at":now_ms(),"activeTokens":active},ttl_seconds=45); self.store.event(kind="context.compaction_requested",task_id=task.get("id") if task else None,session_id=sid,project_dir=task.get("project_dir") if task else None,data={"activeTokens":active,"budgetTokens":budget,"reserveTokens":reserve,"triggered":triggered})
-        completed=[r for r in rows if isinstance(r,dict) and r.get("type")=="compaction" and r.get("status")=="completed"]; return {"activeTokens":active,"budgetTokens":budget,"reserveTokens":reserve,"compactionRequested":triggered,"hasCompaction":bool(completed)}
+            state.update({"completedCount":completed_count,"baselineTokens":baseline or active,"lastRequestTokens":active,"lastRequestAt":now})
+            self.store.cache_set("context-compaction-state",key,state,ttl_seconds=21600)
+            self.store.event(kind="context.compaction_requested",task_id=task.get("id") if task else None,session_id=sid,project_dir=task.get("project_dir") if task else None,data={"activeTokens":active,"budgetTokens":budget,"reserveTokens":reserve,"contextLimit":limit,"model":model_ref,"minGrowthTokens":min_growth,"growthTokens":growth,"triggered":triggered,"reason":"model-aware-budget"})
+        elif state:
+            state["completedCount"]=completed_count; self.store.cache_set("context-compaction-state",key,state,ttl_seconds=21600)
+        return {"activeTokens":active,"budgetTokens":budget,"reserveTokens":reserve,"contextLimit":limit,"model":model_ref,"minGrowthTokens":min_growth,"growthTokens":growth,"compactionRequested":triggered,"compactionPending":bool(pending),"hasCompaction":bool(completed)}
     def envelope(self,features:Any,runtime:Any,sid:str,project_instructions:str,rag_mode:str="auto")->dict[str,Any]:
         tasks=self.store.list_tasks(session_id=sid,states=["submitted","running","waiting_permission","verifying","recovering","queued"],limit=10); task=tasks[0] if tasks else None; compact=self.maybe_compact(features,runtime,sid,task); directory=features._session_directory(sid); budget_chars=max(8000,min(100000,compact["budgetTokens"]*2)); base=runtime.CONTEXT.envelope(project_dir=directory,task=task,project_instructions=project_instructions,budget_chars=min(48000,budget_chars)); parts=[str(base.get("text") or "")]; query=str(task.get("text") or "") if task else ""
         if query:
@@ -324,6 +347,7 @@ class DynamicContextManager:
             if len(compact_part)>remaining: compact_part=compact_part[:remaining-80]+"\n[…server context clipped…]"
             output.append(compact_part); used+=len(compact_part)+2
         return {"text":"\n\n".join(output),"usedChars":used,"budgetChars":budget_chars,"compaction":compact,"semanticDiff":base.get("semanticDiff")}
+
 
 class ToolGateway:
     def __init__(self,store:RuntimeStore,artifacts:ArtifactStore,sandbox:SandboxManager,secrets:ScopedSecretBroker): self.store=store; self.artifacts=artifacts; self.sandbox=sandbox; self.secrets=secrets
@@ -388,6 +412,7 @@ class ToolGateway:
                 if value: env[name]=value
         return {**wrapped,"env":env,"stripSecretPrefixes":list(self.secrets.prefixes),"sandbox":profile,"taskID":task["id"]}
 
+
 class RemoteNotifier:
     def __init__(self,store:RuntimeStore): self.store=store
     def send(self,event:dict[str,Any])->None:
@@ -400,6 +425,7 @@ class RemoteNotifier:
             with urlrequest.urlopen(req,timeout=2.) as response: response.read(1)
         except (OSError,URLError): pass
 
+
 class ReplayService:
     def __init__(self,store:RuntimeStore,artifacts:ArtifactStore): self.store=store; self.artifacts=artifacts
     def capture(self,features:Any,task:dict[str,Any])->dict[str,Any]|None:
@@ -409,6 +435,7 @@ class ReplayService:
         artifact=self.artifacts.put(task_id=task["id"],project_dir=task.get("project_dir"),kind="run-replay",title="Recorded OpenCode run",content=json.dumps(messages if isinstance(messages,list) else [],ensure_ascii=False,default=str),summary="Recorded messages/tool results for zero-token replay",mime="application/json"); self.store.event(kind="replay.captured",task_id=task["id"],session_id=sid,project_dir=task.get("project_dir"),data={"artifactID":artifact["id"]}); return artifact
     def replay(self,task_id:str)->dict[str,Any]:
         artifacts=self.artifacts.list(task_id,limit=200); replay=next((a for a in artifacts if a.get("kind")=="run-replay"),None); return {"taskID":task_id,"events":self.store.events(task_id=task_id,limit=2000),"checkpoints":self.store.checkpoints(task_id,limit=500),"usage":self.store.usage_summary(task_id),"recording":self.artifacts.get(replay["id"],limit=500000) if replay else None,"modelCalls":0}
+
 
 class BranchStateService:
     def __init__(self,store:RuntimeStore): self.store=store
@@ -424,17 +451,26 @@ class BranchStateService:
             for item in self.store.decision_list(source_project,limit=200): copied.append(self.store.decision_add(target_project,item["title"],item["decision"],item["rationale"])["id"])
         self.store.event(kind="session.branch_merged",session_id=target_session,data={"sourceSessionID":source_session,"copiedDecisions":copied,"sourceTaskIDs":[t["id"] for t in source]}); return {"ok":True,"sourceSessionID":source_session,"targetSessionID":target_session,"copiedDecisions":copied,"sourceTasks":len(source),"targetTasks":len(target)}
 
+
 @dataclass
 class RuntimeV3:
     store:RuntimeStore; indexer:SemanticRepoIndexer; secrets:ScopedSecretBroker; sandbox:SandboxManager; rag:SharedRAGService; context:DynamicContextManager; gateway:ToolGateway; notifier:RemoteNotifier; replay:ReplayService; branches:BranchStateService
 _INSTANCE:RuntimeV3|None=None
 
+
 def install(runtime:Any,features:Any)->RuntimeV3:
     global _INSTANCE
     if _INSTANCE is not None: return _INSTANCE
-    indexer=SemanticRepoIndexer(runtime.STORE); secrets=ScopedSecretBroker(); sandbox=SandboxManager(); rag=SharedRAGService(runtime.STORE); context=DynamicContextManager(runtime.STORE,indexer,rag); gateway=ToolGateway(runtime.STORE,runtime.ARTIFACTS,sandbox,secrets); _INSTANCE=RuntimeV3(runtime.STORE,indexer,secrets,sandbox,rag,context,gateway,RemoteNotifier(runtime.STORE),ReplayService(runtime.STORE,runtime.ARTIFACTS),BranchStateService(runtime.STORE)); runtime.SCHEDULER=AdaptiveResourceScheduler(runtime.REGISTRY,runtime.STORE); runtime.STORE.event(kind="runtime.v3_installed",data={"features":["native-compaction","ast-index","embeddings","mcp-code-mode","sandbox-enforcement","shared-rag","replay","adaptive-router"]}); return _INSTANCE
+    indexer=SemanticRepoIndexer(runtime.STORE); secrets=ScopedSecretBroker(); sandbox=SandboxManager(); rag=SharedRAGService(runtime.STORE); context=DynamicContextManager(runtime.STORE,indexer,rag); gateway=ToolGateway(runtime.STORE,runtime.ARTIFACTS,sandbox,secrets)
+    _INSTANCE=RuntimeV3(runtime.STORE,indexer,secrets,sandbox,rag,context,gateway,RemoteNotifier(runtime.STORE),ReplayService(runtime.STORE,runtime.ARTIFACTS),BranchStateService(runtime.STORE))
+    runtime.STORE.event(kind="runtime.v3_installed",data={"features":["native-compaction","ast-index","embeddings","mcp-code-mode","sandbox-enforcement","shared-rag","replay","provider-pinned-role-router"]})
+    return _INSTANCE
+
+
 def instance(runtime:Any,features:Any)->RuntimeV3: return _INSTANCE or install(runtime,features)
 def context_envelope(features:Any,runtime:Any,session_id:str,instructions:str,rag_mode:str="auto")->dict[str,Any]: return instance(runtime,features).context.envelope(features,runtime,session_id,instructions,rag_mode)
+
+
 def _json_body(handler:Any,limit:int=2_000_000)->dict[str,Any]:
     if hasattr(handler,"_feature_body"): return handler._feature_body(limit)
     length=int(handler.headers.get("Content-Length","0"))
@@ -442,11 +478,19 @@ def _json_body(handler:Any,limit:int=2_000_000)->dict[str,Any]:
     data=json.loads(handler.rfile.read(length).decode()) if length else {}
     if not isinstance(data,dict): raise ValueError("JSON object required")
     return data
+
+
 def _internal_auth(handler:Any)->bool:
     expected=os.environ.get("OPENCODE_RUNTIME_PLUGIN_TOKEN") or os.environ.get("OPENCODE_SERVER_PASSWORD") or ""; supplied=handler.headers.get("X-OpenCode-Runtime","")
     return bool(expected and supplied and hashlib.sha256(supplied.encode()).digest()==hashlib.sha256(expected.encode()).digest())
+
+
 def runtime_snapshot(runtime:Any,features:Any,directory:str|None=None)->dict[str,Any]:
-    v3=instance(runtime,features); base=runtime.runtime_snapshot(features,directory); base["version"]=3; base["services"].update({"nativeDynamicCompaction":True,"astIndex":True,"repoEmbeddings":True,"gitGraph":True,"dependencyGraph":True,"semanticSymbolDiff":True,"mcpCodeMode":True,"mcpPolicyGateway":True,"scopedSecretBroker":True,"sandboxEnforcement":True,"sharedNativeRAG":True,"sessionStateBranching":True,"zeroTokenReplay":True,"adaptiveTelemetryRouter":True,"remoteNotificationAPI":True}); base["resources"]=runtime.resource_snapshot(); base["secretBroker"]=v3.secrets.snapshot(); return base
+    v3=instance(runtime,features); base=runtime.runtime_snapshot(features,directory); base["version"]=3
+    base["services"].update({"nativeDynamicCompaction":True,"astIndex":True,"repoEmbeddings":True,"gitGraph":True,"dependencyGraph":True,"semanticSymbolDiff":True,"mcpCodeMode":True,"mcpPolicyGateway":True,"scopedSecretBroker":True,"sandboxEnforcement":True,"sharedNativeRAG":True,"sessionStateBranching":True,"zeroTokenReplay":True,"providerLockedRoleRouter":True,"remoteNotificationAPI":True})
+    base["resources"]=runtime.resource_snapshot(); base["secretBroker"]=v3.secrets.snapshot(); return base
+
+
 def handle_get(handler:Any,parsed:Any,runtime:Any,features:Any)->bool:
     if parsed.path not in {"/client-runtime-v3.json","/client-repo-index-v3.json","/client-replay.json","/client-runtime-events.json"}: return False
     if not handler.authenticated(): return True
@@ -466,6 +510,8 @@ def handle_get(handler:Any,parsed:Any,runtime:Any,features:Any)->bool:
             after=int((params.get("after") or [0])[0]); handler.json_response({"events":runtime.STORE.events(project_dir=directory,after=after,limit=1000)})
     except Exception as exc: handler._feature_error(exc)
     return True
+
+
 def handle_post(handler:Any,parsed:Any,runtime:Any,features:Any)->bool:
     internal={"/internal/runtime/tool-before","/internal/runtime/tool-after","/internal/runtime/shell","/internal/runtime/context"}; public={"/client-session-branch.json","/client-session-merge.json","/client-replay-capture.json","/client-notify-test.json"}
     if parsed.path not in internal|public: return False

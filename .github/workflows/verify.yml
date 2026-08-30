@@ -32,6 +32,9 @@ jobs:
       - name: Runtime V3 architecture verifier
         run: bash scripts/verify-runtime-v3.sh
 
+      - name: Model routing and effort verifier
+        run: python3 scripts/model-routing-effort-smoke.py
+
       - name: Runtime workflow invariants
         run: python3 scripts/runtime-invariants-smoke.py
 

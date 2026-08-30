@@ -27,66 +27,94 @@ OPENCODE_SCRATCH_DIRECTORY=
 OPENCODE_PROJECT_ROOTS=~
 ```
 
-`OPENCODE_SERVER_PASSWORD` обязателен. Обычный web UI использует собственную login page и подписанную `HttpOnly` cookie, а не browser-native Basic Auth prompt.
+`OPENCODE_SERVER_PASSWORD` обязателен. Обычный web UI использует собственную login page и подписанную `HttpOnly` cookie.
 
-- `OPENCODE_AUTH_SESSION_SECONDS` — TTL обычной session cookie; по умолчанию 24 часа. Без `Запомнить вход` cookie не получает `Max-Age` и остаётся browser-session cookie.
-- `OPENCODE_AUTH_REMEMBER_SECONDS` — TTL при включённом `Запомнить вход`; по умолчанию 30 дней.
-- `OPENCODE_AUTH_COOKIE_SECURE=auto` — ставит `Secure` при HTTPS, обнаруженном через reverse-proxy headers. Можно принудительно задать `1` или `0`.
-- `OPENCODE_AUTH_ALLOW_BASIC=0` — рекомендуемый default. `1` нужен только для старых внешних clients/scripts, которые всё ещё отправляют `Authorization: Basic`.
-- `OPENCODE_WEB_ALLOW_LOCAL=0` — рекомендуемый и безопасный default. При явном `1` bypass разрешён только прямому localhost request: loopback TCP peer + loopback `Host` + отсутствие forwarding headers. Reverse-proxy/LAN/Tailscale traffic никогда не наследует localhost bypass.
+- `OPENCODE_AUTH_SESSION_SECONDS` — TTL обычной session cookie.
+- `OPENCODE_AUTH_REMEMBER_SECONDS` — TTL при `Запомнить вход`.
+- `OPENCODE_AUTH_COOKIE_SECURE=auto` — включает `Secure` при HTTPS.
+- `OPENCODE_AUTH_ALLOW_BASIC=0` — рекомендуемый default.
+- `OPENCODE_WEB_ALLOW_LOCAL=0` — рекомендуемый безопасный default.
 
-Пароль в браузере приложением не сохраняется. `Запомнить вход` хранит только пользовательское предпочтение/username в localStorage и долгоживущую подписанную HttpOnly cookie. `Logout` отзывает текущий token в lifetime server process; изменение web password инвалидирует все старые tokens криптографически.
+`OPENCODE_PROJECT_ROOTS` — список разрешённых roots для browser project picker, разделитель `;`.
 
-`OPENCODE_WEB_HOST=localhost` — безопасный default. Если UI публикуется в LAN/tailnet, используйте TLS/Tailscale/reverse proxy, оставляйте `OPENCODE_WEB_ALLOW_LOCAL=0` и не выставляйте plaintext HTTP в недоверенную сеть.
+## Role-based model routing
 
-`OPENCODE_SCRATCH_DIRECTORY` задаёт root для изолированных quick-session directories. Пустое значение приводит к default `~/opencode-scratch`.
-
-`OPENCODE_PROJECT_ROOTS` — список разрешённых roots для `Проекты → Папки на ПК`, разделитель `;`:
+Canonical role refs:
 
 ```text
-OPENCODE_PROJECT_ROOTS=~/code;~/projects
+OPENCODE_PLANNER_MODEL=bailian-cli/qwen3.8-max
+OPENCODE_BUILDER_MODEL=bailian-cli/qwen3.7-plus
+OPENCODE_READER_MODEL=bailian-cli/qwen3.8-flash
+OPENCODE_REVIEW_MODEL=bailian-cli/deepseek-v4-pro-0813
+OPENCODE_LONG_HORIZON_MODEL=bailian-cli/glm-5.2
+OPENCODE_ORCHESTRATED_MODEL=bailian-cli/qwen3.8-orchestrated
 ```
 
-Чем уже список, тем меньше filesystem surface доступна web folder browser.
+Эти роли provider-locked на Alibaba Cloud/Bailian. Qwen, DeepSeek и GLM из orchestration stack не должны автоматически уходить на другой gateway/provider.
 
-## Browser-only UI state
+`direct` сохраняет ровно выбранную пользователем модель. Managed profiles (`fast`, `build`, `architect`, `critical`, `research`, `long-horizon`) используют только собственные role refs.
 
-Тема/акцент, состояние `Лимиты`, remembered username/checkbox и drafts не относятся к `.env`. Они хранятся в browser local/session storage.
+Host load, GPU state, запущенные игры и доступность другого inference endpoint не участвуют в выборе model route.
 
-Основные ключи:
+## Reasoning effort
+
+Canonical levels:
 
 ```text
-opencode:web:appearance-v1
-custom-opencode:limits-collapsed
-opencode:web:login-prefs-v2
-opencode:web:auth-resume-v1   # sessionStorage
+auto
+minimal
+low
+medium
+high
+max
 ```
 
-`appearance-v1` содержит только `theme` (`system|light|dark`) и hex accent color. Секретов в этих keys быть не должно.
+`max` — semantic runtime intent: использовать максимальный reasoning effort, который реально поддерживается данной model/provider pair. Runtime/provider adapter переводит его в фактический provider-specific уровень.
 
-## Публичные/удалённые ссылки
+Default policy:
 
 ```text
-OPENCODE_LOCAL_URL=http://localhost:4098
-OPENCODE_LAN_URL=https://your-lan-hostname
-OPENCODE_TAILSCALE_URL=https://your-tailnet-hostname
+reader     low
+builder    medium
+planner    high
+reviewer   high
 ```
 
-Это host-specific значения. Не хардкодьте реальные LAN/tailnet адреса в tracked config.
-
-## OpenCode backend discovery
+Escalation normal coding:
 
 ```text
-OPENCODE_BACKEND_URL=
-OPENCODE_BACKEND_USERNAME=opencode
-OPENCODE_BACKEND_PASSWORD=
-OPENCODE_SERVICE_FILE=
-OPENCODE_LEGACY_AUTH_FILE=
+Plus medium
+→ Plus high
+→ Max high
+→ Max max только для exceptional/critical reasoning
 ```
 
-Нормальный режим — service discovery через state file OpenCode V2. `OPENCODE_BACKEND_URL` и password нужны только когда backend явно закреплён вручную.
+## Alibaba / Qwen Token Plan
 
-Не заполняйте explicit backend values без необходимости: это делает установку менее переносимой.
+```text
+TOKEN_PLAN_API_KEY=<required for Alibaba models>
+TOKEN_PLAN_ANTHROPIC_BASE_URL=https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1
+TOKEN_PLAN_OPENAI_BASE_URL=https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+TOKEN_PLAN_PROBE_MODEL=qwen3.8-max
+BAILIAN_CONFIG_PATH=
+QWEN_QUOTA_PROBE_ENABLED=0
+```
+
+Основной OpenCode provider `bailian-cli` использует Anthropic-compatible endpoint и `TOKEN_PLAN_API_KEY`.
+
+Не печатайте key в диагностических логах и не переносите его в tracked JSON.
+
+`QWEN_QUOTA_PROBE_ENABLED=0` оставляет install/restart и обычный runtime без автоматического paid inference probe.
+
+## Manual provider endpoints
+
+`OLLAMA_BASE_URL` существует только как endpoint обычного manually selectable provider из OpenCode catalog. Role router его не читает, не проверяет его доступность и не выбирает его автоматически.
+
+```text
+OLLAMA_BASE_URL=http://localhost:11434/v1
+```
+
+Это не routing setting.
 
 ## Provider-limit bridges
 
@@ -99,12 +127,6 @@ OPENCODE_TUI_LIMITS_COMMAND_TIMEOUT_MS=10000
 
 Если `codex` и `bl` доступны через `PATH`, явные пути не нужны.
 
-- Codex bridge читает rate limits через локальный `codex app-server` RPC.
-- Bailian bridge читает Token Plan usage через `bl usage token-plan --output json`.
-- Browser получает нормализованные данные, а не OAuth/API credentials.
-- TUI запускает эти CLI без shell interpolation; каждый child process bounded watchdog-ом. `OPENCODE_TUI_LIMITS_COMMAND_TIMEOUT_MS` ограничен helper-ом диапазоном 500–30000 мс.
-- `limits-header` и `limits-panels` разделяют один single-flight refresh с reference-counted ownership, поэтому unload одного surface не выключает обновление второго.
-
 ## RAG
 
 ```text
@@ -113,69 +135,69 @@ MCP_RAG_ROOT=
 MCP_RAG_BIN=
 ```
 
-`MCP_RAG_ENABLED` задаёт намерение установки:
+`MCP_RAG_ENABLED`:
 
-- `auto` — default; installer пытается найти usable RAG и включает его только если checkout/executable доступны;
-- `0` — RAG намеренно выключен; autodetect не выполняется, `kb` рендерится disabled, `rag-quick` в post-install self-test становится `SKIP`;
-- `1` — RAG обязателен; если usable checkout/executable не найден, установка завершается ошибкой до runtime self-test.
+- `auto` — попробовать найти usable RAG;
+- `0` — намеренно выключить;
+- `1` — сделать обязательным для установки.
 
-В режиме `auto` или `1` installer ищет RAG в порядке:
+В режиме `auto`/`1` installer ищет RAG через explicit path, соседний checkout и стандартный user location. Для production-like установки лучше задавать explicit `MCP_RAG_ROOT` и `MCP_RAG_BIN`.
 
-1. `MCP_RAG_ROOT`;
-2. соседний `../mcp-rag`;
-3. `~/mcp-rag`.
-
-Для предсказуемой production-like установки лучше задать абсолютные пути:
+## Repository index
 
 ```text
-MCP_RAG_ENABLED=1
-MCP_RAG_ROOT=/absolute/path/to/mcp-rag
-MCP_RAG_BIN=/absolute/path/to/mcp-rag/.venv/bin/knowledge-mcp
+OPENCODE_REPO_EMBEDDINGS=auto
+OPENCODE_REPO_EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2
 ```
 
-Если RAG checkout лежит рядом, но его пока не нужно подключать, укажите явно:
+`auto` использует sentence-transformers при наличии и иначе deterministic hashed embeddings. Внешний model API для repository index не обязателен.
+
+## Runtime/tool policy
 
 ```text
-MCP_RAG_ENABLED=0
+OPENCODE_MCP_RATE_LIMIT=120
+OPENCODE_TOOL_ARTIFACT_THRESHOLD=24000
+OPENCODE_LOOP_LIMIT=3
+OPENCODE_VERIFY_PIPELINE=auto
+OPENCODE_VERIFY_TIMEOUT=120
+OPENCODE_VERIFY_AUTOFIX=1
+OPENCODE_AUTO_REVIEW=smart
+OPENCODE_STUCK_PROGRESS_POLLS=100
+OPENCODE_STUCK_ACTION=warn
 ```
 
-При `CUSTOM_OPENCODE_INSTALL_SELFTEST=1` и реально включённом RAG install/update теперь делает два уровня проверки без LLM/API inference:
-
-1. bounded `rag-quick`: Qdrant/corpus/index readiness + MCP connect/protocol;
-2. `scripts/rag-live-regression.py`: full preflight + один local retrieval smoke + прямой MCP `knowledge_search`.
-
-То есть RAG-enabled update не считается успешным, если корпус формально найден, но retrieval или MCP tool contract уже сломан.
-
-## Alibaba / Qwen Token Plan
+## Secrets
 
 ```text
-TOKEN_PLAN_API_KEY=<required for Alibaba models>
-TOKEN_PLAN_ANTHROPIC_BASE_URL=https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1
-TOKEN_PLAN_OPENAI_BASE_URL=https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
-TOKEN_PLAN_PROBE_MODEL=qwen3.8-max
-BAILIAN_CONFIG_PATH=
+OPENCODE_SECRET_PREFIXES=TOKEN_PLAN_;OPENAI_;GITHUB_;MCP_;QDRANT_;HF_
+OPENCODE_SECRET_SCOPES=
+OPENCODE_SHELL_SECRET_REFS=
 ```
 
-Основной OpenCode provider `bailian-cli` использует Anthropic-compatible endpoint и `TOKEN_PLAN_API_KEY`.
+Secret values не сериализуются в browser/runtime snapshots.
 
-Не печатайте key в диагностических логах и не переносите его в tracked JSON.
-
-`QWEN_QUOTA_PROBE_ENABLED=0` оставляет install/restart и обычный runtime без автоматического LLM inference. Значение `1` явно включает периодический one-token probe для decoration заголовков сессий; панель лимитов через Bailian CLI не требует включать этот probe.
-
-## Локальный Ollama
+## Sandbox
 
 ```text
-OLLAMA_BASE_URL=http://localhost:11434/v1
-OPENCODE_LOCAL_AUTO_START=0
-OPENCODE_LOCAL_PROVIDER=ollama
-OPENCODE_LOCAL_ROUTER_URL=
-OPENCODE_LOCAL_ROUTER_START=
-OPENCODE_LOCAL_ROUTER_LOG=
+OPENCODE_ALLOW_FULL_MACHINE=0
+OPENCODE_SANDBOX_DOCKER_IMAGE=python:3.12-slim
+OPENCODE_DOCKER_NETWORK=0
+OPENCODE_DOCKER_READONLY=0
 ```
 
-Рекомендуемый default — `OPENCODE_LOCAL_AUTO_START=0`.
+`full-machine` требует explicit opt-in. Normal writable work использует repo-scoped policy.
 
-Локальные модели присутствуют в catalog для ручного выбора, но автоматические agents не должны зависеть от Ollama. Старые router variables можно хранить для ручного/экспериментального режима.
+## Backend discovery
+
+```text
+OPENCODE_BACKEND_URL=
+OPENCODE_BACKEND_USERNAME=opencode
+OPENCODE_BACKEND_PASSWORD=
+OPENCODE_SERVICE_FILE=
+OPENCODE_LEGACY_AUTH_FILE=
+```
+
+Нормальный режим — OpenCode V2 service discovery. Explicit backend задавайте только когда действительно нужен pin.
 
 ## Installer
 
@@ -188,13 +210,9 @@ INSTALL_OPENCODE_CONFIG=1
 CUSTOM_OPENCODE_INSTALL_SELFTEST=1
 ```
 
-Для shared OpenCode V2 оставляйте `OPENCODE_CONFIG_DIR` пустым: используется канонический global root `~/.config/opencode`. Installer отклоняет другой путь, потому что обычный shared launcher после рестарта иначе вернётся к стандартному профилю и runtime перестанет соответствовать установленному config.
+Для shared OpenCode V2 `OPENCODE_CONFIG_DIR` обычно остаётся пустым, чтобы использовать canonical global config.
 
-Если `OPENCODE_AUTH_FILE` пуст, используется `~/.local/share/opencode/auth.json`.
-
-`CUSTOM_OPENCODE_INSTALL_SELFTEST=1` должен оставаться включённым. При включённом RAG он включает реальный zero-token retrieval regression. `0` предназначен только для аварийного recovery, когда сломанный runtime не позволяет installer завершиться.
-
-## Опциональные auth backup fields
+## Optional OpenCode auth backup
 
 ```text
 OPENCODE_OPENAI_ACCESS=CHANGE_ME
@@ -205,11 +223,9 @@ OPENCODE_ZEN_KEY=CHANGE_ME
 OPENCODE_GO_KEY=CHANGE_ME
 ```
 
-Installer записывает в auth storage только реально заданные значения, отличные от `CHANGE_ME`.
+Installer записывает только реально заданные значения, отличные от `CHANGE_ME`.
 
-Если рабочие credentials уже находятся в `auth.json`, не нужно копировать их обратно в `.env` только ради заполнения этих полей.
-
-## Рекомендованный минимальный `.env`
+## Recommended minimal `.env`
 
 ```text
 OPENCODE_SERVER_USERNAME=opencode
@@ -224,27 +240,29 @@ OPENCODE_PROJECT_ROOTS=~/code;~/projects
 TOKEN_PLAN_API_KEY=<set>
 TOKEN_PLAN_ANTHROPIC_BASE_URL=https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1
 TOKEN_PLAN_OPENAI_BASE_URL=https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
-TOKEN_PLAN_PROBE_MODEL=qwen3.8-max
+
+OPENCODE_PLANNER_MODEL=bailian-cli/qwen3.8-max
+OPENCODE_BUILDER_MODEL=bailian-cli/qwen3.7-plus
+OPENCODE_READER_MODEL=bailian-cli/qwen3.8-flash
+OPENCODE_REVIEW_MODEL=bailian-cli/deepseek-v4-pro-0813
+OPENCODE_LONG_HORIZON_MODEL=bailian-cli/glm-5.2
+OPENCODE_ORCHESTRATED_MODEL=bailian-cli/qwen3.8-orchestrated
 
 MCP_RAG_ENABLED=0
-MCP_RAG_ROOT=
-MCP_RAG_BIN=
-
-OPENCODE_LOCAL_AUTO_START=0
-OPENCODE_LOCAL_PROVIDER=ollama
 CUSTOM_OPENCODE_INSTALL_SELFTEST=1
 INSTALL_OPENCODE_CONFIG=1
 ```
 
-## Проверка `.env`
+## Проверка
 
-Перед install/update полезно проверить:
+Перед install/update:
 
 ```bash
 set -a
 source .env
 set +a
 ./scripts/verify.sh
+python3 scripts/model-routing-effort-smoke.py
 ```
 
-Verifier специально ищет случайно закоммиченные секреты, personal absolute paths и сетевые literals в tracked source. `.env` из проверки исключён.
+Verifier также ищет случайно закоммиченные secrets, personal absolute paths и запрещённые routing regressions.
