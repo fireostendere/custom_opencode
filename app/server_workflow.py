@@ -11,6 +11,7 @@ from urllib.parse import quote, urlsplit
 
 import integration_contract
 import runtime_completion
+import runtime_invariants
 import runtime_resume
 import runtime_v3
 import runtime_v3_ext
@@ -21,6 +22,7 @@ import server_runtime as runtime
 
 
 _ORIGINAL_SEND = features._send_backend_prompt
+runtime_invariants.install(runtime.STORE)
 runtime.install(features)
 runtime_v3.install(runtime, features)
 runtime_v3_ext.install(runtime, runtime_v3, features)
