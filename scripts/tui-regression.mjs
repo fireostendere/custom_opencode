@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 const root = new URL('../', import.meta.url)
 const helperUrl = new URL('config/plugins/tui/lib/limits-helper.js', root)
@@ -31,7 +30,10 @@ print(json.dumps({'planName':'Personal Pro','per5HourPercentage':0.375,'per5Hour
 
 process.env.CODEX_BIN = codex
 process.env.BAILIAN_CLI_BIN = bailian
-process.env.OPENCODE_TUI_LIMITS_COMMAND_TIMEOUT_MS = '1200'
+// Normal subprocess startup can be slower on a loaded Windows/WSL host.
+// Keep the production watchdog strict, but do not make the happy-path fixture
+// itself flaky by requiring both Python CLIs to start inside ~1 second.
+process.env.OPENCODE_TUI_LIMITS_COMMAND_TIMEOUT_MS = '3000'
 
 const helper = await import(`${helperUrl.href}?normal=${Date.now()}`)
 const limits = await helper.getLimits()
@@ -50,7 +52,7 @@ assert.deepEqual(helper.getAutoRefreshState(), {
   owners: 2,
   active: true,
   pending: false,
-  timeoutMs: 1200,
+  timeoutMs: 3000,
 })
 helper.stopAutoRefresh()
 assert.equal(helper.getAutoRefreshState().owners, 1)
