@@ -22,7 +22,7 @@ OPENCODE_AUTH_COOKIE_SECURE=auto
 OPENCODE_AUTH_ALLOW_BASIC=0
 OPENCODE_WEB_HOST=localhost
 OPENCODE_WEB_PORT=4098
-OPENCODE_WEB_ALLOW_LOCAL=1
+OPENCODE_WEB_ALLOW_LOCAL=0
 OPENCODE_SCRATCH_DIRECTORY=
 OPENCODE_PROJECT_ROOTS=~
 ```
@@ -33,11 +33,11 @@ OPENCODE_PROJECT_ROOTS=~
 - `OPENCODE_AUTH_REMEMBER_SECONDS` — TTL при включённом `Запомнить вход`; по умолчанию 30 дней.
 - `OPENCODE_AUTH_COOKIE_SECURE=auto` — ставит `Secure` при HTTPS, обнаруженном через reverse-proxy headers. Можно принудительно задать `1` или `0`.
 - `OPENCODE_AUTH_ALLOW_BASIC=0` — рекомендуемый default. `1` нужен только для старых внешних clients/scripts, которые всё ещё отправляют `Authorization: Basic`.
-- `OPENCODE_WEB_ALLOW_LOCAL=1` разрешает loopback bypass. Для удалённого bind оцените, нужен ли он вообще.
+- `OPENCODE_WEB_ALLOW_LOCAL=0` — рекомендуемый и безопасный default. При явном `1` bypass разрешён только прямому localhost request: loopback TCP peer + loopback `Host` + отсутствие forwarding headers. Reverse-proxy/LAN/Tailscale traffic никогда не наследует localhost bypass.
 
-Пароль в браузере приложением не сохраняется. `Запомнить вход` хранит только пользовательское предпочтение/username в localStorage и долгоживущую подписанную HttpOnly cookie.
+Пароль в браузере приложением не сохраняется. `Запомнить вход` хранит только пользовательское предпочтение/username в localStorage и долгоживущую подписанную HttpOnly cookie. `Logout` отзывает текущий token в lifetime server process; изменение web password инвалидирует все старые tokens криптографически.
 
-`OPENCODE_WEB_HOST=localhost` — безопасный default. Если UI публикуется в LAN/tailnet, используйте TLS/Tailscale/reverse proxy и не выставляйте plaintext HTTP в недоверенную сеть.
+`OPENCODE_WEB_HOST=localhost` — безопасный default. Если UI публикуется в LAN/tailnet, используйте TLS/Tailscale/reverse proxy, оставляйте `OPENCODE_WEB_ALLOW_LOCAL=0` и не выставляйте plaintext HTTP в недоверенную сеть.
 
 `OPENCODE_SCRATCH_DIRECTORY` задаёт root для изолированных quick-session directories. Пустое значение приводит к default `~/opencode-scratch`.
 
@@ -94,6 +94,7 @@ OPENCODE_LEGACY_AUTH_FILE=
 CODEX_BIN=
 BAILIAN_CLI_BIN=
 OPENCODE_LIMITS_CACHE_SECONDS=60
+OPENCODE_TUI_LIMITS_COMMAND_TIMEOUT_MS=10000
 ```
 
 Если `codex` и `bl` доступны через `PATH`, явные пути не нужны.
@@ -101,6 +102,8 @@ OPENCODE_LIMITS_CACHE_SECONDS=60
 - Codex bridge читает rate limits через локальный `codex app-server` RPC.
 - Bailian bridge читает Token Plan usage через `bl usage token-plan --output json`.
 - Browser получает нормализованные данные, а не OAuth/API credentials.
+- TUI запускает эти CLI без shell interpolation; каждый child process bounded watchdog-ом. `OPENCODE_TUI_LIMITS_COMMAND_TIMEOUT_MS` ограничен helper-ом диапазоном 500–30000 мс.
+- `limits-header` и `limits-panels` разделяют один single-flight refresh с reference-counted ownership, поэтому unload одного surface не выключает обновление второго.
 
 ## RAG
 
@@ -135,6 +138,13 @@ MCP_RAG_BIN=/absolute/path/to/mcp-rag/.venv/bin/knowledge-mcp
 ```text
 MCP_RAG_ENABLED=0
 ```
+
+При `CUSTOM_OPENCODE_INSTALL_SELFTEST=1` и реально включённом RAG install/update теперь делает два уровня проверки без LLM/API inference:
+
+1. bounded `rag-quick`: Qdrant/corpus/index readiness + MCP connect/protocol;
+2. `scripts/rag-live-regression.py`: full preflight + один local retrieval smoke + прямой MCP `knowledge_search`.
+
+То есть RAG-enabled update не считается успешным, если корпус формально найден, но retrieval или MCP tool contract уже сломан.
 
 ## Alibaba / Qwen Token Plan
 
@@ -182,7 +192,7 @@ CUSTOM_OPENCODE_INSTALL_SELFTEST=1
 
 Если `OPENCODE_AUTH_FILE` пуст, используется `~/.local/share/opencode/auth.json`.
 
-`CUSTOM_OPENCODE_INSTALL_SELFTEST=1` должен оставаться включённым. `0` предназначен только для аварийного recovery, когда сломанный runtime не позволяет installer завершиться.
+`CUSTOM_OPENCODE_INSTALL_SELFTEST=1` должен оставаться включённым. При включённом RAG он включает реальный zero-token retrieval regression. `0` предназначен только для аварийного recovery, когда сломанный runtime не позволяет installer завершиться.
 
 ## Опциональные auth backup fields
 
@@ -208,7 +218,7 @@ OPENCODE_AUTH_ALLOW_BASIC=0
 OPENCODE_AUTH_COOKIE_SECURE=auto
 OPENCODE_WEB_HOST=localhost
 OPENCODE_WEB_PORT=4098
-OPENCODE_WEB_ALLOW_LOCAL=1
+OPENCODE_WEB_ALLOW_LOCAL=0
 OPENCODE_PROJECT_ROOTS=~/code;~/projects
 
 TOKEN_PLAN_API_KEY=<set>
