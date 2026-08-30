@@ -46,7 +46,7 @@ from pathlib import Path
 import json,sys
 root=Path(sys.argv[1])
 required={
-  "app/runtime_v3.py":["class SemanticRepoIndexer","class DynamicContextManager","class ToolGateway","class ScopedSecretBroker","class SandboxManager","class AdaptiveResourceScheduler","class SharedRAGService","class ReplayService","class BranchStateService"],
+  "app/runtime_v3.py":["class SemanticRepoIndexer","class DynamicContextManager","class ToolGateway","class ScopedSecretBroker","class SandboxManager","class SharedRAGService","class ReplayService","class BranchStateService","class RuntimeV3"],
   "app/runtime_v3_ext.py":["notification.sent","run-replay","client-mcp-gateway-v3.json","client-runtime-telemetry.json","client-task-sandbox.json","client-worktree-merge.json","worktree.merged","_ownership_root_wrapped"],
   "app/runtime_completion.py":["permission_preview","wasted_retries","tool-input-v3","branch-state-merged","client-remote-status.json","client-remote-action.json"],
   "app/server_workflow.py":["runtime_v3.install","runtime_v3_ext.install","runtime_completion.install","runtime_v3.context_envelope"],

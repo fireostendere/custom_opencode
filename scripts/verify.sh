@@ -202,8 +202,9 @@ if "app/server_rag.py" not in service or "app/server_workflow.py" not in service
     bad.append("web systemd service must launch the composed workflow/RAG server")
 if 'OPENCODE_LOCAL_PROVIDER || "ollama"' not in local_router_js or "OPENCODE_LOCAL_AUTO_START" not in local_router_js:
     bad.append("local router must stay manual/opt-in outside server runtime profiles")
-if "qwen3.8-max" not in orchestrator or "qwen3.6-flash" not in orchestrator or "RAG is optional" not in orchestrator:
-    bad.append("orchestrator must define Max -> Flash and optional-RAG policy")
+for token in ("qwen3.8-max", "qwen3.8-flash#low", "qwen3.7-plus#medium", "deepseek-v4-pro-0813#high", "glm-5.2", "RAG policy"):
+    if token not in orchestrator:
+        bad.append(f"orchestrator must keep the provider-pinned role stack / RAG policy token: {token}")
 for marker in ('Plugin.define({', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy'):
     if marker not in orchestrated_plugin_js:
         bad.append(f"orchestrated Qwen plugin marker missing: {marker}")
@@ -225,9 +226,12 @@ for marker in ("runtime-task", "runtime-profile", "runtime-state"):
 for marker in ("CREATE TABLE IF NOT EXISTS tasks", "CREATE TABLE IF NOT EXISTS checkpoints", "CREATE TABLE IF NOT EXISTS events", "CREATE TABLE IF NOT EXISTS usage", "CREATE TABLE IF NOT EXISTS mailbox"):
     if marker not in runtime_store_py:
         bad.append(f"runtime durable-store marker missing: {marker}")
-for marker in ("qwen3.8-coder", "qwen3.8-orchestrated", "qwen3.8-review", "ResourceScheduler", "game process detected; route to cloud"):
+for marker in ("qwen3.8-orchestrated", "ResourceScheduler", "ROLE_DEFAULTS", "role_models", "validate_provider_ref", "qwen3.7-plus", "deepseek-v4-pro-0813", "glm-5.2"):
     if marker not in model_registry_py:
         bad.append(f"model registry/scheduler marker missing: {marker}")
+for retired in ("qwen3.8-coder", "qwen3.8-review", "game process detected"):
+    if retired in model_registry_py:
+        bad.append(f"retired local-router marker must stay removed from model registry: {retired}")
 for marker in ("class RepoIndexer", "class ContextService", "class ArtifactStore", "class VerificationPipeline", "class SecretBroker", "semantic_diff"):
     if marker not in repo_services_py:
         bad.append(f"repo/context service marker missing: {marker}")
@@ -373,9 +377,23 @@ for legacy_id in ("build-direct", "plan-direct"):
     legacy_agent = agents.get(legacy_id) or {}
     if legacy_agent.get("mode") != "primary" or legacy_agent.get("hidden") is not True:
         bad.append(f"legacy direct agent must remain hidden compatibility-only: {legacy_id}")
-for agent_id in ("fast-reader", "local-reader", "title"):
-    if (agents.get(agent_id) or {}).get("model") != "bailian-cli/qwen3.6-flash":
-        bad.append(f"{agent_id} must use paid qwen3.6-flash")
+for agent_id in ("fast-reader", "title"):
+    if (agents.get(agent_id) or {}).get("model") != "bailian-cli/qwen3.8-flash#low":
+        bad.append(f"{agent_id} must use cheap qwen3.8-flash#low")
+if "local-reader" in agents:
+    bad.append("obsolete local-reader compatibility agent must stay removed")
+role_routes = {
+    "role-builder": "bailian-cli/qwen3.7-plus#medium",
+    "role-builder-high": "bailian-cli/qwen3.7-plus#high",
+    "role-builder-max": "bailian-cli/qwen3.7-plus#max",
+    "role-reviewer": "bailian-cli/deepseek-v4-pro-0813#high",
+    "role-reviewer-max": "bailian-cli/deepseek-v4-pro-0813#max",
+    "role-long-horizon": "bailian-cli/glm-5.2#high",
+    "role-long-horizon-max": "bailian-cli/glm-5.2#max",
+}
+for agent_id, model_ref in role_routes.items():
+    if (agents.get(agent_id) or {}).get("model") != model_ref:
+        bad.append(f"role agent {agent_id} must stay provider-pinned to {model_ref}")
 fast_rules = (agents.get("fast-reader") or {}).get("permissions", [])
 if not any(rule.get("action") == "kb_knowledge_search" and rule.get("effect") == "allow" for rule in fast_rules):
     bad.append("fast-reader must be allowed to perform selective RAG search")
