@@ -34,6 +34,9 @@ python3 scripts/runtime-invariants-smoke.py
 step "TUI limits regression"
 node scripts/tui-regression.mjs
 
+step "TUI model selector regression"
+node scripts/model-selector-smoke.mjs
+
 step "Browser regressions"
 if python3 - <<'PY'
 try:
