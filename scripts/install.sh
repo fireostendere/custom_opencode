@@ -72,7 +72,10 @@ if [[ "$SELFTEST" != 0 ]]; then
   "$PYTHON3" -m py_compile \
     "$ROOT/scripts/install-selftest.py" \
     "$ROOT/scripts/install-runtime-v3-selftest.py" \
-    "$ROOT/scripts/pin-orchestrated-recent.py"
+    "$ROOT/scripts/rag-live-regression.py" \
+    "$ROOT/scripts/runtime-invariants-smoke.py" \
+    "$ROOT/scripts/pin-orchestrated-recent.py" \
+    "$ROOT/app/runtime_invariants.py"
   "$ROOT/scripts/verify.sh"
   "$ROOT/scripts/verify-runtime-v3.sh"
 fi
@@ -218,6 +221,11 @@ if [[ "$SELFTEST" != 0 ]]; then
   fi
   "$PYTHON3" "$ROOT/scripts/install-selftest.py" "${SELFTEST_ARGS[@]}"
   "$PYTHON3" "$ROOT/scripts/install-runtime-v3-selftest.py"
+  "$PYTHON3" "$ROOT/scripts/runtime-invariants-smoke.py"
+  if [[ "$RAG_DISABLED" == false ]]; then
+    echo "==> Live RAG retrieval regression (zero LLM tokens)"
+    "$PYTHON3" "$ROOT/scripts/rag-live-regression.py"
+  fi
 fi
 
 echo "Installed. Start OpenCode with: custom-opencode"
