@@ -2,154 +2,197 @@
 
 ## Пользовательская модель выполнения
 
-Web UI фиксирован в `Build`. Visible переключатель `Build / Plan` удалён: execution mode больше не является пользовательским выбором.
+Web UI фиксирован в `Build`. Модель или server profile выбирается в model picker.
 
-Модель/профиль выбирается в model picker. Есть два уровня:
+Есть два принципиально разных пути:
 
 1. обычная конкретная модель — direct/manual selection;
-2. server profile Runtime V2/V3 — profile с заданным routing/policy.
+2. server profile Runtime V2/V3 — role-based orchestration policy.
 
-`plan`, `plan-direct` и соответствующая matrix остаются внутри OpenCode/runtime как compatibility/read-only implementation detail, но frontend возвращает старые пользовательские sessions в Build-equivalent profile.
+`plan`/`plan-direct` остаются внутренними upstream compatibility IDs. Они не являются отдельной модельной маршрутизацией.
 
 ## Direct/manual model
 
-Обычная выбранная модель работает напрямую через `build-direct`:
+Обычная выбранная модель работает напрямую:
 
 - выбранный provider/model сохраняется;
-- resource scheduler не имеет права подменить эту модель;
-- orchestrator prompt отсутствует;
-- automatic fast-reader/subagent delegation запрещена;
-- automatic RAG tools для direct primary запрещены.
+- Runtime не имеет права подменить его другой моделью;
+- orchestration policy не включается сама по себе;
+- automatic reader/reviewer delegation не добавляется.
 
-Примеры:
+Это главный invariant direct path: manual selection всегда авторитетна.
 
-```text
-Qwen3.8 Max       → build-direct → Qwen3.8 Max
-Qwen3.8 Flash     → build-direct → Qwen3.8 Flash
-Ollama/qwen...    → build-direct → локальная модель после ручного выбора
-```
+## Provider-locked role stack
 
-Это важный invariant: наличие adaptive scheduler не превращает любую вручную выбранную модель в Auto.
+Основной orchestration stack:
 
-## Server model profiles
-
-`app/model_registry.py` предоставляет профили:
-
-| Profile | Route | Основная модель/policy | Назначение |
+| Role | Model | Provider | Default effort |
 |---|---|---|---|
-| `direct` | `selected` | текущая selected model | ручной direct path |
-| `qwen3.8-coder` | `auto` | local coder или cloud Max | основной adaptive coding profile |
-| `qwen3.8-orchestrated` | `cloud` | cloud Max + Flash worker | orchestration + optional RAG |
-| `qwen3.8-review` | `cloud` | review model, safe sandbox | review/read path |
-| `qwen3.8-fast` | `cloud` | Flash | быстрый bounded read path |
+| planner | `qwen3.8-max` | `bailian-cli` | high |
+| builder | `qwen3.7-plus` | `bailian-cli` | medium |
+| reader | `qwen3.8-flash` | `bailian-cli` | low |
+| reviewer | `deepseek-v4-pro-0813` | `bailian-cli` | high |
+| long horizon | `glm-5.2` | `bailian-cli` | medium/effective provider level |
 
-Default refs настраиваются через:
+Qwen, DeepSeek и GLM в этих profiles используются именно через Alibaba Cloud/Bailian. Runtime не должен незаметно подменять их OpenRouter, standalone DeepSeek/Zhipu или другим gateway.
 
-```text
-OPENCODE_LOCAL_CODER_MODEL=ollama/qwen3.8:27b
-OPENCODE_CLOUD_CODER_MODEL=bailian-cli/qwen3.8-max
-OPENCODE_FAST_MODEL=bailian-cli/qwen3.6-flash
-OPENCODE_REVIEW_MODEL=bailian-cli/qwen3.8-max
-```
+OpenAI direct models остаются на существующем официальном OpenAI provider.
 
-`runtime-dashboard.js` инжектит server profiles в model picker и добавляет profile badge/Task Center.
+## Server profiles
 
-## Adaptive local/cloud routing
+`app/model_registry.py` предоставляет только актуальные profiles:
 
-Автоматический routing работает только если выбран профиль с `route=auto`, сейчас это `qwen3.8-coder`.
+| Profile | Основной путь | Назначение |
+|---|---|---|
+| `direct` | selected provider/model | ручной direct path |
+| `fast` | Qwen 3.8 Flash / low | быстрые и механические задачи |
+| `build` | Qwen 3.7 Plus / medium | обычная разработка |
+| `architect` | Max planner + Flash reader + Plus builder | большие архитектурные задачи |
+| `critical` | Architect stack + DeepSeek reviewer | high-risk production work |
+| `research` | Max + Flash research + DeepSeek critic | research/synthesis |
+| `long-horizon` | Max + GLM + Flash + DeepSeek | длинная автономная работа |
 
-`ResourceScheduler` учитывает:
+Старый adaptive/device router больше не является частью model routing.
 
-- `OPENCODE_RESOURCE_SCHEDULER`;
-- configured game process fragments;
-- CPU/load pressure;
-- доступность local Ollama endpoint;
-- hysteresis/resource policy Runtime V3.
+## Routing rule
 
-Логика высокого уровня:
-
-```text
-manual direct / route=selected → оставить selected model
-route=cloud                    → cloud pinned
-route=auto + игра              → cloud
-route=auto + high pressure     → cloud
-route=auto + idle + local up   → local
-route=auto + local unavailable → cloud fallback
-```
-
-Game/process detection не является глобальным скрытым router-ом. Он влияет только на auto server profiles.
-
-## Оркестрированная модель
-
-`qwen3.8-orchestrated` / UI entry `Qwen 3.8 Max · Оркестрированная` использует cloud Max и разрешает bounded delegation:
+Routing теперь детерминированный:
 
 ```text
-Qwen 3.8 Max
-      ↓ bounded read/delegation при необходимости
-fast-reader → Qwen 3.6 Flash
-      ↓ corpus-relevant engineering lookup
-kb MCP → mcp-rag
+direct
+  -> оставить ровно выбранный provider/model
+
+fast
+  -> Alibaba Qwen 3.8 Flash
+
+build
+  -> Alibaba Qwen 3.7 Plus
+
+architect / critical / research / long-horizon
+  -> provider-locked role stack согласно profile
 ```
 
-`fast-reader` read-only: repository exploration, logs, точечный lookup и bounded RAG evidence. Финальное reasoning/edit/security решение остаётся у primary Max/runtime policy.
+Нагрузка хоста, GPU, запущенные игры или доступность другого inference endpoint не меняют model route.
 
-Automatic RAG разрешён orchestration/server retrieval path; ordinary direct primary не получает automatic delegation.
+## Effort routing
 
-## Review и fast profiles
+Effort и выбор модели — разные оси.
 
-`qwen3.8-review` cloud-pinned и использует safe/read-oriented execution policy. Он предназначен для verification/review stages Runtime V2/V3, а не для скрытого изменения обычной active model.
+Canonical levels:
 
-`qwen3.8-fast` cloud-pinned на Flash и предназначен для дешёвых/быстрых bounded read stages.
+```text
+auto
+minimal
+low
+medium
+high
+max
+```
 
-Runtime V3 capability registry хранит coding/review/planning/fast-path hints, context class, tool/vision support и cost class, чтобы scheduler выбирал profile/model только в пределах разрешённой profile policy.
+`max` означает «максимальный реально поддерживаемый effort выбранной моделью/provider», а не обязательную literal строку `max` в API.
+
+Обычный coding escalation:
+
+```text
+Qwen 3.7 Plus / medium
+        ↓ meaningful failed solution attempt
+Qwen 3.7 Plus / high
+        ↓ repeated stall / architecture contradiction
+Qwen 3.8 Max / high replanning
+        ↓ exceptional/critical reasoning only
+Qwen 3.8 Max / max
+```
+
+Один неудачный shell command, typo, missing file или transient tool error не считается failed reasoning attempt.
+
+## Reader
+
+`fast-reader` использует Alibaba Qwen 3.8 Flash / low и является read-only bounded worker.
+
+Он нужен для:
+
+- repository-wide search;
+- many-file inspection;
+- large logs/docs/configs;
+- dependency/call-site discovery;
+- RAG evidence gathering;
+- точного extraction;
+- vision/screenshot analysis, когда это полезно.
+
+Reader возвращает только bounded handoff:
+
+```text
+summary
+relevant files/symbols/ranges
+evidence/provenance
+dependencies
+uncertainties
+recommended next actions
+```
+
+Полный transcript reader не копируется в parent context.
+
+## Builder
+
+Обычная работа выполняется `role-builder` на Qwen 3.7 Plus / medium.
+
+При первом реальном провале гипотезы используется `role-builder-high`. `role-builder-max` зарезервирован для исключительных случаев и не должен становиться нормальным default.
+
+Builder возвращает checkpoint:
+
+```text
+completed
+changed files
+tests/results
+failures/blockers
+remaining work
+architecture deviations
+```
+
+## Planner
+
+Qwen 3.8 Max отвечает за планирование, архитектуру и escalation.
+
+Он не должен контролировать каждый `grep`, `read`, `edit`, `shell` или `pytest`. После выдачи bounded work package обычная реализация остаётся у builder.
+
+## Independent reviewer
+
+`role-reviewer` / `role-reviewer-max` использует Alibaba DeepSeek V4 Pro 0813.
+
+Reviewer read-only и получает:
+
+- original task;
+- accepted plan;
+- diff/changed files;
+- test results;
+- known limitations;
+- релевантные evidence.
+
+Builder hidden reasoning/full transcript reviewer не получает. Findings возвращаются builder для fixes. Автоматический review/fix loop должен быть ограничен.
+
+## Long horizon
+
+GLM 5.2 — отдельный executor для действительно длинных bounded work packages. Это не default builder для обычного PR.
 
 ## Model picker
 
-Picker поддерживает:
+Picker может показывать обычные provider models и server profiles. Dedicated `Qwen 3.8 Max · Orchestrated` catalog alias используется только как trigger для orchestration prompt/plugin и указывает на реальный Alibaba Qwen 3.8 Max.
 
-- favorites-first sorting;
-- collapsible provider groups;
-- отдельную `Бесплатные модели` group;
-- hidden search input на mobile;
-- ordinary models;
-- `Qwen 3.8 Max · Оркестрированная` compatibility profile;
-- Runtime server profiles;
-- per-session profile state.
-
-Profile badge рядом с model control показывает `direct`/server profile и открывает тот же model picker.
+Orchestration не является отдельным execution mode.
 
 ## Queue и task model state
 
-Есть два совместимых слоя.
+Runtime task хранит profile. При dispatch profile разрешается в provider-pinned model route.
 
-Legacy persistent queue:
+Direct task сохраняет выбранную модель. Queue сама по себе не является причиной смены provider/model.
 
-- хранит prompt до освобождения session;
-- отправляет его через текущую model/session;
-- сам provider/model не меняет.
+## Context / compaction
 
-Runtime V2/V3 task queue:
+Runtime V3 использует native OpenCode durable compaction.
 
-- task хранит `profile`;
-- server profile может вычислить route при dispatch/recovery;
-- direct profile сохраняет selected model;
-- auto profile может выбрать local/cloud согласно resource policy;
-- priority/dependencies/pause/resume/checkpoints переживают reload/restart.
+Custom preflight budget model-aware: он берёт реальный context limit активной модели и `contextPolicy.targetRatio`. Повторный custom compact требует meaningful context growth и не должен спамиться по короткому fixed cooldown.
 
-Следовательно, фраза «queue никогда не выбирает model» верна только для legacy direct facade. Runtime task с explicit auto profile сознательно проходит server routing.
-
-## Project settings
-
-Project settings могут задавать:
-
-- persistent system instructions;
-- ordinary cloud/orchestrated default для compatibility workflow surface;
-- RAG preference;
-- permission rules.
-
-Visible execution mode всё равно Build. Старый `mode` field — compatibility data.
-
-Обычный project default не должен самопроизвольно превращать direct user selection в Ollama/Auto. Server Runtime profiles выбираются как отдельные profiles и имеют собственную routing policy.
+Изменение effort или role transition само по себе compaction не запускает.
 
 ## Alibaba model catalog
 
@@ -167,38 +210,28 @@ deepseek-v4-pro-0813
 deepseek-v4-flash-0731
 ```
 
-`qwen3.8-max-preview` остаётся compatibility ID старых sessions.
-
-UI/profile label не обязан быть реальным API model ID: server profile указывает реальные `cloudModel/localModel/workerModel` refs отдельно.
-
-## Бесплатные модели
-
-`Бесплатные модели` определяется сначала по V2 cost metadata, затем ограниченным fallback по known IDs. Free ordinary model остаётся direct model, пока пользователь явно не выберет server profile.
-
-## Permissions fast-reader
-
-Deny-first policy:
-
-```text
-* → deny
-read/glob/grep/list/lsp → allow
-kb_knowledge_search/get/sources/status → allow
-edit/shell/ingest/external dirs → deny, кроме явно разрешённых исключений
-```
-
-`.env` и `.env.*` запрещены read-only worker; `.env.example` разрешён как публичная схема.
+`qwen3.8-max-preview` остаётся compatibility ID старых sessions. Он не является routing profile.
 
 ## Проверка
 
-Zero-token verification должна фиксировать как минимум:
+Zero-token regression должна фиксировать минимум:
 
-- Build-only user surface и internal plan compatibility;
 - direct model preservation;
-- server profiles/capability registry;
-- scheduler decisions для game/high-pressure/local-down cases;
-- persistent Runtime tasks/checkpoints;
-- ordinary/orchestrated picker paths;
+- актуальный profile set;
+- Alibaba provider lock;
+- Qwen 3.8 Flash reader;
+- Plus builder medium/high/max escalation;
+- Max planner high/max escalation;
+- DeepSeek reviewer provider/effort;
+- отсутствие retired device-routing configuration;
+- model-aware compaction;
 - RAG/MCP invariants;
 - permission/sandbox boundaries.
 
-Runtime V3 имеет отдельный `scripts/verify-runtime-v3.sh`; основной `scripts/verify.sh` включает web/runtime smokes. Paid model/router E2E остаётся ручной проверкой Doctor/runtime smoke, когда нужен реальный inference.
+Основные команды:
+
+```bash
+python3 scripts/model-routing-effort-smoke.py
+bash scripts/verify-runtime-v3.sh
+bash scripts/regression.sh
+```
