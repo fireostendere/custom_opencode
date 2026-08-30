@@ -103,6 +103,14 @@ with tempfile.TemporaryDirectory() as temp:
         status, _, _ = request("GET", "/auth/session", headers=authed_headers)
         assert status == 401, status
 
+        # Revocation is persisted in RuntimeStore (SQLite/WAL), not merely kept
+        # in process memory. Simulate a service restart by clearing the local
+        # revocation map; the copied cookie must remain rejected.
+        with server_workflow._revoked_lock:
+            server_workflow._revoked_tokens.clear()
+        status, _, _ = request("GET", "/auth/session", headers=authed_headers)
+        assert status == 401, status
+
         # Eight failures in a minute are bounded; the next attempt is 429.
         brute_headers = {
             "Host": "custom-opencode.example.invalid",
@@ -129,4 +137,4 @@ with tempfile.TemporaryDirectory() as temp:
         server.server_close()
         thread.join(timeout=5)
 
-print("Web security smoke passed: direct-local only bypass + proxy auth + revocation + throttle")
+print("Web security smoke passed: direct-local only bypass + proxy auth + durable revocation + throttle")
