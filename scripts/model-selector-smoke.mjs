@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { pathToFileURL } from 'node:url'
 
 const root = new URL('../', import.meta.url)
 const sourceUrl = new URL('config/plugins/tui/model-selector.jsx', root)
@@ -21,9 +20,14 @@ assert.equal(typeof plugin.setup, 'function')
 
 const layers = []
 let dialogOptions = null
-let dialogCurrent = null
+const dialogCurrents = []
 let switched = null
 let persisted = null
+let cleared = 0
+let selectCalls = 0
+let simulateJump = false
+const toasts = []
+let route = { type: 'session', sessionID: 'ses_test' }
 const current = { providerID: 'bailian-cli', modelID: 'qwen3.8-max' }
 const recentState = {
   models: [
@@ -58,16 +62,29 @@ const context = {
     },
   },
   ui: {
-    router: { current: () => ({ type: 'session', sessionID: 'ses_test' }) },
+    router: { current: () => route },
     dialog: {
       async select(value) {
         dialogOptions = value.options
-        dialogCurrent = value.current
+        dialogCurrents.push(value.current)
+        selectCalls++
+        if (simulateJump && selectCalls === 1) {
+          // Simulate Shift+Down while the dialog is open: the jump command
+          // records a reopen target and closes the dialog via clear(), so
+          // select() resolves with undefined just like a cancel would.
+          const jumpNext = commands.find((item) => item.id === 'model-selector.group-next')
+          assert.ok(jumpNext, 'group-next command was not registered')
+          jumpNext.run()
+          return undefined
+        }
         // Choose Qwen Flash to exercise persistence + switchModel.
         return { providerID: 'bailian-cli', modelID: 'qwen-flash' }
       },
+      clear() {
+        cleared++
+      },
     },
-    toast: { show() {} },
+    toast: { show(toast) { toasts.push(toast) } },
     slot({ render }) {
       render()
       return () => {}
@@ -78,7 +95,10 @@ const context = {
     location: { default: () => ({ directory: '/tmp/project' }) },
   },
   client: {
-    model: { list: async () => ({ data: models }) },
+    model: {
+      list: async () => ({ data: models }),
+      default: async () => ({ data: { providerID: 'bailian-cli', id: 'qwen3.8-max' } }),
+    },
     provider: { list: async () => ({ data: providers }) },
     session: { switchModel: async (value) => { switched = value } },
   },
@@ -96,13 +116,27 @@ const commands = layers.flatMap((layer) => layer.commands || [])
 const command = commands.find((item) => item.id === 'model.list')
 assert.ok(command, 'model.list command was not registered')
 assert.deepEqual(command.slash, { name: 'models', aliases: ['mo'] })
-command.run()
+const groupPrev = commands.find((item) => item.id === 'model-selector.group-prev')
+assert.ok(groupPrev, 'group-prev command was not registered')
+assert.equal(groupPrev.bind, 'shift+up')
+assert.equal(groupPrev.run(), false, 'jump keys must pass through while the dialog is closed')
 
-for (let i = 0; i < 100 && !switched; i++) {
-  await new Promise((resolve) => setTimeout(resolve, 5))
-}
-assert.ok(switched, 'selector did not complete switchModel')
-assert.deepEqual(dialogCurrent, current)
+// ── Scenario 1: session + Shift+Down category jump, then selection ──
+simulateJump = true
+command.run()
+await poll(() => switched !== null)
+assert.equal(selectCalls, 2, 'jump must reopen the select dialog once')
+assert.equal(cleared, 1, 'jump must close the dialog via ui.dialog.clear()')
+assert.deepEqual(dialogCurrents[0], current)
+// Current category is the single-item anchor, so Shift+Down lands on the
+// first item of the next section (Recent → openai/gpt-test).
+assert.deepEqual(dialogCurrents[1], { providerID: 'openai', modelID: 'gpt-test' })
+assert.deepEqual(switched, {
+  sessionID: 'ses_test',
+  model: { id: 'qwen-flash', providerID: 'bailian-cli' },
+})
+assert.deepEqual(persisted[0], { providerID: 'bailian-cli', modelID: 'qwen-flash' })
+assert.equal(persisted.filter((item) => item.providerID === 'bailian-cli' && item.modelID === 'qwen-flash').length, 1)
 
 const keys = dialogOptions.map((item) => `${item.value.providerID}/${item.value.modelID}`)
 assert.equal(new Set(keys).size, keys.length, 'model list contains duplicates')
@@ -111,12 +145,50 @@ assert.deepEqual(
   dialogOptions.map((item) => item.category),
   ['Current', 'Recent', 'Alibaba', 'Free', 'Others'],
 )
-assert.deepEqual(switched, {
-  sessionID: 'ses_test',
-  model: { id: 'qwen-flash', providerID: 'bailian-cli' },
-})
-assert.deepEqual(persisted[0], { providerID: 'bailian-cli', modelID: 'qwen-flash' })
-assert.equal(persisted.filter((item) => item.providerID === 'bailian-cli' && item.modelID === 'qwen-flash').length, 1)
+
+// ── Scenario 2: home screen → highlight default model, warn instead of switching ──
+route = { type: 'home' }
+simulateJump = false
+switched = null
+persisted = null
+dialogCurrents.length = 0
+toasts.length = 0
+command.run()
+await poll(() => toasts.length > 0)
+assert.equal(switched, null, 'home screen selection must not call switchModel')
+assert.deepEqual(dialogCurrents[0], current, 'home screen must highlight the default model')
+assert.equal(toasts[0].variant, 'warning')
+
+// ── Scenario 3: Shift+Up from an unknown category lands on the last section ──
+route = { type: 'session', sessionID: 'ses_test' }
+simulateJump = false
+switched = null
+dialogCurrents.length = 0
+selectCalls = 0
+let jumpOnce = true
+const originalSelect = context.ui.dialog.select
+context.ui.dialog.select = async function (value) {
+  selectCalls++
+  dialogCurrents.push(value.current)
+  if (jumpOnce) {
+    jumpOnce = false
+    groupPrev.run()
+    return undefined
+  }
+  return originalSelect(value)
+}
+command.run()
+await poll(() => switched !== null)
+assert.equal(cleared, 2, 'Shift+Up must also reopen via ui.dialog.clear()')
+assert.deepEqual(dialogCurrents[1], { providerID: 'other', modelID: 'z-model' })
+context.ui.dialog.select = originalSelect
 
 cleanup()
-console.log('TUI model selector smoke passed: native dialog + categories + dedupe + recent + switchModel')
+console.log('TUI model selector smoke passed: native dialog + categories + dedupe + recent + switchModel + jump reopen + home guard')
+
+async function poll(check) {
+  for (let i = 0; i < 200 && !check(); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  assert.ok(check(), 'timed out waiting for the selector to settle')
+}

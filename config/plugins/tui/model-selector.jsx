@@ -6,10 +6,18 @@
  * mouse navigation. Models are grouped deterministically:
  *   Current → Recent → Alibaba → OpenAI → Free → Others
  *
- * Important: do not mirror dialog filter/navigation key events here. The
- * public TUI API does not expose the dialog filter state, so reconstructing
- * it from key presses breaks on paste, IME and Unicode input. Native select
- * owns that state and remains compatible with packaged OpenCode updates.
+ * Category jumps (Shift+Down / Shift+Up) are layered on top without
+ * mirroring any dialog key events. The public TUI API does not expose the
+ * dialog filter or cursor state, so instead of tracking the cursor the
+ * jump closes the dialog (`ui.dialog.clear`) and reopens it with
+ * `current` set to the first model of the next/previous category.
+ * Reopening also resets the filter, which keeps jumps deterministic.
+ * Categories wrap around: Recent → Alibaba → OpenAI → Free → Others →
+ * Recent (empty categories are skipped, "Current" is never a jump target).
+ *
+ * From the home screen (no session) the dialog highlights the directory
+ * default model, and choosing a model shows a toast instead of switching,
+ * because there is no session to switch.
  */
 import { Plugin } from "@opencode-ai/plugin/tui"
 
@@ -89,6 +97,37 @@ function buildOptions(models, providerNames, recentEntries, current) {
   return options
 }
 
+/**
+ * Jump targets in display order: the first navigable option of every
+ * category except "Current" (a single-item anchor, not a section).
+ * @param {ReturnType<typeof buildOptions>} options
+ */
+function buildCategoryMap(options) {
+  const map = []
+  const seen = new Set()
+  for (const item of options) {
+    if (item.disabled || !item.category || seen.has(item.category)) continue
+    seen.add(item.category)
+    if (item.category === "Current") continue
+    map.push({ category: item.category, value: item.value })
+  }
+  return map
+}
+
+/**
+ * @param {ReturnType<typeof buildOptions>} options
+ * @param {{ providerID: string, modelID: string } | undefined} value
+ */
+function categoryOf(options, value) {
+  if (!value) return null
+  const item = options.find(
+    (entry) =>
+      entry.value.providerID === value.providerID &&
+      entry.value.modelID === value.modelID,
+  )
+  return item?.category ?? null
+}
+
 export default Plugin.define({
   id: "custom.model-selector",
   setup(context) {
@@ -101,101 +140,182 @@ export default Plugin.define({
       },
     )
 
-    async function openDialog() {
-      const route = context.ui.router.current()
-      const sessionID = route.type === "session" ? route.sessionID : null
+    // Shared state between openDialog() and the jump keymap layer.
+    const jump = {
+      active: false,
+      map: [],
+      currentCategory: null,
+      request: null,
+    }
 
-      let currentModel = null
-      if (sessionID) {
-        const session = context.data.session.get(sessionID)
-        if (session?.model) {
-          currentModel = {
-            providerID: session.model.providerID,
-            modelID: session.model.id,
+    /**
+     * Ask the dialog to reopen on the first model of the next (dir > 0) or
+     * previous (dir < 0) category. Wraps around; no-op with fewer than two
+     * categories.
+     * @param {1 | -1} dir
+     */
+    function requestJump(dir) {
+      if (!jump.active || jump.map.length === 0) return
+      const idx = jump.map.findIndex(
+        (hop) => hop.category === jump.currentCategory,
+      )
+      let next
+      if (jump.map.length === 1) {
+        if (idx !== -1) return
+        next = jump.map[0]
+      } else if (idx === -1) {
+        // Unknown/anchor category: start from the edge.
+        next = dir > 0 ? jump.map[0] : jump.map[jump.map.length - 1]
+      } else {
+        next = jump.map[(idx + dir + jump.map.length) % jump.map.length]
+      }
+      jump.request = next
+      context.ui.dialog.clear()
+    }
+
+    async function openDialog() {
+      if (jump.active) return
+      jump.active = true
+
+      try {
+        const route = context.ui.router.current()
+        const sessionID = route.type === "session" ? route.sessionID : null
+
+        let currentModel = null
+        if (sessionID) {
+          const session = context.data.session.get(sessionID)
+          if (session?.model) {
+            currentModel = {
+              providerID: session.model.providerID,
+              modelID: session.model.id,
+            }
           }
         }
-      }
 
-      const location = context.data.location.default()
-      const locDir = { location: { directory: location.directory } }
+        const location = context.data.location.default()
+        const locDir = { location: { directory: location.directory } }
 
-      let models = []
-      let providers = []
-      try {
-        const [modelsResult, providersResult] = await Promise.all([
-          context.client.model.list(locDir),
-          context.client.provider.list(locDir),
-        ])
-        models = modelsResult.data ?? []
-        providers = providersResult.data ?? []
-      } catch {
-        context.ui.toast.show({
-          message: "Failed to load model list",
-          variant: "error",
-        })
-        return
-      }
+        // From the home screen highlight the directory default model.
+        if (!currentModel) {
+          try {
+            const def = await context.client.model.default(locDir)
+            if (def?.data?.providerID && def.data.id) {
+              currentModel = {
+                providerID: def.data.providerID,
+                modelID: def.data.id,
+              }
+            }
+          } catch {
+            // Highlight is optional.
+          }
+        }
 
-      if (models.length === 0) {
-        context.ui.toast.show({
-          message: "No models available",
-          variant: "warning",
-        })
-        return
-      }
+        let models = []
+        let providers = []
+        try {
+          const [modelsResult, providersResult] = await Promise.all([
+            context.client.model.list(locDir),
+            context.client.provider.list(locDir),
+          ])
+          models = modelsResult.data ?? []
+          providers = providersResult.data ?? []
+        } catch {
+          context.ui.toast.show({
+            message: "Failed to load model list",
+            variant: "error",
+          })
+          return
+        }
 
-      const providerNames = {}
-      for (const provider of providers) {
-        providerNames[provider.id] = provider.name
-      }
+        if (models.length === 0) {
+          context.ui.toast.show({
+            message: "No models available",
+            variant: "warning",
+          })
+          return
+        }
 
-      const options = buildOptions(
-        models,
-        providerNames,
-        recent.models,
-        currentModel,
-      )
+        const providerNames = {}
+        for (const provider of providers) {
+          providerNames[provider.id] = provider.name
+        }
 
-      const result = await context.ui.dialog.select({
-        title: "Select Model",
-        placeholder: "Filter models…",
-        options,
-        current: currentModel ?? undefined,
-      })
-      if (!result || !sessionID) return
+        const options = buildOptions(
+          models,
+          providerNames,
+          recent.models,
+          currentModel,
+        )
 
-      const next = [
-        result,
-        ...recent.models.filter(
-          (entry) =>
-            !(
-              entry.providerID === result.providerID &&
-              entry.modelID === result.modelID
+        jump.map = buildCategoryMap(options)
+
+        let current = currentModel ?? undefined
+        while (true) {
+          jump.request = null
+          jump.currentCategory = categoryOf(options, current)
+          const result = await context.ui.dialog.select({
+            title: "Select Model",
+            placeholder: "Filter models…",
+            options,
+            current,
+          })
+          if (!result) {
+            if (jump.request) {
+              // Shift+Down / Shift+Up: the dialog was cleared by
+              // requestJump(); reopen it on the target category.
+              current = jump.request.value
+              continue
+            }
+            return // cancelled
+          }
+
+          const next = [
+            result,
+            ...recent.models.filter(
+              (entry) =>
+                !(
+                  entry.providerID === result.providerID &&
+                  entry.modelID === result.modelID
+                ),
             ),
-        ),
-      ].slice(0, RECENT_LIMIT)
+          ].slice(0, RECENT_LIMIT)
 
-      try {
-        await updateRecent((draft) => {
-          draft.models = next
-        })
-      } catch {
-        // Recent history is non-critical.
-      }
+          try {
+            await updateRecent((draft) => {
+              draft.models = next
+            })
+          } catch {
+            // Recent history is non-critical.
+          }
 
-      try {
-        await context.client.session.switchModel({
-          sessionID,
-          model: {
-            id: result.modelID,
-            providerID: result.providerID,
-          },
-        })
-      } catch {
-        context.ui.toast.show({
-          message: "Failed to switch model",
-          variant: "error",
-        })
+          if (!sessionID) {
+            context.ui.toast.show({
+              message: "Open a session to switch models",
+              variant: "warning",
+            })
+            return
+          }
+
+          try {
+            await context.client.session.switchModel({
+              sessionID,
+              model: {
+                id: result.modelID,
+                providerID: result.providerID,
+              },
+            })
+          } catch {
+            context.ui.toast.show({
+              message: "Failed to switch model",
+              variant: "error",
+            })
+          }
+          return
+        }
+      } finally {
+        jump.active = false
+        jump.request = null
+        jump.currentCategory = null
       }
     }
 
@@ -210,13 +330,44 @@ export default Plugin.define({
               id: "model.list",
               title: "Select Model",
               description:
-                "Sorted list: Current → Recent → Alibaba → OpenAI → Free → Others",
+                "Sorted list: Current → Recent → Alibaba → OpenAI → Free → Others; Shift+Down/Up jumps categories",
               group: "Model",
               slash: { name: "models", aliases: ["mo"] },
               palette: true,
               suggested: true,
               run: () => {
                 openDialog()
+              },
+            },
+          ],
+        }))
+
+        // Category-jump layer. Active only while the select dialog is open;
+        // otherwise both commands return false and let the keys through.
+        // Jumps do not mirror dialog key events: they close the dialog and
+        // reopen it on the target category (see requestJump/openDialog).
+        context.keymap.layer(() => ({
+          mode: "global",
+          priority: 900,
+          commands: [
+            {
+              id: "model-selector.group-next",
+              title: "Model Selector: Next Category",
+              bind: "shift+down",
+              group: "Model",
+              run: () => {
+                if (!jump.active) return false
+                requestJump(1)
+              },
+            },
+            {
+              id: "model-selector.group-prev",
+              title: "Model Selector: Previous Category",
+              bind: "shift+up",
+              group: "Model",
+              run: () => {
+                if (!jump.active) return false
+                requestJump(-1)
               },
             },
           ],
