@@ -105,7 +105,10 @@ if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   install -m 0644 "$ROOT"/config/plugins/*.js "$CONFIG_DIR/plugins/"
   # TUI plugins renamed from .js to .jsx in newer revisions; the loader
   # auto-discovers plugins/tui, so stale copies would load as broken plugins.
+  # limits-header.jsx was removed entirely (top status bar dropped), so it
+  # must be cleaned from existing installs as well.
   rm -f "$CONFIG_DIR"/plugins/tui/limits-header.js \
+        "$CONFIG_DIR"/plugins/tui/limits-header.jsx \
         "$CONFIG_DIR"/plugins/tui/limits-panels.js \
         "$CONFIG_DIR"/plugins/tui/model-selector.js \
         "$CONFIG_DIR"/plugins/tui/limits-helper.js

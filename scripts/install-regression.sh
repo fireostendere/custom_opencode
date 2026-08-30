@@ -54,6 +54,7 @@ chmod +x "$FAKE_BIN/systemctl"
 # renamed top-level copies instead of allowing the loader to discover both.
 mkdir -p "$HOME_DIR/.config/opencode/plugins/tui"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-header.js"
+printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-header.jsx"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-panels.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/model-selector.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-helper.js"
@@ -77,7 +78,7 @@ grep -Fq "$COPY/app/server_workflow.py" "$SERVICE"
 grep -Fq 'systemctl --user enable --now opencode-web-client.service' "$LOG"
 grep -Fq 'systemctl --user restart opencode-web-client.service' "$LOG"
 
-for stale in limits-header.js limits-panels.js model-selector.js limits-helper.js; do
+for stale in limits-header.js limits-header.jsx limits-panels.js model-selector.js limits-helper.js; do
   [[ ! -e "$TUI_DIR/$stale" ]] || { echo "stale TUI plugin survived install: $stale" >&2; exit 1; }
 done
 python3 - "$COPY/config/plugins/tui" "$TUI_DIR" <<'PY'
