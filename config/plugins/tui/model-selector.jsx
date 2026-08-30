@@ -4,7 +4,9 @@
  * Overrides the built-in `model.list` command while keeping the native
  * `context.ui.dialog.select` implementation for filtering, keyboard and
  * mouse navigation. Models are grouped deterministically:
- *   Current → Recent → Alibaba → OpenAI → Free → Others
+ *   Current → Recent → Alibaba → OpenAI → Orchestrated → Free → Others
+ * "Orchestrated" is the provider-pinned role routing stack (see
+ * ORCHESTRATED_MODELS), kept separate from the remaining Alibaba models.
  *
  * Category jumps (Shift+Down / Shift+Up) are layered on top without
  * mirroring any dialog key events. The public TUI API does not expose the
@@ -12,8 +14,9 @@
  * jump closes the dialog (`ui.dialog.clear`) and reopens it with
  * `current` set to the first model of the next/previous category.
  * Reopening also resets the filter, which keeps jumps deterministic.
- * Categories wrap around: Recent → Alibaba → OpenAI → Free → Others →
- * Recent (empty categories are skipped, "Current" is never a jump target).
+ * Categories wrap around: Recent → Alibaba → OpenAI → Orchestrated →
+ * Free → Others → Recent (empty categories are skipped, "Current" is
+ * never a jump target).
  *
  * From the home screen (no session) the dialog highlights the directory
  * default model, and choosing a model shows a toast instead of switching,
@@ -23,6 +26,19 @@ import { Plugin } from "@opencode-ai/plugin/tui"
 
 const RECENT_LIMIT = 10
 const OPENAI_PROVIDERS = new Set(["openai", "chatgpt"])
+
+// Role-routed orchestration stack (docs/model-routing-effort.md): the
+// provider-pinned planner/builder/reader/reviewer/long-horizon models plus
+// the dedicated `qwen3.8-orchestrated` alias. Surfaced as their own group so
+// the routed models stay visible without crowding the OpenAI section.
+const ORCHESTRATED_MODELS = new Set([
+  "bailian-cli/qwen3.8-max",
+  "bailian-cli/qwen3.8-orchestrated",
+  "bailian-cli/qwen3.8-flash",
+  "bailian-cli/qwen3.7-plus",
+  "bailian-cli/deepseek-v4-pro-0813",
+  "bailian-cli/glm-5.2",
+])
 
 function key(model) {
   return `${model.providerID}/${model.id}`
@@ -82,8 +98,14 @@ function buildOptions(models, providerNames, recentEntries, current) {
     options.push(...items)
   }
 
-  takeSorted("Alibaba", (model) => model.providerID === "bailian-cli")
+  takeSorted(
+    "Alibaba",
+    (model) =>
+      model.providerID === "bailian-cli" &&
+      !ORCHESTRATED_MODELS.has(key(model)),
+  )
   takeSorted("OpenAI", (model) => OPENAI_PROVIDERS.has(model.providerID))
+  takeSorted("Orchestrated", (model) => ORCHESTRATED_MODELS.has(key(model)))
   takeSorted(
     "Free",
     (model) => model.providerID === "opencode" && model.cost?.[0]?.input === 0,
@@ -330,7 +352,7 @@ export default Plugin.define({
               id: "model.list",
               title: "Select Model",
               description:
-                "Sorted list: Current → Recent → Alibaba → OpenAI → Free → Others; Shift+Down/Up jumps categories",
+                "Sorted list: Current → Recent → Alibaba → OpenAI → Orchestrated → Free → Others; Shift+Down/Up jumps categories",
               group: "Model",
               slash: { name: "models", aliases: ["mo"] },
               palette: true,

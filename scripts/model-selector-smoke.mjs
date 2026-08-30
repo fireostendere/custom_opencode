@@ -39,6 +39,7 @@ const recentState = {
 const models = [
   { providerID: 'bailian-cli', id: 'qwen3.8-max', name: 'Qwen Max', enabled: true, status: 'active', cost: [{ input: 0.1 }] },
   { providerID: 'bailian-cli', id: 'qwen-flash', name: 'Qwen Flash', enabled: true, status: 'active', cost: [{ input: 0.01 }] },
+  { providerID: 'bailian-cli', id: 'qwen3.7-plus', name: 'Qwen Plus', enabled: true, status: 'active', cost: [{ input: 0.04 }] },
   { providerID: 'openai', id: 'gpt-test', name: 'GPT Test', enabled: true, status: 'active', cost: [{ input: 0.2 }] },
   { providerID: 'opencode', id: 'free-model', name: 'Free Model', enabled: true, status: 'active', cost: [{ input: 0 }] },
   { providerID: 'other', id: 'z-model', name: 'Z Model', enabled: true, status: 'active', cost: [{ input: 1 }] },
@@ -143,7 +144,21 @@ assert.equal(new Set(keys).size, keys.length, 'model list contains duplicates')
 assert.equal(keys.filter((item) => item === 'bailian-cli/qwen3.8-max').length, 1)
 assert.deepEqual(
   dialogOptions.map((item) => item.category),
-  ['Current', 'Recent', 'Alibaba', 'Free', 'Others'],
+  ['Current', 'Recent', 'Alibaba', 'Orchestrated', 'Free', 'Others'],
+)
+// Role-routed models land in the dedicated Orchestrated group (after OpenAI),
+// not in the generic Alibaba section.
+assert.deepEqual(
+  dialogOptions
+    .filter((item) => item.category === 'Orchestrated')
+    .map((item) => item.value.modelID),
+  ['qwen3.7-plus'],
+)
+assert.deepEqual(
+  dialogOptions
+    .filter((item) => item.category === 'Alibaba')
+    .map((item) => item.value.modelID),
+  ['qwen-flash'],
 )
 
 // ── Scenario 2: home screen → highlight default model, warn instead of switching ──
