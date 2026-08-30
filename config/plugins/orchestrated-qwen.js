@@ -28,7 +28,7 @@ export default Plugin.define({
     await ctx.session.hook("context", async (event) => {
       if (!isOrchestratedQwen(event)) return
       if (Array.isArray(event.system) && event.system.some((item) => textOf(item).includes(MARKER))) return
-      event.system.push({ text: `${MARKER}:\n${policy}` })
+      event.system.push({ type: "text", text: `${MARKER}:\n${policy}` })
     })
   },
 })

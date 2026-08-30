@@ -344,6 +344,7 @@ def _status_busy(value: Any) -> bool:
 def _send_backend_prompt(session_id: str, text: str, files: list[Any]) -> Any:
     target = f"/api/session/{quote(session_id, safe='')}/prompt"
     attempts = (
+        {"text": text, "files": files, "resume": True},
         {"prompt": {"text": text, "files": files}, "delivery": "immediate"},
         {"prompt": {"text": text, "files": files}, "delivery": "steer"},
         {"text": text, "files": files, "delivery": "steer"},

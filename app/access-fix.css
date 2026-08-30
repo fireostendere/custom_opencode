@@ -48,6 +48,10 @@
   min-height:44px;
 }
 
+.permission-banner[hidden]{
+  display:none!important;
+}
+
 .composer{
   align-items:center;
   gap:6px;
@@ -116,6 +120,7 @@ dialog .workflow-modal.large{
   display:flex;
   flex-direction:column;
   overflow:hidden;
+  max-height:80vh;
 }
 
 #modelDialog .model-catalog{
@@ -123,6 +128,9 @@ dialog .workflow-modal.large{
   min-height:0;
   max-height:none!important;
   overflow:auto;
+  touch-action:pan-y;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;
 }
 
 @media(max-width:760px){
@@ -213,8 +221,8 @@ dialog .workflow-modal.large{
   letter-spacing:.06em;
 }
 .limits-summary::-webkit-details-marker{display:none}
-.limits-summary::after{content:'⌃';font-size:15px;line-height:1;opacity:.75}
-.limits-shell:not([open]) .limits-summary::after{content:'⌄'}
+.limits-summary::after{content:'⌄';font-size:15px;line-height:1;opacity:.75}
+.limits-shell:not([open]) .limits-summary::after{content:'›'}
 .limits-shell[open] .limits-summary{border-bottom:1px solid var(--line)}
 .limits-shell .provider-limits{
   margin:0!important;

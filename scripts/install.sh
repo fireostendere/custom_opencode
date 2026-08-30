@@ -100,7 +100,17 @@ if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   install -m 0644 "$ROOT/config/events.js" "$CONFIG_DIR/events.js"
   install -m 0644 "$ROOT/config/prompts/"* "$CONFIG_DIR/prompts/"
   install -m 0644 "$ROOT"/config/plugins/*.js "$CONFIG_DIR/plugins/"
-  install -m 0644 "$ROOT"/config/plugins/tui/* "$CONFIG_DIR/plugins/tui/"
+  # TUI plugins renamed from .js to .jsx in newer revisions; the loader
+  # auto-discovers plugins/tui, so stale copies would load as broken plugins.
+  rm -f "$CONFIG_DIR"/plugins/tui/limits-header.js \
+        "$CONFIG_DIR"/plugins/tui/limits-panels.js \
+        "$CONFIG_DIR"/plugins/tui/model-selector.js \
+        "$CONFIG_DIR"/plugins/tui/limits-helper.js
+  if compgen -G "$ROOT/config/plugins/tui/*" > /dev/null; then
+    while IFS= read -r -d '' rel; do
+      install -D -m 0644 "$ROOT/config/plugins/tui/$rel" "$CONFIG_DIR/plugins/tui/$rel"
+    done < <(cd "$ROOT/config/plugins/tui" && find . -type f -print0)
+  fi
   install -m 0644 "$ROOT"/config/themes/*.json "$CONFIG_DIR/themes/"
   "$PYTHON3" - "$ROOT/config/opencode.json.template" "$CONFIG_DIR/opencode.json" "$CONFIG_DIR" "$ROOT" "$RAG_DISABLED" <<'PY'
 import json, sys

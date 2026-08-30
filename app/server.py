@@ -18,6 +18,7 @@ import re
 import secrets
 import shutil
 import sys
+import threading
 import time
 from urllib.parse import quote, urlsplit
 
@@ -132,6 +133,84 @@ def b64url_decode(value: str) -> bytes:
 
 CLIENT_AUTH = basic_value(CLIENT_USER, CLIENT_PASSWORD)
 BACKEND_AUTH = basic_value(BACKEND_USER, BACKEND_PASSWORD)
+
+# The shared V2 backend service restarts on a new port with a new password and
+# rewrites service.json each time. A web client that pins the backend at
+# startup would answer 502 for every /api/* call until manually restarted, so
+# service discovery is re-read on a short TTL and force-refreshed on failure.
+_BACKEND_EXPLICIT = bool(setting("OPENCODE_BACKEND_URL") and setting("OPENCODE_BACKEND_PASSWORD"))
+_BACKEND_CACHE_TTL = 5.0
+_backend_state = {"host": BACKEND.hostname, "port": BACKEND.port or 80, "auth": BACKEND_AUTH, "at": 0.0}
+_backend_lock = threading.Lock()
+
+
+def _discover_backend() -> tuple[str, int, str] | None:
+    try:
+        service = json.loads(SERVICE_FILE.read_text(encoding="utf-8"))
+        url = str(service["url"]).rstrip("/")
+        password = str(service["password"])
+    except (OSError, KeyError, TypeError, ValueError):
+        return None
+    parsed = urlsplit(url)
+    if parsed.scheme != "http" or not parsed.hostname or parsed.path not in ("", "/"):
+        return None
+    return parsed.hostname, parsed.port or 80, basic_value(BACKEND_USER, password)
+
+
+def current_backend(force_refresh: bool = False) -> tuple[str, int, str]:
+    """Live (host, port, auth) of the V2 backend."""
+    if _BACKEND_EXPLICIT:
+        return BACKEND.hostname, BACKEND.port or 80, BACKEND_AUTH
+    now = time.monotonic()
+    with _backend_lock:
+        if not force_refresh and now - _backend_state["at"] < _BACKEND_CACHE_TTL:
+            return _backend_state["host"], _backend_state["port"], _backend_state["auth"]
+        discovered = _discover_backend()
+        if discovered is not None:
+            _backend_state["host"], _backend_state["port"], _backend_state["auth"] = discovered
+        _backend_state["at"] = now
+        return _backend_state["host"], _backend_state["port"], _backend_state["auth"]
+
+
+def backend_connection(host: str, port: int, read_timeout: float,
+                       connect_timeout: float = 5.0) -> http.client.HTTPConnection:
+    """Backend HTTP connection with separate connect and read timeouts.
+
+    Closed ports can be blackholed instead of refused (WSL/firewall quirks),
+    so a single long timeout would hang every request for minutes right after
+    the backend restarted. Connect failures surface quickly and trigger the
+    service-discovery refresh/retry path instead.
+    """
+    connection = http.client.HTTPConnection(host, port, timeout=connect_timeout)
+    connection.connect()
+    if connection.sock is not None:
+        connection.sock.settimeout(read_timeout)
+    return connection
+
+
+def _attempt_backend_request(command: str, target: str, host: str, port: int, auth: str,
+                             headers: dict[str, str], body: bytes | None,
+                             read_timeout: float = 300.0):
+    """(connection, response), re-resolving the backend once on connect failure."""
+    headers["Authorization"] = auth
+    headers["Host"] = host
+    try:
+        connection = backend_connection(host, port, read_timeout=read_timeout)
+        connection.request(command, target, body=body, headers=headers)
+        return connection, connection.getresponse()
+    except (OSError, http.client.HTTPException):
+        # The backend may have just restarted on a new port/password.
+        refreshed = current_backend(force_refresh=True)
+        if refreshed == (host, port, auth):
+            raise
+        host, port, auth = refreshed
+        headers["Authorization"] = auth
+        headers["Host"] = host
+        connection = backend_connection(host, port, read_timeout=read_timeout)
+        connection.request(command, target, body=body, headers=headers)
+        return connection, connection.getresponse()
+
+
 AUTH_KEY = hashlib.sha256(
     f"custom-opencode-auth-v1\0{CLIENT_USER}\0{CLIENT_PASSWORD}".encode("utf-8")
 ).digest()
@@ -216,15 +295,30 @@ def cleanup_scratch_directory(value: object) -> None:
 
 
 def backend_json(method: str, target: str) -> object | None:
+    host, port, auth = current_backend()
     headers = {
-        "Authorization": BACKEND_AUTH,
-        "Host": BACKEND.hostname or "localhost",
+        "Authorization": auth,
+        "Host": host or "localhost",
         "Accept": "application/json",
     }
-    connection = http.client.HTTPConnection(BACKEND.hostname, BACKEND.port or 80, timeout=15)
+    connection = None
     try:
-        connection.request(method, target, headers=headers)
-        response = connection.getresponse()
+        try:
+            connection = backend_connection(host, port, read_timeout=15)
+            connection.request(method, target, headers=headers)
+            response = connection.getresponse()
+        except (OSError, http.client.HTTPException):
+            if connection is not None:
+                connection.close()
+            refreshed = current_backend(force_refresh=True)
+            if refreshed == (host, port, auth):
+                return None
+            host, port, auth = refreshed
+            headers["Authorization"] = auth
+            headers["Host"] = host or "localhost"
+            connection = backend_connection(host, port, read_timeout=15)
+            connection.request(method, target, headers=headers)
+            response = connection.getresponse()
         body = response.read()
         if response.status < 200 or response.status >= 300:
             return None
@@ -232,7 +326,8 @@ def backend_json(method: str, target: str) -> object | None:
     except (OSError, http.client.HTTPException, UnicodeDecodeError, json.JSONDecodeError):
         return None
     finally:
-        connection.close()
+        if connection is not None:
+            connection.close()
 
 
 def session_directory(path: str) -> str | None:
@@ -424,7 +519,10 @@ class Handler(BaseHTTPRequestHandler):
     def logout(self) -> None:
         self.send_response(204)
         self.send_header("Set-Cookie", self.clear_session_cookie())
-        self.send_header("Clear-Site-Data", '"cache"')
+        # Clear-Site-Data валиден только на secure-оригинах: поверх http://
+        # браузер его отклоняет и пишет предупреждение в консоль.
+        if self.request_is_secure():
+            self.send_header("Clear-Site-Data", '"cache"')
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -600,16 +698,17 @@ class Handler(BaseHTTPRequestHandler):
             for key, value in self.headers.items()
             if key.lower() not in HOP_BY_HOP and key.lower() not in ("authorization", "content-length", "cookie")
         }
-        headers["Authorization"] = BACKEND_AUTH
-        headers["Host"] = BACKEND.hostname
+        host, port, auth = current_backend()
+        headers["Authorization"] = auth
+        headers["Host"] = host
         if body is not None:
             headers["Content-Length"] = str(len(body))
 
-        connection = http.client.HTTPConnection(BACKEND.hostname, BACKEND.port or 80, timeout=300)
+        connection = None
         response_started = False
         try:
-            connection.request(self.command, target, body=body, headers=headers)
-            response = connection.getresponse()
+            connection, response = _attempt_backend_request(
+                self.command, target, host, port, auth, headers, body)
             content_type = response.getheader("Content-Type", "")
             streaming = content_type.startswith("text/event-stream")
             if streaming:
@@ -656,7 +755,8 @@ class Handler(BaseHTTPRequestHandler):
             if not response_started:
                 self.send_error(502, f"V2 backend unavailable: {exc}")
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
 
 
 def main() -> None:

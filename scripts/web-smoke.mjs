@@ -31,7 +31,12 @@ globalThis.fetch = async (path, options = {}) => {
 }
 await api.sendPrompt({ id:'ses_native' }, { text:'hello', files:[{ uri:'data:text/plain;base64,WA==', name:'x' }], delivery:'queue' })
 let body = JSON.parse(calls.at(-1).options.body)
-if (body.delivery !== 'queue' || body.prompt?.text !== 'hello') throw new Error('Current V2 prompt contract regression')
+if (body.delivery !== 'queue' || body.text !== 'hello') throw new Error('Current V2 prompt contract regression')
+
+calls = []
+await api.sendPrompt({ id:'ses_idle' }, { text:'start', files:[], delivery:'normal' })
+body = JSON.parse(calls.at(-1).options.body)
+if (body.text !== 'start' || body.resume !== true || 'delivery' in body) throw new Error('Idle prompt must resume a new drain')
 
 calls = []
 let attempt = 0
@@ -42,7 +47,7 @@ globalThis.fetch = async (path, options = {}) => {
 }
 await api.sendPrompt({ id:'ses_compat' }, { text:'fallback', files:[], delivery:'steer' })
 body = JSON.parse(calls.at(-1).options.body)
-if (body.text !== 'fallback' || body.delivery !== 'steer') throw new Error('Compatibility prompt fallback regression')
+if (body.prompt?.text !== 'fallback' || body.delivery !== 'steer') throw new Error('Compatibility prompt fallback regression')
 
 const enhancements = await loadSource('app/enhancements.js')
 if (enhancements.parseSlash('/status')?.command !== 'status') throw new Error('Slash parser failed')
@@ -236,6 +241,9 @@ if (orchestrated.name !== 'Qwen3.8 Max · Orchestrated') throw new Error('Orches
 const orchestratedPlugin = readFileSync(resolve(root, 'config/plugins/orchestrated-qwen.js'), 'utf8')
 for (const marker of ['Plugin.define({', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy']) {
   if (!orchestratedPlugin.includes(marker)) throw new Error(`Orchestrated Qwen plugin marker missing: ${marker}`)
+}
+for (const source of [orchestratedPlugin, readFileSync(resolve(root, 'config/plugins/server-runtime-guard.js'), 'utf8')]) {
+  if (!source.includes('event.system.push({ type: "text"') && !source.includes('event.system.push({type:"text"')) throw new Error('Context hooks must add typed system parts')
 }
 if (!orchestratedPlugin.includes('id: "qwen3.8-max"') && !orchestratedPlugin.includes('id: "qwen3.8-max"')) {
   // The self-check below is the important invariant: ordinary Max must not match the special alias.

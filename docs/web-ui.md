@@ -60,6 +60,16 @@ UI использует короткие transition/animation только дл�
 - закрывается тапом по затемнённой области или любым кликом вне drawer;
 - выбор session корректно потребляет synthetic history entry, поэтому лишний Back после навигации не нужен.
 
+## Минимальные E2E
+
+Два коротких Playwright-сценария проверяют desktop model picker и mobile permission banner:
+
+```bash
+python3 scripts/web-e2e.py
+```
+
+URL можно переопределить через `OPENCODE_E2E_URL`. Логин берётся из `.env` или переменных `OPENCODE_SERVER_USERNAME` и `OPENCODE_SERVER_PASSWORD`. Ответ permission в тесте перехватывается браузером и не отправляется реальному OpenCode.
+
 ## Лимиты и диалоги
 
 Панель provider limits сворачивается через `Лимиты` и запоминает состояние в localStorage.

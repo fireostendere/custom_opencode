@@ -17,6 +17,7 @@
 - [Doctor](doctor.md) — health checks и ручные paid E2E smoke tests.
 - [Эксплуатация и recovery](operations.md) — systemd, update, backup, logs и recovery.
 - [Troubleshooting](troubleshooting.md) — типовые симптомы, включая login/theme/mobile cases.
+- [VSCode: хоткеи терминала](vscode-terminal.md) — проброс `ctrl+f/p/r/b` в OpenCode TUI вместо команд VSCode (перехват по фокусу).
 
 ## Репозитории
 

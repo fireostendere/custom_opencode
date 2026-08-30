@@ -95,7 +95,7 @@ export default Plugin.define({
       try {
         const managed=await call("/internal/runtime/context",{sessionID})
         const text=managed?.text || ""
-        if (text) event.system.push({text:`${CONTEXT_MARKER} (deduplicated, budgeted, checkpoint/RAG/repo aware):\n${text}`})
+        if (text) event.system.push({type:"text",text:`${CONTEXT_MARKER} (deduplicated, budgeted, checkpoint/RAG/repo aware):\n${text}`})
       } catch {
         // Additive only: native OpenCode context remains usable while the runtime restarts.
       }

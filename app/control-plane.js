@@ -82,8 +82,9 @@ async function autoEvaluate(sid, decision) {
     })
     if (result?.autoReplied) {
       const permissionBanner = $('permissionBanner')
-      if (permissionBanner) permissionBanner.hidden = true
+      if (permissionBanner && permissionBanner.dataset.permissionSession === sid && permissionBanner.dataset.permissionId === String(decision.permissionID)) permissionBanner.hidden = true
       hideRiskSurface()
+      window.__permissionSuppression?.markResolved(key)
     }
   } catch (error) {
     console.warn('permission auto-evaluate failed', error)

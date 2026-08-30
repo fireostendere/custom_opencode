@@ -125,11 +125,9 @@ async function refreshLimits() {
   panel.classList.add('loading-limits')
   try {
     const value = await request('/client-limits.json')
-    panel.innerHTML = `<div class="quota-title"><span>Лимиты</span><button type="button" id="quotaRefresh" title="Обновить лимиты">↻</button></div>${renderQwenQuota(value?.qwen)}${renderOpenAIQuota(value?.openai)}`
-    $('quotaRefresh')?.addEventListener('click', refreshLimits)
+    panel.innerHTML = `<div class="quota-title"><span>Лимиты</span></div>${renderQwenQuota(value?.qwen)}${renderOpenAIQuota(value?.openai)}`
   } catch (error) {
-    panel.innerHTML = `<div class="quota-title"><span>Лимиты</span><button type="button" id="quotaRefresh" title="Обновить лимиты">↻</button></div><div class="quota-note">Не удалось обновить: ${escapeHtml(error.message)}</div>`
-    $('quotaRefresh')?.addEventListener('click', refreshLimits)
+    panel.innerHTML = `<div class="quota-title"><span>Лимиты</span></div><div class="quota-note">Не удалось обновить: ${escapeHtml(error.message)}</div>`
   } finally {
     panel.classList.remove('loading-limits')
   }

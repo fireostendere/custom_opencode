@@ -117,16 +117,19 @@ export async function switchModel(sessionID, model) {
   return request(`/api/session/${encodeURIComponent(sessionID)}/model`, { method: 'POST', body: JSON.stringify({ model }) })
 }
 
-export async function sendPrompt(session, { text, files = [], delivery = 'steer' }) {
+export async function sendPrompt(session, { text, files = [], delivery = 'normal' }) {
   const id = encodeURIComponent(session.id)
   const mode = delivery === 'queue' ? 'queue' : 'steer'
   let lastFormatError
 
   // Current OpenCode V2 contract.
   try {
+    const body = { text, files }
+    if (delivery === 'normal') body.resume = true
+    else body.delivery = mode
     return await request(`/api/session/${id}/prompt`, {
       method: 'POST',
-      body: JSON.stringify({ prompt: { text, files }, delivery: mode }),
+      body: JSON.stringify(body),
     })
   } catch (error) {
     if (![400, 404, 405, 422].includes(error.status)) throw error
@@ -137,7 +140,7 @@ export async function sendPrompt(session, { text, files = [], delivery = 'steer'
   try {
     return await request(`/api/session/${id}/prompt`, {
       method: 'POST',
-      body: JSON.stringify({ text, files, delivery: mode }),
+      body: JSON.stringify({ prompt: { text, files }, delivery: mode }),
     })
   } catch (error) {
     if (![400, 404, 405, 422].includes(error.status)) throw error

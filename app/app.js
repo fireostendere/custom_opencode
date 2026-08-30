@@ -9,6 +9,22 @@ const FAV_KEY = 'opencode:web:favorites'
 const NOTIFY_KEY = 'opencode:web:notifications'
 const PERSONAL_PRO_LIMITS = { fiveHour: 12000, sevenDay: 40000 }
 const QWEN_SUFFIX_RE = /\s·\sQwen\s+(OK|exhausted→([^·]+))\s*$/
+const PERMISSION_SUPPRESSION_TTL = 15_000
+
+const permissionSuppression = window.__permissionSuppression ||= (() => {
+  const resolved = new Map()
+  const prune = (now = Date.now()) => {
+    for (const [key, expiresAt] of resolved) if (expiresAt <= now) resolved.delete(key)
+  }
+  return {
+    resolved,
+    prune,
+    isResolved(key) { prune(); return Boolean(key && resolved.has(key)) },
+    markResolved(key) { if (key) resolved.set(key, Date.now() + PERMISSION_SUPPRESSION_TTL) },
+    forget(key) { if (key) resolved.delete(key) },
+  }
+})()
+window.__resolvedPermissions = permissionSuppression.resolved
 
 const state = {
   clientConfig: null,
@@ -325,11 +341,13 @@ async function forkAtMessage(messageID){if(!state.selected)return;try{const fork
 
 function confirmAction(title,text){return new Promise((resolve)=>{const d=$('confirmDialog');$('confirmTitle').textContent=title;$('confirmText').textContent=text;const cleanup=(value)=>{d.close();$('confirmOk').onclick=null;$('confirmCancel').onclick=null;resolve(value)};$('confirmOk').onclick=()=>cleanup(true);$('confirmCancel').onclick=()=>cleanup(false);d.showModal()})}
 
+function permissionID(request){return String(request?.requestID||request?.id||'')}
+function permissionKey(request){const sid=String(request?.sessionID||'');const pid=permissionID(request);return sid&&pid?`${sid}:${pid}`:''}
 function actionLabel(action){return({shell:'Команда',bash:'Команда',edit:'Изменение файла',write:'Запись файла',read:'Чтение файла',glob:'Поиск файлов',grep:'Поиск по содержимому',list:'Список файлов',subagent:'Субагент',task:'Подзадача',webfetch:'Интернет',external_directory:'Внешняя директория'}[action]||action||'Разрешение')}
-async function refreshPermissions(){if(!state.selected){hidePermission();return}const requests=await api.getPermissions(directory(state.selected));const pending=requests.find((r)=>r.sessionID===state.selected.id)||null;if(pending)showPermission(pending);else hidePermission()}
-function showPermission(p){const changed=state.pendingPermission?.id!==p.id;state.pendingPermission=p;$('permissionBanner').hidden=false;$('permissionTitle').textContent=actionLabel(p.action);$('permissionDetail').textContent=(p.resources||[]).join(', ')||p.action||'';if(changed)notifyUser('OpenCode просит разрешение',`${actionLabel(p.action)} ${(p.resources||[]).join(', ')}`,`perm-${p.id}`)}
-function hidePermission(){state.pendingPermission=null;$('permissionBanner').hidden=true}
-async function replyPendingPermission(reply){const p=state.pendingPermission;if(!p)return;try{await api.replyPermission(p.sessionID,p.id,reply);hidePermission();toast(reply==='reject'?'Отклонено':'Разрешено');setTimeout(refreshPermissions,250)}catch(e){toast(`Permission: ${e.message}`)}}
+async function refreshPermissions(){const selected=state.selected;if(!selected){hidePermission();return}const selectedID=selected.id;const requests=await api.getPermissions(directory(selected));if(state.selected?.id!==selectedID)return;permissionSuppression.prune();const pending=requests.find((r)=>r.sessionID===selectedID&&!permissionSuppression.isResolved(permissionKey(r)))||null;if(pending){const banner=$('permissionBanner');const pid=permissionID(pending);if(banner.dataset.permissionId===pid&&banner.dataset.permissionSession===selectedID&&!banner.hidden)return;showPermission(pending)}else hidePermission()}
+function showPermission(p){const sid=state.selected?.id;const pid=permissionID(p);const key=permissionKey(p);if(!sid||p?.sessionID!==sid||!pid||permissionSuppression.isResolved(key)){hidePermission();return}const changed=permissionKey(state.pendingPermission)!==key;state.pendingPermission=p;const banner=$('permissionBanner');banner.dataset.permissionSession=sid;banner.dataset.permissionId=pid;banner.hidden=false;$('permissionTitle').textContent=actionLabel(p.action);$('permissionDetail').textContent=(p.resources||[]).join(', ')||p.action||'';if(changed)notifyUser('OpenCode просит разрешение',`${actionLabel(p.action)} ${(p.resources||[]).join(', ')}`,`perm-${pid}`)}
+function hidePermission(){state.pendingPermission=null;const banner=$('permissionBanner');delete banner.dataset.permissionSession;delete banner.dataset.permissionId;banner.hidden=true}
+async function replyPendingPermission(reply){const p=state.pendingPermission;if(!p)return;const key=permissionKey(p);if(!key)return;permissionSuppression.markResolved(key);hidePermission();try{await api.replyPermission(p.sessionID,permissionID(p),reply);toast(reply==='reject'?'Отклонено':'Разрешено');setTimeout(refreshPermissions,250)}catch(e){permissionSuppression.forget(key);toast(`Permission: ${e.message}`);refreshPermissions()}}
 
 async function initNotifications(){renderNotifyButton();if('serviceWorker'in navigator){try{await navigator.serviceWorker.register('/sw.js')}catch(e){console.warn('SW registration failed',e)}}}
 function renderNotifyButton(){$('notifyButton').textContent=state.notifyEnabled?'◆':'◇';$('notifyButton').title=state.notifyEnabled?'Уведомления включены':'Уведомления выключены'}

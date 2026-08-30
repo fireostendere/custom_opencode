@@ -31,4 +31,17 @@ async function replay(){if(!state.lastTaskID){toast('Сначала открой
 async function setSandbox(){if(!state.lastTaskID){toast('Сначала выбери задачу');return}try{await req('/client-task-sandbox.json',{method:'POST',body:JSON.stringify({taskID:state.lastTaskID,sandbox:$('runtimeV3Sandbox').value})});toast(`Sandbox: ${$('runtimeV3Sandbox').value}`)}catch(error){toast(`Sandbox: ${error.message}`)}}
 async function search(){const session=sid(),query=$('runtimeV3Search')?.value.trim()||'';if(!session||!query)return;try{const value=await req(`/client-repo-index-v3.json?sessionID=${encodeURIComponent(session)}&query=${encodeURIComponent(query)}`);$('runtimeV3Results').innerHTML=(value.hits||[]).slice(0,20).map(hit=>`<div><strong>${esc(hit.qualified||hit.path)}</strong><span>${esc(hit.type)} · score ${esc(hit.score)}</span></div>`).join('')||'<div class="runtime-muted">Нет совпадений.</div>'}catch(error){toast(`Repo index: ${error.message}`)}}
 
-const observer=new MutationObserver(()=>{if(ensure())render()});observer.observe(document.documentElement,{childList:true,subtree:true});window.addEventListener('hashchange',()=>setTimeout(refresh,100));setInterval(()=>{if($('taskCenterDialog')?.open)refresh()},5000);setTimeout(()=>{ensure();refresh()},500)
+// Панель вставляется один раз, когда появляется #taskCenterDialog.
+// ВАЖНО: observer не должен вызывать render() на каждую мутацию документа —
+// render() перезаписывает innerHTML (новая мутация), и это зацикливает
+// event loop намертво (вкладка зависает, интерфейс «отваливается»).
+let panelAttached=false
+function attachPanel(){
+  if(panelAttached)return false
+  if(!ensure())return false
+  panelAttached=true
+  observer.disconnect()
+  render()
+  return true
+}
+const observer=new MutationObserver(attachPanel);observer.observe(document.documentElement,{childList:true,subtree:true});window.addEventListener('hashchange',()=>setTimeout(refresh,100));setInterval(()=>{if($('taskCenterDialog')?.open)refresh()},5000);setTimeout(()=>{attachPanel();refresh()},500)

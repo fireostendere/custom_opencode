@@ -347,12 +347,23 @@ async function refreshQueue() {
   } catch {}
 }
 function syncQueueBadges() {
-  document.querySelectorAll('[data-persistent-queue]').forEach((el) => el.remove())
-  for (const [sessionID, count] of Object.entries(state.queueCounts || {})) {
+  // ВАЖНО: этот же колбэк повешен на MutationObserver(#sessions, childList+subtree).
+  // Безусловное «удалить все бейджи и вставить заново» даёт мутацию на каждый
+  // вызов и зацикливает observer намертво, как только очередь не пуста.
+  // Поэтому сводим DOM к целевому состоянию минимальными правками.
+  const counts = state.queueCounts || {}
+  document.querySelectorAll('[data-persistent-queue]').forEach((el) => {
+    const sessionID = el.closest('[data-session]')?.dataset.session
+    const count = counts[sessionID]
+    if (!count) { el.remove(); return }
+    const text = `очередь ${count}`
+    if (el.textContent !== text) el.textContent = text
+  })
+  for (const [sessionID, count] of Object.entries(counts)) {
     if (!count) continue
     const button = document.querySelector(`[data-session="${CSS.escape(sessionID)}"]`)
     const meta = button?.querySelector('.session-meta')
-    if (!meta) continue
+    if (!meta || meta.querySelector('[data-persistent-queue]')) continue
     const badge = document.createElement('span')
     badge.dataset.persistentQueue = '1'
     badge.className = 'queued'

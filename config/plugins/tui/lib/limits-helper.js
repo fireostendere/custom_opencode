@@ -250,6 +250,12 @@ async function queryBailian(binary) {
  * @returns {object}
  */
 function normalizeBailianResult(payload) {
+  const planName =
+    payload.planName ||
+    payload.tierName ||
+    payload.plan ||
+    payload.planType ||
+    "Token Plan Personal Pro"
   const fiveHour = bailianWindow(
     payload.per5HourPercentage,
     payload.per5HourResetTime,
@@ -262,11 +268,13 @@ function normalizeBailianResult(payload) {
     QWEN_SEVEN_DAY_LIMIT,
     10_080,
   )
-  if (!fiveHour && !sevenDay) return { available: true, state: "unknown" }
+  if (!fiveHour && !sevenDay)
+    return { available: true, state: "unknown", planName }
   return {
     available: true,
     source: "bailian-cli",
     state: "ok",
+    planName,
     fiveHour:
       fiveHour || { limit: QWEN_FIVE_HOUR_LIMIT, windowDurationMins: 300 },
     sevenDay:
@@ -297,6 +305,54 @@ function bailianWindow(ratio, resetTimeMs, limit, minutes) {
     remainingPercent,
     windowDurationMins: minutes,
     resetsAt,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Alibaba "Night Plan" promo (ночная скидка −50%)
+// ---------------------------------------------------------------------------
+
+/** Beijing is UTC+8 year-round (no DST). */
+const BEIJING_OFFSET_MS = 8 * 3600 * 1000
+/** Promo window: 22:00 → 08:00 Beijing time, minutes of day. */
+const NIGHT_START_MIN = 22 * 60
+const NIGHT_END_MIN = 8 * 60
+
+/**
+ * Status of the Alibaba "Night Plan" promo: every day 22:00–08:00 Beijing
+ * time, Credits consumption for the listed models is charged at 50%.
+ *
+ * There is no API that exposes the promo state — billing decides it by the
+ * request submission time in Beijing time, so the status is computed
+ * deterministically from the clock.
+ * @param {number} [nowMs]
+ * @returns {{
+ *   active: boolean,
+ *   discount: number,
+ *   minutesToToggle: number,
+ *   togglesAtMs: number,
+ *   models: string[],
+ * }}
+ */
+export function getNightPromoStatus(nowMs = Date.now()) {
+  const bj = new Date(nowMs + BEIJING_OFFSET_MS)
+  const minOfDay = bj.getUTCHours() * 60 + bj.getUTCMinutes()
+  const active = minOfDay >= NIGHT_START_MIN || minOfDay < NIGHT_END_MIN
+  let minutesToToggle
+  if (active) {
+    minutesToToggle =
+      minOfDay >= NIGHT_START_MIN
+        ? 24 * 60 - minOfDay + NIGHT_END_MIN // after 22:00 → until 08:00
+        : NIGHT_END_MIN - minOfDay // after midnight → until 08:00
+  } else {
+    minutesToToggle = NIGHT_START_MIN - minOfDay // daytime → until 22:00
+  }
+  return {
+    active,
+    discount: 0.5,
+    minutesToToggle,
+    togglesAtMs: nowMs + minutesToToggle * 60_000,
+    models: ["qwen3.8-max", "deepseek-v4-pro-0813"],
   }
 }
 

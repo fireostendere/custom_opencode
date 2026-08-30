@@ -101,34 +101,53 @@ def _backend_request_json(method: str, target: str, payload: object | None = Non
                           timeout: float = 20.0) -> Any:
     body = None
     headers = {
-        "Authorization": ext.base.BACKEND_AUTH,
-        "Host": ext.base.BACKEND.hostname or "localhost",
         "Accept": "application/json",
     }
     if payload is not None:
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         headers["Content-Type"] = "application/json"
         headers["Content-Length"] = str(len(body))
-    connection = http.client.HTTPConnection(
-        ext.base.BACKEND.hostname,
-        ext.base.BACKEND.port or 80,
-        timeout=timeout,
-    )
-    try:
-        connection.request(method, target, body=body, headers=headers)
-        response = connection.getresponse()
-        raw = response.read()
-        if response.status < 200 or response.status >= 300:
-            detail = raw.decode("utf-8", errors="replace")[:500]
-            raise BackendHTTPError(response.status, f"OpenCode {response.status}: {detail or response.reason}")
-        if not raw:
-            return None
+
+    def _attempt(host: str, port: int, auth: str) -> Any:
+        request_headers = dict(headers)
+        request_headers["Authorization"] = auth
+        request_headers["Host"] = host or "localhost"
+        connection = ext.base.backend_connection(host, port, read_timeout=timeout)
         try:
-            return json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return raw.decode("utf-8", errors="replace")
-    finally:
-        connection.close()
+            connection.request(method, target, body=body, headers=request_headers)
+            response = connection.getresponse()
+            raw = response.read()
+            if response.status < 200 or response.status >= 300:
+                detail = raw.decode("utf-8", errors="replace")[:500]
+                raise BackendHTTPError(response.status, f"OpenCode {response.status}: {detail or response.reason}")
+            if not raw:
+                return None
+            try:
+                return json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return raw.decode("utf-8", errors="replace")
+        finally:
+            connection.close()
+
+    host, port, auth = ext.base.current_backend()
+    try:
+        return _attempt(host, port, auth)
+    except (OSError, http.client.HTTPException):
+        # Backend restarted on a new port; re-read service discovery and retry once.
+        refreshed = ext.base.current_backend(force_refresh=True)
+        if refreshed == (host, port, auth):
+            raise
+        host, port, auth = refreshed
+        return _attempt(host, port, auth)
+    except BackendHTTPError as exc:
+        # Backend restarted keeping its port but rotated its password: 401/403.
+        if exc.status not in (401, 403):
+            raise
+        refreshed = ext.base.current_backend(force_refresh=True)
+        if refreshed == (host, port, auth):
+            raise
+        host, port, auth = refreshed
+        return _attempt(host, port, auth)
 
 
 def _workspace_target(path: str, directory: str | None = None) -> str:
@@ -379,6 +398,7 @@ def _send_smoke_prompt(session_id: str, text: str, timeout: float = 120.0) -> An
     target = f"/api/session/{session_id}/prompt"
     last_error: Exception | None = None
     for payload in (
+        {"text": text, "files": [], "resume": True},
         {"prompt": {"text": text, "files": []}, "delivery": "steer"},
         {"text": text, "files": [], "delivery": "steer"},
     ):
@@ -403,21 +423,27 @@ def _json_blob(value: Any) -> str:
         return str(value)
 
 
+def _assistant_messages(value: Any) -> list[dict[str, Any]]:
+    return [
+        row for row in value if isinstance(row, dict)
+        and (row.get("info") if isinstance(row.get("info"), dict) else row).get("role") == "assistant"
+    ] if isinstance(value, list) else []
+
+
 def _wait_for_text(session_id: str, needle: str | None = None, timeout: float = 90.0) -> Any:
     deadline = time.monotonic() + timeout
-    last = None
     while time.monotonic() < deadline:
         try:
-            last = _session_messages(session_id)
-            blob = _json_blob(last)
+            messages = _assistant_messages(_session_messages(session_id))
+            blob = _json_blob(messages)
             if needle and needle in blob:
-                return last
-            if not needle and '"role": "assistant"' in blob:
-                return last
+                return messages
+            if not needle and messages:
+                return messages
         except Exception:
             pass
         time.sleep(0.75)
-    return last
+    return []
 
 
 def _all_sessions() -> list[dict[str, Any]]:
@@ -446,13 +472,13 @@ def _model_smoke(model: str) -> dict[str, object]:
     try:
         session = _create_smoke_session(workspace, model, "Doctor model smoke")
         session_id = session["id"]
-        response = _send_smoke_prompt(
+        _send_smoke_prompt(
             session_id,
             "Reply exactly DOCTOR_OK. Do not call tools or subagents. Output no other text.",
             timeout=90.0,
         )
         messages = _wait_for_text(session_id, "DOCTOR_OK", timeout=30.0)
-        blob = _json_blob([response, messages])
+        blob = _json_blob(messages)
         ok = "DOCTOR_OK" in blob
         return {
             "ok": ok,
@@ -490,7 +516,7 @@ def _router_smoke(use_rag: bool) -> dict[str, object]:
                 "After the subagent returns, reply exactly that marker and nothing else."
             )
             needle = marker
-        response = _send_smoke_prompt(session_id, prompt, timeout=180.0)
+        _send_smoke_prompt(session_id, prompt, timeout=180.0)
         parent_messages = _wait_for_text(session_id, needle, timeout=60.0)
 
         children = [item for item in _all_sessions() if item.get("parentID") == session_id]
@@ -502,7 +528,7 @@ def _router_smoke(use_rag: bool) -> dict[str, object]:
             except Exception:
                 child_messages.append(None)
 
-        parent_blob = _json_blob([response, parent_messages])
+        parent_blob = _json_blob(parent_messages)
         child_blob = _json_blob([children, child_messages])
         flash_seen = "qwen3.6-flash" in child_blob
         local_seen = "ollama" in child_blob.lower()

@@ -79,6 +79,10 @@ with tempfile.TemporaryDirectory() as temp:
         {"providerID": "bailian-cli", "id": "qwen3.8-max"},
         {"providerID": "bailian-cli", "id": "qwen3.6-flash"},
     ]}) == {"bailian-cli/qwen3.8-max", "bailian-cli/qwen3.6-flash"}
+    assert server_plus._assistant_messages([
+        {"info": {"role": "user"}, "parts": [{"type": "text", "text": "DOCTOR_OK"}]},
+        {"info": {"role": "assistant"}, "parts": [{"type": "text", "text": "waiting"}]},
+    ]) == [{"info": {"role": "assistant"}, "parts": [{"type": "text", "text": "waiting"}]}]
 
     def fake_backend(method, target, payload=None, timeout=20.0):
         if target.startswith("/api/model"):
@@ -119,6 +123,11 @@ with tempfile.TemporaryDirectory() as temp:
     os.environ["CUSTOM_OPENCODE_FEATURE_STATE"] = str(Path(temp) / "features.json")
 
     import server_features
+
+    prompt_calls = []
+    server_features._backend_request_json = lambda method, target, payload=None, timeout=20.0: prompt_calls.append((method, target, payload))
+    server_features._send_backend_prompt("ses_idle", "start", [])
+    assert prompt_calls[0][2] == {"text": "start", "files": [], "resume": True}
 
     settings_value = server_features.update_project_settings(str(project), {
         "instructions": "run tests before finishing",

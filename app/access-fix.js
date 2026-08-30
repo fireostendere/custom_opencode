@@ -1,12 +1,16 @@
 const $ = (id) => document.getElementById(id)
 
-const resolvedPermissions = new Set()
+const permissionSuppression = window.__permissionSuppression
+const resolvedPermissions = permissionSuppression.resolved
+window.__resolvedPermissions = resolvedPermissions
 const directoryCache = new Map()
 let activePermission = null
 let expectedPermissionDetail = ''
 let refreshingPermission = false
 let refreshAgain = false
 let buildRedirectBusy = false
+let lastClearBannerAt = 0
+let lastClearBannerKey = ''
 
 function currentSessionID() {
   if (typeof location === 'undefined') return null
@@ -166,9 +170,14 @@ function clearBanner() {
   expectedPermissionDetail = ''
   const banner = $('permissionBanner')
   if (!banner) return
+  const key = `${banner.dataset.permissionSession||''}:${banner.dataset.permissionId||''}`
   banner.hidden = true
   delete banner.dataset.permissionSession
   delete banner.dataset.permissionId
+  if (key !== ':') {
+    lastClearBannerAt = Date.now()
+    lastClearBannerKey = key
+  }
 }
 
 function restorePermissionCopy() {
@@ -189,10 +198,12 @@ function restorePermissionCopy() {
 function showPermission(requestRow) {
   const sid = currentSessionID()
   const pid = permissionID(requestRow)
-  if (!sid || !pid || requestRow?.sessionID !== sid || resolvedPermissions.has(permissionKey(requestRow))) {
+  if (!sid || !pid || requestRow?.sessionID !== sid || permissionSuppression.isResolved(permissionKey(requestRow))) {
     clearBanner()
     return
   }
+  const key = `${sid}:${pid}`
+  if (key === lastClearBannerKey && Date.now() - lastClearBannerAt < 3000) return
   activePermission = requestRow
   expectedPermissionDetail = permissionDetailText(requestRow)
   const banner = $('permissionBanner')
@@ -223,13 +234,10 @@ async function refreshPermission() {
     const rows = (await permissionRequests(directory)).filter((item) => item?.sessionID === sid)
     if (currentSessionID() !== sid) return
 
-    const liveKeys = new Set(rows.map(permissionKey).filter(Boolean))
-    for (const key of [...resolvedPermissions]) {
-      if (key.startsWith(`${sid}:`) && !liveKeys.has(key)) resolvedPermissions.delete(key)
-    }
+    permissionSuppression.prune()
     const pending = rows.find((item) => {
       const key = permissionKey(item)
-      return key && !resolvedPermissions.has(key)
+      return key && !permissionSuppression.isResolved(key)
     }) || null
     if (pending) showPermission(pending)
     else clearBanner()
@@ -280,7 +288,7 @@ async function handlePermissionAction(button, event) {
   event.preventDefault()
   event.stopImmediatePropagation()
   const reply = button.dataset.permission
-  resolvedPermissions.add(key)
+  permissionSuppression.markResolved(key)
   clearBanner()
   try {
     await sendPermissionReply(requestRow, reply)
@@ -289,7 +297,7 @@ async function handlePermissionAction(button, event) {
     setTimeout(refreshPermission, 500)
     setTimeout(refreshPermission, 1300)
   } catch (error) {
-    resolvedPermissions.delete(key)
+    permissionSuppression.forget(key)
     toast(`Permission: ${error.message}`, 5000)
     refreshPermission()
   }
@@ -345,9 +353,12 @@ function installPermissionScope() {
   new MutationObserver(() => {
     if (banner.hidden) return
     const sid = currentSessionID()
+    const bannerSid = banner.dataset.permissionSession || ''
+    const bannerPid = banner.dataset.permissionId || ''
+    if (bannerSid && bannerPid && bannerSid === sid) return
     const pid = permissionID(activePermission)
     if (!sid || !activePermission || activePermission.sessionID !== sid || banner.dataset.permissionSession !== sid || banner.dataset.permissionId !== pid) {
-      banner.hidden = true
+      clearBanner()
       queueMicrotask(refreshPermission)
     }
   }).observe(banner, { attributes:true, attributeFilter:['hidden'] })
