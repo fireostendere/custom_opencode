@@ -67,7 +67,7 @@
     },
     "bailian-cli": {
       "package": "aisdk:@ai-sdk/anthropic",
-      "name": "Alibaba Cloud Model Studio · Token Plan Personal Pro",
+      "name": "Alibaba Cloud",
       "settings": {
         "baseURL": "{env:TOKEN_PLAN_ANTHROPIC_BASE_URL}",
         "apiKey": "{env:TOKEN_PLAN_API_KEY}"

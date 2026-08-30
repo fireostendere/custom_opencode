@@ -91,7 +91,7 @@ PY
 chmod 0644 "$UNIT_DIR/opencode-web-client.service"
 
 if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
-  install -d "$CONFIG_DIR/plugins" "$CONFIG_DIR/prompts"
+  install -d "$CONFIG_DIR/plugins" "$CONFIG_DIR/plugins/tui" "$CONFIG_DIR/prompts" "$CONFIG_DIR/themes"
   if [[ -f "$CONFIG_DIR/opencode.json" ]]; then
     cp -p "$CONFIG_DIR/opencode.json" "$CONFIG_DIR/opencode.json.backup.$(date +%Y%m%d%H%M%S)"
   fi
@@ -99,7 +99,9 @@ if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   install -m 0644 "$ROOT/config/cli.json" "$CONFIG_DIR/cli.json"
   install -m 0644 "$ROOT/config/events.js" "$CONFIG_DIR/events.js"
   install -m 0644 "$ROOT/config/prompts/"* "$CONFIG_DIR/prompts/"
-  install -m 0644 "$ROOT/config/plugins/"* "$CONFIG_DIR/plugins/"
+  install -m 0644 "$ROOT"/config/plugins/*.js "$CONFIG_DIR/plugins/"
+  install -m 0644 "$ROOT"/config/plugins/tui/* "$CONFIG_DIR/plugins/tui/"
+  install -m 0644 "$ROOT"/config/themes/*.json "$CONFIG_DIR/themes/"
   "$PYTHON3" - "$ROOT/config/opencode.json.template" "$CONFIG_DIR/opencode.json" "$CONFIG_DIR" "$ROOT" "$RAG_DISABLED" <<'PY'
 import json, sys
 source, target, config_dir, root, rag_disabled = sys.argv[1:]
