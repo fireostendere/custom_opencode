@@ -4,11 +4,14 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
 
-REQUIRE_BROWSER=${CUSTOM_OPENCODE_REGRESSION_REQUIRE_BROWSER:-0}
-REQUIRE_PACKAGED_TUI=${CUSTOM_OPENCODE_REGRESSION_REQUIRE_PACKAGED_TUI:-0}
-REQUIRE_LIVE_RAG=${CUSTOM_OPENCODE_REGRESSION_REQUIRE_LIVE_RAG:-0}
+STRICT=${CUSTOM_OPENCODE_REGRESSION_STRICT:-0}
+REQUIRE_BROWSER=${CUSTOM_OPENCODE_REGRESSION_REQUIRE_BROWSER:-$STRICT}
+REQUIRE_PACKAGED_TUI=${CUSTOM_OPENCODE_REGRESSION_REQUIRE_PACKAGED_TUI:-$STRICT}
+REQUIRE_LIVE_RAG=${CUSTOM_OPENCODE_REGRESSION_REQUIRE_LIVE_RAG:-$STRICT}
+SKIPS=0
 
 step() { printf '\n==> %s\n' "$1"; }
+skip() { SKIPS=$((SKIPS + 1)); printf 'SKIP %s\n' "$1"; }
 
 step "Static/runtime verifier"
 bash scripts/verify.sh
@@ -55,13 +58,13 @@ PY
     echo "Playwright is installed but Chromium is unavailable" >&2
     exit 1
   else
-    echo "SKIP browser regressions: Chromium unavailable (set CUSTOM_OPENCODE_REGRESSION_REQUIRE_BROWSER=1 to require)"
+    skip "browser regressions: Chromium unavailable"
   fi
 elif [[ "$REQUIRE_BROWSER" == 1 ]]; then
   echo "Playwright is unavailable" >&2
   exit 1
 else
-  echo "SKIP browser regressions: Playwright unavailable (set CUSTOM_OPENCODE_REGRESSION_REQUIRE_BROWSER=1 to require)"
+  skip "browser regressions: Playwright unavailable"
 fi
 
 step "Packaged OpenCode 2 TUI regression"
@@ -71,7 +74,7 @@ elif [[ "$REQUIRE_PACKAGED_TUI" == 1 ]]; then
   echo "opencode2 is unavailable" >&2
   exit 1
 else
-  echo "SKIP packaged TUI: opencode2 unavailable (set CUSTOM_OPENCODE_REGRESSION_REQUIRE_PACKAGED_TUI=1 to require)"
+  skip "packaged TUI: opencode2 unavailable"
 fi
 
 step "RAG regression"
@@ -100,7 +103,12 @@ elif [[ "$REQUIRE_LIVE_RAG" == 1 ]]; then
   exit 1
 else
   python3 scripts/rag-start-smoke.py
-  echo "SKIP live RAG retrieval: local mcp-rag runtime/corpus unavailable (set CUSTOM_OPENCODE_REGRESSION_REQUIRE_LIVE_RAG=1 to require)"
+  skip "live RAG retrieval: local mcp-rag runtime/corpus unavailable"
 fi
 
-printf '\nFULL REGRESSION PASS\n'
+if [[ "$SKIPS" -eq 0 ]]; then
+  printf '\nFULL REGRESSION PASS\n'
+else
+  printf '\nAVAILABLE REGRESSION PASS (%d optional gate(s) skipped)\n' "$SKIPS"
+  printf 'Set CUSTOM_OPENCODE_REGRESSION_STRICT=1 to require browser + packaged TUI + live RAG.\n'
+fi
