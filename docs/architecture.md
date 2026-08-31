@@ -30,7 +30,7 @@ OpenCode остаётся execution/model backend; `custom_opencode` управ�
 - model/context/cost/runtime/RAG/queue status bar;
 - files/images, Markdown/code/tool/reasoning rendering;
 - drafts, deep links и actionable PWA notifications;
-- provider quotas, Doctor, `/rag-start`, project browser;
+- provider quotas, `/rag-start`, project browser;
 - mobile drawer с swipe/Back/outside-click dismissal;
 - persisted light/dark/system theme и accent color;
 - reduced-motion-aware microanimations.
@@ -53,7 +53,7 @@ server.py
 
 `server_ext.py` — provider-limit bridges.
 
-`server_plus.py` — constrained host-directory browser, symlink containment, Doctor endpoints.
+`server_plus.py` — constrained host-directory browser, symlink containment и общие backend helpers.
 
 `server_rag.py` — `/rag-start`, MCP workspace routing, dynamic `kb` connect и persisted RAG enablement.
 
@@ -158,7 +158,7 @@ R3/R4 control-plane boundaries остаются интерактивными н�
 
 `appearance.js` хранит `{theme, accent}` в `opencode:web:appearance-v1`. `system` использует `prefers-color-scheme`; accent применяется через CSS custom property и автоматически выбирает контрастный foreground.
 
-`appearance.css` загружается последним и переводит legacy dark-only surfaces на palette variables, поэтому светлая тема охватывает core UI, workflow surfaces, review, Doctor, dialogs и sidebar.
+`appearance.css` загружается последним и переводит legacy dark-only surfaces на palette variables, поэтому светлая тема охватывает core UI, workflow surfaces, review, dialogs и sidebar.
 
 Microanimations ограничены короткими transitions и появлением stateful surfaces. `prefers-reduced-motion` почти полностью отключает motion.
 
@@ -188,7 +188,7 @@ restart services
 real host self-test
 ```
 
-Zero-token smoke проверяет persistent settings/queue, запрет automatic local project defaults и safe Git revert. CI не может доказать состояние конкретного host/OpenCode/Qdrant, поэтому host-level Doctor остаётся частью эксплуатации.
+Zero-token smoke проверяет persistent settings/queue, запрет automatic local project defaults и safe Git revert. Host-level RAG readiness проверяется отдельным `/rag-start` и RAG runtime probe.
 
 ## Security boundaries
 

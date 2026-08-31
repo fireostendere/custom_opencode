@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id)
 const COMMAND_CACHE_MS = 60_000
+const RETIRED_COMMANDS = new Set(['doctor'])
 const commandCache = new Map()
-const LOCAL_COMMANDS = [{ name:'doctor', description:'Открыть диагностику OpenCode, моделей, Router и RAG', local:true }]
 let paletteItems = []
 let paletteIndex = 0
 let limitsTimer = null
@@ -125,9 +125,9 @@ async function refreshLimits() {
   panel.classList.add('loading-limits')
   try {
     const value = await request('/client-limits.json')
-    panel.innerHTML = `<div class="quota-title"><span>Лимиты</span></div>${renderQwenQuota(value?.qwen)}${renderOpenAIQuota(value?.openai)}`
+    panel.innerHTML = `${renderQwenQuota(value?.qwen)}${renderOpenAIQuota(value?.openai)}`
   } catch (error) {
-    panel.innerHTML = `<div class="quota-title"><span>Лимиты</span></div><div class="quota-note">Не удалось обновить: ${escapeHtml(error.message)}</div>`
+    panel.innerHTML = `<div class="quota-note">Не удалось обновить: ${escapeHtml(error.message)}</div>`
   } finally {
     panel.classList.remove('loading-limits')
   }
@@ -150,9 +150,8 @@ async function loadCommands(force = false) {
   const params = new URLSearchParams()
   if (directory) params.set('location[directory]', directory)
   const raw = dataOf(await request(`/api/command${params.size ? `?${params}` : ''}`))
-  const remote = (Array.isArray(raw) ? raw : []).map((item) => typeof item === 'string' ? { name:item } : item).filter((item) => commandName(item))
-  const remoteNames = new Set(remote.map((item) => commandName(item).toLowerCase()))
-  const items = [...LOCAL_COMMANDS.filter((item) => !remoteNames.has(commandName(item).toLowerCase())), ...remote]
+  const remote = (Array.isArray(raw) ? raw : []).map((item) => typeof item === 'string' ? { name:item } : item).filter((item) => commandName(item) && !RETIRED_COMMANDS.has(commandName(item).toLowerCase()))
+  const items = remote
   commandCache.set(directory, { at:Date.now(), items })
   return items
 }
@@ -246,11 +245,11 @@ async function executeSlash(value) {
   const parsed = parseSlash(value)
   if (!parsed) return
   const input = $('input')
-  if (parsed.command.toLowerCase() === 'doctor') {
+  if (RETIRED_COMMANDS.has(parsed.command.toLowerCase())) {
     input.value = ''
     input.dispatchEvent(new Event('input', { bubbles:true }))
     closePalette()
-    window.dispatchEvent(new CustomEvent('custom-opencode:doctor'))
+    toast('Команда /doctor удалена', 4000)
     return
   }
   const sessionID = await ensureSessionID()

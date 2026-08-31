@@ -28,7 +28,6 @@
 11. independent MCP probe: initialization, `list_tools`, `knowledge_status`;
 12. проверить required tools;
 13. только после успешного live connection атомарно сохранить `mcp.servers.kb.disabled=false` в runtime config;
-14. открыть Doctor.
 
 Full mode использует локальный embedding/reranker для smoke retrieval, но не внешний LLM API.
 
@@ -119,16 +118,9 @@ Lifecycle bounded на нескольких уровнях:
 RAG готов · <documents> docs · <chunks> chunks · <points> points · MCP connected
 ```
 
-После выполнения открывается Doctor, где отдельно видны:
+После выполнения UI показывает краткий результат RAG-проверки и подключения MCP.
 
-- OpenCode MCP state;
-- direct MCP protocol probe;
-- tools;
-- Qdrant;
-- corpus counts;
-- lifecycle settings.
-
-## Диагностика без UI
+## Проверка без UI
 
 В `mcp-rag`:
 

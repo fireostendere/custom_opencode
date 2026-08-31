@@ -1,0 +1,246 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+
+// ── Minimal browser environment for app.js module scope ────────────────────
+const storage = new Map()
+globalThis.localStorage = {
+  getItem: (key) => (storage.has(key) ? storage.get(key) : null),
+  setItem: (key, value) => storage.set(key, String(value)),
+  removeItem: (key) => storage.delete(key),
+}
+globalThis.window = { addEventListener() {}, dispatchEvent() {} }
+function makeElement() {
+  return {
+    value: '', innerHTML: '', textContent: '', hidden: false, disabled: false, title: '',
+    style: {}, dataset: {},
+    classList: { add() {}, remove() {}, toggle() {}, contains() { return false } },
+    addEventListener() {}, focus() {}, showModal() {}, close() {},
+    querySelector() { return null }, querySelectorAll() { return [] },
+    contains() { return false }, closest() { return null },
+  }
+}
+globalThis.document = {
+  getElementById: () => makeElement(),
+  querySelectorAll: () => [],
+  addEventListener() {},
+  hidden: false,
+}
+
+// ── Controllable api stub ──────────────────────────────────────────────────
+const API_METHODS = [
+  'getSession', 'getContext', 'createSession', 'sendPrompt',
+  'deleteSession', 'forkSession', 'switchAgent', 'switchModel',
+]
+const handlers = {}
+globalThis.__smoke = {
+  api: Object.fromEntries(API_METHODS.map((name) => [
+    name,
+    (...args) => handlers[name]?.(...args),
+  ])),
+}
+
+// ── Load app.js as a module: swap imports/boot for stubs, expose internals ─
+let source = readFileSync(resolve(root, 'app/app.js'), 'utf8')
+source = source
+  .replace("import * as api from './api.js'", 'const api = globalThis.__smoke.api')
+  .replace(
+    "import { escapeHtml, renderMarkdown } from './markdown.js'",
+    'const escapeHtml = (value) => String(value ?? ""); const renderMarkdown = (value) => String(value ?? "")',
+  )
+assert.ok(!source.includes("from './api.js'"), 'api import replacement failed')
+assert.ok(!source.includes("from './markdown.js'"), 'markdown import replacement failed')
+const bootIndex = source.lastIndexOf('initialize().catch')
+assert.ok(bootIndex > 0, 'app.js boot call not found')
+source = source.slice(0, bootIndex)
+  + 'globalThis.__smoke.exports = { transferSessionToProject, forkWithFallback, sessionWithControls, handoffText, messagePlainText, changeAgent, changeModel, state, seedDraft: (id, value) => { drafts[id] = value }, draftOf: (id) => drafts[id] }\n'
+
+await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
+const app = globalThis.__smoke.exports
+const state = app.state
+
+const calls = { createSession: [], sendPrompt: [], deleteSession: [], switchAgent: [], switchModel: [] }
+const error = (status, message = 'boom') => Object.assign(new Error(message), { status })
+
+function reset() {
+  state.sessions = []
+  state.selected = null
+  state.context = []
+  state.projects = []
+  state.running.clear()
+  state.queues.clear()
+  for (const list of Object.values(calls)) list.length = 0
+  handlers.getSession = async () => ({})
+  handlers.getContext = async () => []
+  handlers.createSession = async (value) => { calls.createSession.push(value); return { id: 'ses_new' } }
+  handlers.sendPrompt = async (session, value) => { calls.sendPrompt.push({ session, value }) }
+  handlers.deleteSession = async (id) => { calls.deleteSession.push(id) }
+  handlers.forkSession = async () => { throw error(404, 'fork unsupported') }
+  handlers.switchAgent = async (id, agent) => { calls.switchAgent.push({ id, agent }) }
+  handlers.switchModel = async (id, model) => { calls.switchModel.push({ id, model }) }
+}
+
+const sourceSession = { id: 'ses_src', title: 'Source', location: { directory: '/src' } }
+const targetProject = { id: 'proj_dst', name: 'Dst', canonical: '/dst' }
+
+// ── Scenario 1: transfer with source removal copies the draft and cleans up ─
+reset()
+handlers.getSession = async () => ({ model: { providerID: 'bailian-cli', id: 'qwen-flash', variant: 'low' }, agent: 'build' })
+handlers.getContext = async () => [
+  { type: 'user', text: 'первый вопрос' },
+  { type: 'assistant', content: [{ type: 'text', text: 'ответ' }] },
+]
+app.seedDraft('ses_src', 'черновик')
+state.sessions = [sourceSession]
+
+let result = await app.transferSessionToProject(sourceSession, targetProject, { removeSource: true })
+assert.equal(result.sourceRemoved, true, 'source removal must succeed')
+assert.equal(result.created.id, 'ses_new')
+assert.equal(calls.createSession[0].directory, '/dst')
+assert.equal(calls.createSession[0].agent, 'build', 'merged agent must come from the session detail')
+assert.deepEqual(calls.createSession[0].model, { providerID: 'bailian-cli', id: 'qwen-flash', variant: 'low' })
+const handoffSent = calls.sendPrompt[0].value.text
+assert.ok(handoffSent.includes('первый вопрос') && handoffSent.includes('ответ'), 'handoff must carry the source context')
+assert.ok(handoffSent.includes('USER:') && handoffSent.includes('ASSISTANT:'), 'handoff must label roles')
+assert.equal(app.draftOf('ses_new'), 'черновик', 'draft must move to the transferred session')
+assert.equal(app.draftOf('ses_src'), undefined, 'source draft must be removed with the source session')
+assert.ok(state.sessions.some((session) => session.id === 'ses_new'), 'new session must stay listed')
+assert.ok(!state.sessions.some((session) => session.id === 'ses_src'), 'source session must disappear')
+assert.equal(state.running.has('ses_new'), true, 'handoff session stays running until the drain settles')
+assert.equal(state.running.has('ses_src'), false)
+assert.deepEqual(calls.deleteSession, ['ses_src'])
+
+// ── Scenario 2: sendPrompt failure rolls the created session back ──────────
+reset()
+handlers.getContext = async () => [{ type: 'user', text: 'вопрос' }]
+handlers.sendPrompt = async () => { throw error(500) }
+state.sessions = [sourceSession]
+
+await assert.rejects(
+  app.transferSessionToProject(sourceSession, targetProject, {}),
+  /boom/,
+  'sendPrompt failure must surface',
+)
+assert.deepEqual(calls.deleteSession, ['ses_new'], 'failed handoff must delete the created session')
+assert.ok(!state.sessions.some((session) => session.id === 'ses_new'), 'rolled-back session must not stay listed')
+assert.equal(state.running.has('ses_new'), false)
+assert.ok(state.sessions.some((session) => session.id === 'ses_src'), 'source session must survive the failed copy')
+
+// ── Scenario 3: source delete failure keeps the copy and the source ────────
+reset()
+handlers.getContext = async () => [{ type: 'user', text: 'вопрос' }]
+handlers.deleteSession = async (id) => { calls.deleteSession.push(id); if (id === 'ses_src') throw error(500, 'locked') }
+app.seedDraft('ses_src', 'черновик')
+state.sessions = [sourceSession]
+
+result = await app.transferSessionToProject(sourceSession, targetProject, { removeSource: true })
+assert.equal(result.sourceRemoved, false, 'failed source removal must be reported, not thrown')
+assert.ok(state.sessions.some((session) => session.id === 'ses_src'), 'source session must stay listed when delete fails')
+assert.ok(state.sessions.some((session) => session.id === 'ses_new'), 'copy must survive source delete failure')
+assert.equal(app.draftOf('ses_src'), 'черновик', 'source draft must survive failed removal')
+assert.equal(app.draftOf('ses_new'), 'черновик')
+
+// ── Scenario 4: sessionWithControls merges detail over the list item ───────
+reset()
+handlers.getSession = async () => ({ model: { variant: 'low' }, agent: 'plan' })
+let merged = await app.sessionWithControls({ id: 's1', model: { providerID: 'p', id: 'm' } })
+assert.deepEqual(merged.model, { providerID: 'p', id: 'm', variant: 'low' })
+assert.equal(merged.agent, 'plan')
+handlers.getSession = async () => { throw error(500) }
+const original = { id: 's2' }
+merged = await app.sessionWithControls(original)
+assert.equal(merged, original, 'detail fetch failure must fall back to the list item')
+
+// ── Scenario 5: fork fallback (404) slices context at messageID ────────────
+reset()
+state.selected = sourceSession
+state.context = [
+  { id: 'm1', type: 'user', text: 'один' },
+  { id: 'm2', type: 'assistant', content: [{ type: 'text', text: 'два' }] },
+  { id: 'm3', type: 'user', text: 'три' },
+]
+handlers.createSession = async (value) => { calls.createSession.push(value); return { id: 'ses_fork' } }
+
+const forked = await app.forkWithFallback(sourceSession, 'm2')
+assert.equal(forked.id, 'ses_fork')
+assert.equal(calls.createSession[0].directory, '/src', 'fork must stay in the source directory')
+const forkPrompt = calls.sendPrompt[0].value.text
+assert.ok(forkPrompt.includes('один') && forkPrompt.includes('два'), 'fork handoff must keep messages up to messageID')
+assert.ok(!forkPrompt.includes('три'), 'fork handoff must not carry messages after messageID')
+assert.equal(state.running.has('ses_fork'), true)
+
+// ── Scenario 6: fork fallback validates the created session id ─────────────
+reset()
+handlers.forkSession = async () => { throw error(405, 'no fork route') }
+handlers.createSession = async () => ({})
+state.selected = sourceSession
+state.context = [{ id: 'm1', type: 'user', text: 'один' }]
+
+await assert.rejects(app.forkWithFallback(sourceSession, undefined), /id/, 'missing session id must throw')
+assert.equal(calls.sendPrompt.length, 0, 'no prompt may be sent without a valid session id')
+
+// ── Scenario 7: fork fallback rolls back on sendPrompt failure ─────────────
+reset()
+state.selected = sourceSession
+state.context = [{ id: 'm1', type: 'user', text: 'один' }]
+handlers.createSession = async () => ({ id: 'ses_fork2' })
+handlers.sendPrompt = async () => { throw error(500) }
+
+await assert.rejects(app.forkWithFallback(sourceSession, undefined), /boom/)
+assert.deepEqual(calls.deleteSession, ['ses_fork2'], 'failed fork handoff must delete the created session')
+assert.equal(state.running.has('ses_fork2'), false)
+
+// ── Scenario 8: handoffText keeps only the last 40 messages ────────────────
+const manyMessages = Array.from({ length: 45 }, (_, index) => ({
+  type: index % 2 ? 'assistant' : 'user',
+  text: `msg-${String(index).padStart(2, '0')}`,
+}))
+let clippedHandoff = app.handoffText({ id: 'ses_x', location: { directory: '/d' } }, manyMessages)
+const rows = (clippedHandoff.match(/^(USER|ASSISTANT):/gm) || []).length
+assert.equal(rows, 40, 'handoff must cap at the last 40 messages')
+assert.ok(clippedHandoff.includes('msg-44') && clippedHandoff.includes('msg-05'))
+assert.ok(!clippedHandoff.includes('msg-04'), 'messages beyond the 40-message window must be dropped')
+
+// ── Scenario 9: handoffText caps the transcript at 24 000 characters ───────
+const bigMessages = Array.from({ length: 3 }, (_, index) => ({
+  type: 'user',
+  text: 'abc'[index].repeat(10000),
+}))
+clippedHandoff = app.handoffText({ id: 'ses_x', location: { directory: '/d' } }, bigMessages)
+const joined = bigMessages.map((message) => `USER:\n${message.text}`).join('\n\n')
+assert.ok(joined.length > 24000, 'fixture must exceed the cap')
+assert.ok(clippedHandoff.endsWith(joined.slice(-24000)), 'handoff must keep exactly the last 24 000 transcript characters')
+const prefixLength = app.handoffText({ id: 'ses_x', location: { directory: '/d' } }, []).length
+assert.equal(clippedHandoff.length, prefixLength + 24000)
+
+// ── Scenario 10: messagePlainText extracts text parts only ─────────────────
+assert.equal(app.messagePlainText({ type: 'user', text: 'привет' }), 'привет')
+assert.equal(
+  app.messagePlainText({ type: 'assistant', content: [{ type: 'text', text: 'a' }, { type: 'tool', text: 'skip' }, { type: 'text', text: 'b' }] }),
+  'a\nb',
+)
+
+// ── Scenario 11: draft isolation for agent/model controls ──────────────────
+reset()
+state.selected = null
+await app.changeAgent('plan')
+await app.changeModel({ id: 'qwen-flash', providerID: 'bailian-cli', variant: 'low' })
+assert.equal(state.draftAgent, 'plan')
+assert.deepEqual(state.draftModel, { id: 'qwen-flash', providerID: 'bailian-cli', variant: 'low' })
+assert.equal(calls.switchAgent.length, 0, 'home-screen agent change must not hit the API')
+assert.equal(calls.switchModel.length, 0, 'home-screen model change must not hit the API')
+
+state.selected = { id: 'ses_sel', agent: 'build', model: { id: 'old', providerID: 'p' } }
+await app.changeAgent('build')
+await app.changeModel({ id: 'new', providerID: 'np' })
+assert.deepEqual(calls.switchAgent, [{ id: 'ses_sel', agent: 'build' }])
+assert.deepEqual(calls.switchModel, [{ id: 'ses_sel', model: { id: 'new', providerID: 'np' } }])
+assert.equal(state.selected.agent, 'build')
+assert.deepEqual(state.selected.model, { id: 'new', providerID: 'np' })
+assert.equal(state.draftAgent, 'plan', 'selected-session agent switch must not touch the home draft')
+assert.deepEqual(state.draftModel, { id: 'qwen-flash', providerID: 'bailian-cli', variant: 'low' }, 'selected-session model switch must not touch the home draft')
+
+console.log('Session transfer smoke passed: handoff rollback + draft move + source-delete safety + fork fallback + clipping + draft isolation')

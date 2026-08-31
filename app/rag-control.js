@@ -48,11 +48,9 @@ async function startRag(mode) {
     if (!body?.ok) {
       const detail = body?.error || body?.runtime?.error || body?.mcp?.error || body?.stage || 'RAG не готов'
       toast(`RAG: ${detail}`, 9000)
-      window.dispatchEvent(new CustomEvent('custom-opencode:doctor'))
       return
     }
     toast(summary(body), 7000)
-    window.dispatchEvent(new CustomEvent('custom-opencode:doctor'))
   } catch (error) {
     toast(`RAG start: ${error.message}`, 9000)
   } finally {

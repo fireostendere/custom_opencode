@@ -1,6 +1,6 @@
 # Документация custom_opencode
 
-`custom_opencode` — переносимый комплект поверх OpenCode V2: web/PWA-интерфейс, custom web auth, Alibaba/Qwen routing, Runtime V2/V3 control plane, безопасное открытие локальных проектов, диагностика/self-test и опциональный инженерный RAG.
+`custom_opencode` — переносимый комплект поверх OpenCode V2: web/PWA-интерфейс, custom web auth, Alibaba/Qwen routing, Runtime V2/V3 control plane, безопасное открытие локальных проектов, self-test и опциональный инженерный RAG.
 
 ## С чего начать
 
@@ -14,7 +14,6 @@
 - [Модели и routing](models-and-routing.md) — Build-only UI, direct/server profiles, adaptive local/cloud routing и orchestration.
 - [Интеграция RAG](rag.md) — `mcp-rag`, lifecycle и server-managed retrieval.
 - [`/rag-start`](rag-start.md) — запуск/проверка RAG без LLM-токенов.
-- [Doctor](doctor.md) — health checks и ручные paid E2E smoke tests.
 - [Эксплуатация и recovery](operations.md) — systemd, update, backup, logs и recovery.
 - [Troubleshooting](troubleshooting.md) — типовые симптомы, включая login/theme/mobile cases.
 - [VSCode: хоткеи терминала](vscode-terminal.md) — проброс `ctrl+f/p/r/b` в OpenCode TUI вместо команд VSCode (перехват по фокусу).

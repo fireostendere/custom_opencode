@@ -137,7 +137,6 @@ MCP process остаётся доступным для discovery, но embedding
 6. подключает `kb` именно к этому workspace;
 7. проверяет required MCP tools;
 8. после успешного live connect атомарно сохраняет `kb.disabled=false`;
-9. открывает Doctor.
 
 Быстрый режим:
 
@@ -180,8 +179,7 @@ docker compose down -v
 1. install self-test     — 0 LLM tokens
 2. /rag-start quick      — 0 LLM tokens
 3. /rag-start            — 0 LLM tokens, локальный embedding/reranker
-4. Doctor RAG retrieval  — 0 LLM tokens
-5. Router + RAG E2E      — только вручную, платный inference
+4. Router + RAG E2E      — только вручную, платный inference
 ```
 
-Если первые четыре проходят, сама RAG инфраструктура доказана без расхода provider tokens.
+Если первые три проходят, сама RAG инфраструктура доказана без расхода provider tokens.

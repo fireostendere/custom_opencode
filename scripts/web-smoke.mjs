@@ -51,10 +51,10 @@ if (body.prompt?.text !== 'fallback' || body.delivery !== 'steer') throw new Err
 
 const enhancements = await loadSource('app/enhancements.js')
 if (enhancements.parseSlash('/status')?.command !== 'status') throw new Error('Slash parser failed')
-if (enhancements.parseSlash('/doctor')?.command !== 'doctor') throw new Error('Doctor slash parser failed')
 if (enhancements.parseSlash('/review foo bar')?.arguments !== 'foo bar') throw new Error('Slash arguments parser failed')
 if (enhancements.parseSlash('ordinary text') !== null) throw new Error('Slash parser accepted normal text')
 if (enhancements.commandName({ name:'/init' }) !== 'init') throw new Error('Slash command normalization failed')
+if (!readFileSync(resolve(root, 'app/enhancements.js'), 'utf8').includes("RETIRED_COMMANDS = new Set(['doctor'])")) throw new Error('Retired Doctor command must stay blocked')
 if (enhancements.windowLabel(300) !== 'Сессия · 5ч' || enhancements.windowLabel(10080) !== 'Неделя · 7д') throw new Error('Rate-limit window labels failed')
 
 const rag = await loadSource('app/rag-control.js')
@@ -102,6 +102,7 @@ if (ux.ORCHESTRATED_MODEL.id !== 'qwen3.8-orchestrated' || ux.ORCHESTRATED_MODEL
 const index = readFileSync(resolve(root, 'app/index.html'), 'utf8')
 for (const marker of [
   '/ux-controls.css', '/ux-controls.js', '/advanced-features.css', '/advanced-features.js',
+  '/design-system.css', '/sidebar-resize.js',
   '/runtime-dashboard.css', '/runtime-dashboard.js', '/runtime-v3-dashboard.css', '/runtime-v3-dashboard.js',
   '/appearance-bootstrap.js', '/appearance.css', '/appearance.js', '/auth-ui.js', '/mobile-ui.js',
   'id="composerAction"', 'id="permissionDetails"', 'model-catalog', 'id="appearanceDialog"',
@@ -118,8 +119,43 @@ const uxCss = readFileSync(resolve(root, 'app/ux-controls.css'), 'utf8')
 const uiSource = readFileSync(resolve(root, 'app/ui-enhancements.js'), 'utf8')
 const advanced = readFileSync(resolve(root, 'app/advanced-features.js'), 'utf8')
 const advancedCss = readFileSync(resolve(root, 'app/advanced-features.css'), 'utf8')
+const designSystem = readFileSync(resolve(root, 'app/design-system.css'), 'utf8')
+const sidebarResize = readFileSync(resolve(root, 'app/sidebar-resize.js'), 'utf8')
+const forms = await loadSource('app/advanced-features.js')
+const typedRaw = {
+  id: 'frm_smoke',
+  sessionID: 'ses_forms',
+  title: 'Typed form',
+  fields: [
+    { key:'name', type:'string', default:'alpha', options:[{ value:'alpha', label:'Alpha' }] },
+    { key:'ratio', type:'number', default:2.5, required:true },
+    { key:'count', type:'integer', default:4, required:true },
+    { key:'enabled', type:'boolean', default:false, required:true },
+    { key:'labels', type:'multiselect', default:['one'], options:[{ value:'one', label:'One' }], custom:true },
+    { key:'body', type:'text', default:'hello' },
+  ],
+}
+const typed = forms.normalizeQuestionRequest(typedRaw)
+if (!typed || typed.formID !== 'frm_smoke' || typed.raw !== typedRaw) throw new Error('Native form identity/raw payload normalization failed')
+if (typed.questions.map((question) => question.type).join(',') !== 'string,number,integer,boolean,multiselect,text') throw new Error('Typed form field normalization failed')
+if (typed.questions[1].custom === false || typed.questions[2].custom === false) throw new Error('Numeric form fields must expose editable inputs')
+if (typed.questions[3].custom !== false) throw new Error('Boolean form field must not expose string custom input')
+const defaults = forms.questionSelectionFor(typed)
+const defaultAnswers = forms.questionAnswers(typed, defaults)
+if (JSON.stringify(defaultAnswers) !== JSON.stringify({ name:'alpha', ratio:2.5, count:4, enabled:false, labels:['one'], body:'hello' })) throw new Error('Native form defaults/typed answers failed')
+defaults[4].custom = 'two'
+if (JSON.stringify(forms.questionAnswers(typed, defaults).labels) !== JSON.stringify(['one', 'two'])) throw new Error('Native multiselect custom answer failed')
+const invalidIntegerRequest = { transport:'form', questions:[{ key:'count', type:'integer', required:true, multiple:false, options:[] }] }
+const invalidInteger = forms.questionAnswers(invalidIntegerRequest, [{ selected:new Set(), custom:'1.5' }])
+if ('count' in invalidInteger || !forms.questionAnswersMissing(invalidInteger, invalidIntegerRequest)) throw new Error('Invalid integer answer must be rejected')
+const invalidBooleanRequest = { transport:'form', questions:[{ key:'enabled', type:'boolean', required:true, multiple:false, options:[] }] }
+const invalidBoolean = forms.questionAnswers(invalidBooleanRequest, [{ selected:new Set(), custom:'maybe' }])
+if ('enabled' in invalidBoolean || !forms.questionAnswersMissing(invalidBoolean, invalidBooleanRequest)) throw new Error('Invalid boolean answer must be rejected')
+const fieldsAlias = forms.normalizeQuestionRequest({ id:'frm_alias', sessionID:'ses_forms', form:[{ key:'value', type:'string' }] })
+if (!fieldsAlias || fieldsAlias.formID !== 'frm_alias' || fieldsAlias.questions[0].key !== 'value') throw new Error('Form array compatibility normalization failed')
 const accessFix = readFileSync(resolve(root, 'app/access-fix.js'), 'utf8')
 const accessFixCss = readFileSync(resolve(root, 'app/access-fix.css'), 'utf8')
+const appSource = readFileSync(resolve(root, 'app/app.js'), 'utf8')
 const appearance = readFileSync(resolve(root, 'app/appearance.js'), 'utf8')
 const appearanceBootstrap = readFileSync(resolve(root, 'app/appearance-bootstrap.js'), 'utf8')
 const appearanceCss = readFileSync(resolve(root, 'app/appearance.css'), 'utf8')
@@ -142,28 +178,84 @@ if (!uxControls.includes("addEventListener('submit', () => setTimeout(syncCompos
 if (!uxCss.includes('.delivery{display:none!important}')) throw new Error('Manual Steer/Queue control must stay hidden')
 if (!uxCss.includes('.native-composer-action{display:none!important}')) throw new Error('Native send/stop controls must never create a second visible composer action')
 if (!uxCss.includes('.composer-action.stop{background:#b23a3a')) throw new Error('Running empty composer must expose the red cancel action')
+if (!designSystem.includes('.attach::before') || !designSystem.includes('.composer-action.send::before') || !designSystem.includes('.composer-action.queue::before') || !designSystem.includes('rotate(90deg)')) throw new Error('Composer icons must use centered right-facing CSS geometry')
 if (!uxCss.includes('-webkit-line-clamp:2')) throw new Error('Permission summary must be clamped instead of expanding the layout')
 if (!uxCss.includes('.model-provider-toggle')) throw new Error('Collapsible provider styling missing')
 if (!uxCss.includes('.model-favorite-toggle')) throw new Error('Favorite model control styling missing')
-for (const marker of ['model-provider-collapse-v1', 'data-fav', 'compareModelEntries', 'compareProviderGroups']) {
+for (const marker of ['model-provider-collapse-v1', 'data-fav', 'compareModelEntries', 'compareProviderGroups', 'providerPriority']) {
   if (!uiSource.includes(marker)) throw new Error(`Model picker behavior marker missing: ${marker}`)
 }
+for (const marker of ['PROJECT_ORDER_KEY', 'SESSION_ORDER_KEY', 'handleDrop', 'transferSessionToProject', 'data-session-drag', 'draggable="true"']) {
+  if (!appSource.includes(marker)) throw new Error(`Session drag-and-drop marker missing: ${marker}`)
+}
+for (const marker of ["data-action=\"copy-context\"", "data-action=\"move-project\"", 'removeSource:true', "api.deleteSession(session.id)"]) {
+  if (!appSource.includes(marker)) throw new Error(`Session copy/move marker missing: ${marker}`)
+}
+if (!appSource.includes('async function changeAgent(agent){if(!state.selected){state.draftAgent=agent;renderControls();return}')) throw new Error('changeAgent must only write the draft when no session is selected')
+if (!appSource.includes('async function changeModel(model){if(!state.selected){state.draftModel={...model};saveLastModel(model);renderControls();return}')) throw new Error('changeModel must only write the draft when no session is selected')
 for (const marker of [
   '/client-queue.json', '/client-send.json', '/client-project-settings.json',
-  '/api/question/request', 'questionAnswers', 'data-question-custom', 'Разрешать в проекте',
-  '/api/session/${encodeURIComponent(state.sessionID)}/children', '/client-git-revert.json',
+  '/api/form/request', '/api/question', 'questionAnswers', 'data-question-custom', 'Разрешать в проекте',
+  '/api/session/${encodeURIComponent(state.sessionID)}/children', '/client-git-revert.json', 'custom-opencode:session-selected',
   'data-revert-hunk', 'workflowStatus', 'orchestrationTrace',
 ]) {
   if (!advanced.includes(marker)) throw new Error(`Advanced workflow marker missing: ${marker}`)
 }
+if (!advanced.includes('syncProjectModelOptions')) throw new Error('Project settings must use the current model catalog')
+if (!advanced.includes("const wasOpen = host.querySelector('details')?.open === true")) throw new Error('Orchestration panel must preserve its open state while refreshing')
+if (!advanced.includes('!host.contains(event.target)')) throw new Error('Orchestration panel must close on outside click')
+if (!appSource.includes('configuredEffort')) throw new Error('Effort control must expose the configured model default')
+if (!index.includes('class="control-select"')) throw new Error('Effort select must have a dedicated chevron wrapper')
+const modelControlIndex = index.indexOf('id="modelButton"')
+const effortControlIndex = index.indexOf('id="variantSelect"')
+const agentControlIndex = index.indexOf('id="agentControls"')
+if (!(modelControlIndex < effortControlIndex && effortControlIndex < agentControlIndex)) throw new Error('Composer controls must be ordered Model, Effort, Build/Plan')
+if (index.includes('showArchived') || index.includes('> Архив')) throw new Error('Archive filter must stay removed from the sidebar')
+if (!appSource.includes('PROJECT_COLLAPSE_KEY') || !appSource.includes('class="project-group"')) throw new Error('Session folders must remain collapsible')
+if (!appSource.includes("$('modelChoices').addEventListener('click'")) throw new Error('Favorites must use a stable model-picker click delegate')
+for (const marker of ["id: '__favorites__'", "label: 'Избранное'", "group.id === '__favorites__'"]) {
+  if (!uiSource.includes(marker)) throw new Error(`Dedicated favorites section marker missing: ${marker}`)
+}
+if (!runtimeDashboard.includes("runtimeProfileBadge')?.remove()")) throw new Error('Redundant runtime profile badge must be removed')
+if (runtimeDashboard.includes('injectProfiles') || runtimeDashboard.includes('Server profiles')) throw new Error('Runtime profiles must not be injected into the model picker')
+if (!designSystem.includes('.model-catalog>.model-provider-section{flex:0 0 auto')) throw new Error('Model provider sections must not shrink inside scroll catalog')
+for (const marker of ['model-favorite-toggle', 'permissionFromEvent', 'permissionSessionID', '.composer-action.stop::before', '--scrollbar-size']) {
+  if (!(uiSource.includes(marker) || accessFix.includes(marker) || designSystem.includes(marker))) throw new Error(`UI regression marker missing: ${marker}`)
+}
+if (appSource.includes("payload.type==='permission.asked'") || appSource.includes('setInterval(refreshPermissions')) throw new Error('Permission banner must have a single access-fix owner')
+if (!accessFix.includes("window.addEventListener('custom-opencode:event'")) throw new Error('Permission events must reach the web banner owner')
+for (const marker of ['dialog#modelDialog', 'height:0', 'overflow-y:scroll', 'scrollbar-gutter:stable']) {
+  if (!designSystem.includes(marker)) throw new Error(`Model dialog scroll contract missing: ${marker}`)
+}
+if (advanced.includes('/api/question/request')) throw new Error('Legacy question request endpoint must stay removed')
+for (const marker of ['/api/form/request', '/api/question', 'question.asked', 'question.v2.asked', 'question.replied', 'question.rejected', 'custom-opencode:event']) {
+  if (!advanced.includes(marker) && !appSource.includes(marker)) throw new Error(`Native question marker missing: ${marker}`)
+}
 for (const marker of ['.question-card', '.queue-list', '.orchestration-trace', '.review-hunk', '.workflow-status']) {
   if (!advancedCss.includes(marker)) throw new Error(`Advanced workflow styling missing: ${marker}`)
 }
-
-for (const marker of ["root.style.display = 'none'", "modeSelect.value = 'build'", 'buildAgentForProfile', 'resolvedPermissions']) {
-  if (!accessFix.includes(marker)) throw new Error(`Build-only/permission fix marker missing: ${marker}`)
+for (const marker of ['--sidebar-width', '--scrollbar-size', '.sidebar-resizer', '*::-webkit-scrollbar-thumb', '.limits-summary::after', '.model-provider-chevron', 'overflow-y:auto', '.workflow-grid']) {
+  if (!designSystem.includes(marker)) throw new Error(`Design-system styling missing: ${marker}`)
 }
-if (!accessFixCss.includes('#agentControls') || !accessFixCss.includes('display:none!important')) throw new Error('Build/Plan switch must remain hidden')
+for (const marker of ['pull-refresh', 'role\',\'status', 'pull-refresh-progress', 'pull-refresh-pull', 'const atBottom=', 'Тяните вверх для обновления', 'Удерживайте для обновления', 'gesture.startY-touch.clientY', 'stopHold();hide()', 'SWIPE_DISTANCE=18', 'HOLD_DURATION', 'requestAnimationFrame(updateHold)', 'touchmove']) {
+  if (!(appSource.includes(marker) || designSystem.includes(marker))) throw new Error(`Pull refresh marker missing: ${marker}`)
+}
+for (const marker of ['claimedAttachments', 'previousRun?state.running.set', 'queueFor(session.id).push']) {
+  if (!appSource.includes(marker)) throw new Error(`Duplicate-send guard missing: ${marker}`)
+}
+for (const marker of ['submitPending: false', 'if (state.submitPending) return', 'action.disabled = true', 'state.submitPending = false']) {
+  if (!advanced.includes(marker)) throw new Error(`Managed-send duplicate guard missing: ${marker}`)
+}
+for (const marker of ['.orchestration-nodes{max-height:', 'overflow-y:auto', 'scrollbar-gutter:stable']) {
+  if (!designSystem.includes(marker)) throw new Error(`Orchestration scroll marker missing: ${marker}`)
+}
+for (const marker of ['sidebarResizer', 'localStorage', 'pointerdown', 'ArrowLeft', 'ArrowRight']) {
+  if (!sidebarResize.includes(marker)) throw new Error(`Sidebar resize behavior missing: ${marker}`)
+}
+
+if (!accessFix.includes('resolvedPermissions')) throw new Error('Permission suppression fix missing')
+if (!accessFixCss.includes('#agentControls') || !accessFixCss.includes('grid-template-columns:repeat(2')) throw new Error('Build/Plan switch must remain visible')
+if (accessFix.includes('enforceBuildOnly') || accessFixCss.includes('#agentControls{display:none')) throw new Error('Build/Plan switch must not be forced back to Build')
 if (!accessFixCss.includes('max-height:calc(100dvh')) throw new Error('Mobile dialogs must use the dynamic viewport')
 
 for (const marker of ['opencode:web:appearance-v1', "theme:'system'", '--accent-contrast', 'prefers-color-scheme']) {
@@ -249,7 +341,8 @@ if (!orchestratedPlugin.includes('id: "qwen3.8-max"') && !orchestratedPlugin.inc
   // The self-check below is the important invariant: ordinary Max must not match the special alias.
 }
 
-const doctor = await loadSource('app/doctor.js')
-if (typeof doctor.openDoctor !== 'function') throw new Error('Doctor UI module does not export openDoctor')
+for (const marker of ['doctorButton', 'doctorDialog', 'doctor.js', 'doctor.css', 'client-doctor']) {
+  if (index.includes(marker)) throw new Error(`Removed Doctor surface is still present: ${marker}`)
+}
 
-console.log('Web smoke passed: Build-only UX + native OpenCode agents + dedicated orchestrated Qwen + Runtime V2/V3 + auth/appearance/mobile + queue/questions/permissions/review')
+console.log('Web smoke passed: Build/Plan UX + native OpenCode agents + dedicated orchestrated Qwen + Runtime V2/V3 + auth/appearance/mobile + queue/questions/permissions/review')

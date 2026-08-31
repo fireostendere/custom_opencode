@@ -8,7 +8,6 @@ let activePermission = null
 let expectedPermissionDetail = ''
 let refreshingPermission = false
 let refreshAgain = false
-let buildRedirectBusy = false
 let lastClearBannerAt = 0
 let lastClearBannerKey = ''
 
@@ -19,11 +18,15 @@ function currentSessionID() {
 }
 
 function permissionID(request) {
-  return String(request?.requestID || request?.id || '')
+  return String(request?.requestID || request?.requestId || request?.permissionID || request?.permissionId || request?.id || '')
+}
+
+function permissionSessionID(request) {
+  return String(request?.sessionID || request?.sessionId || request?.session?.id || '')
 }
 
 function permissionKey(request) {
-  const sid = String(request?.sessionID || '')
+  const sid = permissionSessionID(request)
   const pid = permissionID(request)
   return sid && pid ? `${sid}:${pid}` : ''
 }
@@ -116,6 +119,18 @@ function permissionDetailText(request) {
   }
 }
 
+function permissionFromEvent(payload) {
+  const source = payload?.data || payload?.properties || payload || {}
+  const nested = source.permission && typeof source.permission === 'object'
+    ? source.permission
+    : source.request && typeof source.request === 'object'
+      ? source.request
+      : source
+  if (!nested || typeof nested !== 'object') return null
+  const sessionID = permissionSessionID(nested) || permissionSessionID(source)
+  return sessionID && !nested.sessionID ? { ...source, ...nested, sessionID } : nested
+}
+
 function toast(text, ms = 3500) {
   const el = $('toast')
   if (!el) return
@@ -183,7 +198,7 @@ function clearBanner() {
 function restorePermissionCopy() {
   if (!activePermission) return
   const sid = currentSessionID()
-  if (!sid || activePermission.sessionID !== sid) {
+  if (!sid || permissionSessionID(activePermission) !== sid) {
     clearBanner()
     return
   }
@@ -198,7 +213,7 @@ function restorePermissionCopy() {
 function showPermission(requestRow) {
   const sid = currentSessionID()
   const pid = permissionID(requestRow)
-  if (!sid || !pid || requestRow?.sessionID !== sid || permissionSuppression.isResolved(permissionKey(requestRow))) {
+  if (!sid || !pid || permissionSessionID(requestRow) !== sid || permissionSuppression.isResolved(permissionKey(requestRow))) {
     clearBanner()
     return
   }
@@ -231,7 +246,7 @@ async function refreshPermission() {
     }
     const directory = await sessionDirectory(sid)
     if (!directory || currentSessionID() !== sid) return
-    const rows = (await permissionRequests(directory)).filter((item) => item?.sessionID === sid)
+    const rows = (await permissionRequests(directory)).filter((item) => permissionSessionID(item) === sid)
     if (currentSessionID() !== sid) return
 
     permissionSuppression.prune()
@@ -253,7 +268,7 @@ async function refreshPermission() {
 }
 
 async function sendPermissionReply(requestRow, reply) {
-  const sid = String(requestRow?.sessionID || '')
+  const sid = permissionSessionID(requestRow)
   const pid = permissionID(requestRow)
   if (!sid || !pid) throw new Error('permission id is missing')
   const sidQ = encodeURIComponent(sid)
@@ -278,7 +293,7 @@ async function sendPermissionReply(requestRow, reply) {
 async function handlePermissionAction(button, event) {
   const requestRow = activePermission
   const sid = currentSessionID()
-  if (!requestRow || requestRow.sessionID !== sid) {
+  if (!requestRow || permissionSessionID(requestRow) !== sid) {
     clearBanner()
     refreshPermission()
     return
@@ -303,50 +318,6 @@ async function handlePermissionAction(button, event) {
   }
 }
 
-export function buildAgentForProfile(profile = 'direct') {
-  return profile === 'orchestrated' ? 'build' : 'build-direct'
-}
-
-function enforceBuildOnly() {
-  const root = $('agentControls')
-  if (root) {
-    root.style.display = 'none'
-    root.setAttribute('aria-hidden', 'true')
-    const active = root.querySelector('[data-agent].active')?.dataset.agent || ''
-    if (!buildRedirectBusy && (active === 'plan' || active === 'plan-direct')) {
-      const profile = document.documentElement.dataset.modelProfile === 'orchestrated' ? 'orchestrated' : 'direct'
-      const target = root.querySelector(`[data-agent="${buildAgentForProfile(profile)}"]`)
-      if (target) {
-        buildRedirectBusy = true
-        try { target.click() } finally { queueMicrotask(() => { buildRedirectBusy = false }) }
-      }
-    }
-  }
-  const modeSelect = $('projectDefaultMode')
-  if (modeSelect) {
-    modeSelect.value = 'build'
-    const label = modeSelect.closest('label')
-    if (label) label.hidden = true
-  }
-}
-
-function installBuildOnly() {
-  const root = $('agentControls')
-  if (root) new MutationObserver(() => queueMicrotask(enforceBuildOnly)).observe(root, { childList:true, subtree:true, attributes:true, attributeFilter:['class'] })
-  document.addEventListener('click', (event) => {
-    const plan = event.target.closest?.('#agentControls [data-agent="plan"], #agentControls [data-agent="plan-direct"]')
-    if (!plan) return
-    event.preventDefault()
-    event.stopImmediatePropagation()
-    const profile = plan.dataset.agent === 'plan' ? 'orchestrated' : 'direct'
-    const target = $('agentControls')?.querySelector(`[data-agent="${buildAgentForProfile(profile)}"]`)
-    if (target && target !== plan) target.click()
-  }, true)
-  const settings = $('projectSettingsDialog')
-  if (settings) new MutationObserver(enforceBuildOnly).observe(settings, { attributes:true, attributeFilter:['open'], subtree:false })
-  enforceBuildOnly()
-}
-
 function installPermissionScope() {
   const banner = $('permissionBanner')
   if (!banner) return
@@ -357,7 +328,7 @@ function installPermissionScope() {
     const bannerPid = banner.dataset.permissionId || ''
     if (bannerSid && bannerPid && bannerSid === sid) return
     const pid = permissionID(activePermission)
-    if (!sid || !activePermission || activePermission.sessionID !== sid || banner.dataset.permissionSession !== sid || banner.dataset.permissionId !== pid) {
+    if (!sid || !activePermission || permissionSessionID(activePermission) !== sid || banner.dataset.permissionSession !== sid || banner.dataset.permissionId !== pid) {
       clearBanner()
       queueMicrotask(refreshPermission)
     }
@@ -373,20 +344,27 @@ function installPermissionScope() {
     if (button) handlePermissionAction(button, event)
   }, true)
 
+  window.addEventListener('custom-opencode:event', (event) => {
+    const payload = event.detail
+    if (payload?.type === 'permission.asked') {
+      const requestRow = permissionFromEvent(payload)
+      if (requestRow && permissionSessionID(requestRow) === currentSessionID()) showPermission(requestRow)
+      return
+    }
+    if (['permission.replied', 'permission.rejected', 'permission.cancelled'].includes(payload?.type)) refreshPermission()
+  })
+
   window.addEventListener('hashchange', () => {
     clearBanner()
-    enforceBuildOnly()
     refreshPermission()
   })
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
-      enforceBuildOnly()
       refreshPermission()
     }
   })
   setInterval(() => {
     if (!document.hidden) {
-      enforceBuildOnly()
       refreshPermission()
     }
   }, 700)
@@ -394,7 +372,6 @@ function installPermissionScope() {
 }
 
 function init() {
-  installBuildOnly()
   installPermissionScope()
 }
 

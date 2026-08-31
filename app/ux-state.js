@@ -20,10 +20,10 @@ export function agentFor(mode = 'build', _profile = 'direct') {
 
 export function composerActionState({ running = false, hasPayload = false } = {}) {
   if (!running) {
-    return { kind: 'send', symbol: '↑', title: 'Отправить', delivery: 'normal' }
+    return { kind: 'send', symbol: '→', title: 'Отправить', delivery: 'normal' }
   }
   if (hasPayload) {
-    return { kind: 'queue', symbol: '↑', title: 'Отправить в очередь', delivery: 'queue' }
+    return { kind: 'queue', symbol: '→', title: 'Отправить в очередь', delivery: 'queue' }
   }
   return { kind: 'stop', symbol: '×', title: 'Отменить текущую работу', delivery: null }
 }

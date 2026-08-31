@@ -207,7 +207,7 @@ custom-opencode-update
 
 ## `/rag-start quick` падает
 
-Смотрите stage/detail в Doctor.
+Смотрите `stage`/`detail` в ответе команды и в логах web service.
 
 ```bash
 cd /path/to/mcp-rag
@@ -248,9 +248,9 @@ docker compose ps
 
 ## MCP `kb: connected`, но tools не работают
 
-`connected` подтверждает transport, но не полный protocol/tool path. Doctor делает independent MCP probe.
+`connected` подтверждает transport, но не полный protocol/tool path. RAG runtime probe делает independent MCP-проверку.
 
-Проверьте venv dependencies и `MCP_RAG_BIN`. Прямой запуск stdio MCP без protocol client не является полноценным тестом — используйте Doctor/RAG probe scripts или tests из репозитория.
+Проверьте venv dependencies и `MCP_RAG_BIN`. Прямой запуск stdio MCP без protocol client не является полноценным тестом — используйте RAG probe scripts или tests из репозитория.
 
 ## Direct MCP probe PASS, OpenCode MCP FAIL
 
@@ -285,7 +285,7 @@ Catalog check не доказывает provider execution.
 - Token Plan status/limits;
 - Bailian CLI usage.
 
-После этого можно вручную запустить минимальный Flash/Max inference smoke в Doctor. Эти проверки платные.
+После этого проверьте provider credentials, endpoint и статус Token Plan через штатные инструменты провайдера.
 
 ## Router config PASS, Router E2E FAIL
 

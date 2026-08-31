@@ -73,50 +73,6 @@ with tempfile.TemporaryDirectory() as temp:
     assert qwen["sevenDay"]["remainingCredits"] == 11_200
     assert qwen["sevenDay"]["resetsAt"] == 2_000_100_000
 
-    import server_plus
-
-    assert server_plus._model_ids({"data": [
-        {"providerID": "bailian-cli", "id": "qwen3.8-max"},
-        {"providerID": "bailian-cli", "id": "qwen3.6-flash"},
-    ]}) == {"bailian-cli/qwen3.8-max", "bailian-cli/qwen3.6-flash"}
-    assert server_plus._assistant_messages([
-        {"info": {"role": "user"}, "parts": [{"type": "text", "text": "DOCTOR_OK"}]},
-        {"info": {"role": "assistant"}, "parts": [{"type": "text", "text": "waiting"}]},
-    ]) == [{"info": {"role": "assistant"}, "parts": [{"type": "text", "text": "waiting"}]}]
-
-    def fake_backend(method, target, payload=None, timeout=20.0):
-        if target.startswith("/api/model"):
-            return {"data": [
-                {"providerID": "bailian-cli", "id": "qwen3.8-max"},
-                {"providerID": "bailian-cli", "id": "qwen3.6-flash"},
-            ]}
-        if target.startswith("/api/mcp"):
-            return {"data": {"kb": {"status": "disabled"}}}
-        raise AssertionError(target)
-
-    server_plus._backend_request_json = fake_backend
-    server_plus._read_runtime_config = lambda: ({
-        "model": "bailian-cli/qwen3.8-max",
-        "agents": {
-            "fast-reader": {"model": "bailian-cli/qwen3.6-flash"},
-            "title": {"model": "bailian-cli/qwen3.6-flash"},
-        },
-    }, "/tmp/opencode.json")
-    server_plus.ext.query_bailian_token_plan = lambda: {"available": True}
-    server_plus._rag_runtime = lambda: {
-        "root": None, "executable": None, "python": None, "available": False,
-    }
-    snapshot = server_plus.doctor_snapshot()
-    checks = {item["id"]: item for item in snapshot["checks"]}
-    assert snapshot["zeroToken"] is True
-    assert checks["backend"]["status"] == "pass"
-    assert checks["max-catalog"]["status"] == "pass"
-    assert checks["flash-catalog"]["status"] == "pass"
-    assert checks["primary-route"]["status"] == "pass"
-    assert checks["flash-route"]["status"] == "pass"
-    assert checks["no-auto-local"]["status"] == "pass"
-    assert checks["mcp-kb"]["status"] == "warn"
-
     project = Path(temp) / "project"
     project.mkdir()
     os.environ["OPENCODE_PROJECT_ROOTS"] = str(project)
@@ -184,4 +140,4 @@ with tempfile.TemporaryDirectory() as temp:
 # fake backend hooks and local temporary files; no model inference is performed.
 subprocess.run([sys.executable, str(ROOT / "scripts/control-plane-smoke.py")], check=True)
 
-print("Limits + Doctor + workflow + control-plane zero-token smoke passed")
+print("Limits + workflow + control-plane zero-token smoke passed")

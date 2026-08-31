@@ -325,7 +325,7 @@ export function stopAutoRefresh() {
   refreshTimer = null
 }
 
-/** Small diagnostic surface used by regression tests and the doctor. */
+/** Small status surface used by regression tests. */
 export function getAutoRefreshState() {
   return {
     owners: refreshOwners,

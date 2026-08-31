@@ -6,7 +6,11 @@ const QUICK_PROJECT_ID = '__custom_opencode_quick__'
 const META_KEY = 'opencode:web:session-meta-v2'
 const DRAFT_KEY = 'opencode:web:drafts-v2'
 const FAV_KEY = 'opencode:web:favorites'
+const PROJECT_COLLAPSE_KEY = 'opencode:web:project-collapse-v1'
+const PROJECT_ORDER_KEY = 'opencode:web:project-order-v1'
+const SESSION_ORDER_KEY = 'opencode:web:session-order-v1'
 const NOTIFY_KEY = 'opencode:web:notifications'
+const LAST_MODEL_KEY = 'opencode:web:last-model-v1'
 const PERSONAL_PRO_LIMITS = { fiveHour: 12000, sevenDay: 40000 }
 const QWEN_SUFFIX_RE = /\s·\sQwen\s+(OK|exhausted→([^·]+))\s*$/
 const PERMISSION_SUPPRESSION_TTL = 15_000
@@ -40,22 +44,28 @@ let drafts = loadJson(DRAFT_KEY, {})
 let favorites = new Set(loadJson(FAV_KEY, []))
 let contextReloadTimer = null
 let draftSaveTimer = null
-let permissionTimer = null
 let statusTimer = null
 let gitTimer = null
 let eventSource = null
+let dragPayload = null
+let dragHandlersInstalled = false
 
 function loadJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || '') || fallback } catch { return fallback }
 }
 function saveJson(key, value) { localStorage.setItem(key, JSON.stringify(value)) }
-function meta(id) { return sessionMeta[id] ||= { pinned:false, archived:false } }
+function meta(id) { return sessionMeta[id] ||= { pinned:false } }
 function saveMeta() { saveJson(META_KEY, sessionMeta) }
 function draftKey() { return state.selected?.id || '__new__' }
 function saveDraftNow() { drafts[draftKey()] = $('input').value; saveJson(DRAFT_KEY, drafts) }
 function restoreDraft() { $('input').value = drafts[draftKey()] || ''; autosizeInput() }
 function scheduleDraftSave() { clearTimeout(draftSaveTimer); draftSaveTimer = setTimeout(saveDraftNow, 180) }
 function toast(text, ms = 2600) { const el=$('toast'); el.textContent=text; el.hidden=false; clearTimeout(el._timer); el._timer=setTimeout(()=>el.hidden=true,ms) }
+// Last explicitly chosen model for new sessions. Restored after reload so a
+// fresh chat does not silently fall back to whatever the backend calls the
+// default; existing sessions keep their own stored model untouched.
+function saveLastModel(model){ if(!model?.id||!model?.providerID)return; const value={id:model.id,providerID:model.providerID}; if(model.variant)value.variant=model.variant; saveJson(LAST_MODEL_KEY,value) }
+function loadLastModel(){ const value=loadJson(LAST_MODEL_KEY,null); return value?.id&&value?.providerID?value:null }
 
 function stripQuota(title) { return String(title || '').replace(QWEN_SUFFIX_RE, '').trimEnd() }
 function quotaFromTitle(title) {
@@ -78,6 +88,151 @@ function projectInfo(session) {
 function sessionTitle(session) { return stripQuota(session?.title?.trim()) || 'Без названия' }
 function sessionTime(session) { return session?.time?.updated || session?.time?.created || 0 }
 function timeText(value) { return value ? new Date(value).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '' }
+function projectOrder() { return loadJson(PROJECT_ORDER_KEY, []) }
+function sessionOrder() { return loadJson(SESSION_ORDER_KEY, {}) }
+function orderIndex(order, value) { const index=order.indexOf(value); return index<0?Number.MAX_SAFE_INTEGER:index }
+function clearDragState() { dragPayload=null; document.querySelectorAll('.is-dragging,.drop-target').forEach((element)=>element.classList.remove('is-dragging','drop-target')) }
+function setDragData(event,type,value) {
+  dragPayload={type,value}
+  event.dataTransfer?.setData(`application/x-custom-opencode-${type}`,value)
+  event.dataTransfer?.setData('text/plain',`${type}:${value}`)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed='move'
+}
+function dragValue(event,type) {
+  if (dragPayload?.type===type) return dragPayload.value
+  const value=event.dataTransfer?.getData(`application/x-custom-opencode-${type}`)
+  if (value) return value
+  const fallback=event.dataTransfer?.getData('text/plain')||''
+  return fallback.startsWith(`${type}:`)?fallback.slice(type.length+1):''
+}
+function attachDragHandlers() {
+  if (dragHandlersInstalled) return
+  const root=$('sessions')
+  if (!root) return
+  dragHandlersInstalled=true
+  root.addEventListener('dragstart',(event)=>{
+    const session=event.target.closest?.('[data-session-drag]')
+    const group=event.target.closest?.('.project-group')
+    if (session && group) { setDragData(event,'session',session.dataset.sessionDrag);session.classList.add('is-dragging');return }
+    const project=event.target.closest?.('.project')
+    if (project && group) { setDragData(event,'project',group.dataset.project);project.classList.add('is-dragging') }
+  })
+  root.addEventListener('dragend',clearDragState)
+  root.addEventListener('dragover',(event)=>{
+    const sourceSession=dragValue(event,'session'),sourceProject=dragValue(event,'project')
+    if (!sourceSession&&!sourceProject) return
+    const targetSession=event.target.closest?.('[data-session-drag]')
+    const targetProject=event.target.closest?.('.project-group')
+    if (!targetProject || sourceSession && targetSession?.dataset.sessionDrag===sourceSession || sourceProject && targetProject.dataset.project===sourceProject) return
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect='move'
+    document.querySelectorAll('.drop-target').forEach((element)=>element.classList.remove('drop-target'))
+    ;(targetSession||targetProject)?.classList.add('drop-target')
+  })
+  root.addEventListener('dragleave',(event)=>{
+    if (!root.contains(event.relatedTarget)) clearDragState()
+  })
+  root.addEventListener('drop',(event)=>{
+    event.preventDefault()
+    handleDrop(event).catch((error)=>toast(`Перенос: ${error.message}`))
+  })
+}
+function reorderProjects(sourceProject,targetProject,after=false) {
+  const order=[...document.querySelectorAll('#sessions .project-group')].map((group)=>group.dataset.project)
+  const sourceIndex=order.indexOf(sourceProject),targetIndex=order.indexOf(targetProject)
+  if (sourceIndex<0||targetIndex<0||sourceProject===targetProject)return
+  order.splice(sourceIndex,1)
+  let insertion=order.indexOf(targetProject)+(after?1:0)
+  order.splice(Math.max(0,insertion),0,sourceProject)
+  saveJson(PROJECT_ORDER_KEY,order);renderSessions()
+}
+function sessionIdsForProject(projectID) {
+  const order=sessionOrder()[projectID]||[]
+  return state.sessions.filter((session)=>projectInfo(session).key===projectID)
+    .sort((a,b)=>orderIndex(order,a.id)-orderIndex(order,b.id)||Number(meta(b.id).pinned)-Number(meta(a.id).pinned)||sessionTime(b)-sessionTime(a))
+    .map((session)=>session.id)
+}
+function reorderSessions(sourceID,targetID,targetProject,after=false) {
+  const value=sessionOrder(),ids=sessionIdsForProject(targetProject)
+  const sourceIndex=ids.indexOf(sourceID),targetIndex=ids.indexOf(targetID)
+  if(sourceIndex<0||targetIndex<0||sourceID===targetID)return
+  ids.splice(sourceIndex,1)
+  const insertion=ids.indexOf(targetID)+(after?1:0)
+  ids.splice(Math.max(0,insertion),0,sourceID)
+  value[targetProject]=ids;saveJson(SESSION_ORDER_KEY,value);renderSessions()
+}
+function appendSessionToOrder(sessionID,targetProject,targetID='',after=false) {
+  const value=sessionOrder(),ids=sessionIdsForProject(targetProject).filter((id)=>id!==sessionID)
+  const index=targetID?ids.indexOf(targetID):-1
+  const insertion=index<0?ids.length:index+(after?1:0)
+  ids.splice(insertion,0,sessionID);value[targetProject]=ids;saveJson(SESSION_ORDER_KEY,value)
+}
+async function sessionWithControls(session){
+  try{
+    const detail=await api.getSession(session.id)
+    if(!detail||typeof detail!=='object')return session
+    const model=session.model||detail.model?{...(session.model||{}),...(detail.model||{})}:undefined
+    return {...session,...detail,...(model?{model}:{})}
+  }catch{return session}
+}
+async function transferSessionToProject(session,project,{select=false,removeSource=false}={}) {
+  if(state.selected?.id===session.id)saveDraftNow()
+  const sourceSession=await sessionWithControls(session)
+  const context=state.selected?.id===session.id&&state.context.length?[...state.context]:await api.getContext(session.id)
+  const handoff=handoffText(sourceSession,context)
+  const created=await api.createSession({directory:project.canonical,title:`${sessionTitle(sourceSession)} → ${projectLabel(project)}`,agent:sourceSession.agent,model:sourceSession.model})
+  if (!created?.id) throw new Error('OpenCode не вернул id новой сессии')
+  state.sessions=[created,...state.sessions.filter((item)=>item.id!==created.id)]
+  state.running.set(created.id,{status:'handoff',since:Date.now()});renderSessions();renderHeader()
+  try { await api.sendPrompt(created,{text:handoff,files:[],delivery:'normal'}) }
+  catch (error) {
+    state.running.delete(created.id);state.sessions=state.sessions.filter((item)=>item.id!==created.id)
+    try{await api.deleteSession(created.id)}catch{}
+    renderSessions();renderHeader();throw error
+  }
+  let sourceRemoved=false
+  if(removeSource){
+    if(Object.prototype.hasOwnProperty.call(drafts,session.id))drafts[created.id]=drafts[session.id]
+    saveJson(DRAFT_KEY,drafts)
+    try{
+      await api.deleteSession(session.id)
+      state.sessions=state.sessions.filter((item)=>item.id!==session.id)
+      delete sessionMeta[session.id];delete drafts[session.id];saveMeta();saveJson(DRAFT_KEY,drafts)
+      state.running.delete(session.id);state.queues.delete(session.id);sourceRemoved=true
+    }catch{
+      toast('Копия создана, но исходную сессию удалить не удалось')
+    }
+  }
+  if(select)await selectSession(created.id,{saveDraft:false})
+  renderSessions();renderHeader()
+  return {created,sourceRemoved}
+}
+async function handleDrop(event) {
+  const sourceSession=dragValue(event,'session'),sourceProject=dragValue(event,'project')
+  const targetSession=event.target.closest?.('[data-session-drag]')
+  const targetGroup=event.target.closest?.('.project-group')
+  const targetProject=targetGroup?.dataset.project||''
+  const targetRect=targetSession?.getBoundingClientRect?.()||targetGroup?.querySelector('.project')?.getBoundingClientRect?.()
+  const after=Boolean(targetRect && event.clientY>targetRect.top+targetRect.height/2)
+  clearDragState()
+  if(sourceProject){if(targetProject)reorderProjects(sourceProject,targetProject,after);return}
+  if(!sourceSession||!targetProject)return
+  const source=state.sessions.find((session)=>session.id===sourceSession)
+  if(!source)return
+  const sourceInfo=projectInfo(source)
+  if(sourceInfo.key===targetProject){
+    if(targetSession)reorderSessions(sourceSession,targetSession.dataset.sessionDrag,targetProject,after)
+    else appendSessionToOrder(sourceSession,targetProject,'',after)
+    return
+  }
+  const project=state.projects.find((item)=>item.id===targetProject)
+  if(!project||project.id===QUICK_PROJECT_ID)return
+  if(!await confirmAction('Перенести через handoff?',`OpenCode не умеет менять папку существующей сессии. В «${projectLabel(project)}» попадут последние 40 текстовых сообщений (до 24 000 символов); файлы проекта и полная tool-история не переносятся. После успешного handoff исходная сессия будет удалена.`))return
+  const {created,sourceRemoved}=await transferSessionToProject(source,project,{select:state.selected?.id===source.id,removeSource:true})
+  appendSessionToOrder(created.id,targetProject,targetSession?.dataset.sessionDrag||'',after)
+  renderSessions()
+  toast(sourceRemoved?`Сессия перенесена в проект «${projectLabel(project)}»`:'Создана копия; исходная сессия сохранена')
+}
 function activeModelRef() { return state.selected?.model || (!state.selected && state.draftModel) || state.defaultModel || null }
 function activeModel() { const ref=activeModelRef(); return ref && state.models.find((m)=>m.id===ref.id && m.providerID===ref.providerID) }
 function providerName(id) { return state.providers.find((p)=>p.id===id)?.name || id }
@@ -101,7 +256,7 @@ async function loadSessions({ selectHash = false } = {}) {
       else state.running.delete(id)
     }
     if (state.selected) state.selected = state.sessions.find((s)=>s.id===state.selected.id) || state.selected
-    state.loading = false; renderSessions(); renderHeader(); updateBadge()
+    state.loading = false; renderSessions(); renderHeader(); if(state.selected&&state.models.length)renderControls(); updateBadge()
     if (selectHash && !state.selected) {
       const id = sessionIdFromHash()
       if (id && state.sessions.some((s)=>s.id===id)) await selectSession(id,{ push:false })
@@ -116,10 +271,8 @@ async function loadSessions({ selectHash = false } = {}) {
 function renderSessions() {
   if (state.loading) { $('sessions').innerHTML='<div class="loading">Загрузка сессий…</div>'; return }
   const query = $('search').value.trim().toLowerCase()
-  const showArchived = $('showArchived').checked
   const visible = state.sessions.filter((session)=>{
     const m=meta(session.id)
-    if (m.archived && !showArchived) return false
     const info=projectInfo(session)
     return `${sessionTitle(session)} ${info.label} ${info.directory}`.toLowerCase().includes(query)
   }).sort((a,b)=>Number(meta(b.id).pinned)-Number(meta(a.id).pinned)||sessionTime(b)-sessionTime(a))
@@ -130,32 +283,47 @@ function renderSessions() {
     if (!groups.has(info.key)) groups.set(info.key,{ info, items:[] })
     groups.get(info.key).items.push(session)
   }
-  $('sessions').innerHTML=[...groups.values()].map(({info,items})=>`
-    <div class="project" title="${escapeHtml(info.directory)}"><span>${escapeHtml(info.label)}</span><span class="count">${items.length}</span></div>
-    ${items.map((session)=>{
+  const savedProjectOrder=projectOrder(),savedSessionOrder=sessionOrder()
+  const orderedGroups=[...groups.values()].sort((a,b)=>orderIndex(savedProjectOrder,a.info.key)-orderIndex(savedProjectOrder,b.info.key)||Number(meta(b.items[0]?.id).pinned)-Number(meta(a.items[0]?.id).pinned)||sessionTime(b.items[0])-sessionTime(a.items[0]))
+  for(const group of orderedGroups){const order=savedSessionOrder[group.info.key]||[];group.items.sort((a,b)=>orderIndex(order,a.id)-orderIndex(order,b.id)||Number(meta(b.id).pinned)-Number(meta(a.id).pinned)||sessionTime(b)-sessionTime(a))}
+  const collapsedProjects = new Set(loadJson(PROJECT_COLLAPSE_KEY, []))
+  $('sessions').innerHTML=orderedGroups.map(({info,items})=>`
+    <details class="project-group" data-project="${escapeHtml(info.key)}"${collapsedProjects.has(info.key) ? '' : ' open'}>
+      <summary class="project" draggable="true" title="${escapeHtml(info.directory)}"><span>${escapeHtml(info.label)}</span><span class="count">${items.length}</span></summary>
+      <div class="project-sessions">${items.map((session)=>{
       const running=isRunning(session.id), queued=queueFor(session.id).length, m=meta(session.id)
-      return `<div class="session ${state.selected?.id===session.id?'active':''} ${m.pinned?'pinned':''}">
+      return `<div class="session ${state.selected?.id===session.id?'active':''} ${m.pinned?'pinned':''}" draggable="true" data-session-drag="${escapeHtml(session.id)}">
         <button class="session-main" data-session="${escapeHtml(session.id)}">
           <div class="session-title">${escapeHtml(sessionTitle(session))}</div>
-          <div class="session-meta">${running?'<span class="run-dot"></span>':''}<span>${running?'Выполняется':timeText(sessionTime(session))}</span>${queued?`<span class="queued">очередь ${queued}</span>`:''}${m.archived?'<span>архив</span>':''}</div>
+          <div class="session-meta">${running?'<span class="run-dot"></span>':''}<span>${running?'Выполняется':timeText(sessionTime(session))}</span>${queued?`<span class="queued">очередь ${queued}</span>`:''}</div>
         </button><button class="session-more" data-session-more="${escapeHtml(session.id)}">•••</button>
       </div>`
-    }).join('')}`).join('')
+      }).join('')}</div>
+    </details>`).join('')
+  document.querySelectorAll('[data-project]').forEach((group)=>group.addEventListener('toggle',()=>{
+    const values=new Set(loadJson(PROJECT_COLLAPSE_KEY, []))
+    group.open ? values.delete(group.dataset.project) : values.add(group.dataset.project)
+    saveJson(PROJECT_COLLAPSE_KEY, [...values])
+  }))
   document.querySelectorAll('[data-session]').forEach((button)=>button.addEventListener('click',()=>selectSession(button.dataset.session)))
   document.querySelectorAll('[data-session-more]').forEach((button)=>button.addEventListener('click',(event)=>{event.stopPropagation();openSessionActions(button.dataset.sessionMore)}))
 }
 
-async function selectSession(id,{push=true}={}) {
+async function selectSession(id,{push=true,saveDraft=true}={}) {
   const session=state.sessions.find((s)=>s.id===id); if(!session)return
-  saveDraftNow()
+  if(saveDraft)saveDraftNow()
   state.selected=session; state.context=[]; state.attachments=[]; state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
   renderAttachments(); renderSessions(); renderHeader(); renderMessages(); restoreDraft(); $('sidebar').classList.remove('open')
   if(push) setSessionHash(id)
-  await Promise.all([loadContext(),loadControls(),refreshPermissions(),refreshGit()])
+  window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:id}}))
+  const [detail]=await Promise.all([api.getSession(id).catch(()=>null),loadContext(),loadControls(),refreshGit()])
+  if(detail&&state.selected?.id===id){state.selected={...state.selected,...detail};const index=state.sessions.findIndex((item)=>item.id===id);if(index>=0)state.sessions[index]=state.selected;renderHeader();renderControls()}
 }
 function clearSelection() {
   saveDraftNow(); state.selected=null;state.context=[];state.attachments=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
-  location.hash=''; renderSessions();renderHeader();renderMessages();renderAttachments();restoreDraft();loadDraftControls()
+  location.hash=''
+  window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:null}}))
+  renderSessions();renderHeader();renderMessages();renderAttachments();restoreDraft();loadDraftControls()
 }
 function setSessionHash(id) { const next=`#/session/${encodeURIComponent(id)}`; if(location.hash!==next) history.pushState(null,'',next) }
 function sessionIdFromHash() { const match=/^#\/session\/([^/?]+)/.exec(location.hash); return match?decodeURIComponent(match[1]):null }
@@ -176,37 +344,36 @@ async function loadControls() {
 }
 async function loadDraftControls() {
   if(state.selected||!state.clientConfig?.scratchDirectory)return
-  try { const catalog=await api.getControls(state.clientConfig.scratchDirectory); if(state.selected)return; state.draftAgent ||= catalog.agents.find((a)=>a.id==='build')?.id||catalog.agents[0]?.id; state.draftModel ||= catalog.fallback && {id:catalog.fallback.id,providerID:catalog.fallback.providerID}; applyControls(catalog) }
+  state.draftModel ||= loadLastModel()
+  try { const catalog=await api.getControls(state.clientConfig.scratchDirectory); if(state.selected)return; state.draftAgent ||= catalog.agents.find((a)=>a.id==='build')?.id||catalog.agents[0]?.id; if(state.draftModel&&!catalog.models.some((m)=>m.id===state.draftModel.id&&m.providerID===state.draftModel.providerID))state.draftModel=null; state.draftModel ||= catalog.fallback && {id:catalog.fallback.id,providerID:catalog.fallback.providerID}; applyControls(catalog) }
   catch(error){toast(`Настройки: ${error.message}`)}
 }
 function applyControls(catalog){state.agents=catalog.agents;state.models=catalog.models;state.providers=catalog.providers;state.defaultModel=catalog.fallback;renderControls();renderUsage()}
 function modelVariants(model){
-  const variants=Array.isArray(model?.variants)?model.variants:Object.entries(model?.variants||{}).map(([id,v])=>({id,...v}))
-  if(!variants.some((v)=>v.id==='xhigh' ) && (model?.settings?.effort==='xhigh'||variants.some((v)=>v.settings?.effort==='xhigh'))) variants.push({id:'xhigh',settings:{effort:'xhigh'}})
-  return variants
+  const source=model?.variants??model?.options?.variants??{}
+  const variants=Array.isArray(source)?source.map((v)=>({...v})):Object.entries(source).map(([id,v])=>({id,...(v&&typeof v==='object'?v:{})}))
+  if(!variants.some((v)=>v.id==='xhigh')&&(model?.settings?.effort==='xhigh'||variants.some((v)=>v.settings?.effort==='xhigh'))) variants.push({id:'xhigh',settings:{effort:'xhigh'}})
+  return variants.filter((v)=>v.id)
 }
 function renderControls(){
   const agentID=state.selected?.agent||(!state.selected&&state.draftAgent)||state.agents.find((a)=>a.id==='build')?.id||state.agents[0]?.id
   $('agentControls').innerHTML=state.agents.map((agent)=>`<button type="button" class="${agent.id===agentID?'active':''}" data-agent="${escapeHtml(agent.id)}">${escapeHtml(agent.name||agent.id)}</button>`).join('')
   document.querySelectorAll('[data-agent]').forEach((b)=>b.addEventListener('click',()=>changeAgent(b.dataset.agent)))
-  const ref=activeModelRef(), model=activeModel(); $('modelButton').disabled=!state.models.length; $('modelButton').textContent=model?.name||ref?.id||'Модель'
+  const ref=activeModelRef(), model=activeModel(), selectedVariant=ref?.variant||''; $('modelButton').disabled=!state.models.length; $('modelButton').textContent=model?.name||ref?.id||'Модель'
   const variants=modelVariants(model)
-  $('variantSelect').innerHTML=variants.length?`<option value="">Effort: default</option>${variants.map((v)=>`<option value="${escapeHtml(v.id)}">Effort: ${escapeHtml(v.id)}</option>`).join('')}`:'<option value="">Effort: —</option>'
-  $('variantSelect').value=ref?.variant||''; $('variantSelect').disabled=!variants.length
+  const configuredEffort=model?.settings?.effort||''
+  $('variantSelect').innerHTML=variants.length?`<option value="">${escapeHtml(configuredEffort||'default')}</option>${variants.map((v)=>`<option value="${escapeHtml(v.id)}">${escapeHtml(v.id)}</option>`).join('')}`:'<option value="">—</option>'
+  $('variantSelect').value=selectedVariant; $('variantSelect').disabled=!variants.length
 }
-async function changeAgent(agent){state.draftAgent=agent;if(!state.selected){renderControls();return}try{await api.switchAgent(state.selected.id,agent);state.selected.agent=agent;renderControls()}catch(e){toast(`Режим: ${e.message}`)}}
-async function changeModel(model){state.draftModel=model;if(!state.selected){renderControls();return}try{await api.switchModel(state.selected.id,model);state.selected.model=model;renderControls();renderUsage()}catch(e){toast(`Модель: ${e.message}`)}}
+async function changeAgent(agent){if(!state.selected){state.draftAgent=agent;renderControls();return}try{await api.switchAgent(state.selected.id,agent);state.selected.agent=agent;renderControls()}catch(e){toast(`Режим: ${e.message}`)}}
+async function changeModel(model){if(!state.selected){state.draftModel={...model};saveLastModel(model);renderControls();return}try{await api.switchModel(state.selected.id,model);state.selected.model={...model};saveLastModel(model);renderControls();renderUsage()}catch(e){toast(`Модель: ${e.message}`)}}
 
 function renderModelChoices(){
   const query=$('modelSearch').value.trim().toLowerCase(), current=activeModelRef()
   const models=state.models.filter((m)=>`${m.name||''} ${m.id} ${m.providerID}`.toLowerCase().includes(query))
   const groups=new Map(); for(const m of models){if(!groups.has(m.providerID))groups.set(m.providerID,[]);groups.get(m.providerID).push(m)}
   const favKey=(m)=>`${m.providerID}/${m.id}`
-  $('modelChoices').innerHTML=[...groups.entries()].sort((a,b)=>providerName(a[0]).localeCompare(providerName(b[0]))).map(([pid,items])=>`<div class="project">${escapeHtml(providerName(pid))}</div>${items.sort((a,b)=>Number(favorites.has(favKey(b)))-Number(favorites.has(favKey(a)))||(a.name||a.id).localeCompare(b.name||b.id)).map((m)=>`<button class="choice" data-model="${escapeHtml(m.id)}" data-provider="${escapeHtml(m.providerID)}"><div class="choice-title">${favorites.has(favKey(m))?'★ ':''}${escapeHtml(m.name||m.id)}${current?.id===m.id&&current?.providerID===m.providerID?' · ✓':''}</div><div class="choice-meta">${escapeHtml(m.id)} · <span data-fav="${escapeHtml(favKey(m))}">${favorites.has(favKey(m))?'убрать из избранного':'в избранное'}</span></div></button>`).join('')}`).join('')||'<div class="empty">Модели не найдены.</div>'
-  document.querySelectorAll('[data-model]').forEach((button)=>button.addEventListener('click',(event)=>{
-    const fav=event.target.closest('[data-fav]'); if(fav){event.preventDefault();event.stopPropagation();const key=fav.dataset.fav;favorites.has(key)?favorites.delete(key):favorites.add(key);saveJson(FAV_KEY,[...favorites]);renderModelChoices();return}
-    $('modelDialog').close();changeModel({id:button.dataset.model,providerID:button.dataset.provider})
-  }))
+  $('modelChoices').innerHTML=[...groups.entries()].sort((a,b)=>providerName(a[0]).localeCompare(providerName(b[0]))).map(([pid,items])=>`<div class="project">${escapeHtml(providerName(pid))}</div>${items.sort((a,b)=>Number(favorites.has(favKey(b)))-Number(favorites.has(favKey(a)))||(a.name||a.id).localeCompare(b.name||b.id)).map((m)=>`<button class="choice" data-model="${escapeHtml(m.id)}" data-provider="${escapeHtml(m.providerID)}"><div class="choice-title">${escapeHtml(m.name||m.id)}${current?.id===m.id&&current?.providerID===m.providerID?' · ✓':''}</div><div class="choice-meta">${escapeHtml(m.id)} · <span data-fav="${escapeHtml(favKey(m))}">${favorites.has(favKey(m))?'★':'☆'}</span></div></button>`).join('')}`).join('')||'<div class="empty">Модели не найдены.</div>'
 }
 
 function renderHeader(){
@@ -303,61 +470,97 @@ async function addFiles(files){try{state.attachments.push(...await Promise.all([
 async function ensureQuickSession(){if(state.selected)return state.selected;const session=await createAt(state.clientConfig.scratchDirectory);return session}
 async function createAt(dir,title){const session=await api.createSession({directory:dir,title,agent:state.draftAgent,model:state.draftModel});state.sessions=[session,...state.sessions.filter((s)=>s.id!==session.id)];await selectSession(session.id);return session}
 async function sendMessage(event){
-  event?.preventDefault(); const text=$('input').value.trim();if(!text&&!state.attachments.length)return
+  event?.preventDefault();const input=$('input'),text=input.value.trim();if(!text&&!state.attachments.length)return
+  const claimedAttachments=state.attachments,files=claimedAttachments.map(({uri,name,mime})=>({uri,name,mime}))
+  input.value='';state.attachments=[];drafts[draftKey()]='';saveJson(DRAFT_KEY,drafts);renderAttachments();autosizeInput()
+  let session=null,previousRun
   try {
-    const session=await ensureQuickSession(); const files=state.attachments.map(({uri,name,mime})=>({uri,name,mime})); const running=isRunning(session.id)
+    session=await ensureQuickSession();const running=isRunning(session.id)
     if(running&&state.deliveryMode==='queue'){
-      queueFor(session.id).push({text,files});$('input').value='';state.attachments=[];drafts[draftKey()]='';saveJson(DRAFT_KEY,drafts);renderAttachments();autosizeInput();renderSessions();toast('Добавлено в очередь');return
+      queueFor(session.id).push({text,files});renderSessions();toast('Добавлено в очередь');return
     }
-    $('input').value='';state.attachments=[];drafts[draftKey()]='';saveJson(DRAFT_KEY,drafts);renderAttachments();autosizeInput()
+    previousRun=state.running.get(session.id)
     state.running.set(session.id,{status:running?'steer':'running',since:Date.now()});renderHeader();renderSessions();updateBadge()
     await api.sendPrompt(session,{text,files,delivery:running?'steer':'normal'});setTimeout(()=>loadContext(),180)
-  } catch(error){toast(`Отправка: ${error.message}`); if(text&&!$('input').value)$('input').value=text;autosizeInput()}
+  } catch(error){
+    if(session){previousRun?state.running.set(session.id,previousRun):state.running.delete(session.id);renderHeader();renderSessions();updateBadge()}
+    toast(`Отправка: ${error.message}`)
+    if(text&&!input.value)input.value=text
+    if(claimedAttachments.length){state.attachments=[...claimedAttachments,...state.attachments];renderAttachments()}
+    drafts[draftKey()]=input.value;saveJson(DRAFT_KEY,drafts);autosizeInput()
+  }
 }
-async function flushQueue(sessionID){const queue=queueFor(sessionID);if(!queue.length||isRunning(sessionID))return;const session=state.sessions.find((s)=>s.id===sessionID);if(!session)return;const next=queue.shift();state.running.set(sessionID,{status:'queued-start',since:Date.now()});renderSessions();updateBadge();try{await api.sendPrompt(session,{...next,delivery:'normal'})}catch(e){state.running.delete(sessionID);queue.unshift(next);notifyUser('OpenCode: очередь остановлена',e.message,`queue-${sessionID}`)}renderSessions()}
+async function flushQueue(sessionID){const queue=queueFor(sessionID);if(!queue.length||isRunning(sessionID))return;const session=state.sessions.find((s)=>s.id===sessionID);if(!session)return;const next=queue.shift();state.running.set(sessionID,{status:'queued-start',since:Date.now()});renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();try{await api.sendPrompt(session,{...next,delivery:'normal'})}catch(e){state.running.delete(sessionID);queue.unshift(next);notifyUser('OpenCode: очередь остановлена',e.message,`queue-${sessionID}`)}renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
 async function stopSelected(){if(!state.selected)return;try{await api.abortSession(state.selected.id);toast('Остановка отправлена')}catch(e){toast(`Остановка: ${e.message}`)}}
 
-function openProjectDialog(mode='create'){state.projectDialogMode=mode;$('projectDialogTitle').textContent=mode==='handoff'?'Продолжить в проекте':'Создать в проекте';const projects=state.projects.filter((p)=>p.id!==QUICK_PROJECT_ID);$('projectChoices').innerHTML=projects.map((p)=>`<button class="choice" data-project="${escapeHtml(p.id)}"><div class="choice-title">${escapeHtml(projectLabel(p))}</div><div class="choice-meta">${escapeHtml(p.canonical||p.id)}</div></button>`).join('')||'<div class="empty">Проекты не найдены.</div>';document.querySelectorAll('[data-project]').forEach((b)=>b.addEventListener('click',()=>chooseProject(b.dataset.project)));$('projectDialog').showModal()}
-async function chooseProject(projectID){const project=state.projects.find((p)=>p.id===projectID);if(!project)return;$('projectDialog').close();if(state.projectDialogMode==='handoff')await continueInProject(project);else try{await createAt(project.canonical,'Новая сессия')}catch(e){toast(`Создание: ${e.message}`)}}
+function openProjectDialog(mode='create'){state.projectDialogMode=mode;const titles={copy:'Копировать с контекстом',move:'Перенести в проект'};$('projectDialogTitle').textContent=titles[mode]||'Создать в проекте';const currentDirectory=directory(state.selected);const projects=state.projects.filter((p)=>p.id!==QUICK_PROJECT_ID&&!(mode==='move'&&(p.id===state.selected?.projectID||p.canonical===currentDirectory)));$('projectChoices').innerHTML=projects.map((p)=>`<button class="choice" data-project="${escapeHtml(p.id)}"><div class="choice-title">${escapeHtml(projectLabel(p))}</div><div class="choice-meta">${escapeHtml(p.canonical||p.id)}</div></button>`).join('')||'<div class="empty">Проекты не найдены.</div>';document.querySelectorAll('[data-project]').forEach((b)=>b.addEventListener('click',()=>chooseProject(b.dataset.project)));$('projectDialog').showModal()}
+async function chooseProject(projectID){const project=state.projects.find((p)=>p.id===projectID);if(!project)return;$('projectDialog').close();if(state.projectDialogMode==='copy'||state.projectDialogMode==='move')await continueInProject(project,state.projectDialogMode==='move');else try{await createAt(project.canonical,'Новая сессия')}catch(e){toast(`Создание: ${e.message}`)}}
 function handoffText(sourceSession,sourceContext){const rows=sourceContext.slice(-40).map((m)=>`${(m.type||m.role)==='user'?'USER':'ASSISTANT'}:\n${messagePlainText(m)}`).join('\n\n');const clippedRows=rows.length>24000?rows.slice(-24000):rows;return `Продолжи работу из предыдущей OpenCode-сессии. Это перенос контекста, а не новая независимая задача.\n\nИсходная сессия: ${sourceSession?.id}\nИсходная директория: ${directory(sourceSession)}\n\nПоследний контекст:\n${clippedRows}`}
-async function continueInProject(project){if(!state.selected)return;try{const old=state.selected,oldContext=[...state.context],handoff=handoffText(old,oldContext);const session=await api.createSession({directory:project.canonical,title:`${sessionTitle(old)} → ${projectLabel(project)}`,agent:old.agent||state.draftAgent,model:old.model||state.draftModel});state.sessions=[session,...state.sessions];await selectSession(session.id);state.running.set(session.id,{status:'handoff',since:Date.now()});await api.sendPrompt(session,{text:handoff,files:[],delivery:'normal'});renderSessions();renderHeader()}catch(e){toast(`Перенос: ${e.message}`)}}
+async function continueInProject(project,removeSource=false){if(!state.selected)return;if(removeSource&&!await confirmAction('Перенести через handoff?',`OpenCode не умеет менять папку существующей сессии. Будут перенесены последние 40 текстовых сообщений (до 24 000 символов), но не файлы проекта и полная tool-история. После успешного handoff исходная сессия будет удалена.`))return;try{const result=await transferSessionToProject(state.selected,project,{select:true,removeSource});toast(removeSource?(result.sourceRemoved?'Сессия перенесена':'Создана копия; исходная сессия сохранена'):'Создана копия с контекстом')}catch(e){toast(`${removeSource?'Перенос':'Копирование'}: ${e.message}`)}}
 
 async function forkWithFallback(session,messageID){
   try { return await api.forkSession(session.id,messageID) }
   catch(error){
     if(error.status!==404&&error.status!==405)throw error
+    const sourceSession=await sessionWithControls(session)
     const sourceContext=state.context
     let end=sourceContext.length
     if(messageID){const idx=sourceContext.findIndex((m)=>m.id===messageID||m.messageID===messageID);if(idx>=0)end=idx+1}
     const context=sourceContext.slice(0,end)
-    const created=await api.createSession({directory:directory(session),title:`${sessionTitle(session)} · fork`,agent:session.agent||state.draftAgent,model:session.model||state.draftModel})
-    const handoff=handoffText(session,context)
+    const created=await api.createSession({directory:directory(sourceSession),title:`${sessionTitle(sourceSession)} · fork`,agent:sourceSession.agent,model:sourceSession.model})
+    if(!created?.id)throw new Error('OpenCode не вернул id новой сессии')
+    const handoff=handoffText(sourceSession,context)
     state.running.set(created.id,{status:'fork-handoff',since:Date.now()})
-    await api.sendPrompt(created,{text:handoff,files:[],delivery:'normal'})
+    try{await api.sendPrompt(created,{text:handoff,files:[],delivery:'normal'})}
+    catch(promptError){state.running.delete(created.id);try{await api.deleteSession(created.id)}catch{};throw promptError}
     return created
   }
 }
 
-function openSessionActions(id=state.selected?.id){const session=state.sessions.find((s)=>s.id===id);if(!session)return;state.actionSession=session;const m=meta(session.id);$('sessionActionList').innerHTML=`<button class="action" data-action="rename">Переименовать</button><button class="action" data-action="pin">${m.pinned?'Открепить':'Закрепить'}</button><button class="action" data-action="archive">${m.archived?'Вернуть из архива':'Архивировать'}</button><button class="action" data-action="duplicate">Дублировать (Fork)</button><button class="action" data-action="fork-last">Fork от последнего сообщения</button><button class="action" data-action="handoff">Продолжить в проекте…</button><button class="action" data-action="delete">Удалить</button>`;document.querySelectorAll('[data-action]').forEach((b)=>b.addEventListener('click',()=>runSessionAction(b.dataset.action)));$('sessionDialog').showModal()}
-async function runSessionAction(action){const session=state.actionSession;if(!session)return;$('sessionDialog').close();if(action==='rename'){state.actionSession=session;$('renameInput').value=sessionTitle(session);$('renameDialog').showModal();$('renameInput').focus();return}if(action==='pin'){meta(session.id).pinned=!meta(session.id).pinned;saveMeta();renderSessions();return}if(action==='archive'){meta(session.id).archived=!meta(session.id).archived;saveMeta();renderSessions();return}if(action==='handoff'){if(state.selected?.id!==session.id)await selectSession(session.id);openProjectDialog('handoff');return}if(action==='duplicate'||action==='fork-last'){try{if(state.selected?.id!==session.id)await selectSession(session.id);const mid=action==='fork-last'?(state.context.at(-1)?.id||state.context.at(-1)?.messageID):undefined;const fork=await forkWithFallback(session,mid);state.sessions=[fork,...state.sessions.filter((s)=>s.id!==fork.id)];await selectSession(fork.id);toast('Fork создан')}catch(e){toast(`Fork: ${e.message}`)}return}if(action==='delete'){if(await confirmAction('Удалить сессию?',`«${sessionTitle(session)}» будет удалена без возможности восстановления.`))await removeSession(session)}}
+function openSessionActions(id=state.selected?.id){const session=state.sessions.find((s)=>s.id===id);if(!session)return;state.actionSession=session;const m=meta(session.id);$('sessionActionList').innerHTML=`<button class="action" data-action="rename">Переименовать</button><button class="action" data-action="pin">${m.pinned?'Открепить':'Закрепить'}</button><button class="action" data-action="duplicate">Дублировать (Fork)</button><button class="action" data-action="fork-last">Fork от последнего сообщения</button><button class="action" data-action="copy-context">Копировать с контекстом…</button><button class="action" data-action="move-project">Перенести через handoff…</button><button class="action" data-action="delete">Удалить</button>`;document.querySelectorAll('[data-action]').forEach((b)=>b.addEventListener('click',()=>runSessionAction(b.dataset.action)));$('sessionDialog').showModal()}
+async function runSessionAction(action){const session=state.actionSession;if(!session)return;$('sessionDialog').close();if(action==='rename'){state.actionSession=session;$('renameInput').value=sessionTitle(session);$('renameDialog').showModal();$('renameInput').focus();return}if(action==='pin'){meta(session.id).pinned=!meta(session.id).pinned;saveMeta();renderSessions();return}if(action==='copy-context'||action==='move-project'){if(state.selected?.id!==session.id)await selectSession(session.id);openProjectDialog(action==='move-project'?'move':'copy');return}if(action==='duplicate'||action==='fork-last'){try{if(state.selected?.id!==session.id)await selectSession(session.id);const mid=action==='fork-last'?(state.context.at(-1)?.id||state.context.at(-1)?.messageID):undefined;const fork=await forkWithFallback(session,mid);state.sessions=[fork,...state.sessions.filter((s)=>s.id!==fork.id)];await selectSession(fork.id);toast('Fork создан')}catch(e){toast(`Fork: ${e.message}`)}return}if(action==='delete'){if(await confirmAction('Удалить сессию?',`«${sessionTitle(session)}» будет удалена без возможности восстановления.`))await removeSession(session)}}
 async function removeSession(session){try{await api.deleteSession(session.id);state.sessions=state.sessions.filter((s)=>s.id!==session.id);delete sessionMeta[session.id];delete drafts[session.id];saveMeta();saveJson(DRAFT_KEY,drafts);state.running.delete(session.id);state.queues.delete(session.id);if(state.selected?.id===session.id)clearSelection();else renderSessions();toast('Сессия удалена')}catch(e){toast(`Удаление: ${e.message}`)}}
 async function renameCurrent(){const session=state.actionSession||state.selected;if(!session)return;const title=$('renameInput').value.trim();if(!title)return;try{const updated=await api.renameSession(session.id,title);session.title=updated?.title||title;$('renameDialog').close();renderSessions();renderHeader()}catch(e){toast(`Rename: ${e.message}`)}}
 async function forkAtMessage(messageID){if(!state.selected)return;try{const fork=await forkWithFallback(state.selected,messageID.startsWith('idx-')?undefined:messageID);state.sessions=[fork,...state.sessions.filter((s)=>s.id!==fork.id)];await selectSession(fork.id);toast('Fork создан')}catch(e){toast(`Fork: ${e.message}`)}}
 
 function confirmAction(title,text){return new Promise((resolve)=>{const d=$('confirmDialog');$('confirmTitle').textContent=title;$('confirmText').textContent=text;const cleanup=(value)=>{d.close();$('confirmOk').onclick=null;$('confirmCancel').onclick=null;resolve(value)};$('confirmOk').onclick=()=>cleanup(true);$('confirmCancel').onclick=()=>cleanup(false);d.showModal()})}
 
-function permissionID(request){return String(request?.requestID||request?.id||'')}
-function permissionKey(request){const sid=String(request?.sessionID||'');const pid=permissionID(request);return sid&&pid?`${sid}:${pid}`:''}
-function actionLabel(action){return({shell:'Команда',bash:'Команда',edit:'Изменение файла',write:'Запись файла',read:'Чтение файла',glob:'Поиск файлов',grep:'Поиск по содержимому',list:'Список файлов',subagent:'Субагент',task:'Подзадача',webfetch:'Интернет',external_directory:'Внешняя директория'}[action]||action||'Разрешение')}
-async function refreshPermissions(){const selected=state.selected;if(!selected){hidePermission();return}const selectedID=selected.id;const requests=await api.getPermissions(directory(selected));if(state.selected?.id!==selectedID)return;permissionSuppression.prune();const pending=requests.find((r)=>r.sessionID===selectedID&&!permissionSuppression.isResolved(permissionKey(r)))||null;if(pending){const banner=$('permissionBanner');const pid=permissionID(pending);if(banner.dataset.permissionId===pid&&banner.dataset.permissionSession===selectedID&&!banner.hidden)return;showPermission(pending)}else hidePermission()}
-function showPermission(p){const sid=state.selected?.id;const pid=permissionID(p);const key=permissionKey(p);if(!sid||p?.sessionID!==sid||!pid||permissionSuppression.isResolved(key)){hidePermission();return}const changed=permissionKey(state.pendingPermission)!==key;state.pendingPermission=p;const banner=$('permissionBanner');banner.dataset.permissionSession=sid;banner.dataset.permissionId=pid;banner.hidden=false;$('permissionTitle').textContent=actionLabel(p.action);$('permissionDetail').textContent=(p.resources||[]).join(', ')||p.action||'';if(changed)notifyUser('OpenCode просит разрешение',`${actionLabel(p.action)} ${(p.resources||[]).join(', ')}`,`perm-${pid}`)}
-function hidePermission(){state.pendingPermission=null;const banner=$('permissionBanner');delete banner.dataset.permissionSession;delete banner.dataset.permissionId;banner.hidden=true}
-async function replyPendingPermission(reply){const p=state.pendingPermission;if(!p)return;const key=permissionKey(p);if(!key)return;permissionSuppression.markResolved(key);hidePermission();try{await api.replyPermission(p.sessionID,permissionID(p),reply);toast(reply==='reject'?'Отклонено':'Разрешено');setTimeout(refreshPermissions,250)}catch(e){permissionSuppression.forget(key);toast(`Permission: ${e.message}`);refreshPermissions()}}
-
-async function initNotifications(){renderNotifyButton();if('serviceWorker'in navigator){try{await navigator.serviceWorker.register('/sw.js')}catch(e){console.warn('SW registration failed',e)}}}
+// `navigator.serviceWorker.ready` never settles when registration failed or
+// the context is not secure; awaiting it forever would silently swallow every
+// notification. Race it against a short timeout instead.
+function serviceWorkerReady(timeoutMs=1500){
+  if(!('serviceWorker' in navigator))return Promise.resolve(null)
+  return Promise.race([
+    navigator.serviceWorker.ready.catch(()=>null),
+    new Promise((resolve)=>setTimeout(()=>resolve(null),timeoutMs)),
+  ])
+}
+function initNotifications(){renderNotifyButton();if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch((e)=>console.warn('SW registration failed',e))}}
 function renderNotifyButton(){$('notifyButton').textContent=state.notifyEnabled?'◆':'◇';$('notifyButton').title=state.notifyEnabled?'Уведомления включены':'Уведомления выключены'}
-async function toggleNotifications(){if(!('Notification'in window)){toast('Notifications API недоступен');return}if(!state.notifyEnabled){const permission=await Notification.requestPermission();if(permission!=='granted'){toast('Разрешение на уведомления не выдано');return}state.notifyEnabled=true;localStorage.setItem(NOTIFY_KEY,'1');notifyUser('OpenCode','Уведомления включены','notify-enabled')}else{state.notifyEnabled=false;localStorage.setItem(NOTIFY_KEY,'0')}renderNotifyButton()}
-async function notifyUser(title,body,tag,sessionID){if(!state.notifyEnabled||!('Notification'in window)||Notification.permission!=='granted')return;const data=sessionID?{url:`/#/session/${encodeURIComponent(sessionID)}`}:{url:'/'};try{const reg=await navigator.serviceWorker?.ready;if(reg?.showNotification)await reg.showNotification(title,{body,tag,data});else new Notification(title,{body,tag,data})}catch{try{new Notification(title,{body,tag,data})}catch{}}}
+async function toggleNotifications(){
+  if(!('Notification' in window)){
+    const ua=navigator.userAgent||''
+    const ios=/iPhone|iPad|iPod/.test(ua)||(/Macintosh/.test(ua)&&'ontouchend' in document)
+    toast(ios?'На iOS уведомления работают только после «Поделиться → На экран „Домой"»':'Уведомления не поддерживаются этим браузером',4200)
+    return
+  }
+  if(Notification.permission==='denied'){
+    state.notifyEnabled=false;localStorage.setItem(NOTIFY_KEY,'0');renderNotifyButton()
+    toast('Уведомления запрещены — включите их в настройках браузера для этого сайта',4200)
+    return
+  }
+  if(Notification.permission!=='granted'){
+    const permission=await Notification.requestPermission()
+    if(permission!=='granted'){state.notifyEnabled=false;localStorage.setItem(NOTIFY_KEY,'0');toast('Разрешение на уведомления не выдано');renderNotifyButton();return}
+    state.notifyEnabled=true;localStorage.setItem(NOTIFY_KEY,'1');renderNotifyButton();notifyUser('OpenCode','Уведомления включены','notify-enabled')
+    return
+  }
+  state.notifyEnabled=!state.notifyEnabled
+  localStorage.setItem(NOTIFY_KEY,state.notifyEnabled?'1':'0')
+  if(state.notifyEnabled)notifyUser('OpenCode','Уведомления включены','notify-enabled')
+  renderNotifyButton()
+}
+async function notifyUser(title,body,tag,sessionID){if(!state.notifyEnabled||!('Notification'in window)||Notification.permission!=='granted')return;const data=sessionID?{url:`/#/session/${encodeURIComponent(sessionID)}`}:{url:'/'};const options={body,tag,data};try{const registration=await serviceWorkerReady();if(registration?.showNotification){await registration.showNotification(title,options);return}}catch{}try{new Notification(title,options)}catch{}}
 function updateBadge(){const count=state.running.size;try{if(count)navigator.setAppBadge?.(count);else navigator.clearAppBadge?.()}catch{}}
 
 function ensureAssistant(id){let m=state.context.find((x)=>x.id===id);if(m)return m;m={id,type:'assistant',content:[],time:{created:Date.now()}};state.context.push(m);return m}
@@ -366,6 +569,7 @@ function ensureTool(message,data){let p=(message.content||[]).find((x)=>x.type==
 function markStarted(sessionID,label='running'){if(!sessionID||(state.sessions.length&&!state.sessions.some((session)=>session.id===sessionID)))return;state.running.set(sessionID,{status:label,since:Date.now()});renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
 function markFinished(sessionID,kind='готово'){if(!sessionID)return;const wasRunning=state.running.has(sessionID);state.running.delete(sessionID);renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();const session=state.sessions.find((s)=>s.id===sessionID);if(wasRunning&&(document.hidden||state.selected?.id!==sessionID))notifyUser(`OpenCode: ${kind}`,sessionTitle(session),`done-${sessionID}`,sessionID);if(wasRunning||queueFor(sessionID).length)setTimeout(()=>flushQueue(sessionID),80)}
 function handleEvent(payload){
+  window.dispatchEvent(new CustomEvent('custom-opencode:event',{detail:payload}))
   const data=payload.data||payload.properties||{}, sid=data.sessionID||data.session?.id
   if(['session.execution.started','session.busy','session.status.running'].includes(payload.type))markStarted(sid,payload.type)
   if(payload.type==='session.status'){const type=data.status?.type||data.type;if(['busy','retry','running'].includes(type))markStarted(sid,type);if(type==='idle')markFinished(sid,'готово')}
@@ -373,7 +577,6 @@ function handleEvent(payload){
   if(['message.part.delta','message.part.updated','message.updated'].includes(payload.type)&&sid===state.selected?.id)scheduleContextReload(140)
   if(payload.type==='session.execution.failed')markFinished(sid,'ошибка')
   if(payload.type==='session.execution.interrupted')markFinished(sid,'остановлено')
-  if(payload.type==='permission.asked'){if(data.sessionID===state.selected?.id)showPermission(data);else notifyUser('OpenCode просит разрешение',actionLabel(data.action),`perm-${data.id}`)}
   if(!state.selected||sid!==state.selected.id)return
   let message,part
   switch(payload.type){
@@ -397,25 +600,103 @@ function handleEvent(payload){
 function connectEventStream(){eventSource?.close();eventSource=api.connectEvents(handleEvent,()=>{if(state.running.size)toast('Переподключение к event stream…',1200)})}
 async function pollStatuses(){const statuses=await api.sessionStatuses();let changed=false;for(const session of state.sessions){const running=runningStatus(statuses?.[session.id]);if(running&&!isRunning(session.id)){state.running.set(session.id,{status:normalizeRunStatus(statuses[session.id]),since:Date.now()});changed=true}else if(!running&&isRunning(session.id)&&statuses&&session.id in statuses){markFinished(session.id,'готово');changed=true}}if(changed){renderSessions();renderHeader();updateBadge()}}
 
-function setupPullRefresh(){const el=$('messages');let start=null;el.addEventListener('touchstart',(e)=>{if(el.scrollTop<=2)start=e.touches[0].clientY},{passive:true});el.addEventListener('touchend',(e)=>{if(start===null)return;const dy=e.changedTouches[0].clientY-start;start=null;if(dy>90){toast('Обновление…',900);loadSessions();if(state.selected)loadContext()}},{passive:true})}
+function setupPullRefresh(){
+  const el=$('messages')
+  if(!el)return
+  const SWIPE_DISTANCE=18,HOLD_FLOOR=12,HOLD_DURATION=320,SWIPE_PROGRESS=0.18,MIN_REFRESH_TIME=420
+  const indicator=document.createElement('div')
+  indicator.className='pull-refresh'
+  indicator.setAttribute('role','status')
+  indicator.setAttribute('aria-live','polite')
+  indicator.setAttribute('aria-atomic','true')
+  indicator.hidden=true
+  indicator.innerHTML='<svg class="pull-refresh-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle class="pull-refresh-track" cx="12" cy="12" r="9" pathLength="1"></circle><circle class="pull-refresh-progress" cx="12" cy="12" r="9" pathLength="1"></circle><path class="pull-refresh-arrow" d="M17.7 6.3A8 8 0 1 0 20 12M17.7 2.8v3.5h-3.5"></path><path class="pull-refresh-check" d="m7.2 12.4 3.1 3.1 6.7-7"></path></svg><span class="pull-refresh-label">Тяните вверх для обновления</span>'
+  document.body.append(indicator)
+  const label=indicator.querySelector('.pull-refresh-label')
+  let gesture=null,holdFrame=0,refreshing=false,hideTimer=null
+  const atBottom=()=>el.scrollHeight-el.clientHeight-el.scrollTop<=4
+  const place=()=>{const rect=el.getBoundingClientRect();indicator.style.left=`${rect.left+rect.width/2}px`;indicator.style.top=`${Math.max(rect.top+8,rect.bottom-52)}px`}
+  const show=(next,ratio=0)=>{
+    place()
+    indicator.hidden=false
+    indicator.style.setProperty('--pull-progress',String(Math.max(0,Math.min(1,ratio))))
+    if(indicator.dataset.state!==next){indicator.dataset.state=next;label.textContent=next==='pulling'?'Тяните вверх для обновления':next==='refreshing'?'Обновление сессии…':next==='done'?'Сессия обновлена':'Удерживайте для обновления'}
+  }
+  const hide=()=>{clearTimeout(hideTimer);indicator.hidden=true;indicator.dataset.state='idle';indicator.style.removeProperty('--pull-progress')}
+  const stopHold=()=>{if(holdFrame)cancelAnimationFrame(holdFrame);holdFrame=0;if(gesture)gesture.holdAt=null}
+  const cancelGesture=()=>{stopHold();gesture=null;if(!refreshing)hide()}
+  const refreshData=async()=>{
+    if(refreshing)return
+    refreshing=true
+    const sessionID=gesture?.sessionID
+    stopHold();gesture=null;show('refreshing',1)
+    const started=performance.now()
+    await Promise.allSettled([loadSessions(),sessionID?loadContext():Promise.resolve()])
+    const remaining=MIN_REFRESH_TIME-(performance.now()-started)
+    if(remaining>0)await new Promise((resolve)=>setTimeout(resolve,remaining))
+    if(state.selected?.id===sessionID){show('done',1);hideTimer=setTimeout(()=>{refreshing=false;hide()},700)}
+    else{refreshing=false;hide()}
+  }
+  const updateHold=(now)=>{
+    if(!gesture?.holdAt||refreshing)return
+    if(state.selected?.id!==gesture.sessionID){cancelGesture();return}
+    const ratio=Math.min(1,(now-gesture.holdAt)/HOLD_DURATION)
+    show('holding',SWIPE_PROGRESS+(1-SWIPE_PROGRESS)*ratio)
+    if(ratio>=1){void refreshData();return}
+    holdFrame=requestAnimationFrame(updateHold)
+  }
+  const startHold=()=>{
+    if(gesture?.holdAt)return
+    gesture.holdAt=performance.now()
+    show('holding',SWIPE_PROGRESS)
+    holdFrame=requestAnimationFrame(updateHold)
+  }
+  el.addEventListener('touchstart',(event)=>{
+    if(event.touches.length!==1){cancelGesture();return}
+    if(refreshing||!state.selected||!atBottom())return
+    const touch=event.touches[0]
+    clearTimeout(hideTimer)
+    gesture={identifier:touch.identifier,startX:touch.clientX,startY:touch.clientY,holdAt:null,sessionID:state.selected.id}
+  },{passive:true})
+  el.addEventListener('touchmove',(event)=>{
+    if(!gesture||refreshing)return
+    if(event.touches.length!==1){cancelGesture();return}
+    const touch=Array.from(event.touches).find((item)=>item.identifier===gesture.identifier)
+    if(!touch){cancelGesture();return}
+    if(state.selected?.id!==gesture.sessionID){cancelGesture();return}
+    const dx=touch.clientX-gesture.startX,distance=gesture.startY-touch.clientY
+    if(Math.abs(dx)>10&&Math.abs(dx)>Math.abs(distance)*1.2){cancelGesture();return}
+    if(distance>0&&event.cancelable)event.preventDefault()
+    if(distance < -6||!atBottom()){cancelGesture();return}
+    if(distance<=6){stopHold();hide();return}
+    if(gesture.holdAt&&distance>=HOLD_FLOOR)return
+    if(distance>=SWIPE_DISTANCE){startHold();return}
+    stopHold();show('pulling',distance/SWIPE_DISTANCE*SWIPE_PROGRESS)
+  },{passive:false})
+  el.addEventListener('touchend',()=>{
+    if(!gesture||refreshing)return
+    cancelGesture()
+  },{passive:true})
+  el.addEventListener('touchcancel',cancelGesture,{passive:true})
+  window.addEventListener('resize',()=>{if(!indicator.hidden)place()})
+}
 function autosizeInput(){const el=$('input');el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}
 
 function bindEvents(){
   $('newSession').addEventListener('click',async()=>{clearSelection();try{await createAt(state.clientConfig.scratchDirectory)}catch(e){toast(`Создание: ${e.message}`)}})
-  $('chooseProject').addEventListener('click',()=>openProjectDialog('create'));$('refresh').addEventListener('click',()=>{loadSessions();if(state.selected)loadContext()});$('search').addEventListener('input',renderSessions);$('showArchived').addEventListener('change',renderSessions)
-  $('menu').addEventListener('click',()=> $('sidebar').classList.toggle('open'));$('sessionActions').addEventListener('click',()=>openSessionActions());$('modelButton').addEventListener('click',()=>{renderModelChoices();$('modelDialog').showModal();$('modelSearch').focus()});$('modelSearch').addEventListener('input',renderModelChoices)
+  $('chooseProject').addEventListener('click',()=>openProjectDialog('create'));$('refresh').addEventListener('click',()=>{loadSessions();if(state.selected)loadContext()});$('search').addEventListener('input',renderSessions)
+  $('menu').addEventListener('click',()=> $('sidebar').classList.toggle('open'));$('sessionActions').addEventListener('click',()=>openSessionActions());$('modelButton').addEventListener('click',()=>{renderModelChoices();$('modelDialog').showModal();$('modelSearch').focus()});$('modelSearch').addEventListener('input',renderModelChoices);$('modelChoices').addEventListener('click',(event)=>{const fav=event.target.closest?.('[data-fav]');if(fav){event.preventDefault();event.stopPropagation();const key=fav.dataset.fav;favorites.has(key)?favorites.delete(key):favorites.add(key);saveJson(FAV_KEY,[...favorites]);renderModelChoices();return}const button=event.target.closest?.('[data-model][data-provider]');if(!button)return;$('modelDialog').close();changeModel({id:button.dataset.model,providerID:button.dataset.provider})})
   $('variantSelect').addEventListener('change',(e)=>{const ref=activeModelRef();if(!ref)return;const model={id:ref.id,providerID:ref.providerID};if(e.target.value)model.variant=e.target.value;changeModel(model)})
   $('form').addEventListener('submit',sendMessage);$('stop').addEventListener('click',stopSelected);$('input').addEventListener('input',()=>{autosizeInput();scheduleDraftSave()});$('input').addEventListener('keydown',(e)=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('form').requestSubmit()}})
   $('attachButton').addEventListener('click',()=> $('fileInput').click());$('fileInput').addEventListener('change',(e)=>{addFiles(e.target.files);e.target.value=''});$('input').addEventListener('paste',(e)=>{const files=[...(e.clipboardData?.items||[])].filter((i)=>i.kind==='file').map((i)=>i.getAsFile()).filter(Boolean);if(files.length){e.preventDefault();addFiles(files)}})
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.addEventListener('click',()=>{state.deliveryMode=b.dataset.delivery;renderRunControls()}));$('gitButton').addEventListener('click',openGitDialog);$('usageButton').addEventListener('click',()=>{$('usageDialog').showModal()});$('notifyButton').addEventListener('click',toggleNotifications)
   $('renameForm').addEventListener('submit',(e)=>{e.preventDefault();renameCurrent()});document.querySelectorAll('[data-close]').forEach((b)=>b.addEventListener('click',()=>$(b.dataset.close).close()));document.querySelectorAll('dialog').forEach((d)=>d.addEventListener('click',(e)=>{if(e.target===d)d.close()}))
-  document.querySelectorAll('[data-permission]').forEach((b)=>b.addEventListener('click',()=>replyPendingPermission(b.dataset.permission)))
   $('messagesInner').addEventListener('click',(e)=>{const copyCode=e.target.closest('.copy-code');if(copyCode){navigator.clipboard.writeText(copyCode.closest('.code-block').querySelector('code')?.textContent||'');copyCode.textContent='Скопировано';setTimeout(()=>copyCode.textContent='Копировать',900);return}const copy=e.target.closest('[data-copy-message]');if(copy){navigator.clipboard.writeText(messagePlainText(state.context[Number(copy.dataset.copyMessage)])||'');toast('Сообщение скопировано');return}const fork=e.target.closest('[data-fork-message]');if(fork){forkAtMessage(fork.dataset.forkMessage)}})
   window.addEventListener('hashchange',()=>{const id=sessionIdFromHash();if(id&&state.selected?.id!==id)selectSession(id,{push:false});else if(!id&&state.selected)clearSelection()});window.addEventListener('beforeunload',saveDraftNow)
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden){pollStatuses();if(state.selected){loadContext();refreshPermissions()}}})
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){pollStatuses();if(state.selected){loadContext()}}})
 }
 
 async function initialize(){
-  state.clientConfig=await api.getClientConfig();bindEvents();setupPullRefresh();await initNotifications();connectEventStream();await loadSessions({selectHash:true});if(!state.selected){restoreDraft();await loadDraftControls()}permissionTimer=setInterval(refreshPermissions,1800);statusTimer=setInterval(pollStatuses,5000);setInterval(()=>{if(!state.loading)loadSessions()},30000);autosizeInput();renderHeader()
+  state.clientConfig=await api.getClientConfig();bindEvents();attachDragHandlers();setupPullRefresh();await initNotifications();connectEventStream();await loadSessions({selectHash:true});if(!state.selected){restoreDraft();await loadDraftControls()}statusTimer=setInterval(pollStatuses,5000);setInterval(()=>{if(!state.loading)loadSessions()},30000);autosizeInput();renderHeader()
 }
 initialize().catch((error)=>{console.error(error);toast(`Ошибка запуска: ${error.message}`,7000)})

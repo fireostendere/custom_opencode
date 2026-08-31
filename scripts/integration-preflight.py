@@ -87,16 +87,14 @@ def run() -> dict[str, Any]:
     _check_file(
         "app/access-fix.js",
         (
-            "root.style.display = 'none'",
-            "modeSelect.value = 'build'",
-            "buildAgentForProfile",
             "resolvedPermissions",
+            "installPermissionScope",
         ),
         errors,
     )
     _check_file(
         "app/access-fix.css",
-        ("#agentControls", "display:none!important"),
+        ("#agentControls", "grid-template-columns:repeat(2"),
         errors,
     )
     _check_file(

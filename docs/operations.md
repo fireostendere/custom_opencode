@@ -71,7 +71,6 @@ python3 ./scripts/install-selftest.py --rag-enabled
 В web UI:
 
 ```text
-/doctor
 /rag-start quick
 ```
 
@@ -177,25 +176,13 @@ OpenCode V2 остаётся изменяющимся upstream. После зн�
 
 1. `./scripts/verify.sh`;
 2. install/update self-test;
-3. `/doctor`;
-4. `/rag-start quick`, если есть RAG;
-5. открыть реальный проект через `Проекты`;
-6. проверить native slash command;
-7. только при необходимости — ручные paid Max/Flash/Router smoke tests.
+3. `/rag-start quick`, если есть RAG;
+4. открыть реальный проект через `Проекты`;
+5. проверить native slash command.
 
 ## Проверка после изменения router config
 
-Бесплатно:
-
-- verifier;
-- Doctor catalog/config checks.
-
-Платно и только вручную:
-
-- Flash inference;
-- Max inference;
-- Router E2E;
-- Router + RAG E2E.
+Бесплатно: verifier, `/rag-start quick` и runtime probe при настроенном RAG.
 
 ## Обновление `.env`
 

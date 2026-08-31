@@ -1,6 +1,6 @@
 # custom_opencode
 
-Переносимый комплект поверх OpenCode V2: собственный ChatGPT-подобный web/PWA client, Alibaba role routing, серверный Runtime V2/V3 control plane, безопасная работа с проектами, диагностика/self-test и опциональный инженерный RAG через MCP.
+Переносимый комплект поверх OpenCode V2: собственный ChatGPT-подобный web/PWA client, Alibaba role routing, серверный Runtime V2/V3 control plane, безопасная работа с проектами, self-test и опциональный инженерный RAG через MCP.
 
 ## Что предоставляет
 
@@ -10,7 +10,9 @@
 - signed `HttpOnly; SameSite=Strict` web sessions, `Запомнить вход`, logout и возврат в исходный `#/session/...` после re-auth;
 - root sessions в sidebar и isolated quick-session workspaces;
 - Build-only пользовательский execution surface;
-- model picker с favorites, collapsible providers и server model profiles;
+- web- и TUI-model picker с зеркальной секцией favorites: модель остаётся и в исходной группе;
+- session-scoped model, effort и Build/Plan controls без переноса выбора между диалогами;
+- копирование диалога с контекстом и подтверждаемый перенос через handoff между проектами;
 - одна контекстная кнопка composer: send / cancel / persistent queue;
 - native OpenCode questions: single/multi-select, descriptions и custom answer;
 - session-scoped compact permission cards и project allow/deny policies;
@@ -44,7 +46,7 @@
 - role stack `Qwen 3.8 Max planner → Qwen 3.8 Flash reader → Qwen 3.7 Plus builder → DeepSeek V4 Pro reviewer`, все non-OpenAI orchestration roles через Alibaba Cloud/Bailian;
 - GLM 5.2 как optional long-horizon executor через Alibaba Cloud/Bailian;
 - optional `mcp-rag` через `kb` MCP;
-- `/rag-start` и `/doctor`;
+- `/rag-start`;
 - pre-install verifier, Runtime V2/V3 smokes и post-install zero-LLM-token self-test;
 - user systemd deployment и `custom-opencode-update`.
 
@@ -241,7 +243,6 @@ Installer по умолчанию выполняет pre-install verification и
 - [Permission control plane](docs/control-plane.md)
 - [RAG integration](docs/rag.md)
 - [`/rag-start`](docs/rag-start.md)
-- [Doctor](docs/doctor.md)
 - [Эксплуатация и recovery](docs/operations.md)
 - [Troubleshooting](docs/troubleshooting.md)
 

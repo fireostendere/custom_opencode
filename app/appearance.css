@@ -135,8 +135,6 @@ html[data-theme="light"] .markdown code.inline{background:#ececec;border-color:#
 html[data-theme="light"] .permission-banner{background:#fffbe8;border-color:#d6c978}
 html[data-theme="light"] .permission-text span,html[data-theme="light"] .permission-details summary{color:#71672e}
 html[data-theme="light"] .permission-details pre{background:#fffdf2;border-color:#d8cc8b;color:#524b2b}
-html[data-theme="light"] .doctor-check{background:#00000008}
-html[data-theme="light"] .doctor-smoke{border-color:#00000012}
 html[data-theme="light"] .sidebar-scrim{background:#0005}
 html[data-theme="light"] .toast{background:#fff;border-color:#ccc;color:#222;box-shadow:0 10px 34px #0003}
 html[data-theme="light"] .login-shell{background:radial-gradient(700px 420px at 50% -12%,color-mix(in srgb,var(--accent) 10%,transparent),transparent 68%),linear-gradient(180deg,#fafafa 0%,#f2f2f2 100%)}

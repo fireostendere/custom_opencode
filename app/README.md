@@ -13,10 +13,12 @@
 - mobile drawer: swipe справа налево, Back и tap/click вне панели;
 - light/dark/system theme, preset/custom accent color;
 - short reduced-motion-aware microanimations;
-- native slash commands и control-команды `/doctor`, `/rag-start`;
+- native slash commands и control-команда `/rag-start`;
 - isolated quick-session workspaces и безопасный browser локальных project roots;
 - Build-only пользовательский execution surface;
-- model picker с favorites, collapsible providers, free-model group, ordinary models и server profiles;
+- web- и TUI-model picker с зеркальной секцией favorites, collapsible providers, free-model group, ordinary models и server profiles;
+- model, effort и Build/Plan берутся из активной сессии, а не из предыдущего открытого диалога;
+- сессию можно скопировать с контекстом либо перенести через handoff в другой проект; UI предупреждает об ограничении в 40 текстовых сообщений / 24 000 символов и удаляет источник только после успешного handoff;
 - contextual composer action: send / cancel / durable queue;
 - native question cards, compact session-scoped permission banner, project policies;
 - Project settings: system instructions/model profile/RAG/permission defaults;
@@ -136,7 +138,8 @@ OpenCode V2 остаётся native model/tool/session/MCP execution engine.
 - `enhancements.*`, `ui-enhancements.*`, `ux-controls.*`, `advanced-features.*` — UI/features compatibility layers;
 - `runtime-dashboard.*`, `runtime-v3-dashboard.*` — Task Center/Runtime V3 controls;
 - `access-fix.*` — Build-only/permissions/mobile dialog corrections;
-- `rag-control.js`, `doctor.*`, `control-plane.*` — RAG/diagnostics/risk surfaces;
+- `design-system.css`, `sidebar-resize.js` — единая геометрия/chevrons, адаптивные dialog scroll surfaces и desktop resize sidebar;
+- `rag-control.js`, `control-plane.*` — RAG/risk surfaces;
 - `api.js`, `markdown.js`, `app.js` — OpenCode adapter/render/store core;
 - `sw.js` — PWA static asset cache/notifications; HTML/auth/API/internal runtime responses не кэшируются.
 

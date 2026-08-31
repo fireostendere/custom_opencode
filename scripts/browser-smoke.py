@@ -3,7 +3,7 @@
 
 Drives headless Chromium via Playwright through the actual UI:
 logs in through the form, clicks sidebar items, opens dialogs
-(model picker, appearance, usage, doctor), opens a session and
+(model picker, appearance and usage), opens a session and
 renders messages, checks the composer, logs out. Runs once with a
 desktop viewport and once with an Android phone emulation.
 
@@ -14,6 +14,7 @@ from __future__ import annotations
 import sys
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
@@ -51,18 +52,31 @@ def step(ok: bool, label: str, detail: str = "") -> bool:
 
 
 def attach_listeners(page, tag: str) -> None:
+    def expected_http(url: str, status: int) -> bool:
+        path = urlsplit(url).path
+        if status == 401 and path == "/auth/session":
+            return True  # The login page probes the unauthenticated state first.
+        if status in (404, 405) and (path in ("/api/form/request", "/api/question") or path.endswith("/children")):
+            return True  # Optional V2 compatibility routes are capability-probed.
+        return False
+
     def on_console(msg):
-        if msg.type == "error":
+        if msg.type == "error" and not msg.text.startswith("Failed to load resource:"):
             PROBLEMS.append(f"{tag} console error: {msg.text[:300]}")
 
     def on_request_failed(req):
-        PROBLEMS.append(f"{tag} request failed: {req.method} {req.url} ({req.failure})")
+        failure = req.failure or ""
+        path = urlsplit(req.url).path
+        if "ERR_ABORTED" in failure and path in ("/auth/session", "/auth/login", "/auth/logout", "/api/event"):
+            return  # Navigation intentionally closes these requests.
+        PROBLEMS.append(f"{tag} request failed: {req.method} {req.url} ({failure})")
 
     def on_response(resp):
-        if resp.status >= 500:
+        if resp.status >= 400 and not expected_http(resp.url, resp.status):
             PROBLEMS.append(f"{tag} server error: {resp.status} {resp.url}")
 
     page.on("console", on_console)
+    page.on("pageerror", lambda error: PROBLEMS.append(f"{tag} page error: {error}"))
     page.on("requestfailed", on_request_failed)
     page.on("response", on_response)
 
@@ -107,18 +121,77 @@ def desktop_flow(context) -> bool:
     except PWTimeout as exc:
         ok &= step(False, "desktop: open session", str(exc)[:150])
 
-    # 2. Model picker dialog.
+    # 2. Desktop sidebar resize handle.
+    try:
+        handle = page.locator("#sidebarResizer")
+        before = page.locator("#sidebar").bounding_box()["width"]
+        box = handle.bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + 320)
+        page.mouse.down()
+        page.mouse.move(box["x"] + box["width"] / 2 + 48, box["y"] + 320)
+        page.mouse.up()
+        after = page.locator("#sidebar").bounding_box()["width"]
+        ok &= step(after >= before + 35, f"desktop: sidebar resized {before:.0f}px → {after:.0f}px")
+    except Exception as exc:  # noqa: BLE001
+        ok &= step(False, "desktop: sidebar resize", str(exc)[:150])
+
+    # 3. Model picker dialog.
     try:
         page.click("#modelButton")
         page.wait_for_selector("#modelDialog[open]", timeout=5000)
+        page.wait_for_selector("#modelChoices > .model-provider-section", timeout=5000)
+        page.wait_for_timeout(300)
         choices = page.locator("#modelChoices > *").count()
+        model_box = page.locator("#modelButton").bounding_box()
+        effort_box = page.locator("#variantSelect").bounding_box()
+        same_row = abs(model_box["y"] - effort_box["y"]) < 2 and abs(model_box["height"] - effort_box["height"]) < 2
+        profile_badge_removed = page.locator("#runtimeProfileBadge").count() == 0
+        server_profiles_removed = page.locator("#modelChoices [data-runtime-profile-group]").count() == 0
+        favorite_toggle = page.locator("#modelChoices [data-favorite='0'] [data-fav]").first
+        favorite_toggle.click()
+        favorite_section = page.locator("#modelChoices > [data-provider-section='__favorites__']")
+        favorite_section.wait_for(state="visible", timeout=5000)
+        favorite_entries = favorite_section.locator("[data-favorite='1']").count()
+        provider_favorite_entries = page.locator("#modelChoices > [data-provider-section]:not([data-provider-section='__favorites__']) [data-favorite='1']").count()
+        favorites_consistent = favorite_entries > 0 and favorite_entries == provider_favorite_entries
+        catalog = page.locator("#modelChoices")
+        catalog_box = catalog.bounding_box()
+        catalog_overflow = catalog.evaluate("el => ['auto', 'scroll'].includes(getComputedStyle(el).overflowY)")
+        catalog_has_height = catalog_box["height"] > 0
+        headings = page.locator("#modelChoices > .model-provider-section .model-provider-toggle strong").all_inner_texts()
+        headings_present = bool(headings) and all(text.strip() for text in headings)
+        toggles_work = True
+        sections = page.locator("#modelChoices > .model-provider-section")
+        for index in range(sections.count()):
+            section = sections.nth(index)
+            toggle = section.locator(":scope > .model-provider-toggle")
+            body = section.locator(":scope > .model-provider-body").first
+            before_hidden = body.is_hidden()
+            toggle.click()
+            toggles_work &= body.is_hidden() != before_hidden
+            toggle.click()
+            toggles_work &= body.is_hidden() == before_hidden
+        scroll_limit = catalog.evaluate("el => el.scrollHeight - el.clientHeight")
+        catalog.evaluate("(el, value) => el.scrollTop = value", scroll_limit)
+        page.wait_for_timeout(100)
+        scroll_moved = catalog.evaluate("el => el.scrollTop > 0") if scroll_limit > 0 else False
         ok &= step(choices > 0, f"desktop: model dialog opened ({choices} model entries)")
+        ok &= step(same_row, "desktop: model and effort controls share one row and height")
+        ok &= step(profile_badge_removed, "desktop: redundant runtime profile button is removed")
+        ok &= step(server_profiles_removed, "desktop: runtime server profiles are not mixed into model picker")
+        ok &= step(favorites_consistent, f"desktop: favorite section appears and provider entries remain ({favorite_entries})")
+        ok &= step(catalog_overflow and catalog_has_height, "desktop: model catalog has a bounded vertical scroll surface")
+        ok &= step(headings_present, f"desktop: all model sections have headings ({len(headings)})")
+        ok &= step(toggles_work, "desktop: every model section opens and collapses")
+        ok &= step(scroll_moved, f"desktop: model catalog scrolls to the end ({scroll_limit:.0f}px)")
+        page.screenshot(path=str(SHOTS / "desktop-03-model-dialog-scrolled.png"))
+        catalog.evaluate("el => el.scrollTop = 0")
         page.screenshot(path=str(SHOTS / "desktop-03-model-dialog.png"))
         close_dialog(page, "modelDialog")
     except PWTimeout as exc:
         ok &= step(False, "desktop: model dialog", str(exc)[:150])
 
-    # 3. Appearance dialog + theme switch (real click, visual effect).
+    # 4. Appearance dialog + theme switch (real click, visual effect).
     try:
         page.click("#appearanceButton")
         page.wait_for_selector("#appearanceDialog[open]", timeout=5000)
@@ -132,7 +205,7 @@ def desktop_flow(context) -> bool:
     except PWTimeout as exc:
         ok &= step(False, "desktop: appearance dialog", str(exc)[:150])
 
-    # 4. Usage (Контекст) dialog.
+    # 5. Usage (Контекст) dialog.
     try:
         page.click("#usageButton")
         page.wait_for_selector("#usageDialog[open]", timeout=5000)
@@ -142,22 +215,12 @@ def desktop_flow(context) -> bool:
     except PWTimeout as exc:
         ok &= step(False, "desktop: usage dialog", str(exc)[:150])
 
-    # 5. Doctor dialog.
-    try:
-        page.click("#doctorButton")
-        page.wait_for_selector("#doctorDialog[open]", timeout=8000)
-        page.screenshot(path=str(SHOTS / "desktop-06-doctor.png"))
-        ok &= step(True, "desktop: doctor dialog opened")
-        close_dialog(page, "doctorDialog")
-    except PWTimeout as exc:
-        ok &= step(False, "desktop: doctor dialog", str(exc)[:150])
-
     # 6. Composer: typing enables send (no actual send).
     try:
         page.fill("#input", "смок-тест: это сообщение не отправляется")
         page.wait_for_timeout(300)
         enabled = page.locator("#composerAction").is_enabled()
-        page.screenshot(path=str(SHOTS / "desktop-07-composer.png"))
+        page.screenshot(path=str(SHOTS / "desktop-06-composer.png"))
         ok &= step(enabled, "desktop: composer accepts text, send button armed")
         page.fill("#input", "")
     except Exception as exc:  # noqa: BLE001

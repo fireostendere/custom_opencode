@@ -9,14 +9,23 @@ const state = {
   queueCounts: {},
   question: null,
   questionKey: '',
+  questionDataKey: '',
+  questionSource: '',
+  questionActionPending: false,
+  questionDeferred: null,
+  questionTransport: 'unknown',
+  questionRevision: 0,
+  questionRefreshSeq: 0,
   questionSelection: [],
   pendingPermission: null,
   children: [],
+  childrenTransport: 'unknown',
   childDetails: new Map(),
   runStartedAt: null,
   lastDurationMs: 0,
   attachments: [],
   attachmentReads: [],
+  submitPending: false,
   reviewDiffs: [],
 }
 
@@ -128,7 +137,7 @@ function ensureSurfaces() {
         <div class="workflow-section"><label class="workflow-label" for="projectInstructions">Постоянные инструкции проекта</label><textarea class="workflow-textarea" id="projectInstructions" placeholder="Например: перед завершением запускай pytest; не меняй public API без необходимости"></textarea><div class="workflow-note">Передаются OpenCode как system context, поэтому не засоряют текст пользовательского сообщения.</div></div>
         <div class="workflow-section"><div class="workflow-grid">
           <label><span class="workflow-label">Режим по умолчанию</span><select class="workflow-select" id="projectDefaultMode"><option value="inherit">Не менять</option><option value="build">Build</option><option value="plan">Plan</option></select></label>
-          <label><span class="workflow-label">Модель/profile по умолчанию</span><select class="workflow-select" id="projectDefaultModel"><option value="inherit">Не менять</option><option value="orchestrated">Qwen 3.8 Max · Оркестрированная</option><option value="bailian-cli/qwen3.8-max">Qwen 3.8 Max</option><option value="bailian-cli/qwen3.8-flash">Qwen 3.8 Flash</option></select></label>
+           <label><span class="workflow-label">Модель/profile по умолчанию</span><select class="workflow-select" id="projectDefaultModel"><option value="inherit">Не менять</option></select></label>
           <label><span class="workflow-label">RAG</span><select class="workflow-select" id="projectRag"><option value="auto">Auto</option><option value="on">Всегда подключать</option><option value="off">Не запускать автоматически</option></select></label>
         </div></div>
         <div class="workflow-section"><div class="modal-head"><div><strong>Permission policy</strong><div class="workflow-note">Первое совпавшее правило: allow / deny. Ask оставляет стандартную карточку.</div></div><button type="button" id="addPermissionRule">+ правило</button></div><div id="projectPermissionRules" class="workflow-rules"></div></div>
@@ -151,13 +160,21 @@ async function refreshSelectedSession() {
   state.sessionID = id
   state.session = null
   state.directory = ''
-  state.settings = null
-  state.queue = { count:0, items:[], error:null }
+   state.settings = null
+   state.queue = { count:0, items:[], error:null }
   state.question = null
   state.questionKey = ''
+  state.questionDataKey = ''
+  state.questionSource = ''
+  state.questionActionPending = false
+  state.questionDeferred = null
+  state.questionTransport = 'unknown'
+  state.questionRevision += 1
+  state.questionRefreshSeq += 1
   state.questionSelection = []
   state.pendingPermission = null
   state.children = []
+  state.childrenTransport = 'unknown'
   state.childDetails.clear()
   state.attachments = []
   state.attachmentReads = []
@@ -216,8 +233,24 @@ function addRuleRow(rule) {
   $('projectPermissionRules').append(row)
 }
 
+function syncProjectModelOptions() {
+  const select = $('projectDefaultModel')
+  if (!select) return
+  const current = select.value
+  const options = new Map([['inherit', 'Не менять'], ['orchestrated', 'Qwen 3.8 Max · Оркестрированная']])
+  for (const model of state.models || []) {
+    const provider = String(model?.providerID || '')
+    const id = String(model?.id || '')
+    if (!provider || !id || provider === 'ollama') continue
+    options.set(`${provider}/${id}`, `${model?.name || id} · ${provider}`)
+  }
+  select.innerHTML = [...options].map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')
+  select.value = options.has(current) ? current : 'inherit'
+}
+
 function openProjectSettings() {
   if (!state.sessionID || !state.directory) return
+  syncProjectModelOptions()
   const settings = state.settings || DEFAULT_SETTINGS
   $('projectSettingsPath').textContent = state.directory
   $('projectInstructions').value = settings.instructions || ''
@@ -309,9 +342,15 @@ async function interceptSubmit(event) {
   if (!text && !hasAttachmentSurface && !state.attachments.length && !state.attachmentReads.length) return
   event.preventDefault()
   event.stopImmediatePropagation()
-  const files = await awaitAttachments()
-  const profile = currentProfile() === 'orchestrated' ? 'orchestrated' : 'direct'
+  if (state.submitPending) return
+  state.submitPending = true
+  const input = $('input'),action = $('composerAction'),attach = $('attachButton')
+  if (input) { input.value = ''; input.disabled = true; input.dispatchEvent(new Event('input', { bubbles:true })) }
+  if (action) action.disabled = true
+  if (attach) attach.disabled = true
   try {
+    const files = await awaitAttachments()
+    const profile = currentProfile() === 'orchestrated' ? 'orchestrated' : 'direct'
     if (running()) {
       await request('/client-queue.json', { method:'POST', body:JSON.stringify({ sessionID:state.sessionID, text, files, profile }) })
       clearComposer()
@@ -327,7 +366,13 @@ async function interceptSubmit(event) {
     toast('Отправлено', 1300)
     setTimeout(refreshOrchestration, 300)
   } catch (error) {
+    if (input) input.value = text
     toast(`Отправка: ${error.message}`, 6000)
+  } finally {
+    state.submitPending = false
+    if (input) { input.disabled = false; input.dispatchEvent(new Event('input', { bubbles:true })) }
+    if (action) action.disabled = false
+    if (attach) attach.disabled = false
   }
 }
 
@@ -399,55 +444,169 @@ async function moveQueue(index, delta) {
 }
 function openQueueDialog() { renderQueueDialog(); $('queueDialog')?.showModal() }
 
+function normalizeQuestionOptions(options) {
+  return (Array.isArray(options) ? options : []).map((option) => {
+    if (typeof option === 'string') return { label:option, value:option, description:'' }
+    const label = String(option?.label || option?.value || '')
+    return { label, value:String(option?.value ?? label), description:String(option?.description || '') }
+  }).filter((option) => option.label)
+}
+function questionRequestSignature(requestRow) {
+  try {
+    return JSON.stringify({
+      id: requestRow?.id,
+      formID: requestRow?.formID,
+      requestID: requestRow?.requestID,
+      sessionID: requestRow?.sessionID,
+      title: requestRow?.title,
+      questions: requestRow?.questions,
+    })
+  } catch {
+    return String(requestRow?.id || '')
+  }
+}
+function setQuestionRequest(requestRow, source = 'poll') {
+  const key = requestRow ? `${requestRow.sessionID}:${requestRow.id}` : ''
+  const dataKey = requestRow ? questionRequestSignature(requestRow) : ''
+  const identityChanged = key !== state.questionKey
+  const dataChanged = dataKey !== state.questionDataKey
+  if (!identityChanged && !dataChanged) {
+    state.question = requestRow
+    state.questionSource = requestRow ? source : ''
+    return
+  }
+  state.questionKey = key
+  state.questionDataKey = dataKey
+  state.questionSource = requestRow ? source : ''
+  state.question = requestRow
+  state.questionSelection = requestRow ? questionSelectionFor(requestRow) : []
+  renderQuestion()
+  if (requestRow && identityChanged) {
+    notifyAdvanced('OpenCode ждёт выбора', requestRow.questions[0]?.question || 'Нужно выбрать вариант', `question-${requestRow.id}`)
+  }
+}
+function flushDeferredQuestion() {
+  const requestRow = state.questionDeferred
+  state.questionDeferred = null
+  if (requestRow && !state.question) setQuestionRequest(requestRow, 'event')
+}
+export function normalizeQuestionRequest(raw, fallbackSessionID = state.sessionID) {
+  if (!raw || typeof raw !== 'object') return null
+  const embedded = raw.form || raw.request
+  const candidate = embedded && typeof embedded === 'object' && !Array.isArray(embedded) ? embedded : raw
+  const fields = Array.isArray(candidate.fields) ? candidate.fields : Array.isArray(candidate.form) ? candidate.form : Array.isArray(raw.form) ? raw.form : Array.isArray(raw.fields) ? raw.fields : []
+  if (fields.length) {
+    const formID = String(candidate.id || candidate.formID || raw.formID || '')
+    const requestID = String(candidate.requestID || raw.requestID || '')
+    return {
+      id: formID || requestID || String(raw.id || ''),
+      formID,
+      requestID,
+      sessionID: String(candidate.sessionID || raw.sessionID || fallbackSessionID || ''),
+      transport: 'form',
+      title: String(candidate.title || 'Нужен ввод'),
+      raw,
+      questions: fields.map((field, index) => {
+        const type = String(field?.type || 'string').toLowerCase()
+        return {
+          key: String(field?.key || `field_${index + 1}`),
+          header: String(field?.title || field?.key || `Поле ${index + 1}`),
+          question: String(field?.description || field?.title || field?.key || ''),
+          type,
+          required: Boolean(field?.required),
+          custom: ['string', 'text', 'number', 'integer', 'multiselect'].includes(type) && field?.custom !== false,
+          multiple: type === 'multiselect',
+          default: field?.default,
+          minimum: field?.minimum,
+          maximum: field?.maximum,
+          placeholder: String(field?.placeholder || ''),
+          options: normalizeQuestionOptions(field?.options),
+        }
+      }),
+    }
+  }
+  const questions = Array.isArray(candidate.questions) ? [...candidate.questions] : Array.isArray(candidate.question) ? [...candidate.question] : []
+  if (!questions.length && candidate.question && typeof candidate.question === 'string') {
+    questions.push({ question:candidate.question, header:candidate.header, options:candidate.options, multiple:candidate.multiple, custom:candidate.custom })
+  }
+  if (!questions.length) return null
+  const requestID = String(candidate.requestID || raw.requestID || candidate.id || raw.id || '')
+  return {
+    id: requestID,
+    requestID,
+    sessionID: String(candidate.sessionID || raw.sessionID || fallbackSessionID || ''),
+    transport: 'question',
+    title: String(candidate.title || ''),
+    raw,
+    questions: questions.map((question, index) => ({
+      key: String(question?.key || `question_${index + 1}`),
+      header: String(question?.header || `Вопрос ${index + 1}`),
+      question: String(question?.question || question?.text || ''),
+      type: 'string',
+      required: true,
+      custom: question?.custom !== false,
+      multiple: Boolean(question?.multiple),
+      options: normalizeQuestionOptions(question?.options),
+    })),
+  }
+}
+export function questionSelectionFor(request) {
+  return (request?.questions || []).map((question) => {
+    const selected = new Set()
+    let custom = ''
+    const value = question?.default
+    if (question?.multiple && Array.isArray(value)) {
+      value.forEach((item) => selected.add(String(item)))
+    } else if (value !== undefined && value !== null) {
+      const text = String(value)
+      if (question?.options?.some((option) => option.value === text)) selected.add(text)
+      else custom = text
+    }
+    return { selected, custom }
+  })
+}
 async function questionRequests() {
-  if (!state.sessionID || !state.directory) return []
+  if (!state.sessionID) return []
   const q = workspaceQuery()
-  for (const endpoint of [`/api/question/request${q ? `?${q}` : ''}`, `/api/question${q ? `?${q}` : ''}`]) {
+  if (state.questionTransport !== 'question' && state.questionTransport !== 'unsupported') {
     try {
-      const value = dataOf(await request(endpoint))
-      if (Array.isArray(value)) return value.filter((item) => !item?.sessionID || item.sessionID === state.sessionID)
+      const value = dataOf(await request(`/api/form/request${q ? `?${q}` : ''}`))
+      state.questionTransport = 'form'
+      return Array.isArray(value) ? value.map((item) => normalizeQuestionRequest(item)).filter((item) => item && item.sessionID === state.sessionID) : []
+    } catch (error) {
+      if (![404,405].includes(error.status)) {
+        console.debug('form endpoint', error)
+        return []
+      }
+      state.questionTransport = 'question'
+    }
+  }
+  if (state.questionTransport !== 'unsupported') {
+    try {
+      const value = dataOf(await request(`/api/question${q ? `?${q}` : ''}`))
+      state.questionTransport = 'question'
+      return Array.isArray(value) ? value.map((item) => normalizeQuestionRequest(item)).filter((item) => item && item.sessionID === state.sessionID) : []
     } catch (error) {
       if (![404,405].includes(error.status)) console.debug('question endpoint', error)
+      else state.questionTransport = 'unsupported'
     }
   }
   return []
-}
-function normalizeQuestionRequest(raw) {
-  if (!raw || typeof raw !== 'object') return null
-  const questions = Array.isArray(raw.questions) ? [...raw.questions] : Array.isArray(raw.question) ? [...raw.question] : []
-  if (!questions.length && raw.question && typeof raw.question === 'string') {
-    questions.push({ question:raw.question, header:raw.header, options:raw.options, multiple:raw.multiple })
-  }
-  if (!questions.length) return null
-  return {
-    id: String(raw.requestID || raw.id || ''),
-    sessionID: String(raw.sessionID || state.sessionID || ''),
-    questions: questions.map((question, index) => ({
-      header: String(question?.header || `Вопрос ${index + 1}`),
-      question: String(question?.question || question?.text || ''),
-      multiple: Boolean(question?.multiple),
-      options: (Array.isArray(question?.options) ? question.options : []).map((option) => typeof option === 'string' ? { label:option, description:'' } : { label:String(option?.label || option?.value || ''), description:String(option?.description || '') }).filter((option) => option.label),
-    })),
-  }
 }
 async function refreshQuestions() {
   if (!state.sessionID) {
     if (state.questionKey) { state.question = null; state.questionKey = ''; renderQuestion() }
     return
   }
+  const sessionID = state.sessionID
+  const revision = state.questionRevision
+  const refreshSeq = ++state.questionRefreshSeq
   try {
     const requests = await questionRequests()
-    const requestRow = requests.map(normalizeQuestionRequest).find((item) => item?.id) || null
-    const key = requestRow ? `${requestRow.sessionID}:${requestRow.id}` : ''
-    if (key !== state.questionKey) {
-      state.questionKey = key
-      state.question = requestRow
-      state.questionSelection = requestRow ? requestRow.questions.map(() => ({ selected:new Set(), custom:'' })) : []
-      renderQuestion()
-      if (requestRow) notifyAdvanced('OpenCode ждёт выбора', requestRow.questions[0]?.question || 'Нужно выбрать вариант', `question-${requestRow.id}`)
-    } else {
-      state.question = requestRow
-    }
+    if (state.sessionID !== sessionID || state.questionRevision !== revision || state.questionRefreshSeq !== refreshSeq) return
+    const requestRow = requests.find((item) => item?.id) || null
+    if (!requestRow && state.questionSource === 'event') return
+    setQuestionRequest(requestRow, 'poll')
   } catch {}
 }
 function renderQuestion() {
@@ -456,16 +615,17 @@ function renderQuestion() {
   const requestRow = state.question
   host.hidden = !requestRow
   if (!requestRow) { host.innerHTML = ''; return }
-  host.innerHTML = `<div class="question-card"><div class="question-head"><div><div class="question-kicker">Нужен твой выбор</div><div class="question-title">${escapeHtml(requestRow.questions.length > 1 ? `Вопросов: ${requestRow.questions.length}` : requestRow.questions[0].header)}</div></div><button class="question-close" type="button" data-question-reject title="Отклонить вопрос">×</button></div><div class="question-sections">${requestRow.questions.map((question, qIndex) => `<div class="question-section ${question.multiple ? 'multiple' : ''}" data-question-index="${qIndex}"><div><div class="question-kicker">${escapeHtml(question.header)}</div><div class="question-section-title">${escapeHtml(question.question)}</div></div><div class="question-options">${question.options.map((option, oIndex) => `<button type="button" class="question-option" data-question-option="${qIndex}:${oIndex}"><span class="question-option-mark"></span><span class="question-option-text"><span class="question-option-label">${escapeHtml(option.label)}</span>${option.description ? `<span class="question-option-description">${escapeHtml(option.description)}</span>` : ''}</span></button>`).join('')}</div><div class="question-custom"><input data-question-custom="${qIndex}" value="${escapeHtml(state.questionSelection[qIndex]?.custom || '')}" placeholder="Свой вариант…"><button type="button" data-question-custom-use="${qIndex}">Использовать</button></div></div>`).join('')}</div><div class="question-actions"><button type="button" data-question-reject>Отмена</button><button type="button" class="primary" data-question-submit>Продолжить</button></div></div>`
+  host.innerHTML = `<div class="question-card"><div class="question-head"><div><div class="question-kicker">Нужен твой выбор</div><div class="question-title">${escapeHtml(requestRow.title || (requestRow.questions.length > 1 ? `Вопросов: ${requestRow.questions.length}` : requestRow.questions[0].header))}</div></div><button class="question-close" type="button" data-question-reject title="Отклонить вопрос">×</button></div><div class="question-sections">${requestRow.questions.map((question, qIndex) => `<div class="question-section ${question.multiple ? 'multiple' : ''}" data-question-index="${qIndex}"><div><div class="question-kicker">${escapeHtml(question.header)}</div><div class="question-section-title">${escapeHtml(question.question)}</div></div><div class="question-options">${question.options.map((option, oIndex) => `<button type="button" class="question-option" data-question-option="${qIndex}:${oIndex}"><span class="question-option-mark"></span><span class="question-option-text"><span class="question-option-label">${escapeHtml(option.label)}</span>${option.description ? `<span class="question-option-description">${escapeHtml(option.description)}</span>` : ''}</span></button>`).join('')}</div>${question.type === 'boolean' ? `<div class="question-custom question-boolean"><label for="question-boolean-${qIndex}">Значение</label><select id="question-boolean-${qIndex}" data-question-boolean="${qIndex}"><option value="">Выбрать…</option><option value="true" ${state.questionSelection[qIndex]?.custom === 'true' ? 'selected' : ''}>Да</option><option value="false" ${state.questionSelection[qIndex]?.custom === 'false' ? 'selected' : ''}>Нет</option></select></div>` : question.custom !== false ? `<div class="question-custom"><input data-question-custom="${qIndex}" type="${['number','integer'].includes(question.type) ? 'number' : 'text'}" ${question.type === 'integer' ? 'step="1"' : question.type === 'number' ? 'step="any"' : ''} ${question.minimum !== undefined ? `min="${escapeHtml(question.minimum)}"` : ''} ${question.maximum !== undefined ? `max="${escapeHtml(question.maximum)}"` : ''} value="${escapeHtml(state.questionSelection[qIndex]?.custom || '')}" placeholder="${escapeHtml(question.placeholder || 'Свой вариант…')}"><button type="button" data-question-custom-use="${qIndex}">Использовать</button></div>` : ''}</div>`).join('')}</div><div class="question-actions"><button type="button" data-question-reject>Отмена</button><button type="button" class="primary" data-question-submit>Продолжить</button></div></div>`
   for (let qIndex = 0; qIndex < requestRow.questions.length; qIndex++) syncQuestionSection(qIndex)
   host.querySelectorAll('[data-question-option]').forEach((button) => button.addEventListener('click', () => {
     const [qIndexText, optionIndexText] = button.dataset.questionOption.split(':')
     const qIndex = Number(qIndexText), optionIndex = Number(optionIndexText)
     const question = requestRow.questions[qIndex], selection = state.questionSelection[qIndex]
-    const label = question.options[optionIndex]?.label
-    if (!label) return
+    const option = question.options[optionIndex]
+    const value = option?.value || option?.label
+    if (!value) return
     if (!question.multiple) selection.selected.clear()
-    selection.selected.has(label) ? selection.selected.delete(label) : selection.selected.add(label)
+    selection.selected.has(value) ? selection.selected.delete(value) : selection.selected.add(value)
     if (!question.multiple && selection.selected.size) {
       selection.custom = ''
       const input = host.querySelector(`[data-question-custom="${qIndex}"]`)
@@ -479,8 +639,9 @@ function renderQuestion() {
     if (input.value.trim() && !requestRow.questions[qIndex].multiple) state.questionSelection[qIndex].selected.clear()
     syncQuestionSection(qIndex)
   }))
-  host.querySelectorAll('[data-question-custom-use]').forEach((button) => button.addEventListener('click', () => {
-    host.querySelector(`[data-question-custom="${Number(button.dataset.questionCustomUse)}"]`)?.focus()
+  host.querySelectorAll('[data-question-boolean]').forEach((input) => input.addEventListener('change', () => {
+    const qIndex = Number(input.dataset.questionBoolean)
+    state.questionSelection[qIndex].custom = input.value
   }))
   host.querySelector('[data-question-submit]')?.addEventListener('click', submitQuestion)
   host.querySelectorAll('[data-question-reject]').forEach((button) => button.addEventListener('click', rejectQuestion))
@@ -492,15 +653,46 @@ function syncQuestionSection(qIndex) {
   if (!host || !question || !selection) return
   host.querySelectorAll(`[data-question-option^="${qIndex}:"]`).forEach((button) => {
     const optionIndex = Number(button.dataset.questionOption.split(':')[1])
-    const selected = selection.selected.has(question.options[optionIndex]?.label)
+    const selected = selection.selected.has(question.options[optionIndex]?.value || question.options[optionIndex]?.label)
     button.classList.toggle('selected', selected)
     button.querySelector('.question-option-mark').textContent = selected ? '✓' : ''
   })
 }
-function questionAnswers() {
-  return (state.question?.questions || []).map((question, index) => {
-    const selection = state.questionSelection[index]
-    const values = [...selection.selected]
+export function formQuestionValue(question, selection) {
+  const values = [...(selection?.selected || [])]
+  const custom = String(selection?.custom || '').trim()
+  if (question.multiple) {
+    if (custom && !values.includes(custom)) values.push(custom)
+    return values.length ? values : undefined
+  }
+  let value = custom || values[0]
+  if (value === undefined || value === '') return undefined
+  if (question.type === 'number' || question.type === 'integer') {
+    const number = Number(value)
+    if (!Number.isFinite(number) || (question.type === 'integer' && !Number.isInteger(number))) return undefined
+    if (question.minimum !== undefined && number < Number(question.minimum)) return undefined
+    if (question.maximum !== undefined && number > Number(question.maximum)) return undefined
+    return number
+  }
+  if (question.type === 'boolean') {
+    if (/^(true|yes|1)$/i.test(String(value))) return true
+    if (/^(false|no|0)$/i.test(String(value))) return false
+    return undefined
+  }
+  return value
+}
+export function questionAnswers(request = state.question, selections = state.questionSelection) {
+  if (request?.transport === 'form') {
+    const answer = {}
+    request.questions.forEach((question, index) => {
+      const value = formQuestionValue(question, selections[index])
+      if (value !== undefined) answer[question.key] = value
+    })
+    return answer
+  }
+  return (request?.questions || []).map((question, index) => {
+    const selection = selections[index] || { selected:new Set(), custom:'' }
+    const values = [...(selection.selected || [])]
     const custom = String(selection.custom || '').trim()
     if (custom) {
       if (!question.multiple) return [custom]
@@ -509,52 +701,108 @@ function questionAnswers() {
     return values
   })
 }
+export function questionAnswersMissing(answers, request = state.question) {
+  if (request?.transport === 'form') {
+    return request.questions.some((question) => question.required && !Object.prototype.hasOwnProperty.call(answers, question.key))
+  }
+  return answers.some((row) => !row.length)
+}
 async function submitQuestion() {
   if (!state.question) return
-  const answers = questionAnswers()
-  if (answers.some((row) => !row.length)) { toast('Нужно ответить на каждый вопрос'); return }
-  const sid = state.question.sessionID || state.sessionID
-  const qid = state.question.id
+  const requestRow = state.question
+  const requestKey = state.questionKey
+  const answers = questionAnswers(requestRow, state.questionSelection)
+  if (questionAnswersMissing(answers, requestRow)) { toast('Нужно ответить на каждый вопрос'); return }
+  const qid = requestRow.formID || requestRow.requestID || requestRow.id
   const q = workspaceQuery()
-  const attempts = [
-    [`/api/session/${encodeURIComponent(sid)}/question/request/${encodeURIComponent(qid)}/reply`, { answers }],
-    [`/api/session/${encodeURIComponent(sid)}/question/request/${encodeURIComponent(qid)}/reply`, { response:{ answers } }],
-    [`/api/question/${encodeURIComponent(qid)}/reply${q ? `?${q}` : ''}`, { answers }],
-  ]
-  let lastError
-  for (const [path, body] of attempts) {
-    try {
-      await request(path, { method:'POST', body:JSON.stringify(body) })
-      state.question = null
-      state.questionKey = ''
-      renderQuestion()
+  state.questionActionPending = true
+  try {
+    const sid = encodeURIComponent(requestRow.sessionID || state.sessionID)
+    const target = requestRow.transport === 'form'
+      ? `/api/session/${sid}/form/${encodeURIComponent(qid)}/reply`
+      : `/api/question/${encodeURIComponent(qid)}/reply${q ? `?${q}` : ''}`
+    const body = requestRow.transport === 'form' ? { answer:answers } : { answers }
+    await request(target, { method:'POST', body:JSON.stringify(body) })
+    if (state.questionKey !== requestKey) {
+      state.questionActionPending = false
+      flushDeferredQuestion()
       toast('Ответ отправлен')
       return
-    } catch (error) {
-      lastError = error
-      if (![400,404,405,422].includes(error.status)) break
     }
+    state.questionActionPending = false
+    state.questionRevision += 1
+    setQuestionRequest(null)
+    flushDeferredQuestion()
+    toast('Ответ отправлен')
+  } catch (error) {
+    state.questionActionPending = false
+    state.questionDeferred = null
+    toast(`Ответ: ${error.message || 'не удалось отправить'}`, 6000)
   }
-  toast(`Ответ: ${lastError?.message || 'не удалось отправить'}`, 6000)
 }
 async function rejectQuestion() {
   if (!state.question) return
-  const sid = state.question.sessionID || state.sessionID
-  const qid = state.question.id
+  const requestRow = state.question
+  const requestKey = state.questionKey
+  const qid = requestRow.formID || requestRow.requestID || requestRow.id
   const q = workspaceQuery()
-  for (const path of [`/api/session/${encodeURIComponent(sid)}/question/request/${encodeURIComponent(qid)}/reject`, `/api/question/${encodeURIComponent(qid)}/reject${q ? `?${q}` : ''}`]) {
-    try {
-      await request(path, { method:'POST', body:'{}' })
-      state.question = null
-      state.questionKey = ''
-      renderQuestion()
+  state.questionActionPending = true
+  try {
+    const sid = encodeURIComponent(requestRow.sessionID || state.sessionID)
+    const target = requestRow.transport === 'form'
+      ? `/api/session/${sid}/form/${encodeURIComponent(qid)}/cancel`
+      : `/api/question/${encodeURIComponent(qid)}/reject${q ? `?${q}` : ''}`
+    await request(target, { method:'POST', body:'{}' })
+    if (state.questionKey !== requestKey) {
+      state.questionActionPending = false
+      flushDeferredQuestion()
       toast('Вопрос отклонён')
       return
-    } catch (error) {
-      if (![400,404,405].includes(error.status)) break
     }
+    state.questionActionPending = false
+    state.questionRevision += 1
+    setQuestionRequest(null)
+    flushDeferredQuestion()
+    toast('Вопрос отклонён')
+  } catch (error) {
+    state.questionActionPending = false
+    state.questionDeferred = null
+    toast(`Вопрос: ${error.message || 'не удалось отклонить'}`, 6000)
   }
-  toast('Не удалось отклонить вопрос')
+}
+
+function handleQuestionEvent(payload) {
+  const type = String(payload?.type || '')
+  const asked = ['question.asked', 'question.v2.asked', 'form.asked', 'form.created', 'form.requested'].includes(type)
+  const settled = ['question.replied', 'question.rejected', 'question.v2.replied', 'question.v2.rejected', 'form.replied', 'form.rejected', 'form.cancelled'].includes(type)
+  if (!asked && !settled) return
+  const data = payload.properties || payload.data || {}
+  const candidate = data.form || data.request || data
+  const sessionID = candidate.sessionID || data.sessionID
+  if (String(sessionID || '') !== String(state.sessionID || '')) return
+  state.questionRevision += 1
+  if (asked) {
+    const requestRow = normalizeQuestionRequest(data, sessionID)
+    if (!requestRow?.id) { refreshQuestions(); return }
+    const nextKey = `${requestRow.sessionID}:${requestRow.id}`
+    if (state.question && state.questionKey && nextKey !== state.questionKey) {
+      if (state.questionActionPending) state.questionDeferred = requestRow
+      return
+    }
+    setQuestionRequest(requestRow, 'event')
+    return
+  }
+   const requestIDs = [data.requestID, data.formID, candidate.requestID, candidate.formID, candidate.id].map((value) => String(value || '')).filter(Boolean)
+   const activeIDs = [state.question?.id, state.question?.formID, state.question?.requestID].map((value) => String(value || '')).filter(Boolean)
+   if (!requestIDs.length || requestIDs.some((id) => activeIDs.includes(id))) {
+    state.question = null
+    state.questionKey = ''
+    state.questionDataKey = ''
+    state.questionSource = ''
+    state.questionSelection = []
+    renderQuestion()
+  }
+  refreshQuestions()
 }
 
 async function refreshPermission() {
@@ -601,10 +849,15 @@ function childStatus(value) {
 async function refreshOrchestration() {
   if (!state.sessionID) return
   let children = []
-  try {
-    const value = dataOf(await request(`/api/session/${encodeURIComponent(state.sessionID)}/children`))
-    if (Array.isArray(value)) children = value
-  } catch {}
+  if (state.childrenTransport !== 'unsupported') {
+    try {
+      const value = dataOf(await request(`/api/session/${encodeURIComponent(state.sessionID)}/children`))
+      state.childrenTransport = 'supported'
+      if (Array.isArray(value)) children = value
+    } catch (error) {
+      if ([404,405].includes(error.status)) state.childrenTransport = 'unsupported'
+    }
+  }
   if (!children.length) {
     try {
       const value = dataOf(await request('/api/session?limit=200&order=desc'))
@@ -628,13 +881,20 @@ async function refreshOrchestration() {
 function renderOrchestration(statuses = {}) {
   const host = $('orchestrationTrace')
   if (!host) return
+  const wasOpen = host.querySelector('details')?.open === true
   const children = state.children || []
   const visible = currentProfile() === 'orchestrated' || children.length > 0
   host.hidden = !state.sessionID || !visible
   if (host.hidden) { host.innerHTML = ''; return }
   const rootModel = $('modelButton')?.textContent || state.session?.model?.id || 'Primary'
   const rootStatus = running() ? 'running' : 'done'
-  const nodes = [`<div class="orchestration-node ${rootStatus}"><span class="node-icon"></span><div class="node-main"><div class="node-title">${escapeHtml(rootModel)}</div><div class="node-meta">${escapeHtml(currentMode())} · primary</div></div><span class="node-time">${state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''}</span></div>`]
+  const childStates = children.map((child) => childStatus(statuses?.[child?.id]))
+  const runningChildren = childStates.filter((status) => status === 'running').length
+  const errorChildren = childStates.filter((status) => status === 'error').length
+  const panelStatus = running() || runningChildren ? 'running' : errorChildren ? 'error' : 'done'
+  const panelStatusLabel = panelStatus === 'running' ? 'В работе' : panelStatus === 'error' ? 'Есть ошибки' : 'Готово'
+  const panelMeta = `${children.length ? `${children.length} подзадач` : 'primary'}${children.some((child) => state.childDetails.get(child.id)?.rag) ? ' · RAG ✓' : ''}`
+  const nodes = [`<div class="orchestration-node primary-node ${rootStatus}"><span class="node-icon"></span><div class="node-main"><div class="node-title">${escapeHtml(rootModel)}</div><div class="node-meta">${escapeHtml(currentMode())} · primary</div></div><span class="node-time">${state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''}</span></div>`]
   for (const child of children) {
     const id = child?.id || ''
     const status = childStatus(statuses?.[id])
@@ -643,9 +903,10 @@ function renderOrchestration(statuses = {}) {
     const detail = state.childDetails.get(id) || {}
     const created = child?.time?.created || child?.createdAt || 0
     const updated = child?.time?.updated || child?.updatedAt || Date.now()
-    nodes.push(`<div class="orchestration-node ${detail.error ? 'error' : status}"><span class="node-icon"></span><div class="node-main"><div class="node-title">${escapeHtml(agent)}</div><div class="node-meta">${escapeHtml(typeof model === 'string' ? model : JSON.stringify(model))}${detail.rag ? ' · RAG ✓' : ''}</div></div><span class="node-time">${created ? fmtDuration(Math.max(0, updated - created)) : ''}</span></div>`)
+    nodes.push(`<div class="orchestration-node child-node ${detail.error ? 'error' : status}"><span class="node-icon"></span><div class="node-main"><div class="node-title">${escapeHtml(agent)}</div><div class="node-meta">${escapeHtml(typeof model === 'string' ? model : JSON.stringify(model))}${detail.rag ? ' · RAG ✓' : ''}</div></div><span class="node-time">${created ? fmtDuration(Math.max(0, updated - created)) : ''}</span></div>`)
   }
-  host.innerHTML = `<details><summary>Оркестрация · ${children.length ? `${children.length} подзадач` : 'primary'}${children.some((child) => state.childDetails.get(child.id)?.rag) ? ' · RAG ✓' : ''}</summary><div class="orchestration-nodes">${nodes.join('')}</div></details>`
+  host.innerHTML = `<details><summary class="orchestration-summary"><span class="orchestration-summary-mark ${panelStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>Оркестрация</strong><span>${panelMeta}</span></span><span class="orchestration-summary-status ${panelStatus}">${panelStatusLabel}</span></summary><div class="orchestration-nodes">${nodes.join('')}</div></details>`
+  if (wasOpen) host.querySelector('details').open = true
 }
 
 function usageCost() {
@@ -764,13 +1025,23 @@ async function revertReviewHunk(fileIndex, hunkIndex) {
 
 async function notifyAdvanced(title, body, tag) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return
-  try {
-    const registration = await navigator.serviceWorker?.ready
-    const data = { url:state.sessionID ? `/#/session/${encodeURIComponent(state.sessionID)}` : '/' }
-    if (registration?.showNotification) {
+  const data = { url:state.sessionID ? `/#/session/${encodeURIComponent(state.sessionID)}` : '/' }
+  // `ready` never settles when the service worker failed to register; race it
+  // with a short timeout instead of awaiting forever.
+  const registration = 'serviceWorker' in navigator
+    ? await Promise.race([
+        navigator.serviceWorker.ready.catch(() => null),
+        new Promise((resolve) => setTimeout(() => resolve(null), 1500)),
+      ]).catch(() => null)
+    : null
+  if (registration?.showNotification) {
+    try {
       await registration.showNotification(title, { body, tag, data, actions:[{ action:'open', title:'Открыть' }, { action:'dismiss', title:'Закрыть' }] })
-    }
-  } catch {}
+      return
+    } catch {}
+  }
+  // `actions` is only valid for service-worker notifications.
+  try { new Notification(title, { body, tag, data }) } catch {}
 }
 
 function observeRuntime() {
@@ -800,6 +1071,8 @@ function observeRuntime() {
 
 function bindEvents() {
   window.addEventListener('hashchange', refreshSelectedSession)
+  window.addEventListener('custom-opencode:session-selected', () => refreshSelectedSession())
+  window.addEventListener('custom-opencode:event', (event) => handleQuestionEvent(event.detail))
   $('form')?.addEventListener('submit', interceptSubmit, true)
   $('fileInput')?.addEventListener('change', (event) => captureFiles(event.target.files), true)
   $('input')?.addEventListener('paste', (event) => {
@@ -813,6 +1086,10 @@ function bindEvents() {
       if (Number.isInteger(index) && index >= 0) state.attachments.splice(index, 1)
     }
   }, true)
+  document.addEventListener('click', (event) => {
+    const host = $('orchestrationTrace')
+    if (host && !host.contains(event.target)) host.querySelector('details')?.removeAttribute('open')
+  })
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
       refreshSelectedSession()
@@ -841,4 +1118,4 @@ function init() {
   setInterval(() => { if (state.sessionID) { renderStatus(); renderOrchestration() } }, 1000)
 }
 
-init()
+if (typeof document !== 'undefined') init()

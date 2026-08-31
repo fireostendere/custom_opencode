@@ -39,6 +39,10 @@ export async function listSessions() {
   return sessions
 }
 
+export async function getSession(sessionID) {
+  return dataOf(await request(`/api/session/${encodeURIComponent(sessionID)}`))
+}
+
 export async function sessionStatuses() {
   try { return dataOf(await request('/api/session/active')) || {} }
   catch {

@@ -64,6 +64,16 @@ export function compareProviderGroups(a, b) {
     || String(a.label || a.id || '').localeCompare(String(b.label || b.id || ''), 'ru', { sensitivity:'base', numeric:true })
 }
 
+function providerPriority(group) {
+  if (group.id === '__favorites__') return -1
+  if (group.id === '__free__') return 2
+  const value = `${group.id} ${group.label}`.toLowerCase()
+  if (/bailian|alibaba/.test(value)) return 0
+  if (/openai/.test(value)) return 1
+  if (/local|ollama|lm ?studio|llama ?cpp/.test(value)) return 3
+  return 4
+}
+
 function providerLabelsFromFlatList(root) {
   const labels = new Map()
   let heading = ''
@@ -116,13 +126,12 @@ function providerSection({ id, label, entries, collapsed, providerLabels, orches
   section.className = 'model-provider-section'
   section.dataset.providerSection = id
 
-  const favoriteCount = entries.filter((entry) => entry.favorite).length
   const toggle = document.createElement('button')
   toggle.type = 'button'
   toggle.className = 'model-provider-toggle'
   toggle.dataset.providerToggle = id
   toggle.setAttribute('aria-expanded', String(!collapsed.has(id)))
-  toggle.innerHTML = `<span class="model-provider-chevron">${collapsed.has(id) ? '›' : '⌄'}</span><strong>${escapeHtml(label)}</strong>${favoriteCount ? `<span class="model-provider-favorites">★ ${favoriteCount}</span>` : ''}<span class="model-provider-count">${entries.length + (orchestrated ? 1 : 0)}</span>`
+  toggle.innerHTML = `<span class="model-provider-chevron" aria-hidden="true"></span><strong>${escapeHtml(label)}</strong><span class="model-provider-count">${entries.length + (orchestrated ? 1 : 0)}</span>`
 
   const body = document.createElement('div')
   body.className = 'model-provider-body'
@@ -139,7 +148,7 @@ function providerSection({ id, label, entries, collapsed, providerLabels, orches
 
   for (const entry of sortChoices(entries)) {
     const meta = entry.button.querySelector('.choice-meta')
-    if (id === '__free__' && meta && !meta.querySelector('.model-provider-label')) {
+    if ((id === '__favorites__' || id === '__free__') && meta && !meta.querySelector('.model-provider-label')) {
       const provider = document.createElement('span')
       provider.className = 'model-provider-label'
       provider.textContent = providerLabels.get(entry.button.dataset.provider) || entry.button.dataset.provider
@@ -152,7 +161,6 @@ function providerSection({ id, label, entries, collapsed, providerLabels, orches
     const next = !body.hidden
     body.hidden = next
     toggle.setAttribute('aria-expanded', String(!next))
-    toggle.querySelector('.model-provider-chevron').textContent = next ? '›' : '⌄'
     const current = loadSet(COLLAPSE_KEY)
     if (next) current.add(id); else current.delete(id)
     localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...current]))
@@ -197,16 +205,6 @@ async function decorateModelChoices() {
     }
 
     root.replaceChildren()
-    if (freeEntries.length) {
-      root.append(providerSection({
-        id: '__free__',
-        label: 'Бесплатные модели',
-        entries: freeEntries,
-        collapsed,
-        providerLabels,
-      }))
-    }
-
     const providerGroups = [...byProvider.entries()].map(([id, providerEntries]) => ({
       id,
       entries: providerEntries,
@@ -214,7 +212,24 @@ async function decorateModelChoices() {
       favoriteCount: providerEntries.filter((entry) => entry.favorite).length,
     })).sort(compareProviderGroups)
 
-    for (const group of providerGroups) {
+    const sections = []
+    const favoriteEntries = entries.filter((entry) => entry.favorite)
+    if (favoriteEntries.length) sections.push({
+      id: '__favorites__',
+      label: 'Избранное',
+      entries: favoriteEntries.map((entry) => ({ ...entry, button: entry.button.cloneNode(true) })),
+      favoriteCount: favoriteEntries.length,
+    })
+    if (freeEntries.length) sections.push({
+      id: '__free__',
+      label: 'Бесплатные модели',
+      entries: freeEntries,
+      favoriteCount: freeEntries.filter((entry) => entry.favorite).length,
+    })
+    sections.push(...providerGroups)
+    sections.sort((a, b) => providerPriority(a) - providerPriority(b) || compareProviderGroups(a, b))
+
+    for (const group of sections) {
       const hasDedicatedOrchestrated = group.entries.some((entry) => entry.key === 'bailian-cli/qwen3.8-orchestrated')
       root.append(providerSection({
         id: group.id,
@@ -266,6 +281,8 @@ function ensureProjectBrowser() {
   $('browseProjects').addEventListener('click', openProjectBrowser)
 }
 
+let directoryBrowseSeq = 0
+
 function renderDirectorySnapshot(snapshot) {
   const browser = $('projectBrowser')
   if (!browser) return
@@ -291,9 +308,11 @@ function renderDirectorySnapshot(snapshot) {
 
 async function browseDirectory(path) {
   const browser = $('projectBrowser')
+  const requestSeq = ++directoryBrowseSeq
   if (browser) browser.innerHTML = '<div class="loading">Загрузка…</div>'
   const query = path ? `?path=${encodeURIComponent(path)}` : ''
   const snapshot = await request(`/client-directories.json${query}`)
+  if (requestSeq !== directoryBrowseSeq) return
   if (!path && snapshot?.roots?.length === 1) {
     await browseDirectory(snapshot.roots[0].path)
     return

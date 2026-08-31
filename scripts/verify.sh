@@ -66,6 +66,7 @@ for file in "$ROOT/app/"*.js "$ROOT/config/events.js" "$ROOT/config/plugins/"*.j
   "$NODE" --check "$file"
 done
 "$NODE" "$ROOT/scripts/web-smoke.mjs"
+"$NODE" "$ROOT/scripts/session-transfer-smoke.mjs"
 "$PYTHON3" "$ROOT/scripts/limits-smoke.py"
 "$PYTHON3" "$ROOT/scripts/rag-start-smoke.py"
 "$PYTHON3" "$ROOT/scripts/runtime-smoke.py"
@@ -116,8 +117,9 @@ bad: list[str] = []
 index = (root / "app/index.html").read_text(encoding="utf-8")
 required_web = [
     "styles.css", "api.js", "markdown.js", "app.js", "enhancements.css",
-    "enhancements.js", "ui-enhancements.css", "ui-enhancements.js", "doctor.js",
-    "doctor.css", "rag-control.js", "sw.js", "server.py", "server_ext.py",
+    "enhancements.js", "ui-enhancements.css", "ui-enhancements.js", "rag-control.js",
+    "design-system.css", "sidebar-resize.js",
+    "sw.js", "server.py", "server_ext.py",
     "server_plus.py", "server_rag.py", "server_features.py", "server_control.py",
     "server_workflow.py", "server_runtime.py", "runtime_store.py", "model_registry.py",
     "repo_services.py", "runtime_resume.py", "runtime-dashboard.js", "runtime-dashboard.css",
@@ -131,13 +133,13 @@ for script in (
     '<script type="module" src="/enhancements.js"></script>',
     '<script type="module" src="/ui-enhancements.js"></script>',
     '<script type="module" src="/runtime-dashboard.js"></script>',
-    '<script type="module" src="/doctor.js"></script>',
+    '<script type="module" src="/sidebar-resize.js"></script>',
 ):
     if script not in index:
         bad.append(f"index.html missing module: {script}")
 if index.find('/rag-control.js') > index.find('/enhancements.js'):
     bad.append("rag-control.js must load before enhancements.js so /rag-start intercepts native slash submission")
-for css in ("/enhancements.css", "/ui-enhancements.css", "/doctor.css", "/runtime-dashboard.css"):
+for css in ("/enhancements.css", "/ui-enhancements.css", "/runtime-dashboard.css", "/design-system.css"):
     if f'href="{css}"' not in index:
         bad.append(f"index.html missing stylesheet: {css}")
 if 'id="providerLimits"' not in index or 'id="slashPalette"' not in index:

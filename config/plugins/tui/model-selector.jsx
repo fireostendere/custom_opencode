@@ -4,7 +4,7 @@
  * Overrides the built-in `model.list` command while keeping the native
  * `context.ui.dialog.select` implementation for filtering, keyboard and
  * mouse navigation. Models are grouped deterministically:
- *   Current → Recent → Alibaba → OpenAI → Orchestrated → Free → Others
+ *   Current → Favorites → Recent → Alibaba → OpenAI → Orchestrated → Free → Others
  * "Orchestrated" is the provider-pinned role routing stack (see
  * ORCHESTRATED_MODELS), kept separate from the remaining Alibaba models.
  *
@@ -18,9 +18,10 @@
  * Free → Others → Recent (empty categories are skipped, "Current" is
  * never a jump target).
  *
- * From the home screen (no session) the dialog highlights the directory
- * default model, and choosing a model creates the first session with the
- * selected model and its saved variant.
+ * From the home screen (no session) the dialog highlights the last selected
+ * model (most recent valid entry of the local recent list) and falls back to
+ * the directory default model; choosing a model creates the first session
+ * with the selected model and its saved variant.
  */
 import { Plugin } from "@opencode-ai/plugin/tui"
 
@@ -83,13 +84,13 @@ function key(model) {
   return `${model.providerID}/${model.id}`
 }
 
-function option(model, providerNames, category) {
+function option(model, providerNames, category, favorite = false) {
   return {
-    title: model.name,
+    title: `${favorite ? "★ " : ""}${model.name}`,
     value: { providerID: model.providerID, modelID: model.id },
     description: providerNames[model.providerID] || model.providerID,
     category,
-    disabled: model.status === "deprecated",
+    disabled: !model.enabled || model.status === "deprecated",
   }
 }
 
@@ -97,18 +98,31 @@ function byName(a, b) {
   return a.title.localeCompare(b.title)
 }
 
-function buildOptions(models, providerNames, recentEntries, current) {
+function buildOptions(models, providerNames, recentEntries, current, favoriteEntries = []) {
   const options = []
   const seen = new Set()
+  const categorized = new Set()
+  const favoriteKeys = new Set(
+    favoriteEntries.map((entry) => `${entry.providerID}/${entry.modelID}`),
+  )
 
   if (current) {
     const currentKey = `${current.providerID}/${current.modelID}`
     const currentModel = models.find((model) => key(model) === currentKey)
     if (currentModel) {
       seen.add(currentKey)
-      options.push(option(currentModel, providerNames, "Current"))
+      options.push(option(currentModel, providerNames, "Current", favoriteKeys.has(currentKey)))
     }
   }
+
+  // Disabled favorites stay listed (marked disabled) so they can still be
+  // removed via the favorite toggle instead of disappearing silently.
+  options.push(
+    ...models
+      .filter((model) => favoriteKeys.has(key(model)))
+      .map((model) => option(model, providerNames, "Favorites", true))
+      .sort(byName),
+  )
 
   for (const recent of recentEntries) {
     const model = models.find(
@@ -118,7 +132,7 @@ function buildOptions(models, providerNames, recentEntries, current) {
     )
     if (!model || !model.enabled || seen.has(key(model))) continue
     seen.add(key(model))
-    options.push(option(model, providerNames, "Recent"))
+    options.push(option(model, providerNames, "Recent", favoriteKeys.has(key(model))))
   }
 
   const takeSorted = (category, predicate, sortFn = byName) => {
@@ -126,12 +140,14 @@ function buildOptions(models, providerNames, recentEntries, current) {
       .filter(
         (model) =>
           model.enabled &&
-          !seen.has(key(model)) &&
+          !categorized.has(key(model)) &&
+          (!seen.has(key(model)) || favoriteKeys.has(key(model))) &&
           predicate(model),
       )
       .map((model) => {
         seen.add(key(model))
-        return option(model, providerNames, category)
+        categorized.add(key(model))
+        return option(model, providerNames, category, favoriteKeys.has(key(model)))
       })
       .sort(sortFn)
     options.push(...items)
@@ -200,6 +216,14 @@ export default Plugin.define({
         },
       },
     )
+    const [favorites, updateFavorites] = context.storage.store(
+      "model-selector.favorites",
+      {
+        initial: {
+          models: [],
+        },
+      },
+    )
 
     // Shared state between openDialog() and the jump keymap layer.
     const jump = {
@@ -230,7 +254,13 @@ export default Plugin.define({
       } else {
         next = jump.map[(idx + dir + jump.map.length) % jump.map.length]
       }
-      jump.request = next
+      jump.request = { type: "jump", ...next }
+      context.ui.dialog.clear()
+    }
+
+    function requestFavorite() {
+      if (!jump.active) return false
+      jump.request = { type: "favorite" }
       context.ui.dialog.clear()
     }
 
@@ -255,21 +285,6 @@ export default Plugin.define({
 
         const location = context.data.location.default()
         const locDir = { location: { directory: location.directory } }
-
-        // From the home screen highlight the directory default model.
-        if (!currentModel) {
-          try {
-            const def = await context.client.model.default(locDir)
-            if (def?.data?.providerID && def.data.id) {
-              currentModel = {
-                providerID: def.data.providerID,
-                modelID: def.data.id,
-              }
-            }
-          } catch {
-            // Highlight is optional.
-          }
-        }
 
         let models = []
         let providers = []
@@ -299,16 +314,66 @@ export default Plugin.define({
           return
         }
 
+        // Recent entries pointing at models that no longer exist in the
+        // catalog (removed provider, stale alias) would otherwise linger
+        // forever and skew "last selected" resolution. Drop them.
+        const known = new Set(models.map((model) => `${model.providerID}/${model.id}`))
+        const validRecent = recent.models.filter((entry) =>
+          known.has(`${entry.providerID}/${entry.modelID}`),
+        )
+        if (validRecent.length !== recent.models.length) {
+          Promise.resolve(
+            updateRecent((draft) => {
+              draft.models = validRecent
+            }),
+          ).catch(() => {
+            // Recent history cleanup is non-critical.
+          })
+        }
+
+        // From the home screen highlight the last selected model first, then
+        // the directory default model.
+        if (!currentModel) {
+          const lastSelected = validRecent.find((entry) => {
+            const model = models.find(
+              (item) =>
+                item.providerID === entry.providerID &&
+                item.id === entry.modelID,
+            )
+            return Boolean(model?.enabled)
+          })
+          if (lastSelected) {
+            currentModel = {
+              providerID: lastSelected.providerID,
+              modelID: lastSelected.modelID,
+            }
+          }
+        }
+        if (!currentModel) {
+          try {
+            const def = await context.client.model.default(locDir)
+            if (def?.data?.providerID && def.data.id) {
+              currentModel = {
+                providerID: def.data.providerID,
+                modelID: def.data.id,
+              }
+            }
+          } catch {
+            // Highlight is optional.
+          }
+        }
+
         const providerNames = {}
         for (const provider of providers) {
           providerNames[provider.id] = provider.name
         }
 
-        const options = buildOptions(
+        let options = buildOptions(
           models,
           providerNames,
-          recent.models,
+          validRecent,
           currentModel,
+          favorites.models,
         )
 
         jump.map = buildCategoryMap(options)
@@ -324,10 +389,72 @@ export default Plugin.define({
             current,
           })
           if (!result) {
-            if (jump.request) {
+            if (jump.request?.type === "jump") {
               // Shift+Down / Shift+Up: the dialog was cleared by
               // requestJump(); reopen it on the target category.
               current = jump.request.value
+              continue
+            }
+            if (jump.request?.type === "favorite") {
+              const favoriteOptions = buildOptions(
+                models,
+                providerNames,
+                [],
+                null,
+                favorites.models,
+              )
+                // Dedupe mirrored favorite rows instead of dropping the whole
+                // "Favorites" category: a disabled favorite only appears there,
+                // and it must remain selectable here to be removable.
+                .filter(
+                  (item, index, list) =>
+                    index ===
+                    list.findIndex(
+                      (other) =>
+                        other.value.providerID === item.value.providerID &&
+                        other.value.modelID === item.value.modelID,
+                    ),
+                )
+                .map((item) => ({ ...item, disabled: false }))
+              const selectedFavorite = await context.ui.dialog.select({
+                title: "Toggle Favorite",
+                placeholder: "Filter models…",
+                options: favoriteOptions,
+                current,
+              })
+              if (!selectedFavorite) return
+              const selectedKey = `${selectedFavorite.providerID}/${selectedFavorite.modelID}`
+              const exists = favorites.models.some(
+                (entry) => `${entry.providerID}/${entry.modelID}` === selectedKey,
+              )
+              try {
+                await updateFavorites((draft) => {
+                  draft.models = exists
+                    ? draft.models.filter(
+                        (entry) => `${entry.providerID}/${entry.modelID}` !== selectedKey,
+                      )
+                    : [selectedFavorite, ...draft.models]
+                })
+              } catch {
+                context.ui.toast.show({
+                  message: "Failed to update favorites",
+                  variant: "error",
+                })
+                return
+              }
+              options = buildOptions(
+                models,
+                providerNames,
+                validRecent,
+                currentModel,
+                favorites.models,
+              )
+              jump.map = buildCategoryMap(options)
+              current = selectedFavorite
+              context.ui.toast.show({
+                message: exists ? "Removed from Favorites" : "Added to Favorites",
+                variant: "success",
+              })
               continue
             }
             return // cancelled
@@ -335,7 +462,7 @@ export default Plugin.define({
 
           const next = [
             result,
-            ...recent.models.filter(
+            ...validRecent.filter(
               (entry) =>
                 !(
                   entry.providerID === result.providerID &&
@@ -409,7 +536,7 @@ export default Plugin.define({
               id: "model.list",
               title: "Select Model",
               description:
-                "Sorted list: Current → Recent → Alibaba → OpenAI → Orchestrated → Free → Others; Shift+Down/Up jumps categories",
+                "Sorted list: Current → Favorites → Recent → Alibaba → OpenAI → Orchestrated → Free → Others; Ctrl+F toggles a favorite; Shift+Down/Up jumps categories",
               group: "Model",
               slash: { name: "models", aliases: ["mo"] },
               palette: true,
@@ -429,6 +556,13 @@ export default Plugin.define({
           mode: "global",
           priority: 900,
           commands: [
+            {
+              id: "model-selector.favorite-toggle",
+              title: "Model Selector: Toggle Favorite",
+              bind: "ctrl+f",
+              group: "Model",
+              run: requestFavorite,
+            },
             {
               id: "model-selector.group-next",
               title: "Model Selector: Next Category",

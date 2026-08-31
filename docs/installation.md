@@ -239,7 +239,7 @@ systemctl --user status opencode-web-client.service --no-pager
 custom-opencode --version || true
 ```
 
-В web UI откройте `Диагностика` или `/doctor`. Для UI-smoke дополнительно проверьте:
+После установки в web UI дополнительно проверьте:
 
 - login/logout и `Запомнить вход` с удалённого origin;
 - возврат после re-auth в текущий `#/session/...`;
@@ -258,5 +258,3 @@ custom-opencode --version || true
 ```text
 /rag-start
 ```
-
-Платные model/router smoke tests в Doctor запускаются только вручную.
