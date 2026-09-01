@@ -71,11 +71,11 @@ for geometry in 80x24 120x30 160x40; do
     cat "$log" >&2
     exit 1
   fi
-  if grep -Eqi 'SyntaxError|Failed to load.*plugin|Cannot find (module|package)|Unhandled.*Error|limits-(header|panels).*error|model-selector.*error|effort-indicator.*error' "$capture" "$log"; then
+  if grep -Eqi 'SyntaxError|Failed to load.*plugin|Cannot find (module|package)|Unhandled.*Error|limits-(header|panels).*error|workspace-panel.*error|panel-views.*error|panel-command.*error|prompt-history.*error|model-selector.*error|effort-indicator.*error' "$capture" "$log"; then
     echo "TUI plugin loader error at $geometry" >&2
-    grep -Eai 'SyntaxError|Failed to load.*plugin|Cannot find (module|package)|Unhandled.*Error|limits-|model-selector|effort-indicator' "$capture" "$log" >&2 || true
+    grep -Eai 'SyntaxError|Failed to load.*plugin|Cannot find (module|package)|Unhandled.*Error|limits-|workspace-panel|panel-views|panel-command|prompt-history|model-selector|effort-indicator' "$capture" "$log" >&2 || true
     exit 1
   fi
 done
 
-echo "Packaged TUI smoke passed: opencode2 loader at 80x24/120x30/160x40"
+echo "Packaged TUI smoke passed: opencode2 loader + four-zone panels at 80x24/120x30/160x40"
