@@ -21,60 +21,21 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Fix initial history pagination race
+      - name: Apply initial-scroll fix
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('app/app.js')
-          text = path.read_text(encoding='utf-8')
-
-          old = "let applyingPromptHistory = false\n"
-          new = "let applyingPromptHistory = false\nlet initialMessageScrollSession = null\n"
-          if old not in text:
-              raise SystemExit('initial scroll state insertion point not found')
-          text = text.replace(old, new, 1)
-
-          old = '''  else if(bottom){
-            const sessionID=state.selected?.id
-            const settleBottom=()=>{if(state.selected?.id!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
-            settleBottom()
-            requestAnimationFrame(()=>requestAnimationFrame(settleBottom))
-            if(document.fonts?.ready)document.fonts.ready.then(settleBottom).catch(()=>{})
-          }
-'''
-          new = '''  else if(bottom){
-            const sessionID=state.selected?.id
-            initialMessageScrollSession=sessionID
-            const settleBottom=()=>{if(state.selected?.id!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
-            settleBottom()
-            const frames=new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
-            const fonts=document.fonts?.ready?document.fonts.ready.catch(()=>{}):Promise.resolve()
-            Promise.all([frames,fonts]).then(()=>{settleBottom();if(initialMessageScrollSession===sessionID)initialMessageScrollSession=null})
-          }
-'''
-          if old not in text:
-              raise SystemExit('initial bottom convergence block not found')
-          text = text.replace(old, new, 1)
-
-          old = "  $('messages').addEventListener('scroll',()=>{if($('messages').scrollTop<=80)void loadOlderContext();updateScrollToBottomButton()},{passive:true})\n"
-          new = "  $('messages').addEventListener('scroll',()=>{const view=$('messages');if(initialMessageScrollSession!==state.selected?.id&&view.scrollTop<=80)void loadOlderContext();updateScrollToBottomButton()},{passive:true})\n"
-          if old not in text:
-              raise SystemExit('message scroll pagination handler not found')
-          text = text.replace(old, new, 1)
-
-          path.write_text(text, encoding='utf-8')
-          PY
+          python3 .github/audit-fix-initial-scroll.py
           git diff --check
           node --check app/app.js
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add app/app.js
-          git commit -m 'fix: suppress pagination during initial message scroll'
-          git push origin HEAD:audit/full-review-20260901
+          if ! git diff --quiet -- app/app.js; then
+            git add app/app.js
+            git commit -m 'fix: suppress pagination during initial message scroll'
+            git push origin HEAD:audit/full-review-20260901
+          fi
 
-      - name: Hide temporary audit files
-        run: rm -f .github/workflows/audit-autofix-temp.yml .audit-trigger
+      - name: Hide audit harness from product checks
+        run: rm -f .github/workflows/audit-autofix-temp.yml .github/audit-fix-initial-scroll.py .audit-trigger
 
       - name: Browser regression
         run: |
@@ -105,7 +66,7 @@ jobs:
           node scripts/tui-regression.mjs
           node scripts/model-selector-smoke.mjs
 
-      - name: Current OpenCode 2 package and packaged TUI
+      - name: Install current OpenCode 2 beta
         run: |
           npm install --global --prefix "$RUNNER_TEMP/opencode-v2" @opencode-ai/cli@beta
           "$RUNNER_TEMP/opencode-v2/bin/opencode2" --version
