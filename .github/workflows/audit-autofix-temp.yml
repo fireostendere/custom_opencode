@@ -22,17 +22,6 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Restore executable installer contract
-        run: |
-          chmod +x scripts/install.sh scripts/opencode-v2-bootstrap-regression.sh scripts/security-boundary-smoke.py
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add scripts/install.sh scripts/opencode-v2-bootstrap-regression.sh scripts/security-boundary-smoke.py
-          if ! git diff --cached --quiet; then
-            git commit -m 'fix: restore executable installer scripts'
-            git push origin HEAD:audit/full-review-20260901
-          fi
-
       - name: Hide temporary audit files from product verification
         run: rm -f .github/workflows/audit-autofix-temp.yml .audit-trigger
 
@@ -76,6 +65,7 @@ jobs:
         run: |
           npm install --global --prefix "$RUNNER_TEMP/opencode-v2" @opencode-ai/cli@beta
           "$RUNNER_TEMP/opencode-v2/bin/opencode2" --version
+          echo "$RUNNER_TEMP/opencode-v2/bin" >> "$GITHUB_PATH"
 
       - name: Packaged OpenCode 2 TUI regression
         run: bash scripts/tui-package-smoke.sh
