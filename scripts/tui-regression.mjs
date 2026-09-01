@@ -24,25 +24,33 @@ for (const marker of ['session_prompt', 'context.state.session.messages', 'custo
   assert.ok(promptHistory.includes(marker), `TUI session prompt history marker missing: ${marker}`)
 }
 for (const marker of [
-  'planPinned',
-  'homePinned',
-  'function EdgePanel(props)',
-  'function LimitsStrip()',
-  '<EdgePanel',
-  'target.paddingLeft = left',
-  'target.paddingRight = right',
+  'id: "custom.universal-panel"',
+  'universal-panel.state',
+  'function UniversalPanel()',
+  'function PanelBody()',
+  'state.tab === "activity"',
+  'state.tab === "plan"',
+  'state.tab === "limits"',
+  'target.paddingRight = padding',
   'position="absolute"',
   'verticalScrollbarOptions',
   'scrollY={true}',
   '📌',
-  'collapsible={false}',
+  'обновления не сбрасывают scroll',
+  'custom.panel.activity',
+  'custom.panel.plan',
+  'custom.panel.limits',
+  'custom.panel.end',
 ]) {
-  assert.ok(limitsPanels.includes(marker), `TUI panel UX marker missing: ${marker}`)
+  assert.ok(limitsPanels.includes(marker), `TUI universal panel UX marker missing: ${marker}`)
 }
-assert.ok(!limitsPanels.includes('state.limits'), 'Limits section must not have a collapse state')
-assert.ok(!limitsPanels.includes('📍'), 'Unpinned state must reuse the accepted pin icon')
-assert.ok(!limitsPanels.includes('sidebar.content'), 'Limits must use the shared edge panel on sessions')
-assert.ok(!limitsPanels.includes('SidebarToggleHandle'), 'Limits must not add a second native sidebar handle')
+assert.ok(!limitsPanels.includes('function EdgePanel(props)'), 'Legacy independent edge-panel abstraction must stay removed')
+assert.ok(!limitsPanels.includes('side="left"'), 'Plan must not return as a separate left-edge panel')
+assert.ok(!limitsPanels.includes('planPinned'), 'Plan must not own independent pin state')
+assert.ok(!limitsPanels.includes('homePinned'), 'Limits must not own independent pin state')
+assert.ok(!limitsPanels.includes('target.paddingLeft'), 'Universal panel must not reserve a second left strip')
+assert.ok(!limitsPanels.includes('sidebar.content'), 'Workspace must not add a second native sidebar surface')
+assert.ok(!limitsPanels.includes('SidebarToggleHandle'), 'Workspace must not add a second native sidebar handle')
 const temp = await mkdtemp(join(tmpdir(), 'custom-opencode-tui-'))
 
 async function executable(name, source) {
@@ -124,4 +132,4 @@ assert.ok(elapsed < 2500, `Bailian watchdog took ${elapsed}ms`)
 assert.equal(timeoutHelper.getAutoRefreshState().pending, false)
 
 await rm(temp, { recursive: true, force: true })
-console.log('TUI limits regression passed: copy/mouse contract + parsing + promo + refcount + bounded child process')
+console.log('TUI regression passed: copy/mouse + universal panel + limits parser + promo + bounded child process')
