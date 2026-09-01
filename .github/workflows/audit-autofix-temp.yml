@@ -21,16 +21,16 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Repair fixture typo
+      - name: Remove stale manual ordering hook
         run: |
-          sed -i 's/self\.send_json({"data": {"kb": {"status": "disabled"}})/self.send_json({"data": {"kb": {"status": "disabled"}}})/' scripts/web-fixture-e2e.py
+          sed -i '/appendSessionToOrder(created.id,targetProject,targetSession?.dataset.sessionDrag||.\x27.\x27,after)/d' app/app.js
           git diff --check
-          python3 -m py_compile scripts/web-fixture-e2e.py
+          node --check app/app.js
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          if ! git diff --quiet -- scripts/web-fixture-e2e.py; then
-            git add scripts/web-fixture-e2e.py
-            git commit -m 'test: fix web fixture syntax'
+          if ! git diff --quiet -- app/app.js; then
+            git add app/app.js
+            git commit -m 'fix: drop stale session manual ordering hook'
             git push origin HEAD:audit/full-review-20260901
           fi
 
@@ -46,6 +46,15 @@ jobs:
 
       - name: Browser regression
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/web-fixture-e2e.py')
+          s=p.read_text()
+          old='        page.wait_for_function(f"document.querySelectorAll(\'#messages .message\').length === {expected}")\n'
+          new='        page.wait_for_timeout(350)\n        print("history-diag", expected, page.locator("#messages .message").count(), FixtureState.message_requests[-5:], errors, flush=True)\n'+old
+          if old not in s: raise SystemExit('history wait marker missing')
+          p.write_text(s.replace(old,new,1))
+          PY
           python3 -m pip install playwright
           python3 -m playwright install --with-deps chromium
           python3 scripts/queue-badge-convergence.py
