@@ -52,11 +52,11 @@ chmod +x "$HOME/.local/bin/opencode2"
 EOF
 chmod +x "$FAKE_BIN/npm"
 
-# A V1-shaped binary is intentionally present. The installer/wrapper must never
-# probe or execute it: custom_opencode has exactly one OpenCode runtime, V2.
+# An unversioned legacy-shaped binary is intentionally present. The installer/wrapper must never
+# probe or execute it: custom_opencode has exactly one OpenCode runtime, opencode2.
 cat >"$FAKE_BIN/opencode" <<'EOF'
 #!/usr/bin/env bash
-printf 'FORBIDDEN-opencode-v1 %s\n' "$*" >>"${CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG:?}"
+printf 'FORBIDDEN-opencode %s\n' "$*" >>"${CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG:?}"
 exit 99
 EOF
 chmod +x "$FAKE_BIN/opencode"
@@ -77,11 +77,11 @@ CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:/usr/bi
 
 grep -Fxq 'opencode2 --version' "$LOG"
 if grep -Fq 'FORBIDDEN-opencode-v1' "$LOG"; then
-  echo "V1 compatibility path was executed" >&2
+  echo "unversioned compatibility path was executed" >&2
   exit 1
 fi
 if grep -Fq 'exec opencode ' "$WRAPPER"; then
-  echo "V1 fallback remains in generated wrapper" >&2
+  echo "unversioned fallback remains in generated wrapper" >&2
   exit 1
 fi
 

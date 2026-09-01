@@ -28,7 +28,7 @@ SELFTEST=${CUSTOM_OPENCODE_INSTALL_SELFTEST:-1}
 
 # custom_opencode targets OpenCode V2 only. Bootstrap the current official beta
 # into the same user-local prefix as our wrapper so a clean install needs no
-# pre-existing OpenCode binary and never falls back to OpenCode V1.
+# pre-existing OpenCode binary and uses only the opencode2 runtime.
 export PATH="$BIN_DIR:$PATH"
 if ! command -v opencode2 >/dev/null 2>&1; then
   NPM=$(command -v npm || true)

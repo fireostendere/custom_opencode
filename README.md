@@ -203,6 +203,8 @@ Provisioning завершается ошибкой при неверном origi
 
 ## Быстрый старт
 
+Предварительно ставить OpenCode не нужно: `install.sh` сам установит `opencode2`, если его ещё нет.
+
 ```bash
 cp .env.example .env
 # заполнить .env

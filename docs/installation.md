@@ -5,9 +5,8 @@
 Минимально нужны:
 
 - Linux/WSL-среда с `systemd --user`;
-- OpenCode V2 (`opencode2` либо совместимый `opencode`);
 - Python 3;
-- Node.js — нужен `scripts/verify.sh` для JS syntax/web smoke;
+- Node.js + npm — installer сам bootstrap-ит OpenCode V2 (`opencode2`) и использует Node.js для JS syntax/web smoke;
 - Git;
 - приватный `.env` с web password и нужными provider credentials.
 
@@ -69,17 +68,18 @@ MCP_RAG_BIN=/absolute/path/to/mcp-rag/.venv/bin/knowledge-mcp
 Installer:
 
 1. загружает `.env`;
-2. обнаруживает RAG;
-3. валидирует и provision-ит pinned Ponytail checkout, если он включён;
-4. при включённом self-test выполняет pre-install verifier до записи конфигов;
-5. создаёт/обновляет user systemd unit;
-6. рендерит актуальный OpenCode V2 config;
-7. делает backup существующего `opencode.json`;
-8. устанавливает `AGENTS.md`, prompts и plugins;
-9. аккуратно дополняет auth storage только реально заданными credential fields;
-10. создаёт `~/.local/bin/custom-opencode` и `custom-opencode-update`;
-11. перезапускает web/OpenCode services;
-12. выполняет post-install zero-LLM-token self-test.
+2. если `opencode2` отсутствует, устанавливает актуальный OpenCode V2 beta в `~/.local`;
+3. обнаруживает RAG;
+4. валидирует и provision-ит pinned Ponytail checkout, если он включён;
+5. при включённом self-test выполняет pre-install verifier до записи конфигов;
+6. создаёт/обновляет user systemd unit;
+7. рендерит актуальный OpenCode V2 config;
+8. делает backup существующего `opencode.json`;
+9. устанавливает `AGENTS.md`, prompts и plugins;
+10. аккуратно дополняет auth storage только реально заданными credential fields;
+11. создаёт `~/.local/bin/custom-opencode` и `custom-opencode-update`;
+12. перезапускает web/OpenCode V2 services;
+13. выполняет post-install zero-LLM-token self-test.
 
 Успешная установка заканчивается `Self-test PASS`.
 
