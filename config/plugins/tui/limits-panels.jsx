@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 /**
- * Migration tombstone for the former single right-side `custom.universal-panel`.
+ * Migration tombstone for the former single right-side workspace host.
  *
  * `workspace-panel.jsx` now owns all four dock zones and migrates the persisted
  * universal-panel state. Keeping this filename inert ensures upgrades overwrite
