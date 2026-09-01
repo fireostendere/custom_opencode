@@ -22,6 +22,43 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Apply final browser and HTTP fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(pathname, old, new):
+              path = Path(pathname)
+              text = path.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'expected text not found in {pathname}: {old[:120]!r}')
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace(
+              'app/app.js',
+              "  if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height;else if(bottom)view.scrollTop=view.scrollHeight;else if(stick)view.scrollTop=view.scrollHeight;else view.scrollTop=prev\n  updateScrollToBottomButton()\n}",
+              "  if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height\n  else if(bottom){\n    const sessionID=state.selected?.id\n    const settleBottom=()=>{if(state.selected?.id!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}\n    settleBottom()\n    requestAnimationFrame(()=>requestAnimationFrame(settleBottom))\n    if(document.fonts?.ready)document.fonts.ready.then(settleBottom).catch(()=>{})\n  }\n  else if(stick)view.scrollTop=view.scrollHeight\n  else view.scrollTop=prev\n  updateScrollToBottomButton()\n}",
+          )
+
+          replace(
+              'app/server.py',
+              '        self.send_header("X-Content-Type-Options", "nosniff")\n        self.send_header("Content-Length", str(len(body)))\n',
+              '        self.send_header("X-Content-Type-Options", "nosniff")\n        if status >= 400:\n            # Error handlers may reject a POST before consuming its body. Close\n            # the HTTP/1.1 connection so those bytes cannot be parsed as a new request.\n            self.close_connection = True\n            self.send_header("Connection", "close")\n        self.send_header("Content-Length", str(len(body)))\n',
+          )
+
+          replace(
+              'scripts/web-security-smoke.py',
+              '        status, _, _ = request("POST", "/client-send.json", body={"sessionID": "x", "text": "x"}, headers=remote_headers)\n        assert status == 401, status\n',
+              '        status, response_headers, _ = request("POST", "/client-send.json", body={"sessionID": "x", "text": "x"}, headers=remote_headers)\n        assert status == 401, status\n        assert response_headers.get("connection", "").lower() == "close", response_headers\n',
+          )
+          PY
+          git diff --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/app.js app/server.py scripts/web-security-smoke.py
+          git commit -m 'fix: converge initial message scroll and close error connections'
+          git push origin HEAD:audit/full-review-20260901
+
       - name: Hide temporary audit files from product verification
         run: rm -f .github/workflows/audit-autofix-temp.yml .audit-trigger
 
