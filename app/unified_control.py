@@ -214,9 +214,7 @@ def _recovery(runtime: Any, *, directory: str | None, session_id: str | None) ->
     tasks = runtime.STORE.list_tasks(session_id=session_id, project_dir=directory, states=states, limit=100)
     items = []
     for task in tasks:
-        actions = []
-        if task.get("state") in {"failed", "needs_attention", "paused", "recovering"}:
-            actions.append("task.retry")
+        actions = ["task.retry"]
         if task.get("state") not in {"failed", "completed", "cancelled"}:
             actions.append("task.cancel")
         checkpoints = runtime.STORE.checkpoints(str(task.get("id")))
@@ -295,6 +293,7 @@ def _project_snapshot(features: Any, runtime: Any, directory: str | None, sessio
         "tasks": {"counts": dict(counts), "active": [runtime._public(item) for item in active[:20]], "queued": [runtime._public(item) for item in queued[:50]]},
         "verification": _verification_summary(runtime, directory=directory, session_id=session_id),
         "recovery": _recovery(runtime, directory=directory, session_id=session_id),
+        "permissionAdvice": _permission_advice(runtime, directory=directory),
         "resourceProfile": _resource_profile(runtime, directory),
         "mcp": mcp,
         "modelCapabilities": capabilities,
@@ -351,6 +350,45 @@ def _resolve_scope(features: Any, params: dict[str, list[str]]) -> tuple[str | N
     return directory, session_id
 
 
+def _retry_task(features: Any, runtime: Any, task_id: str) -> dict[str, Any]:
+    task = runtime.STORE.get_task(task_id)
+    if not task:
+        raise KeyError(task_id)
+    if task.get("state") != "failed":
+        return runtime.task_control(features, {"taskID": task_id, "action": "resume"})
+    metadata = dict(task.get("metadata") or {}) if isinstance(task.get("metadata"), dict) else {}
+    metadata.update({
+        "retryOf": task_id,
+        "usageBaseline": runtime._usage_totals(features, str(task.get("session_id") or "")),
+    })
+    retried = runtime.STORE.create_task(
+        session_id=str(task.get("session_id") or ""),
+        project_dir=str(task.get("project_dir") or ""),
+        text=str(task.get("text") or ""),
+        files=list(task.get("files") or []),
+        profile=str(task.get("profile") or "direct"),
+        priority=int(task.get("priority") or 0),
+        dependencies=list(task.get("dependencies") or []),
+        kind=str(task.get("kind") or "prompt"),
+        metadata=metadata,
+        baseline=runtime.git_snapshot(str(task.get("project_dir") or "")),
+    )
+    runtime.STORE.checkpoint(
+        str(retried.get("id") or ""),
+        "retry-created",
+        summary=f"Retry created from failed task {task_id}",
+        data={"retryOf": task_id},
+    )
+    runtime.STORE.event(
+        kind="task.retry_created",
+        task_id=str(retried.get("id") or "") or None,
+        session_id=str(task.get("session_id") or "") or None,
+        project_dir=str(task.get("project_dir") or "") or None,
+        data={"retryOf": task_id},
+    )
+    return {"ok": True, "retryOf": task_id, "task": runtime._public(retried)}
+
+
 def execute(features: Any, runtime: Any, payload: dict[str, Any]) -> dict[str, Any]:
     action = str(payload.get("action") or payload.get("id") or "")
     session_id = str(payload.get("sessionID") or "") or None
@@ -366,7 +404,7 @@ def execute(features: Any, runtime: Any, payload: dict[str, Any]) -> dict[str, A
 
     task_id = str(payload.get("taskID") or payload.get("taskId") or "")
     if action == "task.retry":
-        return runtime.task_control(features, {"taskID": task_id, "action": "resume"})
+        return _retry_task(features, runtime, task_id)
     if action == "task.cancel":
         return runtime.task_control(features, {"taskID": task_id, "action": "cancel"})
     if action == "task.checkpoint":
