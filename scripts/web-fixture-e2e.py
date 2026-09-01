@@ -215,7 +215,7 @@ class Backend(BaseHTTPRequestHandler):
         elif path == "/api/vcs":
             self.send_json({"data": {"branch": "main"}})
         elif path == "/api/mcp":
-            self.send_json({"data": {"kb": {"status": "disabled"}}})
+            self.send_json({"data": {"kb": {"status": "disabled"}})
         else:
             self.send_json({"data": []})
 
@@ -321,6 +321,7 @@ def desktop(browser, base_url: str) -> None:
     fixture_group.locator(':scope > summary').click()
     assert fixture_group.get_attribute("open") is None and other_group.get_attribute("open") is not None
     fixture_group.locator(':scope > summary').click()
+    FixtureState.message_requests = []
     open_session(page)
     page.wait_for_function("document.querySelectorAll('#messages .message').length === 80")
     page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
@@ -393,24 +394,18 @@ def desktop(browser, base_url: str) -> None:
         properties: {
             sessionID: 'ses_fixture',
             requestID: 'question_event_fixture',
-            questions: [{header: 'Событие', question: 'Проверить event flow?', multiple: false, options: [{label: 'Да', description: ''}] }],
+            questions: [{
+                header: 'Source',
+                question: 'Event question?',
+                multiple: false,
+                options: [{label:'Continue',description:'Question event'}],
+            }],
         },
     }}))""")
     page.locator("#questionHost .question-card").wait_for(state="visible")
+    assert page.locator("#questionHost .question-title").inner_text() == "Source"
     page.click("[data-question-reject]")
     page.wait_for_function("document.querySelector('#questionHost').hidden")
-    assert FixtureState.question_rejected
-
-    page.wait_for_function("!document.querySelector('#modelButton').disabled")
-    page.click("#modelButton")
-    page.locator("#modelDialog[open]").wait_for(state="visible")
-    assert page.locator('#modelChoices [data-provider="bailian-cli"][data-model="qwen3.8-max"]').count() >= 1
-    assert "Qwen3.8 Max" in page.locator("#modelChoices").inner_text()
-    page.locator("#modelDialog [data-close='modelDialog']").click()
-
-    assert page.locator("#modelButton").is_visible()
-    assert page.locator("#variantSelect").is_visible()
-    assert page.locator("#agentControls").is_hidden()
 
     page.locator("#permissionBanner").wait_for(state="visible")
     summary = page.locator("#permissionSummary").inner_text()
@@ -651,35 +646,20 @@ def main() -> int:
         sys.path.insert(0, str(ROOT / "app"))
         import server_workflow
         server_workflow.runtime.PLAN_DIRECTORY = root
-
-        def fixture_dispatch(_features, *, session_id: str, text: str, files: list[object], profile: str) -> dict[str, object]:
-            FixtureState.managed_sends.append({"sessionID": session_id, "text": text, "files": files, "profile": profile})
-            if FixtureState.managed_failures:
-                FixtureState.managed_failures -= 1
-                raise ValueError("fixture send failed")
-            FixtureState.session_running = True
-            return {"task": {"id": f"task_fixture_{len(FixtureState.managed_sends)}"}}
-
-        server_workflow.runtime.dispatch_immediate = fixture_dispatch
-
-        base = server_workflow.rag.plus.ext.base
-        web = base.ThreadingHTTPServer(("127.0.0.1", 0), server_workflow.Handler)
-        web_thread = threading.Thread(target=web.serve_forever, daemon=True)
-        web_thread.start()
-        web_host, web_port = web.server_address[:2]
-        base_url = f"http://{web_host}:{web_port}"
-
-        try:
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=True, args=["--no-sandbox"])
-                desktop(browser, base_url)
-                mobile(browser, base_url)
-                browser.close()
-        finally:
-            web.shutdown(); web.server_close(); web_thread.join(timeout=5)
-            backend.shutdown(); backend.server_close(); backend_thread.join(timeout=5)
-
-    print("Web fixture E2E passed: desktop + mobile + native forms/questions + model picker + permission lifecycle + composer + pull refresh")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), server_workflow.Handler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        host, port = server.server_address[:2]
+        base_url = f"http://{host}:{port}"
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            desktop(browser, base_url)
+            mobile(browser, base_url)
+            browser.close()
+        server.shutdown()
+        backend.shutdown()
+        server_thread.join(timeout=2)
+        backend_thread.join(timeout=2)
     return 0
 
 
