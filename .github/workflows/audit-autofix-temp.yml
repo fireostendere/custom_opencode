@@ -12,7 +12,7 @@ jobs:
   audit:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,45 +21,91 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Fix case-insensitive Connection regression assertion
+      - name: Fix initial history pagination race
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          path=Path('scripts/web-security-smoke.py')
-          text=path.read_text(encoding='utf-8')
-          old='        assert response_headers.get("connection", "").lower() == "close", response_headers\n'
-          new='        assert any(key.lower() == "connection" and value.lower() == "close" for key, value in response_headers.items()), response_headers\n'
-          if old not in text: raise SystemExit('connection assertion not found')
-          path.write_text(text.replace(old,new,1),encoding='utf-8')
+
+          path = Path('app/app.js')
+          text = path.read_text(encoding='utf-8')
+
+          old = "let applyingPromptHistory = false\n"
+          new = "let applyingPromptHistory = false\nlet initialMessageScrollSession = null\n"
+          if old not in text:
+              raise SystemExit('initial scroll state insertion point not found')
+          text = text.replace(old, new, 1)
+
+          old = '''  else if(bottom){
+            const sessionID=state.selected?.id
+            const settleBottom=()=>{if(state.selected?.id!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
+            settleBottom()
+            requestAnimationFrame(()=>requestAnimationFrame(settleBottom))
+            if(document.fonts?.ready)document.fonts.ready.then(settleBottom).catch(()=>{})
+          }
+'''
+          new = '''  else if(bottom){
+            const sessionID=state.selected?.id
+            initialMessageScrollSession=sessionID
+            const settleBottom=()=>{if(state.selected?.id!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
+            settleBottom()
+            const frames=new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
+            const fonts=document.fonts?.ready?document.fonts.ready.catch(()=>{}):Promise.resolve()
+            Promise.all([frames,fonts]).then(()=>{settleBottom();if(initialMessageScrollSession===sessionID)initialMessageScrollSession=null})
+          }
+'''
+          if old not in text:
+              raise SystemExit('initial bottom convergence block not found')
+          text = text.replace(old, new, 1)
+
+          old = "  $('messages').addEventListener('scroll',()=>{if($('messages').scrollTop<=80)void loadOlderContext();updateScrollToBottomButton()},{passive:true})\n"
+          new = "  $('messages').addEventListener('scroll',()=>{const view=$('messages');if(initialMessageScrollSession!==state.selected?.id&&view.scrollTop<=80)void loadOlderContext();updateScrollToBottomButton()},{passive:true})\n"
+          if old not in text:
+              raise SystemExit('message scroll pagination handler not found')
+          text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding='utf-8')
           PY
           git diff --check
+          node --check app/app.js
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add scripts/web-security-smoke.py
-          git commit -m 'test: normalize HTTP connection header check'
+          git add app/app.js
+          git commit -m 'fix: suppress pagination during initial message scroll'
           git push origin HEAD:audit/full-review-20260901
 
       - name: Hide temporary audit files
         run: rm -f .github/workflows/audit-autofix-temp.yml .audit-trigger
 
-      - name: V2-only and security gates
+      - name: Browser regression
+        run: |
+          python3 -m pip install playwright
+          python3 -m playwright install --with-deps chromium
+          python3 scripts/queue-badge-convergence.py
+          python3 scripts/web-fixture-e2e.py
+
+      - name: Full source and runtime regression
         run: |
           set -euo pipefail
           if git grep -nE '(OpenCode V1|V1-only|из V1)' -- .; then exit 1; fi
           if git grep -nF 'совместимый `opencode`' -- .; then exit 1; fi
           if grep -Fq 'exec opencode "${args[@]}"' scripts/install.sh; then exit 1; fi
+          python3 -m compileall -q app scripts
+          for file in scripts/*.sh; do bash -n "$file"; done
+          for file in app/*.js config/plugins/*.js; do node --check "$file"; done
           bash scripts/opencode-v2-bootstrap-regression.sh
           python3 scripts/security-boundary-smoke.py
+          bash scripts/verify.sh
+          bash scripts/ponytail-provision-regression.sh
+          bash scripts/verify-runtime-v3.sh
+          python3 scripts/model-routing-effort-smoke.py
+          python3 scripts/runtime-invariants-smoke.py
+          bash scripts/install-regression.sh
           python3 scripts/web-server-smoke.py
           python3 scripts/web-security-smoke.py
-
-      - name: Source/TUI regression
-        run: |
-          node --check app/app.js
           node scripts/tui-regression.mjs
           node scripts/model-selector-smoke.mjs
 
-      - name: Current official OpenCode 2 beta and packaged TUI
+      - name: Current OpenCode 2 package and packaged TUI
         run: |
           npm install --global --prefix "$RUNNER_TEMP/opencode-v2" @opencode-ai/cli@beta
           "$RUNNER_TEMP/opencode-v2/bin/opencode2" --version
@@ -67,10 +113,3 @@ jobs:
 
       - name: Packaged OpenCode 2 TUI regression
         run: bash scripts/tui-package-smoke.sh
-
-      - name: Browser convergence regressions
-        run: |
-          python3 -m pip install playwright
-          python3 -m playwright install --with-deps chromium
-          python3 scripts/queue-badge-convergence.py
-          python3 scripts/web-fixture-e2e.py
