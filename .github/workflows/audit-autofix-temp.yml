@@ -26,11 +26,12 @@ jobs:
           python3 .github/audit-fix-initial-scroll.py
           git diff --check
           node --check app/app.js
+          python3 -m py_compile scripts/web-fixture-e2e.py
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          if ! git diff --quiet -- app/app.js; then
-            git add app/app.js
-            git commit -m 'fix: suppress pagination during initial message scroll'
+          if ! git diff --quiet -- app/app.js scripts/web-fixture-e2e.py; then
+            git add app/app.js scripts/web-fixture-e2e.py
+            git commit -m 'fix: gate history pagination on user intent'
             git push origin HEAD:audit/full-review-20260901
           fi
 
