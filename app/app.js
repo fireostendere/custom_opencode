@@ -367,11 +367,6 @@ function setContextPageCursor(cache,cursor,nextCursor) {
   if(!nextCursor||nextCursor===cursor||cache.seenCursors.has(nextCursor)){cache.nextCursor=null;cache.hasMore=false;return}
   cache.nextCursor=nextCursor;cache.hasMore=true
 }
-function maybeLoadOlderContext() {
-  if(initialMessageScrollSession===state.selected?.id)return
-  const view=$('messages'),cache=state.selected&&state.contextCache.get(state.selected.id)
-  if(cache?.hasMore&&view&&view.scrollHeight<=view.clientHeight+8)void loadOlderContext()
-}
 async function loadContext({force=false,initial=false}={}) {
   if(!state.selected)return
   const id=state.selected.id,cache=contextCacheFor(id)
@@ -395,7 +390,6 @@ async function loadContext({force=false,initial=false}={}) {
     if(state.selected?.id===id){if(cache.messages.length)toast(`История: ${error.message}`);else $('messagesInner').innerHTML=`<div class="empty">Не удалось открыть сессию: ${escapeHtml(error.message)}</div>`}
   }finally{
     cache.loading=false
-    if(!cache.complete&&state.selected?.id===id)maybeLoadOlderContext()
   }
 }
 async function loadOlderContext() {
@@ -420,7 +414,6 @@ async function loadOlderContext() {
   }
   finally{
     cache.loading=false
-    if(!cache.complete&&state.selected?.id===id)maybeLoadOlderContext()
   }
 }
 function scheduleContextReload(delay=250) { clearTimeout(contextReloadTimer); contextReloadTimer=setTimeout(()=>loadContext({force:true}),delay) }
