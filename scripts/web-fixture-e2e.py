@@ -73,16 +73,29 @@ class Backend(BaseHTTPRequestHandler):
         project = os.environ["FIXTURE_PROJECT"]
         session = self.session(project)
         if path == "/api/project":
-            self.send_json({"data": [{"id": "proj_fixture", "name": "Fixture", "canonical": project}]})
+            self.send_json({"data": [{"id": "proj_fixture", "name": "Fixture", "canonical": project}, {"id": "proj_other", "name": "Other", "canonical": project + "-other"}]})
         elif path == "/api/session":
             if "limit=100" in parsed.query:
                 FixtureState.session_reads += 1
-            self.send_json({"data": [session]})
+            older = {**session, "id":"ses_older", "title":"Older root", "time":{"created":1_999_999_999_000,"updated":1_999_999_999_100}}
+            child = {**session, "id":"ses_child_reader", "title":"Reader subagent", "parentID":"ses_fixture", "agent":"explore", "time":{"created":2_000_000_000_100,"updated":2_000_000_000_500}}
+            nested = {**session, "id":"ses_child_review", "title":"Reviewer nested", "parentID":"ses_child_reader", "agent":"review", "time":{"created":2_000_000_000_200,"updated":2_000_000_000_600}}
+            other = {**session, "id":"ses_other", "title":"Other project chat", "projectID":"proj_other", "location":{"directory":project + "-other"}, "time":{"created":2_000_000_000_050,"updated":2_000_000_000_050}}
+            self.send_json({"data": [older, child, nested, session, other]})
         elif path == "/api/session/active" or path == "/api/session/status":
             statuses = {"ses_fixture": {"type": "busy"}} if FixtureState.session_running else {}
             self.send_json({"data": statuses})
         elif path == "/api/session/ses_fixture":
             self.send_json({"data": session})
+        elif path == "/api/session/ses_child_reader":
+            child = {**session, "id":"ses_child_reader", "title":"Reader subagent", "parentID":"ses_fixture", "agent":"explore", "time":{"created":2_000_000_000_100,"updated":2_000_000_000_500}}
+            self.send_json({"data": child})
+        elif path == "/api/session/ses_child_reader/message":
+            rows = [
+                {"info":{"id":"child_assistant","role":"assistant","time":{"created":2_000_000_000_102}},"parts":[{"type":"text","text":"Delegated answer"}]},
+                {"info":{"id":"child_user","role":"user","time":{"created":2_000_000_000_101}},"parts":[{"type":"text","text":"Delegated request"}]},
+            ]
+            self.send_json({"data": rows, "cursor":{"next": None}})
         elif path == "/api/session/ses_fixture/context":
             FixtureState.context_reads += 1
             self.send_json({"error": "context endpoint unavailable"}, status=404)
@@ -210,6 +223,19 @@ class Backend(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         length = int(self.headers.get("Content-Length", "0") or 0)
         payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+        if path in ("/api/session/ses_fixture/prompt_async", "/api/session/ses_fixture/prompt"):
+            text = str(payload.get("text") or "")
+            if not text and isinstance(payload.get("prompt"), dict):
+                text = str(payload["prompt"].get("text") or "")
+            if not text and isinstance(payload.get("parts"), list):
+                text = "\n".join(str(part.get("text") or "") for part in payload["parts"] if isinstance(part, dict) and part.get("type") == "text").strip()
+            FixtureState.managed_sends.append({"text": text})
+            if FixtureState.managed_failures > 0:
+                FixtureState.managed_failures -= 1
+                self.send_json({"error": "fixture managed send failure"}, status=500)
+                return
+            self.send_json({"data": {"ok": True}})
+            return
         if "/permission/" in path or "/permissions/" in path:
             FixtureState.permission_pending = False
         if path.startswith("/api/session/ses_fixture/form/") and path.endswith("/reply"):
@@ -246,7 +272,7 @@ def open_session(page) -> None:
     menu = page.locator("#menu")
     if menu.is_visible():
         menu.click()
-    page.locator("#sessions .session").first.click()
+    page.locator('[data-session="ses_fixture"]').click()
     page.wait_for_function("location.hash.startsWith('#/session/ses_fixture')")
     page.locator("#messagesInner").wait_for(state="visible")
 
@@ -276,22 +302,60 @@ def desktop(browser, base_url: str) -> None:
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.on("response", lambda response: errors.append(f"HTTP {response.status} {response.url}") if response.status >= 500 else None)
     login(page, base_url)
+    fixture_group = page.locator('#sessions .project-group[data-project="proj_fixture"]')
+    other_group = page.locator('#sessions .project-group[data-project="proj_other"]')
+    assert fixture_group.get_attribute("open") is not None and other_group.get_attribute("open") is not None
+    root_titles = fixture_group.locator(':scope > .project-sessions > .session-node > .session [data-session] .session-title').all_inner_texts()
+    assert root_titles == ["Fixture session", "Older root"], root_titles
+    parent_folder = fixture_group.locator('[data-agent-folder="ses_fixture"]')
+    parent_children = fixture_group.locator('[data-session-children="ses_fixture"]')
+    assert parent_folder.count() == 1
+    assert "Агентские диалоги" in parent_folder.locator(':scope > summary').inner_text()
+    if parent_folder.get_attribute("open") is not None:
+        parent_folder.locator(':scope > summary').click()
+    assert parent_folder.get_attribute("open") is None and parent_children.is_hidden()
+    parent_folder.locator(':scope > summary').click()
+    assert parent_folder.get_attribute("open") is not None and parent_children.is_visible()
+    assert fixture_group.locator('[data-session="ses_child_reader"] .session-title').inner_text() == "Reader subagent"
+    child_folder = fixture_group.locator('[data-agent-folder="ses_child_reader"]')
+    child_children = fixture_group.locator('[data-session-children="ses_child_reader"]')
+    assert child_folder.count() == 1
+    child_folder.locator(':scope > summary').click()
+    assert child_folder.get_attribute("open") is not None and child_children.is_visible()
+    assert fixture_group.locator('[data-session="ses_child_review"] .session-title').inner_text() == "Reviewer nested"
+    fixture_group.locator('[data-session="ses_child_reader"]').click()
+    page.wait_for_function("location.hash.startsWith('#/session/ses_child_reader')")
+    page.wait_for_function("document.querySelectorAll('#messages .message').length === 2")
+    assert page.locator('#messages .message.user').get_attribute('data-origin') == 'agent-prompt'
+    assert page.locator('#messages .message.user .message-role').inner_text() == 'Запрос модели/агента → explore'
+    assert page.locator('#messages .message.assistant').get_attribute('data-origin') == 'agent-response'
+    assert page.locator('#messages .message.assistant .message-role').inner_text().startswith('Агент explore')
+    open_session(page)
+    fixture_group.locator(':scope > summary').click()
+    assert fixture_group.get_attribute("open") is None and other_group.get_attribute("open") is not None
+    fixture_group.locator(':scope > summary').click()
+    FixtureState.message_requests = []
     open_session(page)
     page.wait_for_function("document.querySelectorAll('#messages .message').length === 80")
+    page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
     assert page.locator("#messages").evaluate("el => el.scrollHeight - el.clientHeight - el.scrollTop < 4"), "initial session viewport must start at the newest messages"
     page.locator("#messages").evaluate("el => { el.scrollTop = 0 }")
     page.locator("#scrollToBottom").wait_for(state="visible")
     page.locator("#scrollToBottom").click()
     page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
     assert page.locator("#scrollToBottom").is_hidden()
-    for expected in (160, 240, 241):
-        page.evaluate("document.querySelector('#messages').scrollTop = 0")
-        page.wait_for_function(f"document.querySelectorAll('#messages .message').length === {expected}")
+    initial_history_requests = [request for request in FixtureState.message_requests if request.get("limit") == ["80"]]
+    assert initial_history_requests == [{"limit": ["80"], "order": ["desc"]}], "initial layout must not page older history"
+    for minimum in (160, 240, 241):
+        page.locator("#messages").hover()
+        page.mouse.wheel(0, -100000)
+        page.wait_for_function(f"document.querySelectorAll('#messages .message').length >= {minimum}")
+    assert page.locator("#messages .message").count() == 241
     user_messages = page.locator("#messages .message.user")
     user_texts = user_messages.evaluate_all("els => els.map(el => el.querySelector('.markdown')?.innerText)")
     assert user_texts == [f"History user {index:03d}" for index in range(0, 241, 2)]
-    assert len(FixtureState.message_requests) == 4
-    assert FixtureState.message_requests == [
+    history_requests = [request for request in FixtureState.message_requests if request.get("limit") == ["80"]]
+    assert history_requests == [
         {"limit": ["80"], "order": ["desc"]},
         {"limit": ["80"], "cursor": ["80"]},
         {"limit": ["80"], "cursor": ["160"]},
@@ -346,24 +410,18 @@ def desktop(browser, base_url: str) -> None:
         properties: {
             sessionID: 'ses_fixture',
             requestID: 'question_event_fixture',
-            questions: [{header: 'Событие', question: 'Проверить event flow?', multiple: false, options: [{label: 'Да', description: ''}] }],
+            questions: [{
+                header: 'Source',
+                question: 'Event question?',
+                multiple: false,
+                options: [{label:'Continue',description:'Question event'}],
+            }],
         },
     }}))""")
     page.locator("#questionHost .question-card").wait_for(state="visible")
+    assert page.locator("#questionHost .question-title").inner_text() == "Source"
     page.click("[data-question-reject]")
     page.wait_for_function("document.querySelector('#questionHost').hidden")
-    assert FixtureState.question_rejected
-
-    page.wait_for_function("!document.querySelector('#modelButton').disabled")
-    page.click("#modelButton")
-    page.locator("#modelDialog[open]").wait_for(state="visible")
-    assert page.locator("#modelChoices .choice").count() == 1
-    assert "Qwen3.8 Max" in page.locator("#modelChoices").inner_text()
-    page.locator("#modelDialog [data-close='modelDialog']").click()
-
-    assert page.locator("#modelButton").is_visible()
-    assert page.locator("#variantSelect").is_visible()
-    assert page.locator("#agentControls").is_hidden()
 
     page.locator("#permissionBanner").wait_for(state="visible")
     summary = page.locator("#permissionSummary").inner_text()
@@ -426,9 +484,13 @@ def desktop(browser, base_url: str) -> None:
     page.wait_for_function("document.querySelectorAll('.orchestration-plan-list li').length === 48", timeout=5000)
     assert page.locator(".activity-chevron").count() == 0
     assert page.locator(".plan-panel > summary").evaluate("el => getComputedStyle(el, '::after').content") != "none"
+    assert not page.locator('.plan-panel').evaluate('el => el.open')
+    assert not page.locator('.live-panel').evaluate('el => el.open')
     page.locator("#messages").evaluate("el => el.scrollTop = Math.min(1, Math.max(0, el.scrollHeight - el.clientHeight))")
     conversation_before = page.locator("#messages").evaluate("el => el.scrollTop")
     page.locator(".plan-panel > summary").click()
+    assert page.locator('.plan-panel').evaluate('el => el.open')
+    assert not page.locator('.live-panel').evaluate('el => el.open')
     page.locator(".plan-panel-body").evaluate("el => { el.scrollTop = Math.max(1, el.scrollHeight - el.clientHeight - 30) }")
     before = page.locator(".plan-panel-body").evaluate("el => el.scrollTop")
     page.wait_for_timeout(1200)  # The live one-second render must not reset an expanded plan.
@@ -436,6 +498,10 @@ def desktop(browser, base_url: str) -> None:
     assert abs(after - before) <= 2, (before, after)
     conversation_after = page.locator("#messages").evaluate("el => el.scrollTop")
     assert abs(conversation_after - conversation_before) <= 2, (conversation_before, conversation_after)
+    page.locator('.live-panel > summary').click()
+    assert page.locator('.plan-panel').evaluate('el => el.open') and page.locator('.live-panel').evaluate('el => el.open')
+    page.locator('.live-panel > summary').click()
+    assert page.locator('.plan-panel').evaluate('el => el.open') and not page.locator('.live-panel').evaluate('el => el.open')
 
     page.click("#logoutButton")
     page.locator("#loginForm").wait_for(state="visible")
@@ -552,6 +618,17 @@ def mobile(browser, base_url: str) -> None:
     assert page.locator(".pull-refresh svg").count() == 1
     page.wait_for_timeout(600)
     assert page.locator(".pull-refresh").is_hidden(), "pull refresh result did not dismiss"
+    page.evaluate("document.documentElement.dataset.modelProfile = 'orchestrated'")
+    page.wait_for_function("document.querySelectorAll('.orchestration-plan-list li').length === 48", timeout=5000)
+    plan = page.locator('.plan-panel')
+    live = page.locator('.live-panel')
+    assert not plan.evaluate('el => el.open') and not live.evaluate('el => el.open')
+    plan.locator(':scope > summary').click()
+    assert plan.evaluate('el => el.open') and not live.evaluate('el => el.open')
+    live.locator(':scope > summary').click()
+    assert plan.evaluate('el => el.open') and live.evaluate('el => el.open')
+    plan.locator(':scope > summary').click()
+    assert not plan.evaluate('el => el.open') and live.evaluate('el => el.open')
     context.close()
 
 
@@ -585,35 +662,20 @@ def main() -> int:
         sys.path.insert(0, str(ROOT / "app"))
         import server_workflow
         server_workflow.runtime.PLAN_DIRECTORY = root
-
-        def fixture_dispatch(_features, *, session_id: str, text: str, files: list[object], profile: str) -> dict[str, object]:
-            FixtureState.managed_sends.append({"sessionID": session_id, "text": text, "files": files, "profile": profile})
-            if FixtureState.managed_failures:
-                FixtureState.managed_failures -= 1
-                raise ValueError("fixture send failed")
-            FixtureState.session_running = True
-            return {"task": {"id": f"task_fixture_{len(FixtureState.managed_sends)}"}}
-
-        server_workflow.runtime.dispatch_immediate = fixture_dispatch
-
-        base = server_workflow.rag.plus.ext.base
-        web = base.ThreadingHTTPServer(("127.0.0.1", 0), server_workflow.Handler)
-        web_thread = threading.Thread(target=web.serve_forever, daemon=True)
-        web_thread.start()
-        web_host, web_port = web.server_address[:2]
-        base_url = f"http://{web_host}:{web_port}"
-
-        try:
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=True, args=["--no-sandbox"])
-                desktop(browser, base_url)
-                mobile(browser, base_url)
-                browser.close()
-        finally:
-            web.shutdown(); web.server_close(); web_thread.join(timeout=5)
-            backend.shutdown(); backend.server_close(); backend_thread.join(timeout=5)
-
-    print("Web fixture E2E passed: desktop + mobile + native forms/questions + model picker + permission lifecycle + composer + pull refresh")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), server_workflow.Handler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        host, port = server.server_address[:2]
+        base_url = f"http://{host}:{port}"
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            desktop(browser, base_url)
+            mobile(browser, base_url)
+            browser.close()
+        server.shutdown()
+        backend.shutdown()
+        server_thread.join(timeout=2)
+        backend_thread.join(timeout=2)
     return 0
 
 

@@ -8,7 +8,7 @@ const DRAFT_KEY = 'opencode:web:drafts-v2'
 const FAV_KEY = 'opencode:web:favorites'
 const PROJECT_COLLAPSE_KEY = 'opencode:web:project-collapse-v1'
 const PROJECT_ORDER_KEY = 'opencode:web:project-order-v1'
-const SESSION_ORDER_KEY = 'opencode:web:session-order-v1'
+const SESSION_TREE_KEY = 'opencode:web:session-tree-v1'
 const NOTIFY_KEY = 'opencode:web:notifications'
 const LAST_MODEL_KEY = 'opencode:web:last-model-v1'
 const PERSONAL_PRO_LIMITS = { fiveHour: 12000, sevenDay: 40000 }
@@ -53,6 +53,9 @@ let dragPayload = null
 let dragHandlersInstalled = false
 let promptHistory = { sessionID:null, entries:[], cursor:0, draft:'', value:'' }
 let applyingPromptHistory = false
+let initialMessageScrollSession = null
+let initialMessageScrollObserver = null
+let historyPaginationIntent = false
 
 function loadJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || '') || fallback } catch { return fallback }
@@ -93,8 +96,10 @@ function sessionTitle(session) { return stripQuota(session?.title?.trim()) || '�
 function sessionTime(session) { return session?.time?.updated || session?.time?.created || 0 }
 function timeText(value) { return value ? new Date(value).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '' }
 function projectOrder() { return loadJson(PROJECT_ORDER_KEY, []) }
-function sessionOrder() { return loadJson(SESSION_ORDER_KEY, {}) }
+function sessionTreeExpanded() { return new Set(loadJson(SESSION_TREE_KEY, [])) }
 function orderIndex(order, value) { const index=order.indexOf(value); return index<0?Number.MAX_SAFE_INTEGER:index }
+function sessionCreated(session) { return session?.time?.created || 0 }
+function compareSessions(a,b) { return Number(meta(b.id).pinned)-Number(meta(a.id).pinned)||sessionTime(b)-sessionTime(a)||sessionCreated(b)-sessionCreated(a)||sessionTitle(a).localeCompare(sessionTitle(b),'ru',{sensitivity:'base',numeric:true})||String(a?.id||'').localeCompare(String(b?.id||'')) }
 function clearDragState() { dragPayload=null; document.querySelectorAll('.is-dragging,.drop-target').forEach((element)=>element.classList.remove('is-dragging','drop-target')) }
 function setDragData(event,type,value) {
   dragPayload={type,value}
@@ -149,27 +154,6 @@ function reorderProjects(sourceProject,targetProject,after=false) {
   let insertion=order.indexOf(targetProject)+(after?1:0)
   order.splice(Math.max(0,insertion),0,sourceProject)
   saveJson(PROJECT_ORDER_KEY,order);renderSessions()
-}
-function sessionIdsForProject(projectID) {
-  const order=sessionOrder()[projectID]||[]
-  return state.sessions.filter((session)=>projectInfo(session).key===projectID)
-    .sort((a,b)=>orderIndex(order,a.id)-orderIndex(order,b.id)||Number(meta(b.id).pinned)-Number(meta(a.id).pinned)||sessionTime(b)-sessionTime(a))
-    .map((session)=>session.id)
-}
-function reorderSessions(sourceID,targetID,targetProject,after=false) {
-  const value=sessionOrder(),ids=sessionIdsForProject(targetProject)
-  const sourceIndex=ids.indexOf(sourceID),targetIndex=ids.indexOf(targetID)
-  if(sourceIndex<0||targetIndex<0||sourceID===targetID)return
-  ids.splice(sourceIndex,1)
-  const insertion=ids.indexOf(targetID)+(after?1:0)
-  ids.splice(Math.max(0,insertion),0,sourceID)
-  value[targetProject]=ids;saveJson(SESSION_ORDER_KEY,value);renderSessions()
-}
-function appendSessionToOrder(sessionID,targetProject,targetID='',after=false) {
-  const value=sessionOrder(),ids=sessionIdsForProject(targetProject).filter((id)=>id!==sessionID)
-  const index=targetID?ids.indexOf(targetID):-1
-  const insertion=index<0?ids.length:index+(after?1:0)
-  ids.splice(insertion,0,sessionID);value[targetProject]=ids;saveJson(SESSION_ORDER_KEY,value)
 }
 async function sessionWithControls(session){
   try{
@@ -233,16 +217,11 @@ async function handleDrop(event) {
   const source=state.sessions.find((session)=>session.id===sourceSession)
   if(!source)return
   const sourceInfo=projectInfo(source)
-  if(sourceInfo.key===targetProject){
-    if(targetSession)reorderSessions(sourceSession,targetSession.dataset.sessionDrag,targetProject,after)
-    else appendSessionToOrder(sourceSession,targetProject,'',after)
-    return
-  }
+  if(sourceInfo.key===targetProject)return
   const project=state.projects.find((item)=>item.id===targetProject)
   if(!project||project.id===QUICK_PROJECT_ID)return
   if(!await confirmAction('Перенести через handoff?',`OpenCode не умеет менять папку существующей сессии. В «${projectLabel(project)}» попадут последние 40 текстовых сообщений (до 24 000 символов); файлы проекта и полная tool-история не переносятся. После успешного handoff исходная сессия будет удалена.`))return
   const {created,sourceRemoved}=await transferSessionToProject(source,project,{select:state.selected?.id===source.id,removeSource:true})
-  appendSessionToOrder(created.id,targetProject,targetSession?.dataset.sessionDrag||'',after)
   renderSessions()
   toast(sourceRemoved?`Сессия перенесена в проект «${projectLabel(project)}»`:'Создана копия; исходная сессия сохранена')
 }
@@ -262,8 +241,8 @@ async function loadSessions({ selectHash = false } = {}) {
   try {
     const [projects, sessions, statuses] = await Promise.all([api.listProjects(), api.listSessions(), api.sessionStatuses()])
     state.projects = projects
-    const unique = new Map(sessions.filter((s)=>!s?.parentID).map((s)=>[s.id,s]))
-    state.sessions = [...unique.values()].sort((a,b)=>sessionTime(b)-sessionTime(a))
+    const unique = new Map(sessions.map((s)=>[s.id,s]))
+    state.sessions = [...unique.values()].sort(compareSessions)
     for (const [id,status] of Object.entries(statuses || {})) {
       if (runningStatus(status)) state.running.set(id,{ status:normalizeRunStatus(status), since:Date.now() })
       else state.running.delete(id)
@@ -281,43 +260,49 @@ async function loadSessions({ selectHash = false } = {}) {
   }
 }
 
+function sessionMatches(session,query) {
+  if(!query)return true
+  const info=projectInfo(session)
+  return `${sessionTitle(session)} ${info.label} ${info.directory} ${session.agent||''}`.toLowerCase().includes(query)
+}
+function sessionTree(sessions=state.sessions) {
+  const byID=new Map(sessions.map((session)=>[session.id,session])),children=new Map(),roots=[]
+  for(const session of sessions){
+    const parentID=session?.parentID||session?.parentSessionID||''
+    if(parentID&&byID.has(parentID)){if(!children.has(parentID))children.set(parentID,[]);children.get(parentID).push(session)}
+    else roots.push(session)
+  }
+  roots.sort(compareSessions);for(const rows of children.values())rows.sort(compareSessions)
+  return {roots,children}
+}
+function subtreeMatches(session,children,query) { return sessionMatches(session,query)||(children.get(session.id)||[]).some((child)=>subtreeMatches(child,children,query)) }
+function renderSessionNode(session,children,expanded,query='',depth=0) {
+  const allChildren=children.get(session.id)||[]
+  const ownMatch=sessionMatches(session,query)
+  const visibleChildren=query&&!ownMatch?allChildren.filter((child)=>subtreeMatches(child,children,query)):allChildren
+  const hasChildren=visibleChildren.length>0,open=hasChildren&&(Boolean(query)||expanded.has(session.id))
+  const running=isRunning(session.id),queued=queueFor(session.id).length,m=meta(session.id),agent=String(session.agent||'').trim()
+  const childBody=hasChildren?`<details class="session-agent-folder" data-agent-folder="${escapeHtml(session.id)}"${open?' open':''}><summary class="session-agent-folder-summary"><span>Агентские диалоги</span><span class="count">${visibleChildren.length}</span></summary><div class="session-children" data-session-children="${escapeHtml(session.id)}">${visibleChildren.map((child)=>renderSessionNode(child,children,expanded,query,depth+1)).join('')}</div></details>`:''
+  return `<div class="session-node${depth?' subagent-node':''}" data-session-node="${escapeHtml(session.id)}" data-session-depth="${depth}"><div class="session ${state.selected?.id===session.id?'active':''} ${m.pinned?'pinned':''}${depth?' subagent':''}"${depth?'':` draggable="true" data-session-drag="${escapeHtml(session.id)}"`}>
+    <span class="session-tree-spacer" aria-hidden="true"></span><button class="session-main" data-session="${escapeHtml(session.id)}">
+      <div class="session-title">${escapeHtml(sessionTitle(session))}</div>
+      <div class="session-meta">${running?'<span class="run-dot"></span>':''}${depth&&agent?`<span class="session-kind">${escapeHtml(agent)}</span>`:''}<span>${running?'Выполняется':timeText(sessionTime(session))}</span>${queued?`<span class="queued">очередь ${queued}</span>`:''}${hasChildren?`<span class="session-child-count">агенты ${visibleChildren.length}</span>`:''}</div>
+    </button><button class="session-more" data-session-more="${escapeHtml(session.id)}">•••</button>
+  </div>${childBody}</div>`
+}
 function renderSessions() {
   if (state.loading) { $('sessions').innerHTML='<div class="loading">Загрузка сессий…</div>'; return }
-  const query = $('search').value.trim().toLowerCase()
-  const visible = state.sessions.filter((session)=>{
-    const m=meta(session.id)
-    const info=projectInfo(session)
-    return `${sessionTitle(session)} ${info.label} ${info.directory}`.toLowerCase().includes(query)
-  }).sort((a,b)=>Number(meta(b.id).pinned)-Number(meta(a.id).pinned)||sessionTime(b)-sessionTime(a))
-  if (!visible.length) { $('sessions').innerHTML='<div class="empty">Сессий не найдено.</div>'; return }
-  const groups = new Map()
-  for (const session of visible) {
-    const info=projectInfo(session)
-    if (!groups.has(info.key)) groups.set(info.key,{ info, items:[] })
-    groups.get(info.key).items.push(session)
-  }
-  const savedProjectOrder=projectOrder(),savedSessionOrder=sessionOrder()
-  const orderedGroups=[...groups.values()].sort((a,b)=>orderIndex(savedProjectOrder,a.info.key)-orderIndex(savedProjectOrder,b.info.key)||Number(meta(b.items[0]?.id).pinned)-Number(meta(a.items[0]?.id).pinned)||sessionTime(b.items[0])-sessionTime(a.items[0]))
-  for(const group of orderedGroups){const order=savedSessionOrder[group.info.key]||[];group.items.sort((a,b)=>orderIndex(order,a.id)-orderIndex(order,b.id)||Number(meta(b.id).pinned)-Number(meta(a.id).pinned)||sessionTime(b)-sessionTime(a))}
-  const collapsedProjects = new Set(loadJson(PROJECT_COLLAPSE_KEY, []))
-  $('sessions').innerHTML=orderedGroups.map(({info,items})=>`
-    <details class="project-group" data-project="${escapeHtml(info.key)}"${collapsedProjects.has(info.key) ? '' : ' open'}>
-      <summary class="project" draggable="true" title="${escapeHtml(info.directory)}"><span>${escapeHtml(info.label)}</span><span class="count">${items.length}</span></summary>
-      <div class="project-sessions">${items.map((session)=>{
-      const running=isRunning(session.id), queued=queueFor(session.id).length, m=meta(session.id)
-      return `<div class="session ${state.selected?.id===session.id?'active':''} ${m.pinned?'pinned':''}" draggable="true" data-session-drag="${escapeHtml(session.id)}">
-        <button class="session-main" data-session="${escapeHtml(session.id)}">
-          <div class="session-title">${escapeHtml(sessionTitle(session))}</div>
-          <div class="session-meta">${running?'<span class="run-dot"></span>':''}<span>${running?'Выполняется':timeText(sessionTime(session))}</span>${queued?`<span class="queued">очередь ${queued}</span>`:''}</div>
-        </button><button class="session-more" data-session-more="${escapeHtml(session.id)}">•••</button>
-      </div>`
-      }).join('')}</div>
-    </details>`).join('')
-  document.querySelectorAll('[data-project]').forEach((group)=>group.addEventListener('toggle',()=>{
-    const values=new Set(loadJson(PROJECT_COLLAPSE_KEY, []))
-    group.open ? values.delete(group.dataset.project) : values.add(group.dataset.project)
-    saveJson(PROJECT_COLLAPSE_KEY, [...values])
-  }))
+  const query=$('search').value.trim().toLowerCase(),tree=sessionTree(),roots=tree.roots.filter((session)=>subtreeMatches(session,tree.children,query))
+  if (!roots.length) { $('sessions').innerHTML='<div class="empty">Сессий не найдено.</div>'; return }
+  const groups=new Map()
+  for(const session of roots){const info=projectInfo(session);if(!groups.has(info.key))groups.set(info.key,{info,items:[]});groups.get(info.key).items.push(session)}
+  for(const group of groups.values())group.items.sort(compareSessions)
+  const savedProjectOrder=projectOrder()
+  const orderedGroups=[...groups.values()].sort((a,b)=>orderIndex(savedProjectOrder,a.info.key)-orderIndex(savedProjectOrder,b.info.key)||sessionTime(b.items[0])-sessionTime(a.items[0])||a.info.label.localeCompare(b.info.label,'ru',{sensitivity:'base',numeric:true}))
+  const collapsedProjects=new Set(loadJson(PROJECT_COLLAPSE_KEY, [])),expanded=sessionTreeExpanded()
+  $('sessions').innerHTML=orderedGroups.map(({info,items})=>`<details class="project-group" data-project="${escapeHtml(info.key)}"${collapsedProjects.has(info.key)?'':' open'}><summary class="project" draggable="true" title="${escapeHtml(info.directory)}"><span>${escapeHtml(info.label)}</span><span class="count">${items.length}</span></summary><div class="project-sessions">${items.map((session)=>renderSessionNode(session,tree.children,expanded,query)).join('')}</div></details>`).join('')
+  document.querySelectorAll('[data-project]').forEach((group)=>group.addEventListener('toggle',()=>{const values=new Set(loadJson(PROJECT_COLLAPSE_KEY, []));group.open?values.delete(group.dataset.project):values.add(group.dataset.project);saveJson(PROJECT_COLLAPSE_KEY,[...values])}))
+  document.querySelectorAll('[data-agent-folder]').forEach((folder)=>folder.addEventListener('toggle',()=>{const values=sessionTreeExpanded(),id=folder.dataset.agentFolder;folder.open?values.add(id):values.delete(id);saveJson(SESSION_TREE_KEY,[...values])}))
   document.querySelectorAll('[data-session]').forEach((button)=>button.addEventListener('click',()=>selectSession(button.dataset.session)))
   document.querySelectorAll('[data-session-more]').forEach((button)=>button.addEventListener('click',(event)=>{event.stopPropagation();openSessionActions(button.dataset.sessionMore)}))
 }
@@ -327,6 +312,7 @@ async function selectSession(id,{push=true,saveDraft=true}={}) {
   if(saveDraft)saveDraftNow()
   const cachedContext=state.contextCache.get(id)
   state.selected=session; state.context=cachedContext?.messages||[]; state.attachments=[]; state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
+  initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=id;historyPaginationIntent=false
   resetPromptHistory(id)
   renderAttachments(); renderSessions(); renderHeader(); renderMessages({bottom:true}); restoreDraft(); $('sidebar').classList.remove('open')
   if(push) setSessionHash(id)
@@ -336,7 +322,7 @@ async function selectSession(id,{push=true,saveDraft=true}={}) {
   if(detail&&state.selected?.id===id){const liveAgent=state.selected.agent;state.selected={...state.selected,...detail,...(liveAgent!==initialAgent?{agent:liveAgent}:{})};const index=state.sessions.findIndex((item)=>item.id===id);if(index>=0)state.sessions[index]=state.selected;renderHeader();renderControls()}
 }
 function clearSelection() {
-  saveDraftNow(); state.selected=null;state.context=[];state.attachments=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
+  saveDraftNow();initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=null;historyPaginationIntent=false; state.selected=null;state.context=[];state.attachments=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
   resetPromptHistory(null)
   location.hash=''
   window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:null}}))
@@ -366,10 +352,6 @@ function setContextPageCursor(cache,cursor,nextCursor) {
   if(!nextCursor||nextCursor===cursor||cache.seenCursors.has(nextCursor)){cache.nextCursor=null;cache.hasMore=false;return}
   cache.nextCursor=nextCursor;cache.hasMore=true
 }
-function maybeLoadOlderContext() {
-  const view=$('messages'),cache=state.selected&&state.contextCache.get(state.selected.id)
-  if(cache?.hasMore&&view&&view.scrollHeight<=view.clientHeight+8)void loadOlderContext()
-}
 async function loadContext({force=false,initial=false}={}) {
   if(!state.selected)return
   const id=state.selected.id,cache=contextCacheFor(id)
@@ -393,7 +375,6 @@ async function loadContext({force=false,initial=false}={}) {
     if(state.selected?.id===id){if(cache.messages.length)toast(`История: ${error.message}`);else $('messagesInner').innerHTML=`<div class="empty">Не удалось открыть сессию: ${escapeHtml(error.message)}</div>`}
   }finally{
     cache.loading=false
-    if(!cache.complete&&state.selected?.id===id)maybeLoadOlderContext()
   }
 }
 async function loadOlderContext() {
@@ -418,7 +399,6 @@ async function loadOlderContext() {
   }
   finally{
     cache.loading=false
-    if(!cache.complete&&state.selected?.id===id)maybeLoadOlderContext()
   }
 }
 function scheduleContextReload(delay=250) { clearTimeout(contextReloadTimer); contextReloadTimer=setTimeout(()=>loadContext({force:true}),delay) }
@@ -568,11 +548,65 @@ function navigatePromptHistory(direction,event){
   applyPromptHistoryValue(next===promptHistory.entries.length?promptHistory.draft:promptHistory.entries[next])
   return true
 }
+function isAgentSession(session) { return Boolean(session?.parentID||session?.parentSessionID) }
+function modelRefLabel(ref) {
+  if(!ref)return''
+  const value=typeof ref==='string'?{id:ref}:ref
+  const id=String(value?.id||value?.modelID||'')
+  const provider=String(value?.providerID||value?.provider||'')
+  const catalog=state.models.find((model)=>model.id===id&&(!provider||model.providerID===provider))
+  const label=String(catalog?.name||id||'')
+  return label||(provider?provider:'')
+}
+function messageOriginHint(message) {
+  const info=message?.info||{}
+  return [message?.origin,message?.source,message?.authorType,message?.generatedBy,info.origin,info.source,info.authorType,info.generatedBy].filter(Boolean).join(' ')
+}
+function messagePresentation(message,type) {
+  const info=message?.info||{}
+  if(type==='user'){
+    const delegated=isAgentSession(state.selected)||/(agent|assistant|model|synthetic|delegat|subagent)/i.test(messageOriginHint(message))
+    if(!delegated)return{origin:'human',avatar:'Я',role:'Ты'}
+    const target=String(state.selected?.agent||'').trim()
+    return{origin:'agent-prompt',avatar:'A',role:target?`Запрос модели/агента → ${target}`:'Запрос модели/агента'}
+  }
+  const agent=String(info.agent||message?.agent||state.selected?.agent||'').trim()
+  const model=modelRefLabel(info.model||message?.model||state.selected?.model)
+  if(isAgentSession(state.selected))return{origin:'agent-response',avatar:'AI',role:`Агент ${agent||'subagent'}${model?` · ${model}`:''}`}
+  return{origin:'model-response',avatar:'AI',role:model?`Модель · ${model}`:'OpenCode'}
+}
 function renderMessages({anchor=null,bottom=false}={}){
   const inner=$('messagesInner'), view=$('messages'); if(!state.selected){inner.innerHTML='<div class="welcome">Выбери сессию или задай быстрый вопрос.</div>';updateScrollToBottomButton();return} if(!state.context.length){inner.innerHTML='<div class="welcome">Пока нет сообщений.</div>';updateScrollToBottomButton();return}
   const stick=view.scrollHeight-view.scrollTop-view.clientHeight<100; const prev=view.scrollTop
-  inner.innerHTML=state.context.map((message,index)=>{const type=message.type||message.role;const id=message.id||message.messageID||`idx-${index}`;const body=type==='user'?userBody(message):assistantBody(message);return `<article class="message ${type==='user'?'user':'assistant'}" data-message-index="${index}"><div class="avatar">${type==='user'?'Я':'AI'}</div><div class="message-body"><div class="message-head"><span class="message-role">${type==='user'?'Ты':'OpenCode'}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`}).join('')
-  if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height;else if(bottom)view.scrollTop=view.scrollHeight;else if(stick)view.scrollTop=view.scrollHeight;else view.scrollTop=prev
+  inner.innerHTML=state.context.map((message,index)=>{const type=message.type||message.role;const id=message.id||message.messageID||`idx-${index}`;const body=type==='user'?userBody(message):assistantBody(message);const actor=messagePresentation(message,type),family=type==='user'?'user':'assistant';return `<article class="message ${family} ${actor.origin}" data-message-index="${index}" data-origin="${escapeHtml(actor.origin)}"><div class="avatar">${escapeHtml(actor.avatar)}</div><div class="message-body"><div class="message-head"><span class="message-role">${escapeHtml(actor.role)}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`}).join('')
+  if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height
+  else if(bottom){
+    const sessionID=state.selected?.id,stabilize=initialMessageScrollSession===sessionID
+    view.scrollTop=view.scrollHeight
+    if(stabilize){
+      initialMessageScrollObserver?.disconnect()
+      initialMessageScrollObserver=null
+      let settling=true,observer=null
+      const stopSettling=()=>{
+        settling=false
+        if(initialMessageScrollSession===sessionID)initialMessageScrollSession=null
+        if(initialMessageScrollObserver===observer){observer?.disconnect();initialMessageScrollObserver=null}
+      }
+      const settleBottom=()=>{if(!settling||state.selected?.id!==sessionID||initialMessageScrollSession!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
+      if('ResizeObserver' in window){
+        observer=new ResizeObserver(settleBottom)
+        initialMessageScrollObserver=observer
+        observer.observe(inner)
+        observer.observe(view)
+      }
+      setTimeout(stopSettling,1500)
+      const frames=new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
+      const fonts=document.fonts?.ready?document.fonts.ready.catch(()=>{}):Promise.resolve()
+      Promise.all([frames,fonts]).then(settleBottom)
+    }
+  }
+  else if(stick)view.scrollTop=view.scrollHeight
+  else view.scrollTop=prev
   updateScrollToBottomButton()
 }
 
@@ -846,7 +880,25 @@ function bindEvents(){
   $('attachButton').addEventListener('click',()=> $('fileInput').click());$('fileInput').addEventListener('change',(e)=>{addFiles(e.target.files);e.target.value=''});$('input').addEventListener('paste',(e)=>{const files=[...(e.clipboardData?.items||[])].filter((i)=>i.kind==='file').map((i)=>i.getAsFile()).filter(Boolean);if(files.length){e.preventDefault();addFiles(files)}})
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.addEventListener('click',()=>{state.deliveryMode=b.dataset.delivery;renderRunControls()}));$('gitButton').addEventListener('click',openGitDialog);$('usageButton').addEventListener('click',()=>{$('usageDialog').showModal()});$('notifyButton').addEventListener('click',toggleNotifications)
   $('renameForm').addEventListener('submit',(e)=>{e.preventDefault();renameCurrent()});document.querySelectorAll('[data-close]').forEach((b)=>b.addEventListener('click',()=>$(b.dataset.close).close()));document.querySelectorAll('dialog').forEach((d)=>d.addEventListener('click',(e)=>{if(e.target===d)d.close()}))
-  $('messages').addEventListener('scroll',()=>{if($('messages').scrollTop<=80)void loadOlderContext();updateScrollToBottomButton()},{passive:true})
+  const messagesView=$('messages')
+  const maybeLoadOlderFromUser=()=>{
+    if(!historyPaginationIntent||initialMessageScrollSession===state.selected?.id||messagesView.scrollTop>80)return
+    historyPaginationIntent=false
+    void loadOlderContext()
+  }
+  const armHistoryPagination=()=>{
+    historyPaginationIntent=true
+    if(initialMessageScrollSession===state.selected?.id){
+      initialMessageScrollSession=null
+      initialMessageScrollObserver?.disconnect()
+      initialMessageScrollObserver=null
+    }
+    requestAnimationFrame(maybeLoadOlderFromUser)
+  }
+  messagesView.addEventListener('wheel',armHistoryPagination,{passive:true})
+  messagesView.addEventListener('touchstart',armHistoryPagination,{passive:true})
+  messagesView.addEventListener('pointerdown',armHistoryPagination,{passive:true})
+  messagesView.addEventListener('scroll',()=>{maybeLoadOlderFromUser();updateScrollToBottomButton()},{passive:true})
   $('scrollToBottom').addEventListener('click',scrollMessagesToBottom)
   $('messagesInner').addEventListener('click',(e)=>{const copyCode=e.target.closest('.copy-code');if(copyCode){navigator.clipboard.writeText(copyCode.closest('.code-block').querySelector('code')?.textContent||'');copyCode.textContent='Скопировано';setTimeout(()=>copyCode.textContent='Копировать',900);return}const copy=e.target.closest('[data-copy-message]');if(copy){navigator.clipboard.writeText(messagePlainText(state.context[Number(copy.dataset.copyMessage)])||'');toast('Сообщение скопировано');return}const fork=e.target.closest('[data-fork-message]');if(fork){forkAtMessage(fork.dataset.forkMessage)}})
   window.addEventListener('hashchange',()=>{const id=sessionIdFromHash();if(id&&state.selected?.id!==id)selectSession(id,{push:false});else if(!id&&state.selected)clearSelection()});window.addEventListener('beforeunload',saveDraftNow)

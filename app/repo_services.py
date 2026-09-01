@@ -30,6 +30,18 @@ def _run(root:Path,args:list[str],timeout:float=12.,input_text:str|None=None)->s
     return subprocess.run(args,cwd=str(root),input=input_text,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=timeout,check=False)
 
 
+def safe_repo_file(root:Path,relative:str)->Path|None:
+    """Return a regular file physically contained by root; reject symlink escapes."""
+    try:
+        candidate=root/relative
+        if candidate.is_symlink(): return None
+        resolved=candidate.resolve(strict=True)
+        resolved.relative_to(root)
+        return resolved if resolved.is_file() else None
+    except (OSError,ValueError,RuntimeError):
+        return None
+
+
 def git_snapshot(project_dir:str)->dict[str,Any]:
     root=Path(project_dir).resolve(strict=False); probe=_run(root,["git","rev-parse","--is-inside-work-tree"],timeout=3.)
     if probe.returncode!=0: return {"git":False,"head":None,"status":[],"changed":[]}
@@ -81,9 +93,12 @@ class RepoIndexer:
                 try: files.append(str(path.relative_to(root)))
                 except ValueError: continue
                 if len(files)>=3000: break
+        files=[relative for relative in files if safe_repo_file(root,relative) is not None]
         symbols=[]; deps=[]; extension_counts={}; indexed_bytes=0
         for relative in files:
-            path=root/relative; ext=path.suffix.lower(); extension_counts[ext or "<none>"]=extension_counts.get(ext or "<none>",0)+1
+            path=safe_repo_file(root,relative)
+            if path is None: continue
+            ext=path.suffix.lower(); extension_counts[ext or "<none>"]=extension_counts.get(ext or "<none>",0)+1
             if path.name in DEPENDENCY_FILES:
                 try:
                     text=path.read_text(encoding="utf-8",errors="ignore")[:120000]; deps.append({"path":relative,"sha":hashlib.sha256(text.encode()).hexdigest()[:16],"preview":text[:1500]})
@@ -210,20 +225,21 @@ def classify_failure(output:str,returncode:int)->str:
 class VerificationPipeline:
     def __init__(self,artifacts:ArtifactStore): self.artifacts=artifacts
     def discover(self,project_dir:str)->list[dict[str,Any]]:
-        root=Path(project_dir); commands=[]; package=root/"package.json"
-        if package.is_file():
+        root=Path(project_dir).resolve(strict=True); commands=[]; package=safe_repo_file(root,"package.json")
+        if package is not None:
             try:
                 data=json.loads(package.read_text(encoding="utf-8")); scripts=data.get("scripts") if isinstance(data.get("scripts"),dict) else {}
             except (OSError,json.JSONDecodeError): scripts={}
             runner="pnpm" if (root/"pnpm-lock.yaml").exists() else "yarn" if (root/"yarn.lock").exists() else "npm"
             for script in ("lint","typecheck","check","test"):
                 if script in scripts: commands.append({"name":script,"argv":[runner,"run",script] if runner!="yarn" else ["yarn",script]})
-        if (root/"pyproject.toml").is_file() or (root/"pytest.ini").is_file(): commands.append({"name":"pytest","argv":[sys.executable,"-m","pytest","-q"]})
-        if (root/"Cargo.toml").is_file(): commands.append({"name":"cargo-check","argv":["cargo","check"]})
-        if (root/"go.mod").is_file(): commands.append({"name":"go-test","argv":["go","test","./..."]})
+        if safe_repo_file(root,"pyproject.toml") is not None or safe_repo_file(root,"pytest.ini") is not None: commands.append({"name":"pytest","argv":[sys.executable,"-m","pytest","-q"]})
+        if safe_repo_file(root,"Cargo.toml") is not None: commands.append({"name":"cargo-check","argv":["cargo","check"]})
+        if safe_repo_file(root,"go.mod") is not None: commands.append({"name":"go-test","argv":["go","test","./..."]})
         return commands[:4]
     def run(self,*,task:dict[str,Any],timeout_seconds:int|None=None)->dict[str,Any]:
-        if os.environ.get("OPENCODE_VERIFY_PIPELINE","auto").strip().lower() in {"0","off","false","no"}: return {"enabled":False,"results":[],"ok":True}
+        if os.environ.get("OPENCODE_VERIFY_PIPELINE","auto").strip().lower() in {"0","off","false","no"}: return {"enabled":False,"results":[],"ok":True,"reason":"verification disabled"}
+        if os.environ.get("OPENCODE_VERIFY_TRUST_REPO","0").strip().lower() not in {"1","true","yes","on"}: return {"enabled":False,"results":[],"ok":True,"reason":"repository verification requires explicit trust (OPENCODE_VERIFY_TRUST_REPO=1)"}
         timeout_seconds=timeout_seconds or int(os.environ.get("OPENCODE_VERIFY_TIMEOUT","120")); results=[]
         for command in self.discover(task["project_dir"]):
             started=time.monotonic()

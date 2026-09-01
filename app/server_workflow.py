@@ -199,6 +199,9 @@ class Handler(rag.Handler, features.Handler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        if status >= 400:
+            self.close_connection = True
+            self.send_header("Connection", "close")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -278,6 +281,7 @@ class Handler(rag.Handler, features.Handler):
         parsed = urlsplit(self.path)
         if parsed.path == "/client-integration.json":
             if not self.authenticated():
+                self.unauthorized()
                 return
             self.json_response(integration_contract.contract())
             return
@@ -305,6 +309,7 @@ class Handler(rag.Handler, features.Handler):
             return
         if parsed.path == "/client-send.json":
             if not self.authenticated():
+                self.unauthorized()
                 return
             try:
                 payload = self._feature_body()

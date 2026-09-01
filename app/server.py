@@ -440,17 +440,9 @@ def transform_json_response(method: str, path: str, body: bytes) -> bytes:
     elif path == "/api/session":
         if isinstance(payload, dict) and isinstance(payload.get("data"), list):
             payload = dict(payload)
-            payload["data"] = [
-                mark_quick_session(session)
-                for session in payload["data"]
-                if not (isinstance(session, dict) and session.get("parentID"))
-            ]
+            payload["data"] = [mark_quick_session(session) for session in payload["data"]]
         elif isinstance(payload, list):
-            payload = [
-                mark_quick_session(session)
-                for session in payload
-                if not (isinstance(session, dict) and session.get("parentID"))
-            ]
+            payload = [mark_quick_session(session) for session in payload]
     elif path == "/api/project":
         quick_project = {
             "id": SCRATCH_PROJECT_ID,
@@ -715,6 +707,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        if status >= 400:
+            # Error handlers may reject a POST before consuming its body. Close
+            # the HTTP/1.1 connection so those bytes cannot be parsed as a new request.
+            self.close_connection = True
+            self.send_header("Connection", "close")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

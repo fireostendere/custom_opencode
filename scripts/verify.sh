@@ -71,9 +71,11 @@ done
 "$PYTHON3" "$ROOT/scripts/rag-start-smoke.py"
 "$PYTHON3" "$ROOT/scripts/runtime-smoke.py"
 "$PYTHON3" "$ROOT/scripts/runtime-resume-smoke.py"
+"$PYTHON3" "$ROOT/scripts/security-boundary-smoke.py"
 for file in "$ROOT/scripts/"*.sh; do
   bash -n "$file"
 done
+bash "$ROOT/scripts/opencode-v2-bootstrap-regression.sh"
 # Ponytail provisioning script must exist and be sourceable.
 if [[ ! -f "$ROOT/scripts/ponytail-provision.sh" ]]; then
   echo "ponytail provisioning script missing" >&2
@@ -222,10 +224,10 @@ if 'OPENCODE_LOCAL_PROVIDER || "ollama"' not in local_router_js or "OPENCODE_LOC
 for token in ("qwen3.8-max", "qwen3.8-flash#low", "qwen3.7-plus#medium", "deepseek-v4-pro-0813#high", "glm-5.2", "RAG policy"):
     if token not in orchestrator:
         bad.append(f"orchestrator must keep the provider-pinned role stack / RAG policy token: {token}")
-for token in ("Planning policy", "conditional, not a ritual", "V1-only tool", "primary `plan` agent", "short, obvious, bounded", "two or more meaningful stages", "before the first file mutation"):
+for token in ("Planning policy", "conditional, not a ritual", "primary `plan` agent", "short, obvious, bounded", "two or more meaningful stages", "before the first file mutation"):
     if token not in orchestrator:
         bad.append(f"orchestrator must keep conditional V2 planning: {token}")
-for token in ("Планирование задач", "V1", "OpenCode V2", "primary-agent `plan`", "2-7", "до первого изменения файла", "не создавай искусственный план"):
+for token in ("Планирование задач", "OpenCode V2", "primary-agent `plan`", "2-7", "до первого изменения файла", "не создавай искусственный план"):
     if token not in agents_policy:
         bad.append(f"global agent policy must keep conditional V2 planning: {token}")
 for marker in ('Plugin.define({', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'gpt-5.6-sol-orchestrated', 'isOrchestratedSol', 'orchestrator-sol.md', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy'):

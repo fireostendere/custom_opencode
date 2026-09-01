@@ -26,7 +26,26 @@ SCRATCH_DIR=${OPENCODE_SCRATCH_DIRECTORY:-"$HOME/opencode-scratch"}
 AUTH_FILE=${OPENCODE_AUTH_FILE:-"$HOME/.local/share/opencode/auth.json"}
 SELFTEST=${CUSTOM_OPENCODE_INSTALL_SELFTEST:-1}
 
-if command -v opencode2 >/dev/null 2>&1 && [[ "$CONFIG_DIR" != "$SHARED_CONFIG_DIR" ]]; then
+# custom_opencode targets OpenCode V2 only. Bootstrap the current official beta
+# into the same user-local prefix as our wrapper so a clean install needs no
+# pre-existing OpenCode binary and uses only the opencode2 runtime.
+export PATH="$BIN_DIR:$PATH"
+if ! command -v opencode2 >/dev/null 2>&1; then
+  NPM=$(command -v npm || true)
+  if [[ -z "$NPM" ]]; then
+    echo "npm is required to install OpenCode V2 automatically" >&2
+    exit 1
+  fi
+  echo "==> Installing OpenCode V2 (@opencode-ai/cli@beta)"
+  "$NPM" install --global --prefix "$HOME/.local" @opencode-ai/cli@beta
+  hash -r
+fi
+if ! command -v opencode2 >/dev/null 2>&1; then
+  echo "OpenCode V2 installation completed without an opencode2 executable" >&2
+  exit 1
+fi
+
+if [[ "$CONFIG_DIR" != "$SHARED_CONFIG_DIR" ]]; then
   echo "OpenCode V2 shared service loads its global config from $SHARED_CONFIG_DIR" >&2
   echo "Unset OPENCODE_CONFIG_DIR (or set it to that exact path) before installing." >&2
   exit 1
@@ -112,7 +131,7 @@ if [[ "$PONYTAIL_ENABLED" == 1 ]]; then
 fi
 
 # Ponytail deliberately keeps this state in its XDG config location, independent
-# of the optional OpenCode config override used when opencode2 is absent.
+# of the OpenCode V2 shared service configuration.
 if [[ "$PONYTAIL_ENABLED" == 1 ]]; then
   PONYTAIL_STATE="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/.ponytail-active"
   if [[ -L "$PONYTAIL_STATE" || -d "$PONYTAIL_STATE" ]]; then
@@ -222,17 +241,18 @@ PY
 cat >"$BIN_DIR/custom-opencode" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+export PATH="$BIN_DIR:\$PATH"
 set -a
 source "$ROOT/.env"
 set +a
-# An isolated V2 plan has no safe parent-session model mapping.  Refuse the
+# An isolated V2 plan has no safe parent-session model mapping. Refuse the
 # otherwise-valid CLI form before it can silently use the global default.
 args=("\$@")
 if [[ "\${1:-}" == "run" ]]; then
   plan_agent=0
   explicit_model=0
   invalid_plan_model=0
-  # Scan a copy by index.  Do not shift the caller arguments: with `set -e`,
+  # Scan a copy by index. Do not shift the caller arguments: with `set -e`,
   # consuming a final --agent/--model used to exit before our diagnostic.
   for ((index=1; index<\${#args[@]}; index++)); do
     arg="\${args[index]}"
@@ -264,13 +284,7 @@ if [[ "\${1:-}" == "run" ]]; then
     exit 2
   fi
 fi
-if command -v opencode2 >/dev/null 2>&1; then
-  exec env -u OPENCODE_CONFIG_DIR opencode2 "\${args[@]}"
-fi
-if [[ -z "\${OPENCODE_CONFIG_DIR:-}" ]]; then
-  unset OPENCODE_CONFIG_DIR
-fi
-exec opencode "\${args[@]}"
+exec env -u OPENCODE_CONFIG_DIR opencode2 "\${args[@]}"
 EOF
 chmod 0755 "$BIN_DIR/custom-opencode"
 
@@ -278,32 +292,30 @@ ln -sfn "$ROOT/scripts/update.sh" "$BIN_DIR/custom-opencode-update"
 
 systemctl --user daemon-reload
 systemctl --user enable --now opencode-web-client.service
-if command -v opencode2 >/dev/null 2>&1; then
-  # The shared V2 service is long-lived and does not inherit variables from a
-  # later custom-opencode client. Persist only variables needed by providers and
-  # server-runtime plugins; arbitrary agent shells are scrubbed by the guard.
-  SERVICE_OPENCODE=(env -u OPENCODE_CONFIG_DIR opencode2)
-  SERVICE_ENV=(
-    OPENCODE_CONFIG_DIR TOKEN_PLAN_API_KEY TOKEN_PLAN_ANTHROPIC_BASE_URL
-    TOKEN_PLAN_OPENAI_BASE_URL TOKEN_PLAN_PROBE_MODEL OLLAMA_BASE_URL
-    BAILIAN_CONFIG_PATH QWEN_QUOTA_PROBE_ENABLED OPENCODE_WEB_PORT
-    OPENCODE_SERVER_PASSWORD OPENCODE_RUNTIME_PLUGIN_TOKEN
-    OPENCODE_RUNTIME_PLUGIN_HOST OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS
-    OPENCODE_SECRET_PREFIXES OPENCODE_PLANNER_MODEL OPENCODE_BUILDER_MODEL
-    OPENCODE_READER_MODEL OPENCODE_REVIEW_MODEL OPENCODE_LONG_HORIZON_MODEL
-     OPENCODE_ORCHESTRATED_MODEL OPENCODE_SOL_ORCHESTRATED_MODEL
-     OPENCODE_SOL_BUILDER_MODEL OPENCODE_SOL_READER_MODEL OPENCODE_SOL_REVIEW_MODEL
-     PONYTAIL_DEFAULT_MODE
-  )
-  for name in "${SERVICE_ENV[@]}"; do
-    value=${!name:-}
-    if [[ "$name" == OPENCODE_CONFIG_DIR ]]; then value=$CONFIG_DIR; fi
-    if [[ -n "$value" ]]; then
-      timeout 15s "${SERVICE_OPENCODE[@]}" service set env "$name" "$value" >/dev/null
-    fi
-  done
-  timeout 45s "${SERVICE_OPENCODE[@]}" service start >/dev/null
-fi
+# The shared V2 service is long-lived and does not inherit variables from a
+# later custom-opencode client. Persist only variables needed by providers and
+# server-runtime plugins; arbitrary agent shells are scrubbed by the guard.
+SERVICE_OPENCODE=(env -u OPENCODE_CONFIG_DIR opencode2)
+SERVICE_ENV=(
+  OPENCODE_CONFIG_DIR TOKEN_PLAN_API_KEY TOKEN_PLAN_ANTHROPIC_BASE_URL
+  TOKEN_PLAN_OPENAI_BASE_URL TOKEN_PLAN_PROBE_MODEL OLLAMA_BASE_URL
+  BAILIAN_CONFIG_PATH QWEN_QUOTA_PROBE_ENABLED OPENCODE_WEB_PORT
+  OPENCODE_SERVER_PASSWORD OPENCODE_RUNTIME_PLUGIN_TOKEN
+  OPENCODE_RUNTIME_PLUGIN_HOST OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS
+  OPENCODE_SECRET_PREFIXES OPENCODE_PLANNER_MODEL OPENCODE_BUILDER_MODEL
+  OPENCODE_READER_MODEL OPENCODE_REVIEW_MODEL OPENCODE_LONG_HORIZON_MODEL
+  OPENCODE_ORCHESTRATED_MODEL OPENCODE_SOL_ORCHESTRATED_MODEL
+  OPENCODE_SOL_BUILDER_MODEL OPENCODE_SOL_READER_MODEL OPENCODE_SOL_REVIEW_MODEL
+  PONYTAIL_DEFAULT_MODE
+)
+for name in "${SERVICE_ENV[@]}"; do
+  value=${!name:-}
+  if [[ "$name" == OPENCODE_CONFIG_DIR ]]; then value=$CONFIG_DIR; fi
+  if [[ -n "$value" ]]; then
+    timeout 15s "${SERVICE_OPENCODE[@]}" service set env "$name" "$value" >/dev/null
+  fi
+done
+timeout 45s "${SERVICE_OPENCODE[@]}" service start >/dev/null
 systemctl --user restart opencode-web-client.service
 
 if [[ "$SELFTEST" != 0 ]]; then
