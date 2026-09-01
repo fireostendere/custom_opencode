@@ -54,6 +54,7 @@ let dragHandlersInstalled = false
 let promptHistory = { sessionID:null, entries:[], cursor:0, draft:'', value:'' }
 let applyingPromptHistory = false
 let initialMessageScrollSession = null
+let initialMessageScrollObserver = null
 
 function loadJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || '') || fallback } catch { return fallback }
@@ -570,9 +571,15 @@ function renderMessages({anchor=null,bottom=false}={}){
   if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height
   else if(bottom){
     const sessionID=state.selected?.id
+    initialMessageScrollObserver?.disconnect()
+    initialMessageScrollObserver=null
     initialMessageScrollSession=sessionID
     const settleBottom=()=>{if(state.selected?.id!==sessionID||initialMessageScrollSession!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
     settleBottom()
+    if('ResizeObserver' in window){
+      initialMessageScrollObserver=new ResizeObserver(settleBottom)
+      initialMessageScrollObserver.observe(inner)
+    }
     const frames=new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
     const fonts=document.fonts?.ready?document.fonts.ready.catch(()=>{}):Promise.resolve()
     Promise.all([frames,fonts]).then(settleBottom)
@@ -853,7 +860,12 @@ function bindEvents(){
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.addEventListener('click',()=>{state.deliveryMode=b.dataset.delivery;renderRunControls()}));$('gitButton').addEventListener('click',openGitDialog);$('usageButton').addEventListener('click',()=>{$('usageDialog').showModal()});$('notifyButton').addEventListener('click',toggleNotifications)
   $('renameForm').addEventListener('submit',(e)=>{e.preventDefault();renameCurrent()});document.querySelectorAll('[data-close]').forEach((b)=>b.addEventListener('click',()=>$(b.dataset.close).close()));document.querySelectorAll('dialog').forEach((d)=>d.addEventListener('click',(e)=>{if(e.target===d)d.close()}))
   const messagesView=$('messages')
-  const armHistoryPagination=()=>{if(initialMessageScrollSession===state.selected?.id)initialMessageScrollSession=null}
+  const armHistoryPagination=()=>{
+    if(initialMessageScrollSession!==state.selected?.id)return
+    initialMessageScrollSession=null
+    initialMessageScrollObserver?.disconnect()
+    initialMessageScrollObserver=null
+  }
   messagesView.addEventListener('wheel',armHistoryPagination,{passive:true})
   messagesView.addEventListener('touchstart',armHistoryPagination,{passive:true})
   messagesView.addEventListener('pointerdown',armHistoryPagination,{passive:true})
