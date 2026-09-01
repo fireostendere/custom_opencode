@@ -35,8 +35,6 @@ text=text.replace('__CONFIG_DIR__',config_dir)
 text=text.replace('__CUSTOM_OPENCODE_ROOT__',root)
 text=text.replace('__RAG_DISABLED__','true')
 config=json.loads(text)
-# This smoke has no managed checkout; exercise the packaged TUI with Ponytail
-# intentionally disabled instead of leaving its template placeholder active.
 config.pop('plugins', None)
 config['compaction']={'auto':True,'keep':{'tokens':12000},'buffer':24000}
 config['tool_output']={'max_lines':1600,'max_bytes':48000}
@@ -55,8 +53,6 @@ export OPENCODE_SERVER_PASSWORD=test
 export CODEX_BIN=/nonexistent/custom-opencode-codex
 export BAILIAN_CLI_BIN=/nonexistent/custom-opencode-bl
 
-# Smoke the real packaged loader at several terminal sizes. A timeout is the
-# normal exit: this test only needs the initial reactive render, not a model run.
 for geometry in 80x24 120x30 160x40; do
   cols=${geometry%x*}
   rows=${geometry#*x}
@@ -71,11 +67,11 @@ for geometry in 80x24 120x30 160x40; do
     cat "$log" >&2
     exit 1
   fi
-  if grep -Eqi 'SyntaxError|Failed to load.*plugin|Cannot find (module|package)|Unhandled.*Error|limits-(header|panels).*error|workspace-panel.*error|panel-views.*error|panel-command.*error|prompt-history.*error|model-selector.*error|effort-indicator.*error' "$capture" "$log"; then
+  if grep -Eqi 'SyntaxError|Failed to load.*plugin|Cannot find (module|package)|Unhandled.*Error|limits-(header|panels).*error|workspace-panel.*error|panel-slash.*error|panel-views.*error|panel-command.*error|prompt-history.*error|model-selector.*error|effort-indicator.*error' "$capture" "$log"; then
     echo "TUI plugin loader error at $geometry" >&2
-    grep -Eai 'SyntaxError|Failed to load.*plugin|Cannot find (module|package)|Unhandled.*Error|limits-|workspace-panel|panel-views|panel-command|prompt-history|model-selector|effort-indicator' "$capture" "$log" >&2 || true
+    grep -Eai 'SyntaxError|Failed to load.*plugin|Cannot find (module|package)|Unhandled.*Error|limits-|workspace-panel|panel-slash|panel-views|panel-command|prompt-history|model-selector|effort-indicator' "$capture" "$log" >&2 || true
     exit 1
   fi
 done
 
-echo "Packaged TUI smoke passed: opencode2 loader + four-zone panels at 80x24/120x30/160x40"
+echo "Packaged TUI smoke passed: opencode2 loader + native panel slash + four-zone panels at 80x24/120x30/160x40"
