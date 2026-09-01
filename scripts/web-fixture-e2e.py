@@ -234,6 +234,7 @@ class Backend(BaseHTTPRequestHandler):
                 FixtureState.managed_failures -= 1
                 self.send_json({"error": "fixture managed send failure"}, status=500)
                 return
+            FixtureState.session_running = True
             self.send_json({"data": {"ok": True}})
             return
         if "/permission/" in path or "/permissions/" in path:
@@ -452,6 +453,7 @@ def desktop(browser, base_url: str) -> None:
     page.wait_for_function("document.querySelector('#input').value === 'send exactly once'")
     page.wait_for_function("document.querySelector('#composerAction').getAttribute('aria-label') === 'Отправить'")
     assert len(FixtureState.managed_sends) == 1
+    errors[:] = [error for error in errors if not (error.startswith("HTTP 500 ") and "/client-send.json" in error)]
 
     page.evaluate("""() => {
         const button = document.querySelector('#composerAction')
