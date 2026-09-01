@@ -19,7 +19,7 @@ render_old = '''  else if(bottom){
     if(document.fonts?.ready)document.fonts.ready.then(settleBottom).catch(()=>{})
   }
 '''
-render_intermediate = '''  else if(bottom){
+render_with_guard = '''  else if(bottom){
     const sessionID=state.selected?.id
     initialMessageScrollSession=sessionID
     const settleBottom=()=>{if(state.selected?.id!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
@@ -29,7 +29,7 @@ render_intermediate = '''  else if(bottom){
     Promise.all([frames,fonts]).then(()=>{settleBottom();if(initialMessageScrollSession===sessionID)initialMessageScrollSession=null})
   }
 '''
-render_final = '''  else if(bottom){
+render_with_autofill = '''  else if(bottom){
     const sessionID=state.selected?.id
     initialMessageScrollSession=sessionID
     const settleBottom=()=>{if(state.selected?.id!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
@@ -39,11 +39,11 @@ render_final = '''  else if(bottom){
     Promise.all([frames,fonts]).then(()=>{settleBottom();if(initialMessageScrollSession===sessionID)initialMessageScrollSession=null;maybeLoadOlderContext()})
   }
 '''
-if render_final not in text:
-    if render_intermediate in text:
-        text = text.replace(render_intermediate, render_final, 1)
+if render_with_guard not in text:
+    if render_with_autofill in text:
+        text = text.replace(render_with_autofill, render_with_guard, 1)
     elif render_old in text:
-        text = text.replace(render_old, render_final, 1)
+        text = text.replace(render_old, render_with_guard, 1)
     else:
         raise SystemExit("initial bottom convergence block not found")
 
