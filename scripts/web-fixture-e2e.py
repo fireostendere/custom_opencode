@@ -359,7 +359,12 @@ def desktop(browser, base_url: str) -> None:
     page.wait_for_function("!document.querySelector('#modelButton').disabled")
     page.click("#modelButton")
     page.locator("#modelDialog[open]").wait_for(state="visible")
-    assert page.locator("#modelChoices .choice").count() == 1
+    model_choices = page.locator("#modelChoices .choice")
+    assert model_choices.count() == 1, {
+        "count": model_choices.count(),
+        "text": page.locator("#modelChoices").inner_text(),
+        "search": page.locator("#modelSearch").input_value(),
+    }
     assert "Qwen3.8 Max" in page.locator("#modelChoices").inner_text()
     page.locator("#modelDialog [data-close='modelDialog']").click()
 
