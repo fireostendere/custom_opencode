@@ -97,7 +97,8 @@ function timeText(value) { return value ? new Date(value).toLocaleString('ru-RU'
 function projectOrder() { return loadJson(PROJECT_ORDER_KEY, []) }
 function sessionTreeExpanded() { return new Set(loadJson(SESSION_TREE_KEY, [])) }
 function orderIndex(order, value) { const index=order.indexOf(value); return index<0?Number.MAX_SAFE_INTEGER:index }
-function compareSessions(a,b) { return Number(meta(b.id).pinned)-Number(meta(a.id).pinned)||sessionTime(b)-sessionTime(a)||sessionTitle(a).localeCompare(sessionTitle(b),'ru',{sensitivity:'base',numeric:true}) }
+function sessionCreated(session) { return session?.time?.created || 0 }
+function compareSessions(a,b) { return Number(meta(b.id).pinned)-Number(meta(a.id).pinned)||sessionTime(b)-sessionTime(a)||sessionCreated(b)-sessionCreated(a)||sessionTitle(a).localeCompare(sessionTitle(b),'ru',{sensitivity:'base',numeric:true})||String(a?.id||'').localeCompare(String(b?.id||'')) }
 function clearDragState() { dragPayload=null; document.querySelectorAll('.is-dragging,.drop-target').forEach((element)=>element.classList.remove('is-dragging','drop-target')) }
 function setDragData(event,type,value) {
   dragPayload={type,value}
@@ -152,27 +153,6 @@ function reorderProjects(sourceProject,targetProject,after=false) {
   let insertion=order.indexOf(targetProject)+(after?1:0)
   order.splice(Math.max(0,insertion),0,sourceProject)
   saveJson(PROJECT_ORDER_KEY,order);renderSessions()
-}
-function sessionIdsForProject(projectID) {
-  const order=sessionOrder()[projectID]||[]
-  return state.sessions.filter((session)=>projectInfo(session).key===projectID)
-    .sort((a,b)=>orderIndex(order,a.id)-orderIndex(order,b.id)||Number(meta(b.id).pinned)-Number(meta(a.id).pinned)||sessionTime(b)-sessionTime(a))
-    .map((session)=>session.id)
-}
-function reorderSessions(sourceID,targetID,targetProject,after=false) {
-  const value=sessionOrder(),ids=sessionIdsForProject(targetProject)
-  const sourceIndex=ids.indexOf(sourceID),targetIndex=ids.indexOf(targetID)
-  if(sourceIndex<0||targetIndex<0||sourceID===targetID)return
-  ids.splice(sourceIndex,1)
-  const insertion=ids.indexOf(targetID)+(after?1:0)
-  ids.splice(Math.max(0,insertion),0,sourceID)
-  value[targetProject]=ids;saveJson(SESSION_ORDER_KEY,value);renderSessions()
-}
-function appendSessionToOrder(sessionID,targetProject,targetID='',after=false) {
-  const value=sessionOrder(),ids=sessionIdsForProject(targetProject).filter((id)=>id!==sessionID)
-  const index=targetID?ids.indexOf(targetID):-1
-  const insertion=index<0?ids.length:index+(after?1:0)
-  ids.splice(insertion,0,sessionID);value[targetProject]=ids;saveJson(SESSION_ORDER_KEY,value)
 }
 async function sessionWithControls(session){
   try{
@@ -302,12 +282,11 @@ function renderSessionNode(session,children,expanded,query='',depth=0) {
   const visibleChildren=query&&!ownMatch?allChildren.filter((child)=>subtreeMatches(child,children,query)):allChildren
   const hasChildren=visibleChildren.length>0,open=hasChildren&&(Boolean(query)||expanded.has(session.id))
   const running=isRunning(session.id),queued=queueFor(session.id).length,m=meta(session.id),agent=String(session.agent||'').trim()
-  const toggle=hasChildren?`<button class="session-tree-toggle" type="button" data-session-tree-toggle="${escapeHtml(session.id)}" aria-expanded="${open?'true':'false'}" aria-label="${open?'Свернуть':'Развернуть'} дочерние диалоги"></button>`:'<span class="session-tree-spacer" aria-hidden="true"></span>'
-  const childBody=hasChildren?`<div class="session-children" data-session-children="${escapeHtml(session.id)}"${open?'':' hidden'}>${visibleChildren.map((child)=>renderSessionNode(child,children,expanded,query,depth+1)).join('')}</div>`:''
+  const childBody=hasChildren?`<details class="session-agent-folder" data-agent-folder="${escapeHtml(session.id)}"${open?' open':''}><summary class="session-agent-folder-summary"><span>Агентские диалоги</span><span class="count">${visibleChildren.length}</span></summary><div class="session-children" data-session-children="${escapeHtml(session.id)}">${visibleChildren.map((child)=>renderSessionNode(child,children,expanded,query,depth+1)).join('')}</div></details>`:''
   return `<div class="session-node${depth?' subagent-node':''}" data-session-node="${escapeHtml(session.id)}" data-session-depth="${depth}"><div class="session ${state.selected?.id===session.id?'active':''} ${m.pinned?'pinned':''}${depth?' subagent':''}"${depth?'':` draggable="true" data-session-drag="${escapeHtml(session.id)}"`}>
-    ${toggle}<button class="session-main" data-session="${escapeHtml(session.id)}">
+    <span class="session-tree-spacer" aria-hidden="true"></span><button class="session-main" data-session="${escapeHtml(session.id)}">
       <div class="session-title">${escapeHtml(sessionTitle(session))}</div>
-      <div class="session-meta">${running?'<span class="run-dot"></span>':''}${depth&&agent?`<span class="session-kind">${escapeHtml(agent)}</span>`:''}<span>${running?'Выполняется':timeText(sessionTime(session))}</span>${queued?`<span class="queued">очередь ${queued}</span>`:''}${hasChildren?`<span class="session-child-count">${visibleChildren.length} sub</span>`:''}</div>
+      <div class="session-meta">${running?'<span class="run-dot"></span>':''}${depth&&agent?`<span class="session-kind">${escapeHtml(agent)}</span>`:''}<span>${running?'Выполняется':timeText(sessionTime(session))}</span>${queued?`<span class="queued">очередь ${queued}</span>`:''}${hasChildren?`<span class="session-child-count">агенты ${visibleChildren.length}</span>`:''}</div>
     </button><button class="session-more" data-session-more="${escapeHtml(session.id)}">•••</button>
   </div>${childBody}</div>`
 }
@@ -323,7 +302,7 @@ function renderSessions() {
   const collapsedProjects=new Set(loadJson(PROJECT_COLLAPSE_KEY, [])),expanded=sessionTreeExpanded()
   $('sessions').innerHTML=orderedGroups.map(({info,items})=>`<details class="project-group" data-project="${escapeHtml(info.key)}"${collapsedProjects.has(info.key)?'':' open'}><summary class="project" draggable="true" title="${escapeHtml(info.directory)}"><span>${escapeHtml(info.label)}</span><span class="count">${items.length}</span></summary><div class="project-sessions">${items.map((session)=>renderSessionNode(session,tree.children,expanded,query)).join('')}</div></details>`).join('')
   document.querySelectorAll('[data-project]').forEach((group)=>group.addEventListener('toggle',()=>{const values=new Set(loadJson(PROJECT_COLLAPSE_KEY, []));group.open?values.delete(group.dataset.project):values.add(group.dataset.project);saveJson(PROJECT_COLLAPSE_KEY,[...values])}))
-  document.querySelectorAll('[data-session-tree-toggle]').forEach((button)=>button.addEventListener('click',(event)=>{event.preventDefault();event.stopPropagation();const id=button.dataset.sessionTreeToggle,body=document.querySelector(`[data-session-children="${CSS.escape(id)}"]`),values=sessionTreeExpanded(),open=button.getAttribute('aria-expanded')!=='true';button.setAttribute('aria-expanded',String(open));button.setAttribute('aria-label',`${open?'Свернуть':'Развернуть'} дочерние диалоги`);if(body)body.hidden=!open;open?values.add(id):values.delete(id);saveJson(SESSION_TREE_KEY,[...values])}))
+  document.querySelectorAll('[data-agent-folder]').forEach((folder)=>folder.addEventListener('toggle',()=>{const values=sessionTreeExpanded(),id=folder.dataset.agentFolder;folder.open?values.add(id):values.delete(id);saveJson(SESSION_TREE_KEY,[...values])}))
   document.querySelectorAll('[data-session]').forEach((button)=>button.addEventListener('click',()=>selectSession(button.dataset.session)))
   document.querySelectorAll('[data-session-more]').forEach((button)=>button.addEventListener('click',(event)=>{event.stopPropagation();openSessionActions(button.dataset.sessionMore)}))
 }
@@ -569,10 +548,37 @@ function navigatePromptHistory(direction,event){
   applyPromptHistoryValue(next===promptHistory.entries.length?promptHistory.draft:promptHistory.entries[next])
   return true
 }
+function isAgentSession(session) { return Boolean(session?.parentID||session?.parentSessionID) }
+function modelRefLabel(ref) {
+  if(!ref)return''
+  const value=typeof ref==='string'?{id:ref}:ref
+  const id=String(value?.id||value?.modelID||'')
+  const provider=String(value?.providerID||value?.provider||'')
+  const catalog=state.models.find((model)=>model.id===id&&(!provider||model.providerID===provider))
+  const label=String(catalog?.name||id||'')
+  return label||(provider?provider:'')
+}
+function messageOriginHint(message) {
+  const info=message?.info||{}
+  return [message?.origin,message?.source,message?.authorType,message?.generatedBy,info.origin,info.source,info.authorType,info.generatedBy].filter(Boolean).join(' ')
+}
+function messagePresentation(message,type) {
+  const info=message?.info||{}
+  if(type==='user'){
+    const delegated=isAgentSession(state.selected)||/(agent|assistant|model|synthetic|delegat|subagent)/i.test(messageOriginHint(message))
+    if(!delegated)return{origin:'human',avatar:'Я',role:'Ты'}
+    const target=String(state.selected?.agent||'').trim()
+    return{origin:'agent-prompt',avatar:'A',role:target?`Запрос модели/агента → ${target}`:'Запрос модели/агента'}
+  }
+  const agent=String(info.agent||message?.agent||state.selected?.agent||'').trim()
+  const model=modelRefLabel(info.model||message?.model||state.selected?.model)
+  if(isAgentSession(state.selected))return{origin:'agent-response',avatar:'AI',role:`Агент ${agent||'subagent'}${model?` · ${model}`:''}`}
+  return{origin:'model-response',avatar:'AI',role:model?`Модель · ${model}`:'OpenCode'}
+}
 function renderMessages({anchor=null,bottom=false}={}){
   const inner=$('messagesInner'), view=$('messages'); if(!state.selected){inner.innerHTML='<div class="welcome">Выбери сессию или задай быстрый вопрос.</div>';updateScrollToBottomButton();return} if(!state.context.length){inner.innerHTML='<div class="welcome">Пока нет сообщений.</div>';updateScrollToBottomButton();return}
   const stick=view.scrollHeight-view.scrollTop-view.clientHeight<100; const prev=view.scrollTop
-  inner.innerHTML=state.context.map((message,index)=>{const type=message.type||message.role;const id=message.id||message.messageID||`idx-${index}`;const body=type==='user'?userBody(message):assistantBody(message);return `<article class="message ${type==='user'?'user':'assistant'}" data-message-index="${index}"><div class="avatar">${type==='user'?'Я':'AI'}</div><div class="message-body"><div class="message-head"><span class="message-role">${type==='user'?'Ты':'OpenCode'}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`}).join('')
+  inner.innerHTML=state.context.map((message,index)=>{const type=message.type||message.role;const id=message.id||message.messageID||`idx-${index}`;const body=type==='user'?userBody(message):assistantBody(message);const actor=messagePresentation(message,type),family=type==='user'?'user':'assistant';return `<article class="message ${family} ${actor.origin}" data-message-index="${index}" data-origin="${escapeHtml(actor.origin)}"><div class="avatar">${escapeHtml(actor.avatar)}</div><div class="message-body"><div class="message-head"><span class="message-role">${escapeHtml(actor.role)}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`}).join('')
   if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height
   else if(bottom){
     const sessionID=state.selected?.id,stabilize=initialMessageScrollSession===sessionID
