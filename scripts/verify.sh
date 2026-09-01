@@ -41,8 +41,8 @@ sessions = {"data": [
     {"id": "child", "parentID": "root", "location": {"directory": workspace}},
 ]}
 filtered = json.loads(server.transform_json_response("GET", "/api/session", json.dumps(sessions).encode()))
-assert [session["id"] for session in filtered["data"]] == ["root"]
-assert filtered["data"][0]["projectID"] == server.SCRATCH_PROJECT_ID
+assert [session["id"] for session in filtered["data"]] == ["root", "child"]
+assert all(session["projectID"] == server.SCRATCH_PROJECT_ID for session in filtered["data"])
 projects = json.loads(server.transform_json_response("GET", "/api/project", b"[]"))
 assert projects[-1]["id"] == server.SCRATCH_PROJECT_ID
 server.cleanup_scratch_directory(workspace)
