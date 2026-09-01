@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory() as temp:
         assert status == 401, status
         status, response_headers, _ = request("POST", "/client-send.json", body={"sessionID": "x", "text": "x"}, headers=remote_headers)
         assert status == 401, status
-        assert response_headers.get("connection", "").lower() == "close", response_headers
+        assert any(key.lower() == "connection" and value.lower() == "close" for key, value in response_headers.items()), response_headers
 
         status, response_headers, _ = request(
             "POST",
