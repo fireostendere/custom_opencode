@@ -21,17 +21,17 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Finalize browser regression contract
+      - name: Finalize browser fixture
         run: |
           python3 - <<'PY'
           from pathlib import Path
           p=Path('scripts/web-fixture-e2e.py')
           s=p.read_text()
-          old='''    page.locator("#messages").hover()\n    page.mouse.wheel(0, -100000)\n    page.wait_for_function("document.querySelectorAll('#messages .message').length === 241")\n'''
-          new='''    for minimum in (160, 240, 241):\n        page.locator("#messages").hover()\n        page.mouse.wheel(0, -100000)\n        page.wait_for_function(f"document.querySelectorAll('#messages .message').length >= {minimum}")\n    assert page.locator("#messages .message").count() == 241\n'''
-          if new not in s:
-              if old not in s: raise SystemExit('history pagination gesture marker missing')
-              s=s.replace(old,new,1)
+          marker='''        payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}\n        if "/permission/" in path or "/permissions/" in path:\n'''
+          replacement='''        payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}\n        if path in ("/api/session/ses_fixture/prompt_async", "/api/session/ses_fixture/prompt"):\n            text = str(payload.get("text") or "")\n            if not text and isinstance(payload.get("prompt"), dict):\n                text = str(payload["prompt"].get("text") or "")\n            if not text and isinstance(payload.get("parts"), list):\n                text = "\\n".join(str(part.get("text") or "") for part in payload["parts"] if isinstance(part, dict) and part.get("type") == "text").strip()\n            FixtureState.managed_sends.append({"text": text})\n            if FixtureState.managed_failures > 0:\n                FixtureState.managed_failures -= 1\n                self.send_json({"error": "fixture managed send failure"}, status=500)\n                return\n            self.send_json({"data": {"ok": True}})\n            return\n        if "/permission/" in path or "/permissions/" in path:\n'''
+          if 'fixture managed send failure' not in s:
+              if marker not in s: raise SystemExit('fixture POST marker missing')
+              s=s.replace(marker,replacement,1)
           p.write_text(s)
           PY
           git diff --check
@@ -40,7 +40,7 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           if ! git diff --quiet -- scripts/web-fixture-e2e.py; then
             git add scripts/web-fixture-e2e.py
-            git commit -m 'test: make history pagination gesture regression robust'
+            git commit -m 'test: restore managed send failure coverage'
             git push origin HEAD:audit/full-review-20260901
           fi
 
