@@ -22,34 +22,84 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Repair leaked fixture path
+      - name: Remove OpenCode V1 compatibility residue
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          path = Path('config/opencode.json.template')
-          text = path.read_text(encoding='utf-8')
-          bad = '"command":["bash","/tmp/root/scripts/rag-mcp.sh"]'
-          good = '"command":["bash","__CUSTOM_OPENCODE_ROOT__/scripts/rag-mcp.sh"]'
-          if bad not in text:
-              raise SystemExit('expected leaked fixture path not found')
-          path.write_text(text.replace(bad, good, 1), encoding='utf-8')
+
+          replacements = {
+              'scripts/install.sh': [
+                  ('and never falls back to OpenCode V1.', 'and uses only the opencode2 runtime.'),
+              ],
+              'scripts/opencode-v2-bootstrap-regression.sh': [
+                  ('# A V1-shaped binary is intentionally present. The installer/wrapper must never\n# probe or execute it: custom_opencode has exactly one OpenCode runtime, V2.',
+                   '# An unversioned legacy-shaped binary is intentionally present. The installer/wrapper must never\n# probe or execute it: custom_opencode has exactly one OpenCode runtime, opencode2.'),
+                  ('FORBIDDEN-opencode-v1', 'FORBIDDEN-opencode'),
+                  ('V1 compatibility path was executed', 'unversioned compatibility path was executed'),
+                  ('V1 fallback remains in generated wrapper', 'unversioned fallback remains in generated wrapper'),
+              ],
+              'config/prompts/orchestrator.md': [
+                  ('For a plan-worthy task, inspect the relevant context first, then record 2-7 outcome-oriented, verifiable items before the first file mutation. `todowrite` is a V1-only tool and is not available in OpenCode V2. In native V2, use the primary `plan` agent and a plan document; in custom Runtime V2/V3, use the durable task/checkpoint/handoff state.',
+                   'For a plan-worthy task, inspect the relevant context first, then record 2-7 outcome-oriented, verifiable items before the first file mutation. In native OpenCode V2, use the primary `plan` agent and a plan document; in custom Runtime V2/V3, use the durable task/checkpoint/handoff state.'),
+              ],
+              'config/AGENTS.md': [
+                  ('Для плановой задачи сначала изучи контекст, затем до первого изменения файла зафиксируй 2-7 проверяемых результатов. В OpenCode V2 не вызывай устаревший `todowrite` из V1: в существующей session переключай только primary-agent `plan` (для direct — `plan-direct`), сохраняя точные provider/model/variant.',
+                   'Для плановой задачи сначала изучи контекст, затем до первого изменения файла зафиксируй 2-7 проверяемых результатов. В OpenCode V2 в существующей session переключай только primary-agent `plan` (для direct — `plan-direct`), сохраняя точные provider/model/variant.'),
+              ],
+              'scripts/verify.sh': [
+                  ('"V1-only tool", ', ''),
+                  ('"Планирование задач", "V1", "OpenCode V2", ', '"Планирование задач", "OpenCode V2", '),
+                  ('for file in "$ROOT/scripts/"*.sh; do\n  bash -n "$file"\ndone\n# Ponytail provisioning script must exist and be sourceable.',
+                   'for file in "$ROOT/scripts/"*.sh; do\n  bash -n "$file"\ndone\nbash "$ROOT/scripts/opencode-v2-bootstrap-regression.sh"\n# Ponytail provisioning script must exist and be sourceable.'),
+              ],
+              'docs/installation.md': [
+                  ('- OpenCode V2 (`opencode2` либо совместимый `opencode`);\n- Python 3;\n- Node.js — нужен `scripts/verify.sh` для JS syntax/web smoke;',
+                   '- Python 3;\n- Node.js + npm — installer сам bootstrap-ит OpenCode V2 (`opencode2`) и использует Node.js для JS syntax/web smoke;'),
+                  ('1. загружает `.env`;\n2. обнаруживает RAG;\n3. валидирует и provision-ит pinned Ponytail checkout, если он включён;\n4. при включённом self-test выполняет pre-install verifier до записи конфигов;\n5. создаёт/обновляет user systemd unit;\n6. рендерит актуальный OpenCode V2 config;\n7. делает backup существующего `opencode.json`;\n8. устанавливает `AGENTS.md`, prompts и plugins;\n9. аккуратно дополняет auth storage только реально заданными credential fields;\n10. создаёт `~/.local/bin/custom-opencode` и `custom-opencode-update`;\n11. перезапускает web/OpenCode services;\n12. выполняет post-install zero-LLM-token self-test.',
+                   '1. загружает `.env`;\n2. если `opencode2` отсутствует, устанавливает актуальный OpenCode V2 beta в `~/.local`;\n3. обнаруживает RAG;\n4. валидирует и provision-ит pinned Ponytail checkout, если он включён;\n5. при включённом self-test выполняет pre-install verifier до записи конфигов;\n6. создаёт/обновляет user systemd unit;\n7. рендерит актуальный OpenCode V2 config;\n8. делает backup существующего `opencode.json`;\n9. устанавливает `AGENTS.md`, prompts и plugins;\n10. аккуратно дополняет auth storage только реально заданными credential fields;\n11. создаёт `~/.local/bin/custom-opencode` и `custom-opencode-update`;\n12. перезапускает web/OpenCode V2 services;\n13. выполняет post-install zero-LLM-token self-test.'),
+              ],
+              'README.md': [
+                  ('## Быстрый старт\n\n```bash\ncp .env.example .env',
+                   '## Быстрый старт\n\nПредварительно ставить OpenCode не нужно: `install.sh` сам установит `opencode2`, если его ещё нет.\n\n```bash\ncp .env.example .env'),
+              ],
+          }
+
+          for filename, pairs in replacements.items():
+              path = Path(filename)
+              text = path.read_text(encoding='utf-8')
+              for old, new in pairs:
+                  if old not in text:
+                      raise SystemExit(f'expected text not found in {filename}: {old[:80]!r}')
+                  text = text.replace(old, new, 1)
+              path.write_text(text, encoding='utf-8')
           PY
           git diff --check
-          git diff -- config/opencode.json.template
+          git diff -- scripts/install.sh scripts/opencode-v2-bootstrap-regression.sh config/prompts/orchestrator.md config/AGENTS.md scripts/verify.sh docs/installation.md README.md
 
-      - name: Commit repair on audit branch
+      - name: Commit v2-only cleanup on audit branch
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add config/opencode.json.template
-          git commit -m 'fix: restore relocatable RAG MCP command path'
-          git push origin HEAD:audit/full-review-20260901
+          git add scripts/install.sh scripts/opencode-v2-bootstrap-regression.sh config/prompts/orchestrator.md config/AGENTS.md scripts/verify.sh docs/installation.md README.md
+          if ! git diff --cached --quiet; then
+            git commit -m 'refactor: remove OpenCode v1 compatibility'
+            git push origin HEAD:audit/full-review-20260901
+          fi
+
+      - name: V2-only source scan
+        run: |
+          set -euo pipefail
+          if git grep -nE '(OpenCode V1|V1-only|из V1|compatible.*opencode|exec[[:space:]].*opencode([[:space:]"$]|$))' -- . ':!.github/workflows/**'; then
+            echo 'OpenCode V1 compatibility residue found' >&2
+            exit 1
+          fi
+          echo 'OpenCode V2-only source scan PASS'
 
       - name: Repository hygiene scan
         run: |
           set -euo pipefail
           echo '== tracked fixture/user absolute paths =='
-          if git grep -nE '(/tmp/root|/home/[A-Za-z0-9._-]+/|[A-Za-z]:\\\\Users\\\\)' -- . ':!docs/**' ':!scripts/*regression*' ':!scripts/*smoke*'; then
+          if git grep -nE '(/tmp/root|/home/[A-Za-z0-9._-]+/|[A-Za-z]:\\\\Users\\\\)' -- . ':!docs/**' ':!scripts/*regression*' ':!scripts/*smoke*' ':!.github/workflows/**'; then
             echo 'Unexpected machine-specific absolute path found' >&2
             exit 1
           fi
@@ -67,6 +117,9 @@ jobs:
           for file in scripts/*.sh; do bash -n "$file"; done
           for file in app/*.js config/plugins/*.js; do node --check "$file"; done
           git diff --check
+
+      - name: V2 clean-bootstrap regression
+        run: bash scripts/opencode-v2-bootstrap-regression.sh
 
       - name: Existing full verifier
         run: bash scripts/verify.sh
@@ -95,11 +148,10 @@ jobs:
           node scripts/tui-regression.mjs
           node scripts/model-selector-smoke.mjs
 
-      - name: Clean install OpenCode 2 beta
+      - name: Official OpenCode 2 beta package smoke
         run: |
-          npm install -g @opencode-ai/cli@beta
-          command -v opencode2
-          opencode2 --version
+          npm install --global --prefix "$RUNNER_TEMP/opencode-v2" @opencode-ai/cli@beta
+          "$RUNNER_TEMP/opencode-v2/bin/opencode2" --version
 
       - name: Packaged OpenCode 2 TUI regression
         run: bash scripts/tui-package-smoke.sh
