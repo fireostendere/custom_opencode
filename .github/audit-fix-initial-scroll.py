@@ -19,7 +19,7 @@ render_old = '''  else if(bottom){
     if(document.fonts?.ready)document.fonts.ready.then(settleBottom).catch(()=>{})
   }
 '''
-render_new = '''  else if(bottom){
+render_intermediate = '''  else if(bottom){
     const sessionID=state.selected?.id
     initialMessageScrollSession=sessionID
     const settleBottom=()=>{if(state.selected?.id!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
@@ -29,10 +29,39 @@ render_new = '''  else if(bottom){
     Promise.all([frames,fonts]).then(()=>{settleBottom();if(initialMessageScrollSession===sessionID)initialMessageScrollSession=null})
   }
 '''
-if render_new not in text:
-    if render_old not in text:
+render_final = '''  else if(bottom){
+    const sessionID=state.selected?.id
+    initialMessageScrollSession=sessionID
+    const settleBottom=()=>{if(state.selected?.id!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
+    settleBottom()
+    const frames=new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
+    const fonts=document.fonts?.ready?document.fonts.ready.catch(()=>{}):Promise.resolve()
+    Promise.all([frames,fonts]).then(()=>{settleBottom();if(initialMessageScrollSession===sessionID)initialMessageScrollSession=null;maybeLoadOlderContext()})
+  }
+'''
+if render_final not in text:
+    if render_intermediate in text:
+        text = text.replace(render_intermediate, render_final, 1)
+    elif render_old in text:
+        text = text.replace(render_old, render_final, 1)
+    else:
         raise SystemExit("initial bottom convergence block not found")
-    text = text.replace(render_old, render_new, 1)
+
+maybe_old = '''function maybeLoadOlderContext() {
+  const view=$('messages'),cache=state.selected&&state.contextCache.get(state.selected.id)
+  if(cache?.hasMore&&view&&view.scrollHeight<=view.clientHeight+8)void loadOlderContext()
+}
+'''
+maybe_new = '''function maybeLoadOlderContext() {
+  if(initialMessageScrollSession===state.selected?.id)return
+  const view=$('messages'),cache=state.selected&&state.contextCache.get(state.selected.id)
+  if(cache?.hasMore&&view&&view.scrollHeight<=view.clientHeight+8)void loadOlderContext()
+}
+'''
+if maybe_new not in text:
+    if maybe_old not in text:
+        raise SystemExit("auto-fill pagination block not found")
+    text = text.replace(maybe_old, maybe_new, 1)
 
 scroll_old = "  $('messages').addEventListener('scroll',()=>{if($('messages').scrollTop<=80)void loadOlderContext();updateScrollToBottomButton()},{passive:true})\n"
 scroll_new = "  $('messages').addEventListener('scroll',()=>{const view=$('messages');if(initialMessageScrollSession!==state.selected?.id&&view.scrollTop<=80)void loadOlderContext();updateScrollToBottomButton()},{passive:true})\n"
