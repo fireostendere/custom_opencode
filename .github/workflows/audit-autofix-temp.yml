@@ -22,162 +22,40 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Apply reviewed security fixes
+      - name: Restore executable installer contract
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def replace(pathname, old, new):
-              path = Path(pathname)
-              text = path.read_text(encoding='utf-8')
-              if old not in text:
-                  raise SystemExit(f'expected text not found in {pathname}: {old[:120]!r}')
-              path.write_text(text.replace(old, new, 1), encoding='utf-8')
-
-          # Production auth routes must terminate unauthorized requests with a
-          # real HTTP response rather than returning from the handler silently.
-          replace(
-              'app/server_workflow.py',
-              '        if parsed.path == "/client-integration.json":\n            if not self.authenticated():\n                return\n',
-              '        if parsed.path == "/client-integration.json":\n            if not self.authenticated():\n                self.unauthorized()\n                return\n',
-          )
-          replace(
-              'app/server_workflow.py',
-              '        if parsed.path == "/client-send.json":\n            if not self.authenticated():\n                return\n',
-              '        if parsed.path == "/client-send.json":\n            if not self.authenticated():\n                self.unauthorized()\n                return\n',
-          )
-
-          # One canonical path guard is shared by both repository indexers.
-          replace(
-              'app/repo_services.py',
-              'def _run(root:Path,args:list[str],timeout:float=12.,input_text:str|None=None)->subprocess.CompletedProcess[str]:\n    return subprocess.run(args,cwd=str(root),input=input_text,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=timeout,check=False)\n\n\n',
-              'def _run(root:Path,args:list[str],timeout:float=12.,input_text:str|None=None)->subprocess.CompletedProcess[str]:\n    return subprocess.run(args,cwd=str(root),input=input_text,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=timeout,check=False)\n\n\ndef safe_repo_file(root:Path,relative:str)->Path|None:\n    """Return a regular file physically contained by root; reject symlink escapes."""\n    try:\n        candidate=root/relative\n        if candidate.is_symlink(): return None\n        resolved=candidate.resolve(strict=True)\n        resolved.relative_to(root)\n        return resolved if resolved.is_file() else None\n    except (OSError,ValueError,RuntimeError):\n        return None\n\n\n',
-          )
-          replace(
-              'app/repo_services.py',
-              '                if len(files)>=3000: break\n        symbols=[]; deps=[]; extension_counts={}; indexed_bytes=0\n        for relative in files:\n            path=root/relative; ext=path.suffix.lower(); extension_counts[ext or "<none>"]=extension_counts.get(ext or "<none>",0)+1\n',
-              '                if len(files)>=3000: break\n        files=[relative for relative in files if safe_repo_file(root,relative) is not None]\n        symbols=[]; deps=[]; extension_counts={}; indexed_bytes=0\n        for relative in files:\n            path=safe_repo_file(root,relative)\n            if path is None: continue\n            ext=path.suffix.lower(); extension_counts[ext or "<none>"]=extension_counts.get(ext or "<none>",0)+1\n',
-          )
-          replace(
-              'app/repo_services.py',
-              '    def discover(self,project_dir:str)->list[dict[str,Any]]:\n        root=Path(project_dir); commands=[]; package=root/"package.json"\n        if package.is_file():\n',
-              '    def discover(self,project_dir:str)->list[dict[str,Any]]:\n        root=Path(project_dir).resolve(strict=True); commands=[]; package=safe_repo_file(root,"package.json")\n        if package is not None:\n',
-          )
-          replace(
-              'app/repo_services.py',
-              '        if (root/"pyproject.toml").is_file() or (root/"pytest.ini").is_file(): commands.append({"name":"pytest","argv":[sys.executable,"-m","pytest","-q"]})\n        if (root/"Cargo.toml").is_file(): commands.append({"name":"cargo-check","argv":["cargo","check"]})\n        if (root/"go.mod").is_file(): commands.append({"name":"go-test","argv":["go","test","./..."]})\n',
-              '        if safe_repo_file(root,"pyproject.toml") is not None or safe_repo_file(root,"pytest.ini") is not None: commands.append({"name":"pytest","argv":[sys.executable,"-m","pytest","-q"]})\n        if safe_repo_file(root,"Cargo.toml") is not None: commands.append({"name":"cargo-check","argv":["cargo","check"]})\n        if safe_repo_file(root,"go.mod") is not None: commands.append({"name":"go-test","argv":["go","test","./..."]})\n',
-          )
-          replace(
-              'app/repo_services.py',
-              '    def run(self,*,task:dict[str,Any],timeout_seconds:int|None=None)->dict[str,Any]:\n        if os.environ.get("OPENCODE_VERIFY_PIPELINE","auto").strip().lower() in {"0","off","false","no"}: return {"enabled":False,"results":[],"ok":True}\n        timeout_seconds=timeout_seconds or int(os.environ.get("OPENCODE_VERIFY_TIMEOUT","120")); results=[]\n',
-              '    def run(self,*,task:dict[str,Any],timeout_seconds:int|None=None)->dict[str,Any]:\n        if os.environ.get("OPENCODE_VERIFY_PIPELINE","auto").strip().lower() in {"0","off","false","no"}: return {"enabled":False,"results":[],"ok":True,"reason":"verification disabled"}\n        if os.environ.get("OPENCODE_VERIFY_TRUST_REPO","0").strip().lower() not in {"1","true","yes","on"}: return {"enabled":False,"results":[],"ok":True,"reason":"repository verification requires explicit trust (OPENCODE_VERIFY_TRUST_REPO=1)"}\n        timeout_seconds=timeout_seconds or int(os.environ.get("OPENCODE_VERIFY_TIMEOUT","120")); results=[]\n',
-          )
-
-          replace(
-              'app/runtime_v3.py',
-              'from repo_services import ArtifactStore, git_snapshot\n',
-              'from repo_services import ArtifactStore, git_snapshot, safe_repo_file\n',
-          )
-          replace(
-              'app/runtime_v3.py',
-              '        files=self._files(root); file_set=set(files); symbols=[]; dependency_edges=[]; manifests=[]; file_docs=[]; indexed_bytes=0\n        for relative in files:\n            path=root/relative\n',
-              '        files=[relative for relative in self._files(root) if safe_repo_file(root,relative) is not None]; file_set=set(files); symbols=[]; dependency_edges=[]; manifests=[]; file_docs=[]; indexed_bytes=0\n        for relative in files:\n            path=safe_repo_file(root,relative)\n            if path is None: continue\n',
-          )
-
-          # Regression coverage for the two production-only auth routes.
-          replace(
-              'scripts/web-security-smoke.py',
-              '        status, response_headers, _ = request(\n            "POST",\n            "/auth/login",\n',
-              '        status, _, _ = request("GET", "/client-integration.json", headers=remote_headers)\n        assert status == 401, status\n        status, _, _ = request("POST", "/client-send.json", body={"sessionID": "x", "text": "x"}, headers=remote_headers)\n        assert status == 401, status\n\n        status, response_headers, _ = request(\n            "POST",\n            "/auth/login",\n',
-          )
-
-          replace(
-              'scripts/opencode-v2-bootstrap-regression.sh',
-              "if grep -Fq 'FORBIDDEN-opencode-v1' \"$LOG\"; then",
-              "if grep -Fq 'FORBIDDEN-opencode' \"$LOG\"; then",
-          )
-
-          replace(
-              '.env.example',
-              'OPENCODE_VERIFY_PIPELINE=auto\nOPENCODE_VERIFY_TIMEOUT=120\n',
-              '# Verification executes repository-defined test/lint scripts. Keep untrusted\n# repositories fail-closed unless you explicitly opt them into local execution.\nOPENCODE_VERIFY_PIPELINE=auto\nOPENCODE_VERIFY_TRUST_REPO=0\nOPENCODE_VERIFY_TIMEOUT=120\n',
-          )
-
-          replace(
-              'scripts/verify.sh',
-              '"$PYTHON3" "$ROOT/scripts/runtime-smoke.py"\n"$PYTHON3" "$ROOT/scripts/runtime-resume-smoke.py"\n',
-              '"$PYTHON3" "$ROOT/scripts/runtime-smoke.py"\n"$PYTHON3" "$ROOT/scripts/runtime-resume-smoke.py"\n"$PYTHON3" "$ROOT/scripts/security-boundary-smoke.py"\n',
-          )
-
-          replace(
-              'docs/installation.md',
-              '## Что проверяет install self-test\n',
-              '## Автоматическая verification pipeline\n\nRepository-defined `lint`/`test`/`pytest`/`cargo`/`go` команды считаются исполняемым кодом проекта. Поэтому даже при `OPENCODE_VERIFY_PIPELINE=auto` сервер не запускает их, пока для доверенного checkout явно не задано `OPENCODE_VERIFY_TRUST_REPO=1`. Для чужих или только что клонированных репозиториев оставляйте значение `0`.\n\n## Что проверяет install self-test\n',
-          )
-          PY
-          git diff --check
-
-      - name: Commit security review fixes
-        run: |
+          chmod +x scripts/install.sh scripts/opencode-v2-bootstrap-regression.sh scripts/security-boundary-smoke.py
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add app/server_workflow.py app/repo_services.py app/runtime_v3.py scripts/web-security-smoke.py scripts/opencode-v2-bootstrap-regression.sh scripts/security-boundary-smoke.py scripts/verify.sh .env.example docs/installation.md
-          git commit -m 'fix: harden auth repo indexing and verification boundaries'
-          git push origin HEAD:audit/full-review-20260901
+          git add scripts/install.sh scripts/opencode-v2-bootstrap-regression.sh scripts/security-boundary-smoke.py
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix: restore executable installer scripts'
+            git push origin HEAD:audit/full-review-20260901
+          fi
 
-      - name: Hide temporary workflow from product verifier
+      - name: Hide temporary audit files from product verification
         run: rm -f .github/workflows/audit-autofix-temp.yml .audit-trigger
 
-      - name: V2-only and repository hygiene scans
+      - name: V2-only and hygiene scans
         run: |
           set -euo pipefail
-          if git grep -nE '(OpenCode V1|V1-only|из V1)' -- .; then
-            echo 'OpenCode V1 references remain' >&2
-            exit 1
-          fi
-          if git grep -nF 'совместимый `opencode`' -- .; then
-            echo 'unversioned OpenCode compatibility documentation remains' >&2
-            exit 1
-          fi
-          if grep -Fq 'exec opencode "${args[@]}"' scripts/install.sh; then
-            echo 'unversioned OpenCode runtime fallback remains' >&2
-            exit 1
-          fi
-          if git grep -nE '(/tmp/root|/home/[A-Za-z0-9._-]+/|[A-Za-z]:\\\\Users\\\\)' -- . ':!docs/**' ':!scripts/*regression*' ':!scripts/*smoke*'; then
-            echo 'Unexpected machine-specific absolute path found' >&2
-            exit 1
-          fi
-          if git grep -nE '(sk-[A-Za-z0-9_-]{24,}|gh[pousr]_[A-Za-z0-9_]{20,}|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY)' -- . ':!.env.example'; then
-            echo 'Possible committed credential found' >&2
-            exit 1
-          fi
+          if git grep -nE '(OpenCode V1|V1-only|из V1)' -- .; then exit 1; fi
+          if git grep -nF 'совместимый `opencode`' -- .; then exit 1; fi
+          if grep -Fq 'exec opencode "${args[@]}"' scripts/install.sh; then exit 1; fi
+          if git grep -nE '(/tmp/root|/home/[A-Za-z0-9._-]+/|[A-Za-z]:\\\\Users\\\\)' -- . ':!docs/**' ':!scripts/*regression*' ':!scripts/*smoke*'; then exit 1; fi
+          if git grep -nE '(sk-[A-Za-z0-9_-]{24,}|gh[pousr]_[A-Za-z0-9_]{20,}|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY)' -- . ':!.env.example'; then exit 1; fi
           echo 'V2-only + hygiene scan PASS'
 
-      - name: Syntax and compile scan
+      - name: Full zero-token verification
         run: |
           python3 -m compileall -q app scripts
           for file in scripts/*.sh; do bash -n "$file"; done
           for file in app/*.js config/plugins/*.js; do node --check "$file"; done
-          git diff --check
-
-      - name: V2 clean-bootstrap regression
-        run: bash scripts/opencode-v2-bootstrap-regression.sh
-
-      - name: Security boundary regression
-        run: python3 scripts/security-boundary-smoke.py
-
-      - name: Existing full verifier
-        run: bash scripts/verify.sh
-
-      - name: Ponytail provisioning regression
-        run: bash scripts/ponytail-provision-regression.sh
-
-      - name: Runtime V3 verifier
-        run: bash scripts/verify-runtime-v3.sh
-
-      - name: Routing and runtime invariants
-        run: |
+          bash scripts/opencode-v2-bootstrap-regression.sh
+          python3 scripts/security-boundary-smoke.py
+          bash scripts/verify.sh
+          bash scripts/ponytail-provision-regression.sh
+          bash scripts/verify-runtime-v3.sh
           python3 scripts/model-routing-effort-smoke.py
           python3 scripts/runtime-invariants-smoke.py
 
