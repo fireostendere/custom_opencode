@@ -21,16 +21,35 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Remove stale manual ordering hook
+      - name: Finalize history pagination and ordering cleanup
         run: |
-          sed -i '/appendSessionToOrder(created.id,targetProject,targetSession?.dataset.sessionDrag||.\x27.\x27,after)/d' app/app.js
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app/app.js')
+          s=p.read_text()
+          def rep(old,new,label):
+              global s
+              if new in s: return
+              if old not in s: raise SystemExit(f'{label} marker missing')
+              s=s.replace(old,new,1)
+          rep('let initialMessageScrollObserver = null\n','let initialMessageScrollObserver = null\nlet historyPaginationIntent = false\n','intent state')
+          rep('initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=id\n','initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=id;historyPaginationIntent=false\n','select reset')
+          rep('saveDraftNow();initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=null; state.selected=null;','saveDraftNow();initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=null;historyPaginationIntent=false; state.selected=null;','clear reset')
+          stale="  appendSessionToOrder(created.id,targetProject,targetSession?.dataset.sessionDrag||'',after)\n"
+          s=s.replace(stale,'',1)
+          old='''  const armHistoryPagination=()=>{\n    if(initialMessageScrollSession!==state.selected?.id)return\n    initialMessageScrollSession=null\n    initialMessageScrollObserver?.disconnect()\n    initialMessageScrollObserver=null\n  }\n  messagesView.addEventListener('wheel',armHistoryPagination,{passive:true})\n  messagesView.addEventListener('touchstart',armHistoryPagination,{passive:true})\n  messagesView.addEventListener('pointerdown',armHistoryPagination,{passive:true})\n  messagesView.addEventListener('scroll',()=>{if(initialMessageScrollSession!==state.selected?.id&&messagesView.scrollTop<=80)void loadOlderContext();updateScrollToBottomButton()},{passive:true})\n'''
+          new='''  const maybeLoadOlderFromUser=()=>{\n    if(!historyPaginationIntent||initialMessageScrollSession===state.selected?.id||messagesView.scrollTop>80)return\n    historyPaginationIntent=false\n    void loadOlderContext()\n  }\n  const armHistoryPagination=()=>{\n    historyPaginationIntent=true\n    if(initialMessageScrollSession===state.selected?.id){\n      initialMessageScrollSession=null\n      initialMessageScrollObserver?.disconnect()\n      initialMessageScrollObserver=null\n    }\n    requestAnimationFrame(maybeLoadOlderFromUser)\n  }\n  messagesView.addEventListener('wheel',armHistoryPagination,{passive:true})\n  messagesView.addEventListener('touchstart',armHistoryPagination,{passive:true})\n  messagesView.addEventListener('pointerdown',armHistoryPagination,{passive:true})\n  messagesView.addEventListener('scroll',()=>{maybeLoadOlderFromUser();updateScrollToBottomButton()},{passive:true})\n'''
+          rep(old,new,'pagination event gate')
+          p.write_text(s)
+          PY
           git diff --check
           node --check app/app.js
+          ! grep -q 'appendSessionToOrder' app/app.js
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           if ! git diff --quiet -- app/app.js; then
             git add app/app.js
-            git commit -m 'fix: drop stale session manual ordering hook'
+            git commit -m 'fix: consume one history page per user intent'
             git push origin HEAD:audit/full-review-20260901
           fi
 
@@ -46,15 +65,6 @@ jobs:
 
       - name: Browser regression
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('scripts/web-fixture-e2e.py')
-          s=p.read_text()
-          old='        page.wait_for_function(f"document.querySelectorAll(\'#messages .message\').length === {expected}")\n'
-          new='        page.wait_for_timeout(350)\n        print("history-diag", expected, page.locator("#messages .message").count(), FixtureState.message_requests[-5:], errors, flush=True)\n'+old
-          if old not in s: raise SystemExit('history wait marker missing')
-          p.write_text(s.replace(old,new,1))
-          PY
           python3 -m pip install playwright
           python3 -m playwright install --with-deps chromium
           python3 scripts/queue-badge-convergence.py
