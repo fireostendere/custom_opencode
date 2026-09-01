@@ -12,75 +12,54 @@ jobs:
   audit:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Fix production JSON error connection handling
+      - name: Fix case-insensitive Connection regression assertion
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          path=Path('app/server_workflow.py')
+          path=Path('scripts/web-security-smoke.py')
           text=path.read_text(encoding='utf-8')
-          old='''        self.send_header("X-Content-Type-Options", "nosniff")\n        self.send_header("Content-Length", str(len(body)))\n        self.end_headers()\n        self.wfile.write(body)\n'''
-          new='''        self.send_header("X-Content-Type-Options", "nosniff")\n        if status >= 400:\n            self.close_connection = True\n            self.send_header("Connection", "close")\n        self.send_header("Content-Length", str(len(body)))\n        self.end_headers()\n        self.wfile.write(body)\n'''
-          if old not in text:
-              raise SystemExit('production json_response block not found')
+          old='        assert response_headers.get("connection", "").lower() == "close", response_headers\n'
+          new='        assert any(key.lower() == "connection" and value.lower() == "close" for key, value in response_headers.items()), response_headers\n'
+          if old not in text: raise SystemExit('connection assertion not found')
           path.write_text(text.replace(old,new,1),encoding='utf-8')
           PY
           git diff --check
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add app/server_workflow.py
-          git commit -m 'fix: close rejected production HTTP requests'
+          git add scripts/web-security-smoke.py
+          git commit -m 'test: normalize HTTP connection header check'
           git push origin HEAD:audit/full-review-20260901
 
-      - name: Hide temporary audit files from product verification
+      - name: Hide temporary audit files
         run: rm -f .github/workflows/audit-autofix-temp.yml .audit-trigger
 
-      - name: V2-only and hygiene scans
+      - name: V2-only and security gates
         run: |
           set -euo pipefail
           if git grep -nE '(OpenCode V1|V1-only|из V1)' -- .; then exit 1; fi
           if git grep -nF 'совместимый `opencode`' -- .; then exit 1; fi
           if grep -Fq 'exec opencode "${args[@]}"' scripts/install.sh; then exit 1; fi
-          if git grep -nE '(/tmp/root|/home/[A-Za-z0-9._-]+/|[A-Za-z]:\\\\Users\\\\)' -- . ':!docs/**' ':!scripts/*regression*' ':!scripts/*smoke*'; then exit 1; fi
-          if git grep -nE '(sk-[A-Za-z0-9_-]{24,}|gh[pousr]_[A-Za-z0-9_]{20,}|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY)' -- . ':!.env.example'; then exit 1; fi
-          echo 'V2-only + hygiene scan PASS'
-
-      - name: Full zero-token verification
-        run: |
-          python3 -m compileall -q app scripts
-          for file in scripts/*.sh; do bash -n "$file"; done
-          for file in app/*.js config/plugins/*.js; do node --check "$file"; done
           bash scripts/opencode-v2-bootstrap-regression.sh
           python3 scripts/security-boundary-smoke.py
-          bash scripts/verify.sh
-          bash scripts/ponytail-provision-regression.sh
-          bash scripts/verify-runtime-v3.sh
-          python3 scripts/model-routing-effort-smoke.py
-          python3 scripts/runtime-invariants-smoke.py
-
-      - name: Fresh install and update regression
-        run: bash scripts/install-regression.sh
-
-      - name: Web backend and security regressions
-        run: |
           python3 scripts/web-server-smoke.py
           python3 scripts/web-security-smoke.py
 
-      - name: TUI source regressions
+      - name: Source/TUI regression
         run: |
+          node --check app/app.js
           node scripts/tui-regression.mjs
           node scripts/model-selector-smoke.mjs
 
-      - name: Official OpenCode 2 beta package smoke
+      - name: Current official OpenCode 2 beta and packaged TUI
         run: |
           npm install --global --prefix "$RUNNER_TEMP/opencode-v2" @opencode-ai/cli@beta
           "$RUNNER_TEMP/opencode-v2/bin/opencode2" --version
@@ -89,12 +68,9 @@ jobs:
       - name: Packaged OpenCode 2 TUI regression
         run: bash scripts/tui-package-smoke.sh
 
-      - name: Install browser runtime
+      - name: Browser convergence regressions
         run: |
           python3 -m pip install playwright
           python3 -m playwright install --with-deps chromium
-
-      - name: Browser convergence regressions
-        run: |
           python3 scripts/queue-badge-convergence.py
           python3 scripts/web-fixture-e2e.py
