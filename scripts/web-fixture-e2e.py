@@ -278,6 +278,7 @@ def desktop(browser, base_url: str) -> None:
     login(page, base_url)
     open_session(page)
     page.wait_for_function("document.querySelectorAll('#messages .message').length === 80")
+    page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
     assert page.locator("#messages").evaluate("el => el.scrollHeight - el.clientHeight - el.scrollTop < 4"), "initial session viewport must start at the newest messages"
     page.locator("#messages").evaluate("el => { el.scrollTop = 0 }")
     page.locator("#scrollToBottom").wait_for(state="visible")
@@ -285,7 +286,9 @@ def desktop(browser, base_url: str) -> None:
     page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
     assert page.locator("#scrollToBottom").is_hidden()
     for expected in (160, 240, 241):
-        page.evaluate("document.querySelector('#messages').scrollTop = 0")
+        page.locator("#messages").hover()
+        page.mouse.wheel(0, -100000)
+        page.wait_for_function("document.querySelector('#messages').scrollTop <= 1")
         page.wait_for_function(f"document.querySelectorAll('#messages .message').length === {expected}")
     user_messages = page.locator("#messages .message.user")
     user_texts = user_messages.evaluate_all("els => els.map(el => el.querySelector('.markdown')?.innerText)")
