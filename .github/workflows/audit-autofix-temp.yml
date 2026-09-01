@@ -31,9 +31,9 @@ jobs:
           python3 -m py_compile app/server.py scripts/web-fixture-e2e.py
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          if ! git diff --quiet -- app/app.js app/server.py; then
-            git add app/app.js app/server.py
-            git commit -m 'fix: make initial conversation scroll one-shot'
+          if ! git diff --quiet -- app/app.js app/advanced-features.js app/styles.css app/server.py scripts/web-fixture-e2e.py; then
+            git add app/app.js app/advanced-features.js app/styles.css app/server.py scripts/web-fixture-e2e.py
+            git commit -m 'fix: separate agent sessions and orchestration panels'
             git push origin HEAD:audit/full-review-20260901
           fi
 
