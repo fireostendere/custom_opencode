@@ -7,6 +7,7 @@ const root = new URL('../', import.meta.url)
 const helperUrl = new URL('config/plugins/tui/lib/limits-helper.js', root)
 const panelCommandUrl = new URL('config/plugins/tui/lib/panel-command.js', root)
 const promptHistory = await readFile(new URL('config/plugins/tui/prompt-history.jsx', root), 'utf8')
+const panelSlash = await readFile(new URL('config/plugins/tui/panel-slash.jsx', root), 'utf8')
 const workspacePanel = await readFile(new URL('config/plugins/tui/workspace-panel.jsx', root), 'utf8')
 const panelViews = await readFile(new URL('config/plugins/tui/lib/panel-views.jsx', root), 'utf8')
 const retiredPanel = await readFile(new URL('config/plugins/tui/limits-panels.jsx', root), 'utf8')
@@ -31,14 +32,40 @@ for (const marker of [
   'custom.prompt-history.previous',
   'custom.prompt-history.next',
   'context.ui.Prompt',
-  'currentFocusedEditor',
+]) {
+  assert.ok(promptHistory.includes(marker), `TUI prompt/history marker missing: ${marker}`)
+}
+for (const retired of [
   'parsePanelCommand',
   'panelCommandID',
   'custom.panels.inline-submit',
   'bind: "enter"',
+  'currentFocusedEditor',
 ]) {
-  assert.ok(promptHistory.includes(marker), `TUI prompt/history marker missing: ${marker}`)
+  assert.ok(!promptHistory.includes(retired), `Prompt history must not intercept /panel through Enter: ${retired}`)
 }
+
+for (const marker of [
+  'id: "custom.panel-slash"',
+  'slash: { name: slashName }',
+  'panel left',
+  'panel right',
+  'panel top',
+  'panel bottom',
+  'panel reset',
+  'panel ${side} off',
+  'panel ${side} pin',
+  'panel ${side} unpin',
+  'panel ${side} collapse',
+  'panel ${side} expand',
+  'panel ${side} ${view}',
+  'context.keymap.dispatchCommand?.(target)',
+]) {
+  assert.ok(panelSlash.includes(marker), `Native panel slash marker missing: ${marker}`)
+}
+assert.ok(!panelSlash.includes('bind: "enter"'), 'Native /panel commands must never override prompt Enter')
+assert.ok(!panelSlash.includes('context.ui.Prompt'), 'Native /panel commands must not touch prompt submission')
+assert.ok(!panelSlash.includes('context.client'), 'Native /panel commands must not call model/client APIs')
 
 for (const marker of [
   'id: "custom.workspace-panel"',
@@ -200,4 +227,4 @@ assert.ok(elapsed < 2500, `Bailian watchdog took ${elapsed}ms`)
 assert.equal(timeoutHelper.getAutoRefreshState().pending, false)
 
 await rm(temp, { recursive: true, force: true })
-console.log('TUI regression passed: four-zone dock + unified Activity/scroll + /panel + copy/mouse + limits watchdog')
+console.log('TUI regression passed: native local /panel + four-zone dock + unified Activity/scroll + copy/mouse + limits watchdog')
