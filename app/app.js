@@ -55,6 +55,7 @@ let promptHistory = { sessionID:null, entries:[], cursor:0, draft:'', value:'' }
 let applyingPromptHistory = false
 let initialMessageScrollSession = null
 let initialMessageScrollObserver = null
+let historyPaginationIntent = false
 
 function loadJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || '') || fallback } catch { return fallback }
@@ -221,7 +222,6 @@ async function handleDrop(event) {
   if(!project||project.id===QUICK_PROJECT_ID)return
   if(!await confirmAction('Перенести через handoff?',`OpenCode не умеет менять папку существующей сессии. В «${projectLabel(project)}» попадут последние 40 текстовых сообщений (до 24 000 символов); файлы проекта и полная tool-история не переносятся. После успешного handoff исходная сессия будет удалена.`))return
   const {created,sourceRemoved}=await transferSessionToProject(source,project,{select:state.selected?.id===source.id,removeSource:true})
-  appendSessionToOrder(created.id,targetProject,targetSession?.dataset.sessionDrag||'',after)
   renderSessions()
   toast(sourceRemoved?`Сессия перенесена в проект «${projectLabel(project)}»`:'Создана копия; исходная сессия сохранена')
 }
@@ -312,7 +312,7 @@ async function selectSession(id,{push=true,saveDraft=true}={}) {
   if(saveDraft)saveDraftNow()
   const cachedContext=state.contextCache.get(id)
   state.selected=session; state.context=cachedContext?.messages||[]; state.attachments=[]; state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
-  initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=id
+  initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=id;historyPaginationIntent=false
   resetPromptHistory(id)
   renderAttachments(); renderSessions(); renderHeader(); renderMessages({bottom:true}); restoreDraft(); $('sidebar').classList.remove('open')
   if(push) setSessionHash(id)
@@ -322,7 +322,7 @@ async function selectSession(id,{push=true,saveDraft=true}={}) {
   if(detail&&state.selected?.id===id){const liveAgent=state.selected.agent;state.selected={...state.selected,...detail,...(liveAgent!==initialAgent?{agent:liveAgent}:{})};const index=state.sessions.findIndex((item)=>item.id===id);if(index>=0)state.sessions[index]=state.selected;renderHeader();renderControls()}
 }
 function clearSelection() {
-  saveDraftNow();initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=null; state.selected=null;state.context=[];state.attachments=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
+  saveDraftNow();initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=null;historyPaginationIntent=false; state.selected=null;state.context=[];state.attachments=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
   resetPromptHistory(null)
   location.hash=''
   window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:null}}))
@@ -881,16 +881,24 @@ function bindEvents(){
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.addEventListener('click',()=>{state.deliveryMode=b.dataset.delivery;renderRunControls()}));$('gitButton').addEventListener('click',openGitDialog);$('usageButton').addEventListener('click',()=>{$('usageDialog').showModal()});$('notifyButton').addEventListener('click',toggleNotifications)
   $('renameForm').addEventListener('submit',(e)=>{e.preventDefault();renameCurrent()});document.querySelectorAll('[data-close]').forEach((b)=>b.addEventListener('click',()=>$(b.dataset.close).close()));document.querySelectorAll('dialog').forEach((d)=>d.addEventListener('click',(e)=>{if(e.target===d)d.close()}))
   const messagesView=$('messages')
+  const maybeLoadOlderFromUser=()=>{
+    if(!historyPaginationIntent||initialMessageScrollSession===state.selected?.id||messagesView.scrollTop>80)return
+    historyPaginationIntent=false
+    void loadOlderContext()
+  }
   const armHistoryPagination=()=>{
-    if(initialMessageScrollSession!==state.selected?.id)return
-    initialMessageScrollSession=null
-    initialMessageScrollObserver?.disconnect()
-    initialMessageScrollObserver=null
+    historyPaginationIntent=true
+    if(initialMessageScrollSession===state.selected?.id){
+      initialMessageScrollSession=null
+      initialMessageScrollObserver?.disconnect()
+      initialMessageScrollObserver=null
+    }
+    requestAnimationFrame(maybeLoadOlderFromUser)
   }
   messagesView.addEventListener('wheel',armHistoryPagination,{passive:true})
   messagesView.addEventListener('touchstart',armHistoryPagination,{passive:true})
   messagesView.addEventListener('pointerdown',armHistoryPagination,{passive:true})
-  messagesView.addEventListener('scroll',()=>{if(initialMessageScrollSession!==state.selected?.id&&messagesView.scrollTop<=80)void loadOlderContext();updateScrollToBottomButton()},{passive:true})
+  messagesView.addEventListener('scroll',()=>{maybeLoadOlderFromUser();updateScrollToBottomButton()},{passive:true})
   $('scrollToBottom').addEventListener('click',scrollMessagesToBottom)
   $('messagesInner').addEventListener('click',(e)=>{const copyCode=e.target.closest('.copy-code');if(copyCode){navigator.clipboard.writeText(copyCode.closest('.code-block').querySelector('code')?.textContent||'');copyCode.textContent='Скопировано';setTimeout(()=>copyCode.textContent='Копировать',900);return}const copy=e.target.closest('[data-copy-message]');if(copy){navigator.clipboard.writeText(messagePlainText(state.context[Number(copy.dataset.copyMessage)])||'');toast('Сообщение скопировано');return}const fork=e.target.closest('[data-fork-message]');if(fork){forkAtMessage(fork.dataset.forkMessage)}})
   window.addEventListener('hashchange',()=>{const id=sessionIdFromHash();if(id&&state.selected?.id!==id)selectSession(id,{push:false});else if(!id&&state.selected)clearSelection()});window.addEventListener('beforeunload',saveDraftNow)
