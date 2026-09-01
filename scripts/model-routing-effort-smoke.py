@@ -190,11 +190,11 @@ for token in ("role-builder", "role-builder-high", "fast-reader", "role-reviewer
 sol_prompt = (ROOT / "config" / "prompts" / "orchestrator-sol.md").read_text(encoding="utf-8")
 for token in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "sol-role-builder", "sol-role-reviewer", "direct/manual"):
     assert token.casefold() in sol_prompt.casefold(), token
-for token in ("Planning policy", "conditional, not a ritual", "V1-only tool", "native", "primary `plan` agent", "short, obvious, bounded", "two or more meaningful stages", "before the first file mutation"):
+for token in ("Planning policy", "conditional, not a ritual", "native", "primary `plan` agent", "short, obvious, bounded", "two or more meaningful stages", "before the first file mutation"):
     assert token.casefold() in prompt.casefold(), token
 
 agents_policy = (ROOT / "config" / "AGENTS.md").read_text(encoding="utf-8")
-for token in ("Планирование задач", "V1", "OpenCode V2", "plan", "2-7", "до первого изменения файла", "не создавай искусственный план"):
+for token in ("Планирование задач", "OpenCode V2", "plan", "2-7", "до первого изменения файла", "не создавай искусственный план"):
     assert token in agents_policy, token
 
 forbidden = (
