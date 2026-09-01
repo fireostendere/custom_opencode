@@ -1,4 +1,4 @@
-const CACHE='custom-opencode-web-v6'
+const CACHE='custom-opencode-web-v7'
 const STATIC_RE=/\.(?:js|css|webmanifest|png|svg|ico)$/
 
 self.addEventListener('install',()=>self.skipWaiting())
@@ -35,13 +35,40 @@ self.addEventListener('fetch',(event)=>{
   })())
 })
 
-self.addEventListener('notificationclick',(event)=>{event.notification.close();if(event.action==='dismiss')return;event.waitUntil((async()=>{
-  const clients=await self.clients.matchAll({type:'window',includeUncontrolled:true})
-  const url=event.notification.data?.url||'/'
-  if(clients[0]){
-    await clients[0].focus()
-    if('navigate'in clients[0])await clients[0].navigate(url)
+async function runtimeAction(action,data){
+  if(!data?.taskID)return false
+  const response=await fetch('/client-unified-action.json',{
+    method:'POST',
+    credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action,taskID:data.taskID,sessionID:data.sessionID||''}),
+  })
+  return response.ok
+}
+
+async function focusOrOpen(url){
+  const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true})
+  if(windows[0]){
+    await windows[0].focus()
+    if('navigate'in windows[0])await windows[0].navigate(url)
     return
   }
   await self.clients.openWindow(url)
-})())})
+}
+
+self.addEventListener('notificationclick',(event)=>{
+  event.notification.close()
+  if(event.action==='dismiss')return
+  event.waitUntil((async()=>{
+    const data=event.notification.data||{}
+    const url=data.url||'/'
+    try{
+      if(event.action==='cancel-task'){
+        if(await runtimeAction('task.cancel',data))return
+      }else if(event.action==='retry-task'){
+        if(await runtimeAction('task.retry',data))return
+      }
+    }catch{}
+    await focusOrOpen(url)
+  })())
+})
