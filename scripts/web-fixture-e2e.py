@@ -215,7 +215,7 @@ class Backend(BaseHTTPRequestHandler):
         elif path == "/api/vcs":
             self.send_json({"data": {"branch": "main"}})
         elif path == "/api/mcp":
-            self.send_json({"data": {"kb": {"status": "disabled"}})
+            self.send_json({"data": {"kb": {"status": "disabled"}}})
         else:
             self.send_json({"data": []})
 
