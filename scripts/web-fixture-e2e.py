@@ -223,6 +223,19 @@ class Backend(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         length = int(self.headers.get("Content-Length", "0") or 0)
         payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+        if path in ("/api/session/ses_fixture/prompt_async", "/api/session/ses_fixture/prompt"):
+            text = str(payload.get("text") or "")
+            if not text and isinstance(payload.get("prompt"), dict):
+                text = str(payload["prompt"].get("text") or "")
+            if not text and isinstance(payload.get("parts"), list):
+                text = "\n".join(str(part.get("text") or "") for part in payload["parts"] if isinstance(part, dict) and part.get("type") == "text").strip()
+            FixtureState.managed_sends.append({"text": text})
+            if FixtureState.managed_failures > 0:
+                FixtureState.managed_failures -= 1
+                self.send_json({"error": "fixture managed send failure"}, status=500)
+                return
+            self.send_json({"data": {"ok": True}})
+            return
         if "/permission/" in path or "/permissions/" in path:
             FixtureState.permission_pending = False
         if path.startswith("/api/session/ses_fixture/form/") and path.endswith("/reply"):
