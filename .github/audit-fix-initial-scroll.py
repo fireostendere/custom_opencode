@@ -79,19 +79,41 @@ app.write_text(text, encoding="utf-8")
 
 test = Path("scripts/web-fixture-e2e.py")
 t = test.read_text(encoding="utf-8")
-old = '''    for expected in (160, 240, 241):
+old_loop = '''    for expected in (160, 240, 241):
         page.locator("#messages").hover()
         page.mouse.wheel(0, -100000)
         page.wait_for_function("document.querySelector('#messages').scrollTop <= 1")
         page.wait_for_function(f"document.querySelectorAll('#messages .message').length === {expected}")
 '''
-new = '''    for expected in (160, 240, 241):
+new_loop = '''    for expected in (160, 240, 241):
         page.locator("#messages").hover()
         page.mouse.wheel(0, -100000)
         page.wait_for_function(f"document.querySelectorAll('#messages .message').length === {expected}")
 '''
-if new not in t:
-    if old not in t:
+if new_loop not in t:
+    if old_loop not in t:
         raise SystemExit("anchored history pagination loop not found")
-    t = t.replace(old, new, 1)
+    t = t.replace(old_loop, new_loop, 1)
+
+old_assert = '''    assert len(FixtureState.message_requests) == 4
+    assert FixtureState.message_requests == [
+        {"limit": ["80"], "order": ["desc"]},
+        {"limit": ["80"], "cursor": ["80"]},
+        {"limit": ["80"], "cursor": ["160"]},
+        {"limit": ["80"], "cursor": ["240"]},
+    ]
+'''
+new_assert = '''    history_requests = [request for request in FixtureState.message_requests if request.get("limit") == ["80"]]
+    assert history_requests == [
+        {"limit": ["80"], "order": ["desc"]},
+        {"limit": ["80"], "cursor": ["80"]},
+        {"limit": ["80"], "cursor": ["160"]},
+        {"limit": ["80"], "cursor": ["240"]},
+    ]
+'''
+if new_assert not in t:
+    if old_assert not in t:
+        raise SystemExit("history request assertion block not found")
+    t = t.replace(old_assert, new_assert, 1)
+
 test.write_text(t, encoding="utf-8")
