@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pin the dedicated orchestrated Qwen at the top of OpenCode TUI Recent models.
+"""Pin the dedicated Qwen and SOL orchestrators at the top of TUI Recent models.
 
 The TUI persists model preferences in XDG_STATE_HOME/opencode/model.json.
 Only the ordering of the dedicated alias in `recent` is changed; favorites,
@@ -12,7 +12,10 @@ import os
 from pathlib import Path
 import tempfile
 
-PINNED = {"providerID": "bailian-cli", "modelID": "qwen3.8-orchestrated"}
+PINNED = [
+    {"providerID": "bailian-cli", "modelID": "qwen3.8-orchestrated"},
+    {"providerID": "openai", "modelID": "gpt-5.6-sol-orchestrated"},
+]
 
 
 def state_path() -> Path:
@@ -23,10 +26,10 @@ def state_path() -> Path:
 
 
 def same_model(value: object) -> bool:
-    return (
-        isinstance(value, dict)
-        and value.get("providerID") == PINNED["providerID"]
-        and value.get("modelID") == PINNED["modelID"]
+    return isinstance(value, dict) and any(
+        value.get("providerID") == item["providerID"]
+        and value.get("modelID") == item["modelID"]
+        for item in PINNED
     )
 
 
@@ -47,7 +50,7 @@ def main() -> int:
     if not isinstance(recent, list):
         recent = []
 
-    ordered = [dict(PINNED), *(item for item in recent if not same_model(item))]
+    ordered = [*map(dict, PINNED), *(item for item in recent if not same_model(item))]
     if recent == ordered:
         return 0
 

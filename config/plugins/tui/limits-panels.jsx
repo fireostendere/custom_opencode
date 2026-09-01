@@ -1,25 +1,22 @@
 /** @jsxImportSource @opentui/solid */
 /**
- * Limits sidebar section, home-screen limits panel and the todo-plan strip
- * for the OpenCode TUI.
+ * Limits panel and todo-plan strip for the OpenCode TUI.
  *
- * Adds three independently hideable areas:
- *   - Лимиты: ChatGPT + Alibaba rate-limit windows in the session sidebar;
- *     the whole sidebar can be collapsed with the right-edge chevron
- *   - Лимиты (начальный экран): the same data as a collapsible strip on the
- *     right edge of the home screen.  The session view uses the native
- *     sidebar so it composes with Context, MCP and the other built-in panels.
+ * Adds two independently hideable edge panels:
+ *   - Лимиты: ChatGPT + Alibaba rate-limit windows on the right edge of every
+ *     route
  *   - План: a collapsible strip on the LEFT edge, present on every screen
  *     and bound to the current dialog.  In a session it shows that
- *     session's latest todowrite plan; on the start screen it shows the
- *     plan of the most recently updated session.  Progress bar
- *     (completed/total, percent) + todo list + session footer.
+ *     session's latest legacy todowrite plan or the native V2 plan document;
+ *     on the start screen it shows the latest available plan.  Progress bar
+ *     (completed/total, percent) + task list + session/document footer.
  *
  * Each custom edge strip is a thin bar with a chevron (the panel opens away
- * from the edge); both start collapsed on every launch.  Toggle with a
- * chevron/header click (mouse) or the "Панели" commands in the palette
- * (ctrl+alt+l toggles the limits panels, ctrl+alt+t the plan strip).  The
- * native session sidebar has its own right-edge chevron and uses the built-in
+ * from the edge); both start collapsed on every launch.  The pin icon switches
+ * an expanded panel between an overlay and a normal flex-layout dock.  Toggle
+ * visibility with an edge handle or the "Панели" commands in the palette
+ * (ctrl+alt+l toggles the limits panel, ctrl+alt+t the plan strip).  The
+ * native session sidebar remains separate and uses the built-in
  * `session.sidebar.toggle` command (<leader>b).
  *
  * NOTE: TUI plugins that contain JSX must use the `.jsx`/`.tsx` extension,
@@ -28,6 +25,9 @@
  */
 import { Plugin } from "@opencode-ai/plugin/tui"
 import { createEffect, createSignal, onMount, Show } from "solid-js"
+import { readdir, readFile, stat } from "node:fs/promises"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import {
   getLimits,
   getLimitsSync,
@@ -169,8 +169,78 @@ function qwenHint(qwen) {
   }
 }
 
+const V2_PLAN_DIRECTORY = join(homedir(), ".opencode", "plan")
+
 /**
- * Return the latest valid todo list written by the model in this session.
+ * Parse the common checklist form used by Markdown plan documents. Plain
+ * bullet lines are accepted as pending tasks when a document has no checks.
+ * @param {string} text
+ * @param {string} fallbackTitle
+ * @returns {{ todos: { content: string, status?: string }[], title: string }}
+ */
+function parsePlanDocument(text, fallbackTitle) {
+  const checkedTodos = []
+  const bulletTodos = []
+  let title = ""
+  let inFence = false
+  for (const line of String(text || "").split(/\r?\n/)) {
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    const heading = line.match(/^\s*#\s+(.+?)\s*$/)
+    if (!title && heading) title = heading[1]
+    const checked = line.match(/^\s*(?:[-*+]|\d+[.)])\s+\[([ xX>~-])\]\s+(.+?)\s*$/)
+    if (checked) {
+      const marker = checked[1].toLowerCase()
+      checkedTodos.push({
+        content: checked[2],
+        status: marker === "x" ? "completed" : marker === ">" || marker === "~" || marker === "-" ? "in_progress" : "pending",
+      })
+      continue
+    }
+    const bullet = line.match(/^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/)
+    if (bullet && !/^\[[ xX>~-]\]/.test(bullet[1])) {
+      bulletTodos.push({ content: bullet[1], status: "pending" })
+    }
+  }
+  return { todos: checkedTodos.length ? checkedTodos : bulletTodos, title: title || fallbackTitle }
+}
+
+/**
+ * Read the newest native V2 plan document. V2 does not emit a todowrite tool
+ * part, and its plan files are global rather than tied to a session ID.
+ * @returns {Promise<{ todos: { content: string, status?: string }[], title?: string, updated?: number } | null>}
+ */
+async function readLatestV2Plan() {
+  let entries
+  try {
+    entries = await readdir(V2_PLAN_DIRECTORY, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  const candidates = []
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue
+    const path = join(V2_PLAN_DIRECTORY, entry.name)
+    try {
+      const details = await stat(path)
+      candidates.push({ path, name: entry.name, updated: details.mtimeMs })
+    } catch {}
+  }
+  candidates.sort((a, b) => b.updated - a.updated)
+  for (const candidate of candidates) {
+    try {
+      const parsed = parsePlanDocument(await readFile(candidate.path, "utf8"), candidate.name.replace(/\.md$/, ""))
+      if (parsed.todos.length) return { ...parsed, updated: candidate.updated }
+    } catch {}
+  }
+  return null
+}
+
+/**
+ * Return the latest valid legacy todo list written by the model in this session.
  * @param {import("@opencode-ai/client").SessionMessageInfo[]} messages
  */
 function latestTodos(messages) {
@@ -227,40 +297,38 @@ export default Plugin.define({
 
     // Message updates trigger a fresh read from the reactive session cache.
     const [planVersion, setPlanVersion] = createSignal(0)
-    const unmessage = context.data.on("session.message.content.updated", () => {
-      setPlanVersion((version) => version + 1)
-    })
-
-    // Persistent collapse state.  `home` is the start-screen limits strip;
-    // `limits` controls the session-sidebar section; `plan` is the left-edge
-    // plan strip.  All panels start collapsed.
+    // Persistent visibility/pin state.  Edge strips start collapsed on every
+    // launch, while pin choices remain stable between TUI restarts.
     const [state, updateState] = context.storage.store("limits-panels.state", {
-      initial: { limits: true, plan: false, home: false },
+      initial: {
+        plan: false,
+        home: false,
+        planPinned: false,
+        homePinned: false,
+      },
     })
-
-    // The native sidebar owns its visibility state.  Keep only the local
-    // chevron direction here; the built-in command remains the source of
-    // truth for the actual layout.
-    const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false)
-    function toggleSidebar() {
-      context.keymap.dispatch("session.sidebar.toggle")
-      setSidebarCollapsed((collapsed) => !collapsed)
-    }
 
     // The edge strips must greet every launch collapsed, so drop any
     // "expanded" value persisted by the previous run.
-    if (state.limits === true || state.home === true || state.plan === true) {
+    if (state.home === true || state.plan === true) {
       updateState((draft) => {
-        draft.limits = false
         draft.home = false
         draft.plan = false
       })
     }
 
-    /** @param {"limits" | "plan" | "home"} which */
+    /** @param {"plan" | "home"} which */
     function toggle(which) {
       updateState((draft) => {
         draft[which] = !state[which]
+      })
+    }
+
+    /** @param {"plan" | "home" | "sidebar"} which */
+    function togglePin(which) {
+      const key = `${which}Pinned`
+      updateState((draft) => {
+        draft[key] = !state[key]
       })
     }
 
@@ -273,22 +341,76 @@ export default Plugin.define({
     // sits under an expanded strip (post-process hooks run after the
     // frame's renderables have positioned the cursor, so we get the last
     // word); the caret reappears as soon as it moves back into view.
-    const PLAN_STRIP_COLS = 36 // 2-col edge bar + 34-col panel, left edge
-    const HOME_STRIP_COLS = 34 // 2-col edge bar + 32-col panel, right edge
+    const HANDLE_COLS = 2
+    const PLAN_PANEL_COLS = 34
+    const HOME_PANEL_COLS = 32
+    const PLAN_STRIP_COLS = HANDLE_COLS + PLAN_PANEL_COLS
+    const HOME_STRIP_COLS = HANDLE_COLS + HOME_PANEL_COLS
     const renderer = context.renderer
+    let planNode = null
+    let dockTarget = null
+    let dockRetry = null
+    let appliedDock = { left: null, right: null }
+
+    // The native `app` slot is rendered after the route, so a relative panel
+    // would occupy a row below the interface.  Instead, keep the panel in the
+    // overlay layer and inset the route's large layout container when pinned.
+    function findDockTarget() {
+      let parent = planNode?.parent
+      while (parent) {
+        const height = Number(renderer.height ?? 0)
+        const candidates = (parent.getChildren?.() ?? [])
+          .filter((child) => child !== planNode && child.getChildrenCount?.() > 0)
+          .filter((child) => !height || Number(child.height ?? 0) >= height / 2)
+          .sort((a, b) => Number(b.height ?? 0) - Number(a.height ?? 0))
+        if (candidates.length) return candidates[0]
+        parent = parent.parent
+      }
+      return null
+    }
+
+    function syncDockLayout() {
+      const target = findDockTarget()
+      if (!target) {
+        if (!dockRetry) {
+          dockRetry = setTimeout(() => {
+            dockRetry = null
+            syncDockLayout()
+          }, 50)
+        }
+        return
+      }
+      if (dockTarget && dockTarget !== target) {
+        dockTarget.paddingLeft = 0
+        dockTarget.paddingRight = 0
+      }
+      if (dockTarget !== target) appliedDock = { left: null, right: null }
+      dockTarget = target
+      const left = state.planPinned === true
+        ? (state.plan === true ? PLAN_STRIP_COLS : HANDLE_COLS)
+        : 0
+      const right = state.homePinned === true
+        ? (state.home === true ? HOME_STRIP_COLS : HANDLE_COLS)
+        : 0
+      if (appliedDock.left !== left) {
+        target.paddingLeft = left
+        appliedDock.left = left
+      }
+      if (appliedDock.right !== right) {
+        target.paddingRight = right
+        appliedDock.right = right
+      }
+    }
+
+    function scheduleDockLayout() {
+      queueMicrotask(syncDockLayout)
+    }
     /** @param {number} x 1-based cursor column */
     function cursorUnderStrip(x) {
-      if (state.plan === true && x <= PLAN_STRIP_COLS) return true
-      if (
-        sidebarCollapsed() &&
-        context.ui.router.current()?.type === "session" &&
-        x > renderer.width - 2
-      ) {
-        return true
-      }
+      if (state.plan === true && state.planPinned !== true && x <= PLAN_STRIP_COLS) return true
       if (
         state.home === true &&
-        context.ui.router.current()?.type === "home" &&
+        state.homePinned !== true &&
         x > renderer.width - HOME_STRIP_COLS
       ) {
         return true
@@ -306,23 +428,45 @@ export default Plugin.define({
     renderer.addPostProcessFn?.(hideCursorUnderStrip)
 
     // -----------------------------------------------------------------
-    // Start-screen plan data (latest todowrite of the freshest session)
+    // Start-screen plan data (latest legacy todo plan or native V2 document)
     // -----------------------------------------------------------------
 
     /**
      * Latest plan found in the most recently updated sessions, plus the
      * session it belongs to.  `null` means "no plan anywhere yet".
      * @type {import("solid-js").Signal<
-     *   { todos: { content: string, status?: string }[], sessionID: string,
+     *   { todos: { content: string, status?: string }[], sessionID: string | null,
      *     title?: string, updated?: number } | null>}
      */
     const [homePlan, setHomePlan] = createSignal(null)
+    const [documentPlan, setDocumentPlan] = createSignal(null)
+    let documentPlanPromise = null
+
+    async function refreshDocumentPlan() {
+      if (documentPlanPromise) return documentPlanPromise
+      documentPlanPromise = readLatestV2Plan()
+        .then((found) => {
+          setDocumentPlan(found)
+          setPlanVersion((version) => version + 1)
+          return found
+        })
+        .finally(() => {
+          documentPlanPromise = null
+        })
+      return documentPlanPromise
+    }
+
+    refreshDocumentPlan().catch(() => {})
+    const unmessage = context.data.on("session.message.content.updated", () => {
+      setPlanVersion((version) => version + 1)
+      refreshDocumentPlan().catch(() => {})
+    })
     let homePlanBusy = false
     let homePlanCheckedAt = 0
 
     /**
      * Walk a session's message pages (newest first) until the most recent
-     * todowrite plan is found.
+     * legacy todowrite plan is found.
      * @param {string} sessionID
      */
     async function findLatestTodos(sessionID) {
@@ -367,6 +511,11 @@ export default Plugin.define({
             })
             return
           }
+        }
+        const nativePlan = await refreshDocumentPlan()
+        if (nativePlan?.todos?.length) {
+          setHomePlan({ ...nativePlan, sessionID: null })
+          return
         }
         setHomePlan(null)
       } catch {
@@ -419,25 +568,50 @@ export default Plugin.define({
     }
 
     /**
-     * Collapsible section header (click to toggle).
+     * Shared panel/section header.  Limits deliberately use a static label;
+     * the edge handle remains the only visibility control for that panel.
      * @param {string} title
      * @param {boolean} expanded
      * @param {() => void} onToggle
+     * @param {{ collapsible?: boolean, pinned?: boolean, onPin?: () => void }} options
      */
-    function sectionHeader(title, expanded, onToggle) {
+    function sectionHeader(title, expanded, onToggle, options = {}) {
+      const collapsible = options.collapsible !== false
       return (
         <box
           flexDirection="row"
-          gap={1}
-          paddingX={1}
-          onMouseDown={onToggle}
+          justifyContent="space-between"
+          width="100%"
         >
-          <text fg={theme.hue?.orange?.[400] ?? theme.text.default}>
-            <span>{expanded ? "▾" : "▸"}</span>
-          </text>
-          <text fg={theme.text.default}>
-            <span>{title}</span>
-          </text>
+          <box
+            flexDirection="row"
+            gap={1}
+            paddingX={1}
+            onMouseDown={collapsible ? onToggle : undefined}
+          >
+            <Show when={collapsible}>
+              <text fg={theme.hue?.orange?.[400] ?? theme.text.default}>
+                <span>{expanded ? "▾" : "▸"}</span>
+              </text>
+            </Show>
+            <text fg={theme.text.default}>
+              <span>{title}</span>
+            </text>
+          </box>
+          <Show when={Boolean(options.onPin)}>
+            <box
+              width={3}
+              paddingRight={1}
+              onMouseDown={(event) => {
+                event?.stopPropagation?.()
+                options.onPin?.()
+              }}
+            >
+              <text fg={options.pinned ? theme.hue?.orange?.[400] ?? theme.text.default : theme.text.subdued}>
+                <span>📌</span>
+              </text>
+            </box>
+          </Show>
         </box>
       )
     }
@@ -453,7 +627,7 @@ export default Plugin.define({
         ? `ChatGPT · окно ${fmtWindow(codex.primary.windowDurationMins)}`
         : "ChatGPT"
       return (
-        <box flexDirection="column" paddingX={1} gap={1}>
+        <box flexDirection="column" width="100%" paddingX={1} gap={1}>
           <Show
             when={codex.available}
             fallback={
@@ -489,6 +663,7 @@ export default Plugin.define({
             return (
               <box flexDirection="column">
                 <text
+                  flexShrink={0}
                   fg={
                     promo.active
                       ? theme.text.feedback.success.default
@@ -512,42 +687,77 @@ export default Plugin.define({
     }
 
     /**
-     * Collapsible "Лимиты" strip for the home screen.  Sessions render the
-     * limits section inside the native sidebar below, preventing it from
-     * covering the built-in Context/MCP panel.
+     * Shared edge-panel shell.  Home limits and the plan use the same handle,
+     * pin control and overlay/dock behavior; only their body and direction
+     * differ.
+     * @param {{
+     *   side: "left" | "right",
+     *   visible?: () => boolean,
+     *   expanded: () => boolean,
+     *   pinned: () => boolean,
+     *   layoutKey?: () => unknown,
+     *   panelWidth: number,
+     *   title: string,
+     *   collapsible?: boolean,
+     *   onToggle: () => void,
+     *   onPin: () => void,
+     *   onNode?: (node: object) => void,
+     *   before?: () => unknown,
+     *   body: () => unknown,
+     * }} props
      */
-    function HomeLimitsStrip() {
+    function EdgePanel(props) {
       const [hover, setHover] = createSignal(false)
-      const isHome = () => context.ui.router.current()?.type === "home"
-      const expanded = () => state.home === true
+      const isLeft = () => props.side === "left"
+      const expanded = () => props.expanded() === true
+      const pinned = () => props.pinned() === true
+      createEffect(() => {
+        props.visible?.()
+        expanded()
+        pinned()
+        props.layoutKey?.()
+        scheduleDockLayout()
+      })
       return (
-        <Show when={isHome()}>
+        <Show when={props.visible ? props.visible() : true}>
           <box
+            ref={(node) => {
+              props.onNode?.(node)
+              scheduleDockLayout()
+            }}
             position="absolute"
             top={0}
-            right={0}
+            left={isLeft() ? 0 : undefined}
+            right={isLeft() ? undefined : 0}
+            width={expanded() ? HANDLE_COLS + props.panelWidth : HANDLE_COLS}
             height="100%"
-            zIndex={1500}
+            flexShrink={0}
+            zIndex={pinned() ? 0 : 1500}
             flexDirection="row"
           >
+            {props.before?.()}
             <Show when={expanded()}>
               <box
-                width={32}
+                width={props.panelWidth}
                 height="100%"
-                border={["left"]}
+                border={[isLeft() ? "right" : "left"]}
                 borderColor={theme.text.subdued}
                 backgroundColor={theme.background.default}
                 flexDirection="column"
                 paddingTop={1}
               >
-                {sectionHeader("Лимиты", true, () => toggle("home"))}
-                {limitsBody(limits())}
+                {sectionHeader(props.title, expanded(), props.onToggle, {
+                  collapsible: props.collapsible,
+                  pinned: pinned(),
+                  onPin: props.onPin,
+                })}
+                {props.body()}
               </box>
             </Show>
             <box
-              width={2}
+              width={HANDLE_COLS}
               height="100%"
-              border={["left"]}
+              border={[isLeft() ? "right" : "left"]}
               borderColor={hover() ? theme.text.default : theme.text.subdued}
               backgroundColor={theme.background.default}
               flexDirection="column"
@@ -555,10 +765,18 @@ export default Plugin.define({
               alignItems="center"
               onMouseOver={() => setHover(true)}
               onMouseOut={() => setHover(false)}
-              onMouseDown={() => toggle("home")}
+              onMouseDown={props.onToggle}
             >
               <text fg={hover() ? theme.text.default : theme.text.subdued}>
-                <span>{expanded() ? "▸" : "◂"}</span>
+                <span>
+                  {isLeft()
+                    ? expanded()
+                      ? "◂"
+                      : "▸"
+                    : expanded()
+                      ? "▸"
+                      : "◂"}
+                </span>
               </text>
             </box>
           </box>
@@ -566,42 +784,25 @@ export default Plugin.define({
       )
     }
 
-    /**
-     * A handle for the native session sidebar.  It stays on the right edge
-     * after the sidebar is hidden, so the same mouse target can restore it.
-     */
-    function SidebarToggleHandle() {
-      const [hover, setHover] = createSignal(false)
-      const isSession = () => context.ui.router.current()?.type === "session"
+    /** "Лимиты" strip shared by the home and session routes. */
+    function LimitsStrip() {
       return (
-        <Show when={isSession()}>
-          <box
-            position="absolute"
-            top={0}
-            right={0}
-            width={2}
-            height="100%"
-            zIndex={1500}
-            border={["left"]}
-            borderColor={hover() ? theme.text.default : theme.text.subdued}
-            backgroundColor={theme.background.default}
-            flexDirection="column"
-            justifyContent="center"
-            alignItems="center"
-            onMouseOver={() => setHover(true)}
-            onMouseOut={() => setHover(false)}
-            onMouseDown={toggleSidebar}
-          >
-            <text fg={hover() ? theme.text.default : theme.text.subdued}>
-              <span>{sidebarCollapsed() ? "◂" : "▸"}</span>
-            </text>
-          </box>
-        </Show>
+        <EdgePanel
+          side="right"
+          expanded={() => state.home === true}
+          pinned={() => state.homePinned === true}
+          panelWidth={HOME_PANEL_COLS}
+          title="Лимиты"
+          collapsible={false}
+          onToggle={() => toggle("home")}
+          onPin={() => togglePin("home")}
+          body={() => limitsBody(limits())}
+        />
       )
     }
 
     /**
-     * Progress header + todo list + session footer, shared by every route
+     * Progress header + task list + session/document footer, shared by every route
      * of the plan strip.  Standardized on the same `bar()` look as the
      * limits rows: green when everything is done, orange (the "in
      * progress" accent) otherwise.
@@ -609,14 +810,14 @@ export default Plugin.define({
      */
     function planPanelBody(plan) {
       return (
-        <box flexDirection="column" paddingX={1} gap={1}>
+        <box flexDirection="column" width="100%" paddingX={1} gap={1}>
           <Show
             when={plan && plan.todos.length > 0}
             fallback={
-              <text fg={theme.text.subdued}>
+              <text fg={theme.text.subdued} wrapMode="word" flexShrink={1} minWidth={0}>
                 <span>
                   Плана пока нет — он появится, когда модель запишет
-                  todo-список.
+                  todo-список или V2 plan document.
                 </span>
               </text>
             }
@@ -630,7 +831,7 @@ export default Plugin.define({
                 const percent = Math.round((completed / todos.length) * 100)
                 const allDone = completed === todos.length
                 return (
-                  <box flexDirection="row" gap={1}>
+                  <box flexDirection="row" gap={1} width="100%" flexShrink={0}>
                     <text
                       fg={
                         allDone
@@ -653,7 +854,7 @@ export default Plugin.define({
               })()}
               {todoRows(plan.todos)}
               <Show when={plan.title || plan.updated}>
-                <text fg={theme.text.subdued}>
+                <text fg={theme.text.subdued} wrapMode="word" flexShrink={1}>
                   <span>
                     {plan.title || "Сессия без названия"}
                     {plan.updated ? ` · ${fmtWhen(plan.updated)}` : ""}
@@ -685,13 +886,19 @@ export default Plugin.define({
             if (found) setHistoricalTodos(found)
           })
           .catch(() => {})
+
+        refreshDocumentPlan().catch(() => {})
       })
 
       const plan = () => {
         planVersion() // re-read the reactive cache on message updates
-        const todos =
-          latestTodos(context.data.session.message.list(props.sessionID)) ??
-          historicalTodos()
+        const cachedTodos = latestTodos(context.data.session.message.list(props.sessionID))
+        const historical = historicalTodos()
+        const todos = cachedTodos?.length
+          ? cachedTodos
+          : historical.length
+            ? historical
+            : documentPlan()?.todos
         let info
         try {
           info = context.data.session.get(props.sessionID)
@@ -700,8 +907,8 @@ export default Plugin.define({
         }
         return {
           todos: todos ?? [],
-          title: info?.title,
-          updated: info?.time?.updated,
+          title: info?.title || documentPlan()?.title,
+          updated: info?.time?.updated || documentPlan()?.updated,
         }
       }
 
@@ -728,70 +935,52 @@ export default Plugin.define({
       return null
     }
 
-    /**
-     * Collapsible "План" strip pinned to the LEFT edge of every screen —
-     * the mirror of HomeLimitsStrip, and bound to the current dialog:
-     * in a session it shows that session's latest plan, on the start
-     * screen the plan of the most recently updated session.  ▸ while
-     * collapsed, ◂ while expanded.  Starts collapsed on launch, like its
-     * right-edge sibling.
-     */
+    /** "План" strip bound to the current dialog or latest home plan. */
     function PlanStrip() {
-      const [hover, setHover] = createSignal(false)
       const sessionID = () => {
         const route = context.ui.router.current()
         return route?.type === "session" ? route.sessionID : null
       }
-      const expanded = () => state.plan === true
       return (
-        <box
-          position="absolute"
-          top={0}
-          left={0}
-          height="100%"
-          zIndex={1500}
-          flexDirection="row"
-        >
-          <Show when={!sessionID()}>
-            <HomePlanRefresh />
-          </Show>
-          <box
-            width={2}
-            height="100%"
-            border={["right"]}
-            borderColor={hover() ? theme.text.default : theme.text.subdued}
-            backgroundColor={theme.background.default}
-            flexDirection="column"
-            justifyContent="center"
-            alignItems="center"
-            onMouseOver={() => setHover(true)}
-            onMouseOut={() => setHover(false)}
-            onMouseDown={() => {
-              if (!sessionID()) refreshHomePlan()
-              toggle("plan")
-            }}
-          >
-            <text fg={hover() ? theme.text.default : theme.text.subdued}>
-              <span>{expanded() ? "◂" : "▸"}</span>
-            </text>
-          </box>
-          <Show when={expanded()}>
-            <box
-              width={34}
-              height="100%"
-              border={["right"]}
-              borderColor={theme.text.subdued}
-              backgroundColor={theme.background.default}
-              flexDirection="column"
-              paddingTop={1}
+        <EdgePanel
+          side="left"
+          expanded={() => state.plan === true}
+          pinned={() => state.planPinned === true}
+          layoutKey={() => `${sessionID()}-${state.home}-${state.homePinned}`}
+          panelWidth={PLAN_PANEL_COLS}
+          title="План"
+          onToggle={() => {
+            if (!sessionID()) refreshHomePlan()
+            toggle("plan")
+          }}
+          onPin={() => togglePin("plan")}
+          onNode={(node) => {
+            planNode = node
+          }}
+          before={() => (
+            <Show when={!sessionID()}>
+              <HomePlanRefresh />
+            </Show>
+          )}
+          body={() => (
+            <scrollbox
+              flexGrow={1}
+              minHeight={0}
+              width="100%"
+              scrollY={true}
+              verticalScrollbarOptions={{
+                trackOptions: {
+                  backgroundColor: theme.background.default,
+                  foregroundColor: theme.hue?.orange?.[400] ?? theme.text.subdued,
+                },
+              }}
             >
-              {sectionHeader("План", true, () => toggle("plan"))}
               <Show when={sessionID()} keyed fallback={<HomePlanBody />}>
                 {(id) => <SessionPlan sessionID={id} />}
               </Show>
-            </box>
-          </Show>
-        </box>
+            </scrollbox>
+          )}
+        />
       )
     }
 
@@ -804,8 +993,10 @@ export default Plugin.define({
         const done = todo.status === "completed"
         const active = todo.status === "in_progress"
         return (
-          <box flexDirection="row" gap={1}>
+          <box flexDirection="row" gap={1} width="100%" flexShrink={0}>
             <text
+              width={1}
+              flexShrink={0}
               fg={
                 active
                   ? theme.hue?.orange?.[400] ?? theme.text.default
@@ -816,7 +1007,13 @@ export default Plugin.define({
             >
               <span>{done ? "✓" : active ? "●" : "○"}</span>
             </text>
-            <text fg={done ? theme.text.subdued : theme.text.default}>
+            <text
+              fg={done ? theme.text.subdued : theme.text.default}
+              flexGrow={1}
+              flexShrink={1}
+              minWidth={0}
+              wrapMode="word"
+            >
               <span>{todo.content}</span>
             </text>
           </box>
@@ -843,11 +1040,7 @@ export default Plugin.define({
               group: "Панели",
               bind: "ctrl+alt+l",
               palette: true,
-              // Keep the home and session edge-panel state independent.
-              run: () => {
-                const route = context.ui.router.current()
-                toggle(route?.type === "home" ? "home" : "limits")
-              },
+              run: () => toggle("home"),
             },
             {
               id: "custom.panels.plan-toggle",
@@ -859,28 +1052,20 @@ export default Plugin.define({
             },
           ],
         }))
-        return [<SidebarToggleHandle />, <HomeLimitsStrip />, <PlanStrip />]
+        return [<LimitsStrip />, <PlanStrip />]
       },
-    })
-
-    // Session routes already own the right sidebar.  Add limits to that
-    // layout-managed slot instead of placing a second panel over it.
-    const unclaim = context.ui.slot({
-      prepend: "sidebar.content",
-      render: () => (
-        <box flexDirection="column" gap={1} paddingTop={1}>
-          {sectionHeader("Лимиты", state.limits, () => toggle("limits"))}
-          <Show when={state.limits}>{limitsBody(limits())}</Show>
-        </box>
-      ),
     })
 
     return () => {
       unkeys()
-      unclaim()
       unsub?.()
       unmessage?.()
       renderer.removePostProcessFn?.(hideCursorUnderStrip)
+      if (dockRetry) clearTimeout(dockRetry)
+      if (dockTarget) {
+        dockTarget.paddingLeft = 0
+        dockTarget.paddingRight = 0
+      }
       clearInterval(ticker)
       stopAutoRefresh()
     }

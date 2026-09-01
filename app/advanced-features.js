@@ -21,6 +21,13 @@ const state = {
   children: [],
   childrenTransport: 'unknown',
   childDetails: new Map(),
+  orchestrationStatuses: {},
+  plan: null,
+  activityItems: [],
+  currentActivityID: '',
+  activityHydrated: false,
+  orchestrationRevision: 0,
+  orchestrationRenderRevision: 0,
   runStartedAt: null,
   lastDurationMs: 0,
   attachments: [],
@@ -102,7 +109,7 @@ function ensureSurfaces() {
     trace.id = 'orchestrationTrace'
     trace.className = 'orchestration-trace'
     trace.hidden = true
-    $('messages')?.after(trace)
+    document.querySelector('.messages-frame')?.after(trace)
   }
   if (!$('workflowStatus')) {
     const bar = document.createElement('div')
@@ -158,6 +165,8 @@ async function refreshSelectedSession() {
   const id = sessionFromHash()
   if (id === state.sessionID && state.session) return
   state.sessionID = id
+  resetSubmitControls()
+  state.orchestrationRevision += 1
   state.session = null
   state.directory = ''
    state.settings = null
@@ -176,6 +185,11 @@ async function refreshSelectedSession() {
   state.children = []
   state.childrenTransport = 'unknown'
   state.childDetails.clear()
+   state.orchestrationStatuses = {}
+   state.plan = null
+   state.activityItems = []
+   state.currentActivityID = ''
+   state.activityHydrated = false
   state.attachments = []
   state.attachmentReads = []
   state.runStartedAt = running() ? Date.now() : null
@@ -187,17 +201,20 @@ async function refreshSelectedSession() {
     state.session = session
     state.directory = session?.location?.directory || ''
     $('projectSettingsButton').hidden = !state.directory
-    await Promise.allSettled([loadProjectSettings(), refreshQueue(), refreshQuestions(), refreshOrchestration(), refreshPermission()])
-    await applyProjectDefaultsOnce()
+    await Promise.allSettled([loadProjectSettings(id), refreshQueue(id), refreshQuestions(), refreshOrchestration(), refreshPlan(), refreshPermission(id)])
+    if (state.sessionID !== id) return
+    await applyProjectDefaultsOnce(id)
+    if (state.sessionID !== id) return
     renderAll()
   } catch (error) {
     console.warn('advanced session load failed', error)
   }
 }
 
-async function loadProjectSettings() {
-  if (!state.sessionID) return
-  const value = await request(`/client-project-settings.json?sessionID=${encodeURIComponent(state.sessionID)}`)
+async function loadProjectSettings(sessionID = state.sessionID) {
+  if (!sessionID) return
+  const value = await request(`/client-project-settings.json?sessionID=${encodeURIComponent(sessionID)}`)
+  if (state.sessionID !== sessionID) return
   state.settings = { ...DEFAULT_SETTINGS, ...(value?.settings || {}) }
 }
 
@@ -237,7 +254,11 @@ function syncProjectModelOptions() {
   const select = $('projectDefaultModel')
   if (!select) return
   const current = select.value
-  const options = new Map([['inherit', 'Не менять'], ['orchestrated', 'Qwen 3.8 Max · Оркестрированная']])
+  const options = new Map([
+    ['inherit', 'Не менять'],
+    ['orchestrated', 'Qwen 3.8 Max · Оркестрированная'],
+    ['sol-orchestrated', 'GPT-5.6 Sol · Оркестрированная'],
+  ])
   for (const model of state.models || []) {
     const provider = String(model?.providerID || '')
     const id = String(model?.id || '')
@@ -262,25 +283,27 @@ function openProjectSettings() {
   $('projectSettingsDialog').showModal()
 }
 
-async function applyProjectDefaultsOnce() {
-  if (!state.sessionID || !state.settings) return
-  const key = `opencode:web:project-defaults:${state.sessionID}`
+async function applyProjectDefaultsOnce(sessionID = state.sessionID) {
+  if (!sessionID || state.sessionID !== sessionID || !state.settings) return
+  const key = `opencode:web:project-defaults:${sessionID}`
   if (sessionStorage.getItem(key)) return
   sessionStorage.setItem(key, '1')
   try {
-    const rows = dataOf(await request(`/api/session/${encodeURIComponent(state.sessionID)}/message?limit=1`))
+    const rows = dataOf(await request(`/api/session/${encodeURIComponent(sessionID)}/message?limit=1`))
+    if (state.sessionID !== sessionID) return
     if (Array.isArray(rows) && rows.length) return
   } catch {}
+  if (state.sessionID !== sessionID) return
   const settings = state.settings
   if (settings.defaultMode === 'build' || settings.defaultMode === 'plan') {
     document.querySelector(`#agentControls [data-agent="${settings.defaultMode}"]`)?.click()
   }
-  if (settings.defaultModel === 'orchestrated') window.CustomOpenCodeUX?.setProfile?.('orchestrated')
+  if (settings.defaultModel === 'orchestrated' || settings.defaultModel === 'sol-orchestrated') window.CustomOpenCodeUX?.setProfile?.(settings.defaultModel)
   else if (typeof settings.defaultModel === 'string' && settings.defaultModel.includes('/')) {
     await chooseConcreteModel(settings.defaultModel)
   }
   if (settings.rag === 'on') {
-    request('/client-rag-start.json', { method:'POST', body:JSON.stringify({ mode:'quick', sessionID:state.sessionID }) }).catch(() => {})
+    request('/client-rag-start.json', { method:'POST', body:JSON.stringify({ mode:'quick', sessionID }) }).catch(() => {})
   }
 }
 
@@ -293,12 +316,12 @@ async function chooseConcreteModel(ref) {
   document.querySelector(`#modelChoices [data-model="${CSS.escape(model)}"][data-provider="${CSS.escape(provider)}"]`)?.click()
 }
 
-function readAttachment(file, slot) {
+function readAttachment(file, slot, sessionID = state.sessionID, revision = state.orchestrationRevision, attachments = state.attachments) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => {
       const value = { uri:reader.result, name:file.name || `file-${Date.now()}`, mime:file.type || 'application/octet-stream' }
-      state.attachments[slot] = value
+      if (state.sessionID === sessionID && state.orchestrationRevision === revision && state.attachments === attachments) attachments[slot] = value
       resolve(value)
     }
     reader.onerror = () => reject(reader.error)
@@ -306,21 +329,22 @@ function readAttachment(file, slot) {
   })
 }
 function captureFiles(files) {
+  const sessionID = state.sessionID, revision = state.orchestrationRevision, attachments = state.attachments
   for (const file of [...(files || [])]) {
     if (!file) continue
     const slot = state.attachments.length
     state.attachments.push(null)
-    state.attachmentReads.push(readAttachment(file, slot).catch((error) => {
-      state.attachments[slot] = null
+    state.attachmentReads.push(readAttachment(file, slot, sessionID, revision, attachments).catch((error) => {
+      if (state.sessionID === sessionID && state.orchestrationRevision === revision && state.attachments === attachments) attachments[slot] = null
       console.warn('attachment mirror failed', error)
     }))
   }
 }
-async function awaitAttachments() {
-  const pending = [...state.attachmentReads]
-  state.attachmentReads = []
+async function awaitAttachments(attachments = state.attachments, reads = state.attachmentReads) {
+  const pending = [...reads]
+  if (state.attachments === attachments && state.attachmentReads === reads) state.attachmentReads = []
   if (pending.length) await Promise.allSettled(pending)
-  return state.attachments.filter(Boolean)
+  return attachments.filter(Boolean)
 }
 function clearComposer() {
   const input = $('input')
@@ -333,9 +357,17 @@ function clearComposer() {
   state.attachmentReads = []
   for (const button of removes) button.click()
 }
+function resetSubmitControls() {
+  state.submitPending = false
+  const input = $('input'), action = $('composerAction'), attach = $('attachButton')
+  if (input) { input.disabled = false; input.dispatchEvent(new Event('input', { bubbles:true })) }
+  if (action) action.disabled = false
+  if (attach) attach.disabled = false
+}
 
 async function interceptSubmit(event) {
   if (!state.sessionID) return
+  if (document.documentElement.dataset.modelTransition === '1') { event.preventDefault(); return }
   const text = $('input')?.value.trim() || ''
   if (text.startsWith('/') && !text.startsWith('//')) return
   const hasAttachmentSurface = Boolean($('attachments') && !$('attachments').hidden && $('attachments').children.length)
@@ -344,21 +376,25 @@ async function interceptSubmit(event) {
   event.stopImmediatePropagation()
   if (state.submitPending) return
   state.submitPending = true
+  const sessionID = state.sessionID, revision = state.orchestrationRevision, attachments = state.attachments, reads = state.attachmentReads
   const input = $('input'),action = $('composerAction'),attach = $('attachButton')
   if (input) { input.value = ''; input.disabled = true; input.dispatchEvent(new Event('input', { bubbles:true })) }
   if (action) action.disabled = true
   if (attach) attach.disabled = true
   try {
-    const files = await awaitAttachments()
+    const files = await awaitAttachments(attachments, reads)
+    if (state.sessionID !== sessionID || state.orchestrationRevision !== revision) return
     const profile = currentProfile() === 'orchestrated' ? 'orchestrated' : 'direct'
     if (running()) {
-      await request('/client-queue.json', { method:'POST', body:JSON.stringify({ sessionID:state.sessionID, text, files, profile }) })
+      await request('/client-queue.json', { method:'POST', body:JSON.stringify({ sessionID, text, files, profile }) })
+      if (state.sessionID !== sessionID || state.orchestrationRevision !== revision) return
       clearComposer()
       await refreshQueue()
       toast('Добавлено в серверную очередь')
       return
     }
-    await request('/client-send.json', { method:'POST', body:JSON.stringify({ sessionID:state.sessionID, text, files, profile }) })
+    await request('/client-send.json', { method:'POST', body:JSON.stringify({ sessionID, text, files, profile }) })
+    if (state.sessionID !== sessionID || state.orchestrationRevision !== revision) return
     clearComposer()
     if ($('stop')) $('stop').hidden = false
     if (!state.runStartedAt) state.runStartedAt = Date.now()
@@ -366,23 +402,21 @@ async function interceptSubmit(event) {
     toast('Отправлено', 1300)
     setTimeout(refreshOrchestration, 300)
   } catch (error) {
-    if (input) input.value = text
-    toast(`Отправка: ${error.message}`, 6000)
+    if (state.sessionID === sessionID && state.orchestrationRevision === revision && input) input.value = text
+    if (state.sessionID === sessionID && state.orchestrationRevision === revision) toast(`Отправка: ${error.message}`, 6000)
   } finally {
-    state.submitPending = false
-    if (input) { input.disabled = false; input.dispatchEvent(new Event('input', { bubbles:true })) }
-    if (action) action.disabled = false
-    if (attach) attach.disabled = false
+    if (state.sessionID === sessionID && state.orchestrationRevision === revision) resetSubmitControls()
   }
 }
 
-async function refreshQueue() {
-  if (!state.sessionID) return
+async function refreshQueue(sessionID = state.sessionID) {
+  if (!sessionID) return
   try {
     const [selected, global] = await Promise.all([
-      request(`/client-queue.json?sessionID=${encodeURIComponent(state.sessionID)}`),
+      request(`/client-queue.json?sessionID=${encodeURIComponent(sessionID)}`),
       request('/client-queue.json'),
     ])
+    if (state.sessionID !== sessionID) return
     state.queue = selected || { count:0, items:[] }
     state.queueCounts = global?.counts || {}
     syncQueueBadges()
@@ -805,13 +839,15 @@ function handleQuestionEvent(payload) {
   refreshQuestions()
 }
 
-async function refreshPermission() {
-  if (!state.sessionID || !state.directory) { state.pendingPermission = null; syncPermissionProjectButton(); return }
+async function refreshPermission(sessionID = state.sessionID) {
+  if (!sessionID || !state.directory) { if (state.sessionID === sessionID) { state.pendingPermission = null; syncPermissionProjectButton() }; return }
   const q = workspaceQuery()
   try {
     const value = dataOf(await request(`/api/permission/request${q ? `?${q}` : ''}`))
-    state.pendingPermission = Array.isArray(value) ? value.find((item) => item?.sessionID === state.sessionID) || null : null
-  } catch { state.pendingPermission = null }
+    if (state.sessionID !== sessionID) return
+    state.pendingPermission = Array.isArray(value) ? value.find((item) => item?.sessionID === sessionID) || null : null
+  } catch { if (state.sessionID === sessionID) state.pendingPermission = null }
+  if (state.sessionID !== sessionID) return
   syncPermissionProjectButton()
 }
 function syncPermissionProjectButton() {
@@ -846,12 +882,166 @@ function childStatus(value) {
   const raw = typeof value === 'string' ? value : value?.type || value?.status || value?.state || ''
   return /busy|running|retry|working|pending/i.test(String(raw)) ? 'running' : /error|failed/i.test(String(raw)) ? 'error' : 'done'
 }
+function orchestrationPurpose(agent) {
+  const value = String(agent || '').toLowerCase()
+  if (/review|critic/.test(value)) return 'Независимая проверка результата · только чтение'
+  if (/explore|reader|research/.test(value)) return 'Поиск по проекту и сбор фактов · только чтение'
+  if (/build|builder|implement/.test(value)) return 'Внесение изменений в проект'
+  if (/plan|architect/.test(value)) return 'Планирование и декомпозиция задачи'
+  if (/aggregate|synth/.test(value)) return 'Сведение результатов дочерних вызовов'
+  return 'Вспомогательный дочерний вызов'
+}
+function activityValue(value, limit = 12000) {
+  if (value === undefined || value === null || value === '') return ''
+  let text
+  if (Array.isArray(value)) text = value.map((item) => item?.type === 'text' ? item.text || '' : item?.text || item?.name || JSON.stringify(item)).filter(Boolean).join('\n')
+  else if (typeof value === 'string') text = value
+  else {
+    try { text = JSON.stringify(value, null, 2) } catch { text = String(value) }
+  }
+  return text.length > limit ? `${text.slice(0, limit)}\n…обрезано…` : text
+}
+function activityModelLabel(data = {}) {
+  const raw = data.model || data.modelID || data.modelRef
+  if (raw && typeof raw === 'object') {
+    const provider = raw.providerID || raw.provider || ''
+    const id = raw.id || raw.modelID || raw.name || ''
+    const variant = raw.variant ? `#${raw.variant}` : ''
+    return `${provider ? `${provider}/` : ''}${id}${variant}` || 'модель'
+  }
+  return String(raw || $('modelButton')?.textContent || 'модель')
+}
+function activityKind(name, type = '') {
+  const value = `${name || ''} ${type || ''}`.toLowerCase()
+  if (/mcp|knowledge|rag|kb_/.test(value)) return 'mcp'
+  if (/skill/.test(value)) return 'skill'
+  if (/task|subagent|agent|model|reasoning|text/.test(value)) return 'model'
+  return 'tool'
+}
+function activityKindLabel(kind) {
+  return kind === 'mcp' ? 'MCP / RAG' : kind === 'skill' ? 'Skill' : kind === 'model' ? 'Модель' : 'Инструмент'
+}
+function activityStatusLabel(status) {
+  return status === 'running' || status === 'streaming' ? 'выполняется' : status === 'error' ? 'ошибка' : status === 'completed' ? 'готово' : 'ожидание'
+}
+function activitySessionID(payload) {
+  const data = payload?.data || payload?.properties || {}
+  return String(data.sessionID || data.session?.id || '')
+}
+function activityBelongsToSession(payload) {
+  const data = payload?.data || payload?.properties || {}
+  const sid = activitySessionID(payload)
+  if (sid === String(state.sessionID || '')) return true
+  const parentID = data.parentID || data.parentSessionID || data.session?.parentID
+  return String(parentID || '') === String(state.sessionID || '') || state.children.some((child) => String(child?.id || '') === sid)
+}
+function activityKey(data, type) {
+  return String(data.id || data.callID || data.toolCallID || data.assistantMessageID || `${type}:${data.name || data.tool || 'primary'}`)
+}
+function activityEventData(payload) {
+  const data = payload?.data || payload?.properties || {}
+  return data?.part?.type === 'tool' ? { ...data, ...data.part, state:data.part.state || data.state } : data
+}
+function activityDescriptor(payload) {
+  const type = String(payload?.type || '')
+  const data = activityEventData(payload)
+  const toolEvent = type.startsWith('session.tool.') || data.type === 'tool'
+  if (toolEvent) {
+    const name = String(data.name || data.tool || data.toolName || 'Инструмент')
+    return { id:`tool:${activityKey(data, type)}`, kind:activityKind(name, type), title:name, detail:data.agent || data.model ? `${data.agent || ''}${data.agent && data.model ? ' · ' : ''}${data.model ? activityModelLabel(data) : ''}` : 'текущая операция' }
+  }
+  if (type === 'session.created' && data.parentID) {
+    const agent = String(data.agent || data.title || 'Подзадача')
+    return { id:`agent:${activitySessionID(payload)}`, kind:'model', title:agent, detail:activityModelLabel(data) }
+  }
+  if (type.includes('reasoning')) return { id:`model:${data.assistantMessageID || 'primary'}`, kind:'model', title:'Рассуждение', detail:activityModelLabel(data) }
+  if (type.includes('text')) return { id:`model:${data.assistantMessageID || 'primary'}`, kind:'model', title:'Формирование ответа', detail:activityModelLabel(data) }
+  if (type.includes('step')) return { id:`model:${data.assistantMessageID || 'primary'}`, kind:'model', title:'Шаг модели', detail:activityModelLabel(data) }
+  if (type.includes('execution') || type === 'session.busy' || type === 'session.status') return { id:'model:primary', kind:'model', title:'Основная модель', detail:activityModelLabel(data) }
+  return null
+}
+function updateActivityFromEvent(payload) {
+  if (currentProfile() !== 'orchestrated' || !state.sessionID || !activityBelongsToSession(payload)) return
+  const type = String(payload?.type || '')
+  const data = activityEventData(payload)
+  const descriptor = activityDescriptor(payload)
+  if (!descriptor) return
+  const toolEvent = type.startsWith('session.tool.') || data.type === 'tool'
+  const existing = state.activityItems.find((item) => item.id === descriptor.id)
+  const sourceStatus = data.state?.status || data.status
+  const status = type.includes('failed') || sourceStatus === 'error' ? 'error' : type.includes('success') || type.includes('succeeded') || type.includes('ended') || type === 'session.idle' || ['completed', 'done', 'idle', 'success'].includes(sourceStatus) ? 'completed' : toolEvent && type.includes('progress') ? existing?.status || 'running' : sourceStatus || 'running'
+  const inputValue = data.input !== undefined ? data.input : data.state?.input
+  const outputValue = data.content !== undefined ? data.content : data.state?.content
+  const errorValue = data.error !== undefined ? data.error : data.state?.error
+  const deltaInput = toolEvent && data.delta !== undefined ? `${activityValue(existing?.input)}${activityValue(data.delta)}` : existing?.input
+  const deltaOutput = !toolEvent && data.delta !== undefined ? `${existing?.output || ''}${activityValue(data.delta)}` : existing?.output
+  const next = {
+    ...(existing || {}),
+    ...descriptor,
+    status,
+    input: inputValue !== undefined ? inputValue : deltaInput,
+    output: outputValue !== undefined ? activityValue(outputValue) : data.text !== undefined ? activityValue(data.text) : data.output !== undefined ? activityValue(data.output) : deltaOutput,
+    error: errorValue ? activityValue(errorValue) : existing?.error,
+    updatedAt: Date.now(),
+  }
+  const index = state.activityItems.findIndex((item) => item.id === descriptor.id)
+  if (index >= 0) state.activityItems.splice(index, 1, next)
+  else state.activityItems.push(next)
+  state.activityItems = state.activityItems.slice(-32)
+  state.currentActivityID = descriptor.id
+  renderOrchestration()
+}
+function latestActivityFromMessages(messages, child) {
+  const rows = Array.isArray(messages) ? messages : []
+  let latest = null
+  for (const message of rows) {
+    const parts = message?.parts || message?.content || []
+    for (const part of Array.isArray(parts) ? parts : []) {
+      if (part?.type !== 'tool') continue
+      const name = String(part.name || part.tool || 'Инструмент')
+      const rawState = part.state || part
+      latest = {
+        id:`child-tool:${child?.id || ''}:${part.id || name}`,
+        kind:activityKind(name),
+        title:name,
+        detail:child?.agent || child?.title || activityModelLabel(child?.model ? { model:child.model } : {}),
+        status:/error|failed/i.test(String(rawState.status || part.status || '')) ? 'error' : /running|streaming|busy/i.test(String(rawState.status || part.status || '')) ? 'running' : 'completed',
+        input:rawState.input,
+        output:activityValue(rawState.content || part.output || part.result),
+        error:activityValue(rawState.error || part.error),
+        updatedAt:message?.time?.updated || message?.time?.created || Date.now(),
+      }
+    }
+  }
+  return latest
+}
+function renderActivityItem(item, current = false) {
+  if (!item) return ''
+  const status = item.status || 'completed'
+  const input = activityValue(item.input, 5000)
+  const output = item.error || item.output || ''
+  return `<article class="activity-item ${current ? 'current' : ''} ${escapeHtml(status)}"><div class="activity-item-head"><span class="activity-kind">${escapeHtml(activityKindLabel(item.kind))}</span><span class="activity-status ${escapeHtml(status)}">${escapeHtml(activityStatusLabel(status))}</span></div><strong>${escapeHtml(item.title || 'Операция')}</strong><span class="activity-detail">${escapeHtml(item.detail || '')}</span>${input && current ? `<pre class="activity-code">${escapeHtml(input)}</pre>` : ''}${output ? `<pre class="activity-output ${item.error ? 'error' : ''}">${escapeHtml(output)}</pre>` : ''}</article>`
+}
+function renderActivityFromEvent(payload) {
+  updateActivityFromEvent(payload)
+}
 async function refreshOrchestration() {
   if (!state.sessionID) return
+  const sessionID = state.sessionID
+  const revision = state.orchestrationRevision
+  const current = () => state.sessionID === sessionID && state.orchestrationRevision === revision
+  if (currentProfile() !== 'orchestrated') {
+    state.children = []
+    state.orchestrationStatuses = {}
+    state.childDetails.clear()
+    renderOrchestration()
+    return
+  }
   let children = []
   if (state.childrenTransport !== 'unsupported') {
     try {
-      const value = dataOf(await request(`/api/session/${encodeURIComponent(state.sessionID)}/children`))
+      const value = dataOf(await request(`/api/session/${encodeURIComponent(sessionID)}/children`))
+      if (!current()) return
       state.childrenTransport = 'supported'
       if (Array.isArray(value)) children = value
     } catch (error) {
@@ -861,29 +1051,66 @@ async function refreshOrchestration() {
   if (!children.length) {
     try {
       const value = dataOf(await request('/api/session?limit=200&order=desc'))
-      if (Array.isArray(value)) children = value.filter((item) => item?.parentID === state.sessionID)
+      if (!current()) return
+      if (Array.isArray(value)) children = value.filter((item) => item?.parentID === sessionID)
     } catch {}
   }
+  if (!current()) return
   state.children = children
   let statuses = {}
-  try { statuses = dataOf(await request('/api/session/active')) || {} } catch {}
+  try { statuses = dataOf(await request('/api/session/active')) || {}; if (!current()) return } catch {}
+  if (!state.activityHydrated) {
+    state.activityHydrated = true
+    request(`/api/session/${encodeURIComponent(sessionID)}/message?limit=100`).then((value) => {
+      if (!current() || state.activityItems.length) return
+      const latest = latestActivityFromMessages(dataOf(value) || [], state.session)
+      if (latest) {
+        state.activityItems = [latest]
+        state.currentActivityID = latest.id
+        renderOrchestration()
+      }
+    }).catch(() => {})
+  }
   for (const child of children.slice(0, 12)) {
     const id = child?.id
     if (!id || state.childDetails.has(id)) continue
     request(`/api/session/${encodeURIComponent(id)}/message?limit=100`).then((value) => {
-      const blob = JSON.stringify(dataOf(value) || [])
-      state.childDetails.set(id, { rag:/kb_knowledge_|knowledge_search|knowledge_get/i.test(blob), error:/"error"/i.test(blob) })
+      if (!current()) return
+      const messages = dataOf(value) || []
+      const blob = JSON.stringify(messages)
+      state.childDetails.set(id, { rag:/kb_knowledge_|knowledge_search|knowledge_get/i.test(blob), error:/"error"/i.test(blob), latest: latestActivityFromMessages(messages, child) })
       renderOrchestration(statuses)
-    }).catch(() => state.childDetails.set(id, {}))
+    }).catch(() => { if (current()) state.childDetails.set(id, {}) })
   }
+  state.orchestrationStatuses = statuses
   renderOrchestration(statuses)
 }
-function renderOrchestration(statuses = {}) {
+async function refreshPlan() {
+  if (!state.sessionID) return
+  const sessionID = state.sessionID
+  const revision = state.orchestrationRevision
+  if (currentProfile() !== 'orchestrated') {
+    state.plan = null
+    renderOrchestration()
+    return
+  }
+  try {
+    const value = await request(`/client-plan.json?sessionID=${encodeURIComponent(sessionID)}`)
+    if (state.sessionID !== sessionID || state.orchestrationRevision !== revision) return
+    state.plan = value?.plan || null
+    renderOrchestration()
+  } catch (error) { console.debug('native V2 plan refresh', error) }
+}
+function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   const host = $('orchestrationTrace')
   if (!host) return
+  const renderRevision = ++state.orchestrationRenderRevision
+  const conversation = captureScrollState($('messages'))
   const wasOpen = host.querySelector('details')?.open === true
+  const planScroll = captureScrollState(host.querySelector('.plan-panel-body'))
+  const nodesScroll = captureScrollState(host.querySelector('.orchestration-nodes'))
   const children = state.children || []
-  const visible = currentProfile() === 'orchestrated' || children.length > 0
+  const visible = currentProfile() === 'orchestrated'
   host.hidden = !state.sessionID || !visible
   if (host.hidden) { host.innerHTML = ''; return }
   const rootModel = $('modelButton')?.textContent || state.session?.model?.id || 'Primary'
@@ -891,22 +1118,80 @@ function renderOrchestration(statuses = {}) {
   const childStates = children.map((child) => childStatus(statuses?.[child?.id]))
   const runningChildren = childStates.filter((status) => status === 'running').length
   const errorChildren = childStates.filter((status) => status === 'error').length
-  const panelStatus = running() || runningChildren ? 'running' : errorChildren ? 'error' : 'done'
-  const panelStatusLabel = panelStatus === 'running' ? 'В работе' : panelStatus === 'error' ? 'Есть ошибки' : 'Готово'
-  const panelMeta = `${children.length ? `${children.length} подзадач` : 'primary'}${children.some((child) => state.childDetails.get(child.id)?.rag) ? ' · RAG ✓' : ''}`
-  const nodes = [`<div class="orchestration-node primary-node ${rootStatus}"><span class="node-icon"></span><div class="node-main"><div class="node-title">${escapeHtml(rootModel)}</div><div class="node-meta">${escapeHtml(currentMode())} · primary</div></div><span class="node-time">${state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''}</span></div>`]
+  const plan = state.plan
+  const todos = Array.isArray(plan?.todos) ? plan.todos : []
+  const planTotal = Number.isFinite(Number(plan?.total)) && Number(plan.total) > 0 ? Number(plan.total) : todos.length
+  const planDone = Number.isFinite(Number(plan?.completed)) ? Number(plan.completed) : todos.filter((todo) => todo?.status === 'completed').length
+  const planRunning = Number(plan?.inProgress) > 0 || todos.some((todo) => todo?.status === 'in_progress')
+  const planIncomplete = planTotal > 0 && planDone < planTotal
+  const planPercent = planTotal ? Math.round((planDone / planTotal) * 100) : 0
+  const panelStatus = running() || runningChildren || planRunning ? 'running' : errorChildren ? 'error' : planIncomplete ? 'pending' : 'done'
+  const panelStatusLabel = panelStatus === 'running' ? 'В работе' : panelStatus === 'error' ? 'Есть ошибки' : panelStatus === 'pending' ? 'План не завершён' : 'Готово'
+  const currentTodo = todos.find((todo) => todo?.status === 'in_progress') || todos.find((todo) => todo?.status !== 'completed')
+  const currentStage = currentTodo?.content || (planTotal && planDone >= planTotal ? 'Все этапы завершены' : 'Ожидание этапов плана')
+  const panelMetaParts = []
+  if (planTotal) panelMetaParts.push(`План ${planDone}/${planTotal}`)
+  if (children.length) panelMetaParts.push(`${children.length} подзадач`)
+  if (!panelMetaParts.length) panelMetaParts.push('primary')
+  if (children.some((child) => state.childDetails.get(child.id)?.rag)) panelMetaParts.push('RAG ✓')
+  const panelMeta = panelMetaParts.join(' · ')
+  const planMarkup = planTotal ? `<section class="orchestration-plan" aria-label="План"><div class="orchestration-plan-head"><div class="orchestration-plan-copy"><strong>${escapeHtml(plan.title || 'План')}</strong><span>Текущий этап: ${escapeHtml(currentStage)}</span></div><span class="orchestration-plan-count">${planDone}/${planTotal}</span></div><div class="orchestration-plan-meter" role="progressbar" aria-valuemin="0" aria-valuemax="${planTotal}" aria-valuenow="${planDone}"><span style="width:${planPercent}%"></span></div><ul class="orchestration-plan-list">${todos.map((todo) => { const status = ['completed', 'in_progress'].includes(todo?.status) ? todo.status : 'pending'; const mark = status === 'completed' ? '✓' : status === 'in_progress' ? '•' : ''; return `<li class="${status}"><span class="orchestration-plan-mark" aria-hidden="true">${mark}</span><span>${escapeHtml(todo?.content || '')}</span></li>` }).join('')}${plan.truncated ? `<li class="truncated"><span class="orchestration-plan-mark" aria-hidden="true">…</span><span>Показаны первые ${todos.length} из ${planTotal} пунктов</span></li>` : ''}</ul></section>` : '<div class="activity-empty">План появится после начала оркестрации.</div>'
+  const nodes = [`<div class="orchestration-node primary-node ${rootStatus}"><span class="node-icon"></span><div class="node-main"><div class="node-title">${escapeHtml(rootModel)}</div><div class="node-meta">${escapeHtml(currentMode())} · primary</div><div class="node-purpose">Основная модель: ведёт диалог и собирает итог</div></div><span class="node-time">${state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''}</span></div>`]
+  const childActivities = []
   for (const child of children) {
     const id = child?.id || ''
     const status = childStatus(statuses?.[id])
-    const model = child?.model?.id || child?.modelID || child?.model || 'subagent'
+    const rawModel = child?.model
+    const model = rawModel?.id || rawModel?.modelID || child?.modelID || rawModel || 'subagent'
+    const provider = rawModel?.providerID || child?.providerID || ''
     const agent = child?.agent || child?.title || 'subagent'
     const detail = state.childDetails.get(id) || {}
     const created = child?.time?.created || child?.createdAt || 0
     const updated = child?.time?.updated || child?.updatedAt || Date.now()
-    nodes.push(`<div class="orchestration-node child-node ${detail.error ? 'error' : status}"><span class="node-icon"></span><div class="node-main"><div class="node-title">${escapeHtml(agent)}</div><div class="node-meta">${escapeHtml(typeof model === 'string' ? model : JSON.stringify(model))}${detail.rag ? ' · RAG ✓' : ''}</div></div><span class="node-time">${created ? fmtDuration(Math.max(0, updated - created)) : ''}</span></div>`)
+    const modelLabel = `${provider ? `${provider}/` : ''}${typeof model === 'string' ? model : JSON.stringify(model)}`
+    nodes.push(`<div class="orchestration-node child-node ${detail.error ? 'error' : status}"><span class="node-icon"></span><div class="node-main"><div class="node-title">${escapeHtml(agent)}</div><div class="node-meta">${escapeHtml(modelLabel)}${detail.rag ? ' · RAG ✓' : ''}</div><div class="node-purpose">${escapeHtml(orchestrationPurpose(agent))}</div></div><span class="node-time">${created ? fmtDuration(Math.max(0, updated - created)) : ''}</span></div>`)
+    if (detail.latest || status === 'running') childActivities.push({ ...(detail.latest || {}), id:detail.latest?.id || `agent:${id}`, kind:detail.latest?.kind || 'model', title:detail.latest?.title || agent, detail:detail.latest?.detail || modelLabel, status:status === 'running' ? 'running' : detail.latest?.status || 'completed' })
   }
-  host.innerHTML = `<details><summary class="orchestration-summary"><span class="orchestration-summary-mark ${panelStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>Оркестрация</strong><span>${panelMeta}</span></span><span class="orchestration-summary-status ${panelStatus}">${panelStatusLabel}</span></summary><div class="orchestration-nodes">${nodes.join('')}</div></details>`
-  if (wasOpen) host.querySelector('details').open = true
+  const liveActivities = [...state.activityItems, ...childActivities]
+  const currentActivity = liveActivities.find((item) => item.id === state.currentActivityID) || liveActivities.find((item) => item.status === 'running' || item.status === 'streaming') || liveActivities[liveActivities.length - 1]
+  const liveStatus = currentActivity?.status === 'error' ? 'error' : currentActivity?.status === 'running' || currentActivity?.status === 'streaming' ? 'running' : currentActivity ? 'done' : panelStatus
+  const liveStatusLabel = liveStatus === 'running' ? 'Выполняется' : liveStatus === 'error' ? 'Ошибка' : currentActivity ? 'Последний вывод' : panelStatusLabel
+  const liveSummary = currentActivity ? `${activityKindLabel(currentActivity.kind)} · ${currentActivity.title}` : children.length ? `${children.length} подзадач · ожидание активности` : 'Инструменты и модели появятся здесь'
+  const history = state.activityItems.filter((item) => item.id !== currentActivity?.id).slice(-6).reverse().map((item) => renderActivityItem(item)).join('')
+  host.innerHTML = `<div class="orchestration-panels"><details class="orchestration-panel plan-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${panelStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>План</strong><span>${escapeHtml(currentStage)} · ${escapeHtml(panelMeta)}</span></span><span class="orchestration-summary-status ${panelStatus}">${panelStatusLabel}</span></summary><div class="activity-panel-body plan-panel-body">${planMarkup}</div></details><details class="orchestration-panel live-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${liveStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>Инструменты и агенты</strong><span>${escapeHtml(liveSummary)}</span></span><span class="orchestration-summary-status ${liveStatus}">${liveStatusLabel}</span></summary><div class="orchestration-nodes activity-panel-body">${currentActivity ? `<div class="activity-current-label">Сейчас</div>${renderActivityItem(currentActivity, true)}` : '<div class="activity-empty">Сейчас инструмент не выполняется.</div>'}<div class="activity-agents-label">Участники оркестрации</div>${nodes.join('')}${history ? `<div class="activity-history-label">Последние события</div>${history}` : ''}</div></details></div>`
+  const details = [...host.querySelectorAll('details')]
+  const syncPanels = (source) => {
+    const open = source.open
+    details.forEach((detail) => { if (detail !== source) detail.open = open })
+    host.classList.toggle('is-expanded', open)
+  }
+  details.forEach((detail) => {
+    const rememberConversation = () => { detail._conversationScroll = captureScrollState($('messages')) }
+    const summary = detail.querySelector('summary')
+    summary?.addEventListener('pointerdown', rememberConversation)
+    summary?.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') rememberConversation() })
+    detail.addEventListener('toggle', () => { syncPanels(detail); restoreScrollState($('messages'), detail._conversationScroll || captureScrollState($('messages'))) })
+  })
+  if (wasOpen) details.forEach((detail) => { detail.open = true })
+  const sessionID = state.sessionID
+  const revision = state.orchestrationRevision
+  requestAnimationFrame(() => {
+    if (state.sessionID !== sessionID || state.orchestrationRevision !== revision || state.orchestrationRenderRevision !== renderRevision || host.hidden) return
+    restoreScrollState(host.querySelector('.plan-panel-body'), planScroll)
+    restoreScrollState(host.querySelector('.orchestration-nodes'), nodesScroll)
+    restoreScrollState($('messages'), conversation)
+  })
+}
+
+function captureScrollState(element) {
+  if (!element) return null
+  const max = Math.max(0, element.scrollHeight - element.clientHeight)
+  return { top:element.scrollTop, atBottom:max - element.scrollTop <= 4 }
+}
+function restoreScrollState(element, saved) {
+  if (!element || !saved) return
+  const max = Math.max(0, element.scrollHeight - element.clientHeight)
+  element.scrollTop = saved.atBottom ? max : Math.min(saved.top, max)
 }
 
 function usageCost() {
@@ -1052,7 +1337,7 @@ function observeRuntime() {
     } else if (state.runStartedAt) {
       state.lastDurationMs = Date.now() - state.runStartedAt
       state.runStartedAt = null
-      setTimeout(() => { refreshQueue(); refreshOrchestration(); loadReview() }, 120)
+      setTimeout(() => { refreshQueue(); refreshOrchestration(); refreshPlan(); loadReview() }, 120)
     }
     renderStatus()
     renderOrchestration()
@@ -1072,7 +1357,7 @@ function observeRuntime() {
 function bindEvents() {
   window.addEventListener('hashchange', refreshSelectedSession)
   window.addEventListener('custom-opencode:session-selected', () => refreshSelectedSession())
-  window.addEventListener('custom-opencode:event', (event) => handleQuestionEvent(event.detail))
+  window.addEventListener('custom-opencode:event', (event) => { handleQuestionEvent(event.detail); renderActivityFromEvent(event.detail) })
   $('form')?.addEventListener('submit', interceptSubmit, true)
   $('fileInput')?.addEventListener('change', (event) => captureFiles(event.target.files), true)
   $('input')?.addEventListener('paste', (event) => {
@@ -1088,7 +1373,7 @@ function bindEvents() {
   }, true)
   document.addEventListener('click', (event) => {
     const host = $('orchestrationTrace')
-    if (host && !host.contains(event.target)) host.querySelector('details')?.removeAttribute('open')
+    if (host && !host.contains(event.target)) host.querySelectorAll('details').forEach((detail) => detail.removeAttribute('open'))
   })
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
@@ -1096,6 +1381,7 @@ function bindEvents() {
       refreshQueue()
       refreshQuestions()
       refreshOrchestration()
+      refreshPlan()
       refreshPermission()
     }
   })
@@ -1105,7 +1391,7 @@ async function tickFast() {
   if (!document.hidden && state.sessionID) await Promise.allSettled([refreshQuestions(), refreshPermission()])
 }
 async function tickMedium() {
-  if (!document.hidden && state.sessionID) await Promise.allSettled([refreshQueue(), refreshOrchestration()])
+  if (!document.hidden && state.sessionID) await Promise.allSettled([refreshQueue(), refreshOrchestration(), refreshPlan()])
 }
 
 function init() {

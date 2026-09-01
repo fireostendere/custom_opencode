@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory() as temp:
     state = Path(temp) / "state"
     scratch = Path(temp) / "scratch"
+    plan_dir = Path(temp) / "plans"
     projects = Path(temp) / "projects"
     project = projects / "alpha"
     project.mkdir(parents=True)
@@ -39,7 +40,8 @@ with tempfile.TemporaryDirectory() as temp:
 
     class _StubBackend(BaseHTTPRequestHandler):
         def _reply(self):
-            body = json.dumps({"data": []}).encode("utf-8")
+            value = {"data": {"id": "ses_web_plan", "location": {"directory": str(project)}}} if self.path == "/api/session/ses_web_plan" else {"data": []}
+            body = json.dumps(value).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -57,12 +59,18 @@ with tempfile.TemporaryDirectory() as temp:
     os.environ["OPENCODE_BACKEND_URL"] = f"http://127.0.0.1:{stub_port}"
     os.environ["OPENCODE_BACKEND_PASSWORD"] = "test"
     os.environ["OPENCODE_SCRATCH_DIRECTORY"] = str(scratch)
+    os.environ["OPENCODE_PLAN_DIRECTORY"] = str(plan_dir)
     os.environ["OPENCODE_PROJECT_ROOTS"] = str(projects)
     os.environ["CUSTOM_OPENCODE_FEATURE_STATE"] = str(state / "features.json")
     os.environ["CUSTOM_OPENCODE_RUNTIME_DB"] = str(state / "runtime.sqlite3")
     os.environ["MCP_RAG_ENABLED"] = "0"
     os.environ["OPENCODE_RESOURCE_SCHEDULER"] = "off"
     os.environ["OPENCODE_REPO_EMBEDDINGS"] = "hash"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "ses_web_plan-plan.md").write_text(
+        "# Web V2 plan\n\n- [x] Expose the plan\n- [>] Render checklist\n- [ ] Keep Build-only UI\n",
+        encoding="utf-8",
+    )
 
     sys.path.insert(0, str(ROOT / "app"))
     import server_workflow
@@ -96,6 +104,8 @@ with tempfile.TemporaryDirectory() as temp:
 
         denied, _, _ = request("GET","/client-runtime-v3.json",authenticated=False)
         assert denied == 401, denied
+        plan_denied, _, _ = request("GET", "/client-plan.json?sessionID=ses_web_plan", authenticated=False)
+        assert plan_denied == 401, plan_denied
         remote_denied,_,_=request("GET","/client-remote-status.json",authenticated=False)
         assert remote_denied==401,remote_denied
 
@@ -104,6 +114,18 @@ with tempfile.TemporaryDirectory() as temp:
         payload = json.loads(body)
         assert payload["version"] == 2
         assert payload["services"]["durableQueue"] is True
+
+        status, _, body = request("GET", "/client-plan.json?sessionID=ses_web_plan")
+        assert status == 200
+        plan = json.loads(body)["plan"]
+        assert plan["source"] == "native-v2"
+        assert plan["title"] == "Web V2 plan"
+        assert plan["total"] == 3 and plan["completed"] == 1 and plan["truncated"] is False
+        assert [item["status"] for item in plan["todos"]] == ["completed", "in_progress", "pending"]
+        status, _, body = request("GET", "/client-plan.json?sessionID=missing-backend-session")
+        assert status == 200 and json.loads(body)["plan"]["title"] == "Web V2 plan"
+        plain = server_workflow.runtime._parse_plan_document("# Plain\n\n- First\n- Second\n\n```\n- ignored\n```", "fallback")
+        assert plain["title"] == "Plain" and [item["content"] for item in plain["todos"]] == ["First", "Second"]
 
         status, content_type, body = request("GET","/client-runtime-v3.json")
         assert status == 200, status

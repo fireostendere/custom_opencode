@@ -67,9 +67,12 @@
         <button class="icon" id="sessionActions" title="Действия с сессией" disabled>•••</button>
       </header>
 
-      <section class="messages" id="messages">
-        <div id="messagesInner"><div class="welcome">Выбери сессию или задай быстрый вопрос.</div></div>
-      </section>
+      <div class="messages-frame">
+        <section class="messages" id="messages">
+          <div id="messagesInner"><div class="welcome">Выбери сессию или задай быстрый вопрос.</div></div>
+        </section>
+        <button id="scrollToBottom" class="scroll-to-bottom" type="button" hidden aria-label="Прокрутить к последним сообщениям" title="Прокрутить к последним сообщениям"><span aria-hidden="true"></span></button>
+      </div>
 
       <div class="permission-banner" id="permissionBanner" hidden>
         <div class="permission-main">
@@ -126,6 +129,7 @@
   <dialog id="appearanceDialog"><div class="modal appearance-modal"><div class="modal-head"><h3>Оформление</h3><button class="icon" type="button" data-appearance-close="appearanceDialog">×</button></div><section class="appearance-section"><div class="appearance-label">Тема</div><div class="theme-choice-group" role="radiogroup" aria-label="Тема интерфейса"><button class="theme-choice" type="button" role="radio" data-theme-mode="system">Системная</button><button class="theme-choice" type="button" role="radio" data-theme-mode="light">Светлая</button><button class="theme-choice" type="button" role="radio" data-theme-mode="dark">Тёмная</button></div><div class="appearance-note">Системная тема автоматически следует настройке устройства.</div></section><section class="appearance-section"><div class="appearance-label">Акцентный цвет</div><div class="accent-grid" role="radiogroup" aria-label="Акцентный цвет"><button class="accent-swatch" type="button" role="radio" data-accent="#10a37f" style="--swatch:#10a37f" aria-label="Зелёный"></button><button class="accent-swatch" type="button" role="radio" data-accent="#3b82f6" style="--swatch:#3b82f6" aria-label="Синий"></button><button class="accent-swatch" type="button" role="radio" data-accent="#8b5cf6" style="--swatch:#8b5cf6" aria-label="Фиолетовый"></button><button class="accent-swatch" type="button" role="radio" data-accent="#ec4899" style="--swatch:#ec4899" aria-label="Розовый"></button><button class="accent-swatch" type="button" role="radio" data-accent="#f59e0b" style="--swatch:#f59e0b" aria-label="Янтарный"></button><button class="accent-swatch" type="button" role="radio" data-accent="#ef4444" style="--swatch:#ef4444" aria-label="Красный"></button><input class="accent-custom" id="accentCustom" type="color" value="#10a37f" title="Свой цвет" aria-label="Свой акцентный цвет"></div><div class="appearance-note">Настройки сохраняются локально в этом браузере и применяются также к странице входа.</div></section><div class="appearance-actions"><button class="appearance-reset" id="appearanceReset" type="button">Сбросить оформление</button></div></div></dialog>
 
   <div class="toast" id="toast" hidden></div>
+  <script type="module" src="/modal-ui.js"></script>
   <script type="module" src="/appearance.js"></script>
   <script type="module" src="/auth-ui.js"></script>
   <script type="module" src="/app.js"></script>

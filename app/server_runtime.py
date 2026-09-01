@@ -25,21 +25,25 @@ from runtime_store import RuntimeStore, TASK_STATES, now_ms
 
 STORE=RuntimeStore(); INDEXER=RepoIndexer(STORE); ARTIFACTS=ArtifactStore(STORE); CONTEXT=ContextService(STORE,INDEXER); VERIFY=VerificationPipeline(ARTIFACTS); SECRETS=SecretBroker(); SCHEDULER=ResourceScheduler(); REGISTRY=CapabilityRegistry([])
 INSTALL_LOCK=threading.Lock(); INSTALLED=False; VERIFY_LOCK=threading.Lock(); VERIFYING:set[str]=set(); LAST_INDEX_AT:dict[str,float]={}; MIGRATION_DONE=False
+PLAN_DIRECTORY=Path(os.environ.get("OPENCODE_PLAN_DIRECTORY") or (Path.home()/".opencode"/"plan")).expanduser(); PLAN_MAX_BYTES=1_000_000; PLAN_MAX_ITEMS=500
 ACTIVE_STATES={"submitted","running","waiting_permission","verifying","recovering"}; QUEUE_STATES={"queued","blocked","paused"}
-PROFILE_IDS={"direct","fast","build","architect","critical","research","review","long-horizon"}
+PROFILE_IDS={"direct","fast","build","architect","sol-orchestrated","sol-review","critical","research","review","long-horizon"}
+PROFILE_ALIASES={"orchestrated":"architect","qwen3.8-orchestrated":"architect","gpt-5.6-sol-orchestrated":"sol-orchestrated"}
 
 
 def _profile_id(value:Any)->str:
     profile=str(value or "direct")
-    return profile if profile in PROFILE_IDS else "direct"
+    profile=PROFILE_ALIASES.get(profile,profile)
+    if profile not in PROFILE_IDS: raise ValueError(f"unknown model profile: {value}")
+    return profile
 
 
 def _model_ref(session:dict[str,Any])->str|None:
     model=session.get("model")
     if isinstance(model,str): return model
     if isinstance(model,dict):
-        provider=str(model.get("providerID") or model.get("provider") or ""); ident=str(model.get("id") or model.get("modelID") or "")
-        return f"{provider}/{ident}" if provider and ident else None
+        provider=str(model.get("providerID") or model.get("provider") or ""); ident=str(model.get("id") or model.get("modelID") or ""); variant=str(model.get("variant") or "")
+        return f"{provider}/{ident}"+(f"#{variant}" if variant else "") if provider and ident else None
     return None
 
 
@@ -133,12 +137,20 @@ def reorder_queue(session_id:str,ids:list[str])->dict[str,Any]: STORE.reorder(se
 
 
 def _switch_session(features:Any,task:dict[str,Any])->dict[str,Any]:
-    session=features._session_info(task["session_id"]); mode=_mode(session); selected=_model_ref(session); profiles=REGISTRY.profiles(); profile=profiles.get(str(task.get("profile")),profiles["direct"]); decision=SCHEDULER.decide(profile,selected_model=selected); model=decision.selected_model
-    if profile.get("route")!="selected" and model and model!=selected:
-        provider,sep,ident=model.partition("/")
-        if sep and provider and ident: features._backend_request_json("POST",f"/api/session/{quote(task['session_id'],safe='')}/model",{"model":{"providerID":provider,"id":ident}},timeout=12.0)
+    session=features._session_info(task["session_id"]); metadata=task.get("metadata") if isinstance(task.get("metadata"),dict) else {}; mode=str(metadata.get("modeAtCreate") or _mode(session)); selected=_model_ref(session); profiles=REGISTRY.profiles(); profile_id=_profile_id(task.get("profile")); profile=profiles.get(profile_id)
+    if not isinstance(profile,dict): raise ValueError(f"task profile is not configured: {profile_id}")
+    role_task=task.get("kind") in {"review","research","aggregate"}
+    decision=SCHEDULER.decide(profile,selected_model=selected); model=decision.selected_model
+    # A native plan session must retain its selected model.  Agent and model are
+    # independent V2 controls; changing both loses the caller's provider/variant.
+    if (role_task or mode!="plan") and profile.get("route")!="selected" and model and model!=selected:
+        provider,sep,remainder=model.partition("/"); ident,has_variant,variant=remainder.partition("#")
+        if sep and provider and ident:
+            pinned={"providerID":provider,"id":ident}
+            if has_variant and variant: pinned["variant"]=variant
+            features._backend_request_json("POST",f"/api/session/{quote(task['session_id'],safe='')}/model",{"model":pinned},timeout=12.0)
     agent=profile.get("agentPlan") if mode=="plan" else profile.get("agentBuild")
-    if task.get("kind") in {"review","research","aggregate"}: agent="plan-direct"
+    if role_task: agent="plan-direct"
     if agent and agent!=str(session.get("agent") or ""):
         try: features._backend_request_json("POST",f"/api/session/{quote(task['session_id'],safe='')}/agent",{"agent":agent},timeout=12.0)
         except Exception: pass
@@ -237,9 +249,12 @@ def _verify_finish(features:Any,task_id:str)->None:
             if task.get("kind")=="research":
                 target=(task.get("metadata") or {}).get("mailboxTo") if isinstance(task.get("metadata"),dict) else None
                 if target: STORE.mailbox_send(project_dir=task["project_dir"],from_task=task_id,to_task=str(target),message_type="finding",payload={"text":_last_assistant_text(features,task["session_id"])[:14000],"route":task.get("route")})
-            if task.get("kind") in {"prompt","verification-fix"} and review.get("needed") and os.environ.get("OPENCODE_AUTO_REVIEW","smart").strip().lower() in {"smart","enqueue","1","true"}:
+            profile=REGISTRY.profiles().get(str(task.get("profile")),REGISTRY.profiles()["direct"])
+            if task.get("kind") in {"prompt","verification-fix"} and profile.get("autoReview") and review.get("needed") and os.environ.get("OPENCODE_AUTO_REVIEW","smart").strip().lower() in {"smart","enqueue","1","true"}:
                 existing=[item for item in STORE.list_tasks(session_id=task["session_id"],limit=200) if (item.get("metadata") or {}).get("reviewOf")==task_id]
-                if not existing: STORE.create_task(session_id=task["session_id"],project_dir=task["project_dir"],text="Review the changes produced by the previous task. Focus on correctness, regressions, security and missing tests. Do not edit files; return concise findings.",files=[],profile="review",priority=int(task.get("priority") or 0)-5,kind="review",metadata={"reviewOf":task_id,"modeAtCreate":"plan","usageBaseline":_usage_totals(features,task["session_id"]),"sandbox":"safe"},baseline=task.get("baseline") if isinstance(task.get("baseline"),dict) else git_snapshot(task["project_dir"]))
+                if not existing:
+                    review_profile = "sol-review" if task.get("profile") == "sol-orchestrated" else "review"
+                    STORE.create_task(session_id=task["session_id"],project_dir=task["project_dir"],text="Review the changes produced by the previous task. Focus on correctness, regressions, security and missing tests. Do not edit files; return concise findings.",files=[],profile=review_profile,priority=int(task.get("priority") or 0)-5,kind="review",metadata={"reviewOf":task_id,"modeAtCreate":"plan","usageBaseline":_usage_totals(features,task["session_id"]),"sandbox":"safe"},baseline=task.get("baseline") if isinstance(task.get("baseline"),dict) else git_snapshot(task["project_dir"]))
     except Exception as exc:
         try: STORE.transition(task_id,"failed",event="task.finalize_failed",data={},error=f"{type(exc).__name__}: {exc}")
         except Exception: pass
@@ -356,10 +371,20 @@ def _remove_worktree(task:dict[str,Any])->dict[str,Any]:
     STORE.update_task(task["id"],metadata_patch={"worktree":None}); STORE.event(kind="worktree.removed",task_id=task["id"],session_id=task["session_id"],project_dir=root,data={"path":worktree}); return {"ok":True,"path":worktree}
 
 
+def _cleanup_new_worktree(root:str,worktree:str)->None:
+    """Remove only the worktree just created by this request, never a caller path."""
+    target=Path(worktree).resolve(strict=True); managed=STORE.paths.worktrees.resolve(strict=False)
+    try: target.relative_to(managed)
+    except ValueError as exc: raise RuntimeError("refusing to clean unmanaged worktree") from exc
+    result=subprocess.run(["git","-C",root,"worktree","remove",str(target)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=20.0,check=False)
+    if result.returncode!=0: raise RuntimeError(result.stderr.strip() or "failed to clean newly-created worktree")
+
+
 def create_task_request(features:Any,payload:dict[str,Any])->dict[str,Any]:
     base=str(payload.get("sessionID") or ""); directory=features._session_directory(base) if base else features._canonical_directory(str(payload.get("directory") or "")); text=str(payload.get("text") or "").strip()
     if not text: raise ValueError("task text is required")
     profile=_profile_id(payload.get("profile") or "build"); task_id=f"t_{uuid4().hex}"; isolate=bool(payload.get("isolate")); task_dir=directory; sid=base; metadata={"ownershipRoot":directory,"modeAtCreate":str(payload.get("mode") or "build"),"sandbox":REGISTRY.profiles().get(profile,{}).get("sandbox","repo-write")}
+    created_session=False
     if isolate:
         task_dir=_create_worktree(directory,task_id); metadata["worktree"]=task_dir; body={"location":{"directory":task_dir},"title":str(payload.get("title") or "Isolated server task")[:200],"agent":"plan-direct" if metadata["modeAtCreate"]=="plan" else "build-direct"}
         if base:
@@ -367,11 +392,24 @@ def create_task_request(features:Any,payload:dict[str,Any])->dict[str,Any]:
                 source=features._session_info(base)
                 if isinstance(source.get("model"),dict): body["model"]=source["model"]
             except Exception: pass
-        created=features._data(features._backend_request_json("POST","/api/session",body,timeout=20.0))
-        if not isinstance(created,dict) or not created.get("id"): raise RuntimeError("OpenCode session creation failed for worktree task")
-        sid=str(created["id"])
-    if not sid: raise ValueError("sessionID is required unless isolate creates a session")
-    metadata["usageBaseline"]=_usage_totals(features,sid); task=STORE.create_task(session_id=sid,project_dir=task_dir,text=text,files=payload.get("files") if isinstance(payload.get("files"),list) else [],profile=profile,priority=int(payload.get("priority") or 0),dependencies=[str(item) for item in (payload.get("dependencies") or []) if item],kind=str(payload.get("kind") or "prompt")[:80],metadata=metadata,baseline=git_snapshot(task_dir),task_id=task_id); STORE.checkpoint(task_id,"created",summary="Standalone server task created"+(" in isolated Git worktree" if isolate else ""),data={"worktree":metadata.get("worktree"),"ownershipRoot":directory}); return {"ok":True,"task":_public(task)}
+        try:
+            created=features._data(features._backend_request_json("POST","/api/session",body,timeout=20.0))
+            if not isinstance(created,dict) or not created.get("id"): raise RuntimeError("OpenCode session creation failed for worktree task")
+        except Exception:
+            _cleanup_new_worktree(directory,task_dir)
+            raise
+        sid=str(created["id"]); created_session=True
+    try:
+        if not sid: raise ValueError("sessionID is required unless isolate creates a session")
+        metadata["usageBaseline"]=_usage_totals(features,sid); task=STORE.create_task(session_id=sid,project_dir=task_dir,text=text,files=payload.get("files") if isinstance(payload.get("files"),list) else [],profile=profile,priority=int(payload.get("priority") or 0),dependencies=[str(item) for item in (payload.get("dependencies") or []) if item],kind=str(payload.get("kind") or "prompt")[:80],metadata=metadata,baseline=git_snapshot(task_dir),task_id=task_id); STORE.checkpoint(task_id,"created",summary="Standalone server task created"+(" in isolated Git worktree" if isolate else ""),data={"worktree":metadata.get("worktree"),"ownershipRoot":directory}); return {"ok":True,"task":_public(task)}
+    except Exception:
+        if created_session:
+            try: features._backend_request_json("DELETE",f"/api/session/{quote(sid,safe='')}",None,timeout=12.0)
+            except Exception: pass
+        if isolate:
+            try: _cleanup_new_worktree(directory,task_dir)
+            except Exception: pass
+        raise
 
 
 def task_control(features:Any,payload:dict[str,Any])->dict[str,Any]:
@@ -379,12 +417,14 @@ def task_control(features:Any,payload:dict[str,Any])->dict[str,Any]:
     if not task: raise KeyError(task_id)
     action=str(payload.get("action") or "").lower()
     if action=="pause":
+        if task["state"] in {"completed","failed","cancelled"}: raise ValueError("terminal task cannot be paused")
         if task["state"] in {"running","submitted","waiting_permission"}: _interrupt(features,task["session_id"])
         task=STORE.transition(task_id,"paused",event="task.paused",data={"source":"user"}); STORE.checkpoint(task_id,"paused",summary="Task paused; resume continues from durable checkpoint",data={"repo":git_snapshot(task["project_dir"])})
     elif action=="resume":
         if task["state"] not in {"paused","recovering","needs_attention"}: raise ValueError("task is not resumable")
         task=STORE.transition(task_id,"queued",event="task.resumed",data={"source":"user"})
     elif action=="cancel":
+        if task["state"] in {"completed","failed","cancelled"}: raise ValueError("terminal task cannot be cancelled")
         if task["state"] in {"running","submitted","waiting_permission"}:
             try: _interrupt(features,task["session_id"])
             except Exception: pass
@@ -440,16 +480,65 @@ def mcp_gateway(features:Any,directory:str,namespace:str|None=None)->dict[str,An
     return result
 
 
+def _parse_plan_document(text:str,fallback_title:str)->dict[str,Any]:
+    checked:list[dict[str,str]]=[]; bullets:list[dict[str,str]]=[]; title=""; in_fence=False
+    for line in str(text or "").splitlines():
+        if re.match(r"^\s*```",line): in_fence=not in_fence; continue
+        if in_fence: continue
+        heading=re.match(r"^\s*#\s+(.+?)\s*$",line)
+        if not title and heading: title=heading.group(1)
+        checklist=re.match(r"^\s*(?:[-*+]|\d+[.)])\s+\[([ xX>~-])\]\s+(.+?)\s*$",line)
+        if checklist:
+            marker=checklist.group(1).lower(); status="completed" if marker=="x" else "in_progress" if marker in {">","~","-"} else "pending"
+            checked.append({"content":checklist.group(2),"status":status}); continue
+        bullet=re.match(r"^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$",line)
+        if bullet and not re.match(r"^\[[ xX>~-]\]",bullet.group(1)): bullets.append({"content":bullet.group(1),"status":"pending"})
+    return {"title":title or fallback_title,"todos":checked or bullets}
+
+
+def _read_plan_candidate(path:Path,root:Path)->dict[str,Any]|None:
+    try:
+        resolved=path.resolve(strict=True); resolved.relative_to(root.resolve(strict=False)); details=resolved.stat()
+        if not resolved.is_file() or details.st_size>PLAN_MAX_BYTES: return None
+        with resolved.open("rb") as handle: raw=handle.read(PLAN_MAX_BYTES+1)
+        if len(raw)>PLAN_MAX_BYTES: return None
+        parsed=_parse_plan_document(raw.decode("utf-8"),resolved.stem)
+        if not parsed["todos"]: return None
+        todos=parsed["todos"]; completed=sum(1 for item in todos if item.get("status")=="completed"); in_progress=sum(1 for item in todos if item.get("status")=="in_progress")
+        return {**parsed,"todos":todos[:PLAN_MAX_ITEMS],"total":len(todos),"completed":completed,"inProgress":in_progress,"truncated":len(todos)>PLAN_MAX_ITEMS,"filename":resolved.name,"updated":int(details.st_mtime*1000),"source":"native-v2"}
+    except (OSError,UnicodeDecodeError,RuntimeError,ValueError): return None
+
+
+def latest_plan_document()->dict[str,Any]|None:
+    root=PLAN_DIRECTORY
+    try:
+        root_resolved=root.resolve(strict=True)
+        if not root_resolved.is_dir(): return None
+    except (OSError,RuntimeError): return None
+    try: files=[item for item in root_resolved.iterdir() if item.is_file() and item.suffix.lower()==".md"]
+    except OSError: return None
+    try: files.sort(key=lambda item:item.stat().st_mtime,reverse=True)
+    except OSError: return None
+    for candidate in files:
+        parsed=_read_plan_candidate(candidate,root_resolved)
+        if parsed: return parsed
+    return None
+
+
 def runtime_snapshot(features:Any,directory:str|None=None)->dict[str,Any]:
     tasks=STORE.list_tasks(project_dir=directory,limit=500) if directory else STORE.list_tasks(limit=500)
     return {"version":2,"store":str(STORE.paths.db),"taskCounts":_counts(tasks),"tasks":[_public(task) for task in tasks[:100]],"usage":STORE.usage_summary(),"routing":resource_snapshot(),"secretBroker":SECRETS.snapshot(),"services":{"durableQueue":True,"checkpoints":True,"eventReplay":True,"largeOutputArtifacts":True,"repoIndex":True,"semanticDiff":True,"contextCache":True,"toolResultCache":True,"agentMailbox":True,"typedHandoff":True,"verification":True,"failureClassifier":True,"loopDetector":True,"stuckWatchdog":True,"patchOwnership":True,"speculativeParallelism":True,"providerPinnedRoleRouter":True,"capabilityRegistry":True,"mcpGatewayMetadata":True,"worktreeIsolation":True}}
 
 
 def handle_get(handler:Any,parsed:Any,features:Any)->bool:
-    paths={"/client-runtime.json","/client-tasks.json","/client-task.json","/client-task-events.json","/client-model-capabilities.json","/client-resource-status.json","/client-repo-index.json","/client-artifact.json","/client-project-memory.json","/client-decisions.json","/client-mcp-gateway.json"}
+    paths={"/client-runtime.json","/client-tasks.json","/client-task.json","/client-task-events.json","/client-model-capabilities.json","/client-resource-status.json","/client-repo-index.json","/client-artifact.json","/client-project-memory.json","/client-decisions.json","/client-mcp-gateway.json","/client-plan.json"}
     if parsed.path not in paths: return False
     if not handler.authenticated(): handler.unauthorized(); return True
     params=parse_qs(parsed.query)
+    if parsed.path=="/client-plan.json":
+        try: handler.json_response({"ok":True,"plan":latest_plan_document()})
+        except Exception as exc: _error(handler,exc)
+        return True
     try:
         sid=(params.get("sessionID") or [None])[0]; directory=features._session_directory(str(sid)) if sid else (params.get("directory") or [None])[0]; directory=features._canonical_directory(str(directory)) if directory else None
         if parsed.path=="/client-runtime.json": handler.json_response(runtime_snapshot(features,directory))

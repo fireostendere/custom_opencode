@@ -15,7 +15,7 @@ import sys
 import tempfile
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import sync_playwright
 
@@ -34,6 +34,8 @@ class FixtureState:
     question_event_sent = False
     session_reads = 0
     context_reads = 0
+    message_requests: list[dict[str, list[str]]] = []
+    message_order = "desc"
     managed_sends: list[dict[str, object]] = []
     managed_failures = 0
     session_running = False
@@ -83,15 +85,30 @@ class Backend(BaseHTTPRequestHandler):
             self.send_json({"data": session})
         elif path == "/api/session/ses_fixture/context":
             FixtureState.context_reads += 1
-            self.send_json({"data": [{
-                "id": "msg_fixture",
-                "type": "assistant",
-                "role": "assistant",
-                "text": "Fixture ready",
-                "time": {"created": 2_000_000_000_000},
-            }]})
+            self.send_json({"error": "context endpoint unavailable"}, status=404)
         elif path == "/api/session/ses_fixture/message":
-            self.send_json({"data": []})
+            query = parse_qs(parsed.query)
+            FixtureState.message_requests.append(query)
+            history = []
+            for index in range(241):
+                role = "user" if index % 2 == 0 else "assistant"
+                history.append({
+                    "info": {
+                        "id": f"msg_{index:03d}",
+                        "role": role,
+                        "time": {"created": 2_000_000_000_000 + index},
+                    },
+                    "parts": [{"type": "text", "text": f"History {role} {index:03d}"}],
+                })
+            if "cursor" not in query:
+                FixtureState.message_order = query.get("order", ["desc"])[0]
+            if FixtureState.message_order == "desc":
+                history.reverse()
+            start = int(query.get("cursor", ["0"])[0])
+            limit = int(query.get("limit", ["200"])[0])
+            rows = history[start:start + limit]
+            next_cursor = str(start + limit) if start + limit < len(history) else (str(start) if "cursor" in query else None)
+            self.send_json({"data": rows, "cursor": {"next": next_cursor}})
         elif path == "/api/agent":
             self.send_json({"data": [
                 {"id": "build", "name": "Build", "mode": "primary"},
@@ -251,6 +268,8 @@ def desktop(browser, base_url: str) -> None:
     FixtureState.managed_sends = []
     FixtureState.managed_failures = 0
     FixtureState.session_running = False
+    FixtureState.message_requests = []
+    FixtureState.message_order = "desc"
     context = browser.new_context(viewport={"width": 1366, "height": 850})
     page = context.new_page()
     errors: list[str] = []
@@ -258,6 +277,26 @@ def desktop(browser, base_url: str) -> None:
     page.on("response", lambda response: errors.append(f"HTTP {response.status} {response.url}") if response.status >= 500 else None)
     login(page, base_url)
     open_session(page)
+    page.wait_for_function("document.querySelectorAll('#messages .message').length === 80")
+    assert page.locator("#messages").evaluate("el => el.scrollHeight - el.clientHeight - el.scrollTop < 4"), "initial session viewport must start at the newest messages"
+    page.locator("#messages").evaluate("el => { el.scrollTop = 0 }")
+    page.locator("#scrollToBottom").wait_for(state="visible")
+    page.locator("#scrollToBottom").click()
+    page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
+    assert page.locator("#scrollToBottom").is_hidden()
+    for expected in (160, 240, 241):
+        page.evaluate("document.querySelector('#messages').scrollTop = 0")
+        page.wait_for_function(f"document.querySelectorAll('#messages .message').length === {expected}")
+    user_messages = page.locator("#messages .message.user")
+    user_texts = user_messages.evaluate_all("els => els.map(el => el.querySelector('.markdown')?.innerText)")
+    assert user_texts == [f"History user {index:03d}" for index in range(0, 241, 2)]
+    assert len(FixtureState.message_requests) == 4
+    assert FixtureState.message_requests == [
+        {"limit": ["80"], "order": ["desc"]},
+        {"limit": ["80"], "cursor": ["80"]},
+        {"limit": ["80"], "cursor": ["160"]},
+        {"limit": ["80"], "cursor": ["240"]},
+    ]
 
     page.locator("#questionHost .question-card").wait_for(state="visible")
     page.locator('[data-question-option="0:0"]').click()
@@ -322,15 +361,9 @@ def desktop(browser, base_url: str) -> None:
     assert "Qwen3.8 Max" in page.locator("#modelChoices").inner_text()
     page.locator("#modelDialog [data-close='modelDialog']").click()
 
-    control_order = page.locator(".controls").evaluate("el => [...el.children].map(child => child.id || child.querySelector('#variantSelect')?.id)")
-    assert control_order == ["modelButton", "variantSelect", "agentControls"], control_order
-    assert page.locator("#agentControls").is_visible()
-    assert page.locator("#agentControls [data-agent='build']").is_visible()
-    assert page.locator("#agentControls [data-agent='plan']").is_visible()
-    page.locator("#agentControls [data-agent='plan']").click()
-    page.locator("#agentControls [data-agent='plan'].active").wait_for()
-    page.locator("#agentControls [data-agent='build']").click()
-    page.locator("#agentControls [data-agent='build'].active").wait_for()
+    assert page.locator("#modelButton").is_visible()
+    assert page.locator("#variantSelect").is_visible()
+    assert page.locator("#agentControls").is_hidden()
 
     page.locator("#permissionBanner").wait_for(state="visible")
     summary = page.locator("#permissionSummary").inner_text()
@@ -345,6 +378,15 @@ def desktop(browser, base_url: str) -> None:
     assert page.locator("#composerAction").is_enabled()
     assert page.locator("#composerAction").get_attribute("aria-label") in ("Отправить", "Добавить в очередь")
     page.fill("#input", "")
+    # The scroll affordance appears at the top and remains within its frame.
+    page.locator("#messages").evaluate("el => el.scrollTop = 0")
+    page.locator("#scrollToBottom").wait_for(state="visible")
+    box = page.locator("#scrollToBottom").bounding_box()
+    frame = page.locator(".messages-frame").bounding_box()
+    assert box and frame and frame["y"] <= box["y"] and box["y"] + box["height"] <= frame["y"] + frame["height"], (box, frame)
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] - 2)
+    page.wait_for_function("el => el.scrollTop + el.clientHeight >= el.scrollHeight - 2", arg=page.locator("#messages").element_handle())
+    page.locator("#scrollToBottom").wait_for(state="hidden")
 
     FixtureState.managed_failures = 1
     page.fill("#input", "send exactly once")
@@ -379,6 +421,21 @@ def desktop(browser, base_url: str) -> None:
     page.click('[data-theme-mode="dark"]')
     assert page.locator("html").get_attribute("data-theme") == "dark"
     page.evaluate("document.getElementById('appearanceDialog').close()")
+
+    page.evaluate("document.documentElement.dataset.modelProfile = 'orchestrated'")
+    page.wait_for_function("document.querySelectorAll('.orchestration-plan-list li').length === 48", timeout=5000)
+    assert page.locator(".activity-chevron").count() == 0
+    assert page.locator(".plan-panel > summary").evaluate("el => getComputedStyle(el, '::after').content") != "none"
+    page.locator("#messages").evaluate("el => el.scrollTop = Math.min(1, Math.max(0, el.scrollHeight - el.clientHeight))")
+    conversation_before = page.locator("#messages").evaluate("el => el.scrollTop")
+    page.locator(".plan-panel > summary").click()
+    page.locator(".plan-panel-body").evaluate("el => { el.scrollTop = Math.max(1, el.scrollHeight - el.clientHeight - 30) }")
+    before = page.locator(".plan-panel-body").evaluate("el => el.scrollTop")
+    page.wait_for_timeout(1200)  # The live one-second render must not reset an expanded plan.
+    after = page.locator(".plan-panel-body").evaluate("el => el.scrollTop")
+    assert abs(after - before) <= 2, (before, after)
+    conversation_after = page.locator("#messages").evaluate("el => el.scrollTop")
+    assert abs(conversation_after - conversation_before) <= 2, (conversation_before, conversation_after)
 
     page.click("#logoutButton")
     page.locator("#loginForm").wait_for(state="visible")
@@ -426,6 +483,14 @@ def mobile(browser, base_url: str) -> None:
     page.fill("#input", "mobile fixture")
     assert page.locator("#composerAction").is_visible()
     page.fill("#input", "")
+    page.locator("#messages").evaluate("el => el.scrollTop = 0")
+    page.locator("#scrollToBottom").wait_for(state="visible")
+    box = page.locator("#scrollToBottom").bounding_box()
+    frame = page.locator(".messages-frame").bounding_box()
+    assert box and frame and frame["y"] <= box["y"] and box["y"] + box["height"] <= frame["y"] + frame["height"], (box, frame)
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] - 2)
+    page.wait_for_function("el => el.scrollTop + el.clientHeight >= el.scrollHeight - 2", arg=page.locator("#messages").element_handle())
+    page.locator("#scrollToBottom").wait_for(state="hidden")
 
     cdp = context.new_cdp_session(page)
     messages = page.locator("#messages")
@@ -495,6 +560,7 @@ def main() -> int:
         root = Path(temp)
         project = root / "project"
         project.mkdir()
+        (root / "plan.md").write_text("# Fixture plan\n" + "\n".join(f"- [ ] Fixture step {index:02d}" for index in range(48)), encoding="utf-8")
         os.environ.update({
             "FIXTURE_PROJECT": str(project),
             "OPENCODE_SERVER_USERNAME": "opencode",
@@ -518,6 +584,7 @@ def main() -> int:
 
         sys.path.insert(0, str(ROOT / "app"))
         import server_workflow
+        server_workflow.runtime.PLAN_DIRECTORY = root
 
         def fixture_dispatch(_features, *, session_id: str, text: str, files: list[object], profile: str) -> dict[str, object]:
             FixtureState.managed_sends.append({"sessionID": session_id, "text": text, "files": files, "profile": profile})

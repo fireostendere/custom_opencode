@@ -3,9 +3,15 @@ export const ORCHESTRATED_MODEL = {
   providerID: 'bailian-cli',
   label: 'Qwen3.8 Max · Orchestrated',
 }
+export const SOL_ORCHESTRATED_MODEL = {
+  id: 'gpt-5.6-sol-orchestrated',
+  providerID: 'openai',
+  label: 'GPT-5.6 Sol · Orchestrated',
+}
+export const ORCHESTRATED_MODELS = [ORCHESTRATED_MODEL, SOL_ORCHESTRATED_MODEL]
 
-// Build/Plan remain native OpenCode agents. Legacy *-direct IDs are accepted only
-// when reading old sessions; model selection no longer switches primary agents.
+// The web surface is Build-only. Legacy Plan identifiers remain compatible
+// with native clients and are normalized to the matching Build agent by UI sync.
 export function modeFromAgent(agentID = '') {
   return String(agentID).startsWith('plan') ? 'plan' : 'build'
 }
@@ -14,8 +20,9 @@ export function profileFromAgent(_agentID = '') {
   return 'direct'
 }
 
-export function agentFor(mode = 'build', _profile = 'direct') {
-  return mode === 'plan' ? 'plan' : 'build'
+export function agentFor(mode = 'build', profile = 'direct') {
+  if (profile === 'orchestrated') return mode === 'plan' ? 'plan' : 'build'
+  return mode === 'plan' ? 'plan-direct' : 'build-direct'
 }
 
 export function composerActionState({ running = false, hasPayload = false } = {}) {

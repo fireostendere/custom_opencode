@@ -48,11 +48,17 @@ OPENCODE_READER_MODEL=bailian-cli/qwen3.8-flash
 OPENCODE_REVIEW_MODEL=bailian-cli/deepseek-v4-pro-0813
 OPENCODE_LONG_HORIZON_MODEL=bailian-cli/glm-5.2
 OPENCODE_ORCHESTRATED_MODEL=bailian-cli/qwen3.8-orchestrated
+OPENCODE_SOL_ORCHESTRATED_MODEL=openai/gpt-5.6-sol-orchestrated
+OPENCODE_SOL_BUILDER_MODEL=openai/gpt-5.6-terra
+OPENCODE_SOL_READER_MODEL=openai/gpt-5.6-luna
+OPENCODE_SOL_REVIEW_MODEL=openai/gpt-5.6-luna
 ```
 
-Эти роли provider-locked на Alibaba Cloud/Bailian. Qwen, DeepSeek и GLM из orchestration stack не должны автоматически уходить на другой gateway/provider.
+Alibaba-роли provider-locked на Alibaba Cloud/Bailian, а SOL-роли provider-locked
+на официальный OpenAI provider. Ни одна роль из orchestration stack не должна
+автоматически уходить на другой gateway/provider.
 
-`direct` сохраняет ровно выбранную пользователем модель. Managed profiles (`fast`, `build`, `architect`, `critical`, `research`, `long-horizon`) используют только собственные role refs.
+`direct` сохраняет ровно выбранную пользователем модель. Managed profiles (`fast`, `build`, `architect`, `sol-orchestrated`, `critical`, `research`, `long-horizon`) используют только собственные role refs.
 
 Host load, GPU state, запущенные игры и доступность другого inference endpoint не участвуют в выборе model route.
 
@@ -161,9 +167,19 @@ PONYTAIL_DEFAULT_MODE=full
 
 ## Планирование задач
 
-Установленный `AGENTS.md` и orchestrator prompt используют условную policy планирования. `todowrite` нужен для многошаговых задач: когда есть два и более содержательных этапа, несколько файлов или компонентов, исследование с выбором решения, миграция, отладка, интеграция или существенный риск.
+Установленный `AGENTS.md` и orchestrator prompt используют условную policy планирования. `todowrite` относится к V1 и отсутствует в OpenCode V2; его отсутствие в текущем V2 runtime не является поломкой конфигурации.
 
-Для одной очевидной правки, короткого ответа, чтения или простой настройки формальный план не создаётся. Для plan-worthy задачи сначала изучается контекст, затем до первого изменения файла создаётся план из 2-7 проверяемых результатов. Явная просьба пользователя о плане имеет приоритет.
+Для одной очевидной правки, короткого ответа, чтения или простой настройки формальный план не создаётся. Для plan-worthy задачи сначала изучается контекст, затем до первого изменения файла фиксируется план из 2-7 проверяемых результатов. В существующей native V2 session переключается только primary-agent: `plan` для orchestrated и `plan-direct` для direct/manual, поэтому точный provider/model/variant сохраняется. Изолированный CLI plan — запасной путь: обязательно передавайте точный непустой `--model provider/model[#variant]` (`bailian-cli/qwen3.8-orchestrated` для Qwen alias, `openai/gpt-5.6-sol-orchestrated` для SOL alias и exact selected ref для direct). Wrapper отклоняет isolated plan без model или с некорректным ref, поскольку global default не восстанавливает родительскую session. Такой V2 plan document не имеет безопасной parent-session mapping. После согласования реализации нужен `build` agent.
+
+Пользовательский web UI этого комплекта намеренно Build-only. При работе через custom Runtime V2/V3 роль планирования выполняют durable task queue, checkpoints и typed handoff; переключать web session в нативный `plan` не требуется.
+
+TUI-панель плана поддерживает native V2 Markdown-документы из `~/.opencode/plan` и сохраняет чтение legacy `todowrite` сообщений для старых сессий.
+
+Edge-панели `План` и `Лимиты` одинаково работают на стартовом экране и в диалоге: `План` закреплён слева, `Лимиты` справа, а их handle зеркально показывает направление открытия и закрытия. Кнопка `📌` в заголовке закрепляет открытую панель в flex-layout TUI; повторное нажатие возвращает её в overlay-режим, а состояние обозначается цветом той же пиктограммы. План отображает длинные пункты с переносом строк и прокручивается отдельным вертикальным scrollbar. Native session sidebar остаётся отдельной встроенной панелью OpenCode.
+
+## История prompt
+
+В web UI клавиши `ArrowUp` и `ArrowDown` в поле текущего диалога перебирают только пользовательские сообщения выбранной session. В TUI глобальные `prompt.history.previous/next` отключены в `config/cli.json`, а `custom.prompt-history` делает такую же session-scoped навигацию через native `session_prompt`; сообщения других сессий, проектов и папок в историю не попадают.
 
 ## Repository index
 

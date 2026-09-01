@@ -1,7 +1,6 @@
 /* Branch-local visual cleanup for the compact composer. */
 #agentControls{
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
+  display:none!important;
   min-width:0;
   height:44px;
   padding:3px;
@@ -20,7 +19,7 @@
 .controls{
   flex:0 1 540px;
   display:grid;
-  grid-template-columns:minmax(0,1.4fr) minmax(96px,.7fr) minmax(128px,.8fr);
+  grid-template-columns:minmax(0,1.4fr) minmax(128px,.8fr);
   gap:8px;
   overflow:visible;
 }
@@ -148,7 +147,7 @@ dialog .workflow-modal.large{
   .controls{
     width:100%;
     max-width:none;
-    grid-template-columns:minmax(0,1.3fr) minmax(82px,.7fr) minmax(116px,.9fr);
+    grid-template-columns:minmax(0,1.3fr) minmax(116px,.9fr);
     gap:8px;
   }
 

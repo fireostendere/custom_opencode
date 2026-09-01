@@ -79,7 +79,7 @@ def run() -> dict[str, Any]:
             "composerActionState",
             "action.kind === 'queue'",
             "action.kind === 'stop'",
-            "button.textContent !== 'Build'",
+            "function currentMode() {\n  return 'build'",
             "dataset.modelProfile",
         ),
         errors,
@@ -94,7 +94,7 @@ def run() -> dict[str, Any]:
     )
     _check_file(
         "app/access-fix.css",
-        ("#agentControls", "grid-template-columns:repeat(2"),
+        ("#agentControls", "display:none!important", "grid-template-columns:minmax(0,1.4fr) minmax(128px,.8fr)"),
         errors,
     )
     _check_file(
@@ -104,9 +104,16 @@ def run() -> dict[str, Any]:
             "/client-task-control.json",
             "/client-model-capabilities.json",
             "/client-resource-status.json",
-            "qwen3.8-orchestrated",
+            "/client-plan.json",
+            "latest_plan_document",
+            "ResourceScheduler",
             "recover_inflight",
         ),
+        errors,
+    )
+    _check_file(
+        "app/model_registry.py",
+        ("qwen3.8-orchestrated", "ROLE_DEFAULTS", "role_models", "validate_provider_ref"),
         errors,
     )
     _check_file(
@@ -115,7 +122,7 @@ def run() -> dict[str, Any]:
             "/client-runtime-v3.json",
             "/client-runtime-events.json",
             "SharedRAGService",
-            "AdaptiveResourceScheduler",
+            "DynamicContextManager",
             "ScopedSecretBroker",
             "SandboxManager",
         ),
@@ -133,6 +140,7 @@ def run() -> dict[str, Any]:
         "taskCreate",
         "taskControl",
         "runtime",
+        "nativePlan",
         "mcpGateway",
         "ragStart",
     }
@@ -151,6 +159,8 @@ def run() -> dict[str, Any]:
         errors.append("integration contract must preserve hidden plan compatibility")
     if frontend.get("orchestrationLivesInModelProfile") is not True:
         errors.append("integration contract must keep orchestration in the model profile")
+    if frontend.get("modelProfiles") != ["direct", "qwen3.8-orchestrated", "gpt-5.6-sol-orchestrated"]:
+        errors.append("integration contract model profiles must match direct and orchestrated aliases")
 
     required_tools = {"knowledge_search", "knowledge_get", "knowledge_sources", "knowledge_status"}
     rag = contract.get("rag") if isinstance(contract.get("rag"), dict) else {}

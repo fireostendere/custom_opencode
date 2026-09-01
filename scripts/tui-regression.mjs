@@ -1,10 +1,39 @@
 import assert from 'node:assert/strict'
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const root = new URL('../', import.meta.url)
 const helperUrl = new URL('config/plugins/tui/lib/limits-helper.js', root)
+const promptHistory = await readFile(new URL('config/plugins/tui/prompt-history.jsx', root), 'utf8')
+const limitsPanels = await readFile(new URL('config/plugins/tui/limits-panels.jsx', root), 'utf8')
+const cliConfig = JSON.parse(await readFile(new URL('config/cli.json', root), 'utf8'))
+assert.equal(cliConfig.keybinds['prompt.history.previous'], 'none')
+assert.equal(cliConfig.keybinds['prompt.history.next'], 'none')
+assert.equal(cliConfig.keybinds['app.exit'], '<leader>q')
+for (const marker of ['session_prompt', 'context.state.session.messages', 'custom.prompt-history.previous', 'custom.prompt-history.next', 'context.ui.Prompt', 'focused', 'sessionID']) {
+  assert.ok(promptHistory.includes(marker), `TUI session prompt history marker missing: ${marker}`)
+}
+for (const marker of [
+  'planPinned',
+  'homePinned',
+  'function EdgePanel(props)',
+  'function LimitsStrip()',
+  '<EdgePanel',
+  'target.paddingLeft = left',
+  'target.paddingRight = right',
+  'position="absolute"',
+  'verticalScrollbarOptions',
+  'scrollY={true}',
+  '📌',
+  'collapsible={false}',
+]) {
+  assert.ok(limitsPanels.includes(marker), `TUI panel UX marker missing: ${marker}`)
+}
+assert.ok(!limitsPanels.includes('state.limits'), 'Limits section must not have a collapse state')
+assert.ok(!limitsPanels.includes('📍'), 'Unpinned state must reuse the accepted pin icon')
+assert.ok(!limitsPanels.includes('sidebar.content'), 'Limits must use the shared edge panel on sessions')
+assert.ok(!limitsPanels.includes('SidebarToggleHandle'), 'Limits must not add a second native sidebar handle')
 const temp = await mkdtemp(join(tmpdir(), 'custom-opencode-tui-'))
 
 async function executable(name, source) {

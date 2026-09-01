@@ -13,6 +13,10 @@ source = source.replace(
   'const Plugin = { define(value) { return value } }',
 )
 assert.ok(!source.includes('@opencode-ai/plugin/tui'), 'plugin import replacement failed')
+for (const modelID of ['gpt-5.6-sol-orchestrated', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+  assert.ok(source.includes(`openai/${modelID}`), `SOL orchestration model missing from TUI grouping: ${modelID}`)
+}
+assert.ok(!source.includes('openai/gpt-5.6-sol-fast'), 'SOL Fast must not be used by the TUI orchestration grouping')
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
 const plugin = (await import(moduleUrl)).default
 assert.equal(plugin.id, 'custom.model-selector')

@@ -47,11 +47,9 @@ The UI still exposes only `Build` and `Plan` as execution modes. Orchestration a
 
 Current server profiles:
 
-- `direct` — preserve the model explicitly selected in OpenCode;
-- `qwen3.8-coder` — auto local/cloud coding profile;
-- `qwen3.8-orchestrated` — cloud-pinned orchestrated profile;
-- `qwen3.8-review` — read-only review profile;
-- `qwen3.8-fast` — cheap/fast read-only path.
+- `direct` — preserve the exact provider/model/variant selected in OpenCode;
+- `qwen3.8-orchestrated` — cloud-pinned Qwen orchestration alias;
+- `gpt-5.6-sol-orchestrated` — cloud-pinned SOL orchestration alias.
 
 `CapabilityRegistry` merges the current OpenCode model catalog with server hints such as:
 
@@ -67,11 +65,11 @@ The capability details remain server-side; the model picker shows only compact p
 
 ### Important routing rule
 
-`direct` never changes an explicitly selected model. Automatic local/cloud routing is performed only for a server profile whose `route` permits it.
+`direct` never changes an explicitly selected model. Only an explicitly selected orchestration alias is provider-pinned.
 
 ## Resource scheduler
 
-`ResourceScheduler` can route `qwen3.8-coder` to cloud when the host is constrained and back to local when it is idle.
+`ResourceScheduler` keeps a direct ref unchanged and routes an explicit orchestration profile to its configured provider model.
 
 Relevant settings:
 
@@ -171,7 +169,7 @@ Failures are classified as:
 
 Only code failures are eligible for automatic repair tasks. Logs are stored as artifacts and only bounded failure summaries are carried forward.
 
-Automatic review currently uses a deterministic diff-size/sensitive-path gate. When the gate decides a full review is needed, it enqueues the `qwen3.8-review` profile. A separate cheap-model classifier is not used yet.
+Automatic review currently uses a deterministic diff-size/sensitive-path gate. When the gate decides a full review is needed, it enqueues the configured hidden review profile. A separate cheap-model classifier is not used yet.
 
 ## Loop, stuck and conflict detection
 

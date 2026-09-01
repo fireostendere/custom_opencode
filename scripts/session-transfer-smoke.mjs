@@ -15,16 +15,17 @@ globalThis.localStorage = {
 globalThis.window = { addEventListener() {}, dispatchEvent() {} }
 function makeElement() {
   return {
-    value: '', innerHTML: '', textContent: '', hidden: false, disabled: false, title: '',
+    value: '', innerHTML: '', textContent: '', hidden: false, disabled: false, title: '', selectionStart: 0, selectionEnd: 0, scrollHeight: 42,
     style: {}, dataset: {},
     classList: { add() {}, remove() {}, toggle() {}, contains() { return false } },
-    addEventListener() {}, focus() {}, showModal() {}, close() {},
+    addEventListener() {}, focus() {}, showModal() {}, close() {}, setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end },
     querySelector() { return null }, querySelectorAll() { return [] },
     contains() { return false }, closest() { return null },
   }
 }
+const elements = new Map()
 globalThis.document = {
-  getElementById: () => makeElement(),
+  getElementById: (id) => elements.get(id) || (elements.set(id, makeElement()), elements.get(id)),
   querySelectorAll: () => [],
   addEventListener() {},
   hidden: false,
@@ -56,7 +57,7 @@ assert.ok(!source.includes("from './markdown.js'"), 'markdown import replacement
 const bootIndex = source.lastIndexOf('initialize().catch')
 assert.ok(bootIndex > 0, 'app.js boot call not found')
 source = source.slice(0, bootIndex)
-  + 'globalThis.__smoke.exports = { transferSessionToProject, forkWithFallback, sessionWithControls, handoffText, messagePlainText, changeAgent, changeModel, state, seedDraft: (id, value) => { drafts[id] = value }, draftOf: (id) => drafts[id] }\n'
+  + 'globalThis.__smoke.exports = { transferSessionToProject, forkWithFallback, sessionWithControls, handoffText, messagePlainText, changeAgent, changeModel, resetPromptHistory, navigatePromptHistory, state, seedDraft: (id, value) => { drafts[id] = value }, draftOf: (id) => drafts[id] }\n'
 
 await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
 const app = globalThis.__smoke.exports
@@ -100,7 +101,7 @@ let result = await app.transferSessionToProject(sourceSession, targetProject, { 
 assert.equal(result.sourceRemoved, true, 'source removal must succeed')
 assert.equal(result.created.id, 'ses_new')
 assert.equal(calls.createSession[0].directory, '/dst')
-assert.equal(calls.createSession[0].agent, 'build', 'merged agent must come from the session detail')
+assert.equal(calls.createSession[0].agent, 'build-direct', 'ordinary copied sessions must use the no-delegation agent')
 assert.deepEqual(calls.createSession[0].model, { providerID: 'bailian-cli', id: 'qwen-flash', variant: 'low' })
 const handoffSent = calls.sendPrompt[0].value.text
 assert.ok(handoffSent.includes('первый вопрос') && handoffSent.includes('ответ'), 'handoff must carry the source context')
@@ -223,7 +224,29 @@ assert.equal(
   'a\nb',
 )
 
-// ── Scenario 11: draft isolation for agent/model controls ──────────────────
+// ── Scenario 11: prompt history is limited to the selected session ──────────
+reset()
+state.selected = { id: 'ses_current' }
+state.context = [
+  { type: 'user', text: 'первый prompt' },
+  { type: 'assistant', content: [{ type: 'text', text: 'ответ' }] },
+  { type: 'user', text: 'второй prompt' },
+]
+const promptInput = document.getElementById('input')
+promptInput.value = 'новый draft'
+promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length)
+app.resetPromptHistory('ses_current')
+const promptKey = { shiftKey:false, altKey:false, ctrlKey:false, metaKey:false }
+assert.equal(app.navigatePromptHistory(-1, promptKey), true)
+assert.equal(promptInput.value, 'второй prompt')
+assert.equal(app.navigatePromptHistory(-1, promptKey), true)
+assert.equal(promptInput.value, 'первый prompt')
+assert.equal(app.navigatePromptHistory(1, { ...promptKey, }), true)
+assert.equal(promptInput.value, 'второй prompt')
+assert.equal(app.navigatePromptHistory(1, promptKey), true)
+assert.equal(promptInput.value, 'новый draft')
+
+// ── Scenario 12: draft isolation for agent/model controls ──────────────────
 reset()
 state.selected = null
 await app.changeAgent('plan')
@@ -243,4 +266,4 @@ assert.deepEqual(state.selected.model, { id: 'new', providerID: 'np' })
 assert.equal(state.draftAgent, 'plan', 'selected-session agent switch must not touch the home draft')
 assert.deepEqual(state.draftModel, { id: 'qwen-flash', providerID: 'bailian-cli', variant: 'low' }, 'selected-session model switch must not touch the home draft')
 
-console.log('Session transfer smoke passed: handoff rollback + draft move + source-delete safety + fork fallback + clipping + draft isolation')
+console.log('Session transfer smoke passed: handoff rollback + draft move + source-delete safety + fork fallback + clipping + session prompt history + draft isolation')

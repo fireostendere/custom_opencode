@@ -1,4 +1,5 @@
 const jsonHeaders = { 'Content-Type': 'application/json' }
+const COMPATIBILITY_AGENTS = new Set(['build-direct', 'plan-direct'])
 
 export async function request(path, options = {}) {
   const response = await fetch(path, {
@@ -77,14 +78,59 @@ function normalizeModernMessage(item) {
   }
 }
 
+export async function getContextPage(sessionID, { cursor = '', limit = 80, order = 'desc' } = {}) {
+  const query = new URLSearchParams({ limit: String(limit) })
+  if (cursor) query.set('cursor', cursor)
+  else query.set('order', order)
+  const encodedID = encodeURIComponent(sessionID)
+
+  try {
+    const page = await request(`/api/session/${encodedID}/message?${query}`)
+    if (Array.isArray(page)) {
+      return { messages: page.map(normalizeModernMessage), nextCursor: null, complete: true }
+    }
+    const rows = Array.isArray(page?.data) ? page.data : []
+    return {
+      messages: order === 'desc' ? rows.reverse().map(normalizeModernMessage) : rows.map(normalizeModernMessage),
+      nextCursor: page?.cursor?.next || null,
+      complete: false,
+    }
+  } catch (error) {
+    if (cursor || error.status !== 404) throw error
+    const value = dataOf(await request(`/api/session/${encodedID}/context`))
+    return {
+      messages: Array.isArray(value) ? value.map(normalizeModernMessage) : [],
+      nextCursor: null,
+      complete: true,
+    }
+  }
+}
+
 export async function getContext(sessionID) {
   try {
     const value = dataOf(await request(`/api/session/${encodeURIComponent(sessionID)}/context`))
-    return Array.isArray(value) ? value : []
+    return Array.isArray(value) ? value.map(normalizeModernMessage) : []
   } catch (error) {
     if (error.status !== 404) throw error
-    const value = dataOf(await request(`/api/session/${encodeURIComponent(sessionID)}/message?limit=200`))
-    return Array.isArray(value) ? value.map(normalizeModernMessage) : []
+    const messages = []
+    const seenCursors = new Set()
+    let cursor = ''
+    for (let pageCount = 0; pageCount < 200; pageCount += 1) {
+      const query = new URLSearchParams({ limit: '200' })
+      if (cursor) query.set('cursor', cursor)
+      else query.set('order', 'asc')
+      const page = await request(`/api/session/${encodeURIComponent(sessionID)}/message?${query}`)
+      if (Array.isArray(page)) {
+        messages.push(...page)
+        break
+      }
+      if (Array.isArray(page?.data)) messages.push(...page.data)
+      const next = page?.cursor?.next
+      if (!next || seenCursors.has(next)) break
+      seenCursors.add(next)
+      cursor = next
+    }
+    return messages.map(normalizeModernMessage)
   }
 }
 
@@ -105,8 +151,11 @@ export async function getControls(directory) {
     const [providerID, id] = Object.entries(providerValue.default)[0] || []
     if (providerID && id) fallback = { providerID, id }
   }
+  const visibleAgents = agents.filter((agent) => !agent.hidden && (agent.mode === 'primary' || agent.mode === 'all' || !agent.mode))
+  const compatibilityAgents = agents.filter((agent) => agent.hidden && COMPATIBILITY_AGENTS.has(agent.id) && agent.mode === 'primary')
   return {
-    agents: agents.filter((agent) => !agent.hidden && (agent.mode === 'primary' || agent.mode === 'all' || !agent.mode)),
+    // Hidden direct agents are internal routing targets, not user-facing modes.
+    agents: [...visibleAgents, ...compatibilityAgents],
     models: models.filter((model) => model.enabled !== false),
     providers,
     fallback,

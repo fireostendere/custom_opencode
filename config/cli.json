@@ -11,6 +11,11 @@
     "scrollbar": false,
     "thinking": "show"
   },
+  "keybinds": {
+    "prompt.history.previous": "none",
+    "prompt.history.next": "none",
+    "app.exit": "<leader>q"
+  },
   "animations": true,
   "mouse": true
 }

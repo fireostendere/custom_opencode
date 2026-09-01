@@ -221,17 +221,56 @@ PY
 
 cat >"$BIN_DIR/custom-opencode" <<EOF
 #!/usr/bin/env bash
+set -euo pipefail
 set -a
 source "$ROOT/.env"
 set +a
-"$PYTHON3" "$ROOT/scripts/pin-orchestrated-recent.py" >/dev/null 2>&1 || true
+# An isolated V2 plan has no safe parent-session model mapping.  Refuse the
+# otherwise-valid CLI form before it can silently use the global default.
+args=("\$@")
+if [[ "\${1:-}" == "run" ]]; then
+  plan_agent=0
+  explicit_model=0
+  invalid_plan_model=0
+  # Scan a copy by index.  Do not shift the caller arguments: with `set -e`,
+  # consuming a final --agent/--model used to exit before our diagnostic.
+  for ((index=1; index<\${#args[@]}; index++)); do
+    arg="\${args[index]}"
+    case "\$arg" in
+      --agent=plan) plan_agent=1 ;;
+      --agent)
+        [[ "\${args[index+1]:-}" == "plan" ]] && plan_agent=1
+        ;;
+      --model=*)
+        model_ref="\${arg#--model=}"
+        if [[ "\$model_ref" =~ ^[^/#[:space:]]+/[^#[:space:]]+(#[^#[:space:]]+)?$ ]]; then
+          explicit_model=1
+        else
+          invalid_plan_model=1
+        fi
+        ;;
+      --model)
+        model_ref="\${args[index+1]:-}"
+        if [[ "\$model_ref" =~ ^[^/#[:space:]]+/[^#[:space:]]+(#[^#[:space:]]+)?$ ]]; then
+          explicit_model=1
+        else
+          invalid_plan_model=1
+        fi
+        ;;
+    esac
+  done
+  if [[ \$plan_agent == 1 && ( \$explicit_model != 1 || \$invalid_plan_model == 1 ) ]]; then
+    echo "custom-opencode: isolated 'run --agent plan' requires --model provider/model[#variant]; use an existing session to preserve its selected model." >&2
+    exit 2
+  fi
+fi
 if command -v opencode2 >/dev/null 2>&1; then
-  exec env -u OPENCODE_CONFIG_DIR opencode2 "\$@"
+  exec env -u OPENCODE_CONFIG_DIR opencode2 "\${args[@]}"
 fi
 if [[ -z "\${OPENCODE_CONFIG_DIR:-}" ]]; then
   unset OPENCODE_CONFIG_DIR
 fi
-exec opencode "\$@"
+exec opencode "\${args[@]}"
 EOF
 chmod 0755 "$BIN_DIR/custom-opencode"
 
@@ -252,7 +291,9 @@ if command -v opencode2 >/dev/null 2>&1; then
     OPENCODE_RUNTIME_PLUGIN_HOST OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS
     OPENCODE_SECRET_PREFIXES OPENCODE_PLANNER_MODEL OPENCODE_BUILDER_MODEL
     OPENCODE_READER_MODEL OPENCODE_REVIEW_MODEL OPENCODE_LONG_HORIZON_MODEL
-    OPENCODE_ORCHESTRATED_MODEL PONYTAIL_DEFAULT_MODE
+     OPENCODE_ORCHESTRATED_MODEL OPENCODE_SOL_ORCHESTRATED_MODEL
+     OPENCODE_SOL_BUILDER_MODEL OPENCODE_SOL_READER_MODEL OPENCODE_SOL_REVIEW_MODEL
+     PONYTAIL_DEFAULT_MODE
   )
   for name in "${SERVICE_ENV[@]}"; do
     value=${!name:-}

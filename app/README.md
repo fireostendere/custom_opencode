@@ -39,13 +39,11 @@ Runtime V2/V3 дополнительно предлагает server profiles:
 
 ```text
 direct                 → выбранная модель, scheduler не меняет её
-qwen3.8-coder          → adaptive local/cloud route
 qwen3.8-orchestrated   → cloud Max + bounded orchestration/fast-reader/RAG
-qwen3.8-review         → cloud review/safe profile
-qwen3.8-fast           → cloud fast/read profile
+gpt-5.6-sol-orchestrated → SOL orchestration на официальном OpenAI provider
 ```
 
-То есть local/cloud auto-routing существует, но только внутри явно выбранного `route=auto` server profile. Ручная Ollama/Qwen/OpenAI model selection не должна быть незаметно заменена scheduler-ом.
+Provider-pinned orchestration доступна только через явные alias-профили. Ручная Ollama/Qwen/OpenAI model selection не должна быть незаметно заменена scheduler-ом.
 
 ## Composer и task runtime
 

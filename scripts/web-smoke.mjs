@@ -49,6 +49,20 @@ await api.sendPrompt({ id:'ses_compat' }, { text:'fallback', files:[], delivery:
 body = JSON.parse(calls.at(-1).options.body)
 if (body.prompt?.text !== 'fallback' || body.delivery !== 'steer') throw new Error('Compatibility prompt fallback regression')
 
+globalThis.fetch = async (path) => {
+  if (String(path).startsWith('/api/agent?')) return response(200, { data: [
+    { id:'build', mode:'primary', hidden:false },
+    { id:'build-direct', mode:'primary', hidden:true },
+    { id:'role-builder', mode:'subagent', hidden:true },
+  ] })
+  if (String(path).startsWith('/api/model?')) return response(200, { data: [] })
+  if (String(path).startsWith('/api/provider?')) return response(200, { data: [] })
+  return response(200, { data: null })
+}
+const controls = await api.getControls('/tmp/project')
+if (!controls.agents.some((agent) => agent.id === 'build-direct')) throw new Error('Hidden direct agent must remain available as an internal routing target')
+if (controls.agents.some((agent) => agent.id === 'role-builder')) throw new Error('Hidden role agents must not leak into web controls')
+
 const enhancements = await loadSource('app/enhancements.js')
 if (enhancements.parseSlash('/status')?.command !== 'status') throw new Error('Slash parser failed')
 if (enhancements.parseSlash('/review foo bar')?.arguments !== 'foo bar') throw new Error('Slash arguments parser failed')
@@ -91,13 +105,14 @@ if (ux.composerActionState({ running:true, hasPayload:false }).kind !== 'stop') 
 if (ux.composerActionState({ running:true, hasPayload:false }).symbol !== '×') throw new Error('Stop action must use cancel icon instead of square')
 if (ux.composerActionState({ running:true, hasPayload:true }).kind !== 'queue') throw new Error('Running composer with text must auto-queue')
 if (ux.modeFromAgent('build-direct') !== 'build' || ux.modeFromAgent('plan') !== 'plan') throw new Error('Internal Build/Plan compatibility mapping regressed')
-if (ux.agentFor('build', 'direct') !== 'build' || ux.agentFor('plan', 'direct') !== 'plan') throw new Error('Ordinary models must use native OpenCode agents')
+if (ux.agentFor('build', 'direct') !== 'build-direct' || ux.agentFor('plan', 'direct') !== 'plan-direct') throw new Error('Ordinary models must use isolated direct agents')
 if (ux.agentFor('build', 'orchestrated') !== 'build' || ux.agentFor('plan', 'orchestrated') !== 'plan') throw new Error('Orchestrated model must keep native OpenCode agents')
 if (ux.profileFromAgent('build') !== 'direct' || ux.profileFromAgent('build-direct') !== 'direct') throw new Error('Agent ID must not imply orchestration')
 if (!ux.permissionSummary('Команда', '{"command":"git status","description":"long"}').includes('git status')) throw new Error('Permission summary did not extract command')
 if (!ux.permissionSummary('question', '{"questions":[{"label":"Сохранить изменения","description":"Сначала сохранить изменения"}]}').startsWith('Нужен выбор:')) throw new Error('Question permission summary is not human-readable')
 if (ux.permissionSummary('Команда', 'x'.repeat(300)).length > 110) throw new Error('Permission summary must stay compact')
-if (ux.ORCHESTRATED_MODEL.id !== 'qwen3.8-orchestrated' || ux.ORCHESTRATED_MODEL.label !== 'Qwen3.8 Max · Orchestrated') throw new Error('Orchestrated model identity regression')
+if (ux.ORCHESTRATED_MODEL.id !== 'qwen3.8-orchestrated' || ux.ORCHESTRATED_MODEL.label !== 'Qwen3.8 Max · Orchestrated') throw new Error('Orchestrated Qwen identity regression')
+if (ux.SOL_ORCHESTRATED_MODEL.id !== 'gpt-5.6-sol-orchestrated' || ux.SOL_ORCHESTRATED_MODEL.providerID !== 'openai') throw new Error('Orchestrated SOL identity regression')
 
 const index = readFileSync(resolve(root, 'app/index.html'), 'utf8')
 for (const marker of [
@@ -168,10 +183,10 @@ const runtimeDashboard = readFileSync(resolve(root, 'app/runtime-dashboard.js'),
 const runtimeCss = readFileSync(resolve(root, 'app/runtime-dashboard.css'), 'utf8')
 const runtimeV3Dashboard = readFileSync(resolve(root, 'app/runtime-v3-dashboard.js'), 'utf8')
 
-if (!uxControls.includes("button.textContent = 'Build'")) throw new Error('Build must remain the compatibility work-mode label')
+if (!uxControls.includes("const mode = 'build'")) throw new Error('Build must remain the web compatibility mode')
 if (uxControls.includes("button.textContent = 'Direct'")) throw new Error('Direct must not be exposed as a user-facing mode label')
 if (!uxControls.includes("event.target.closest('[data-orchestrated-model]')")) throw new Error('Orchestrated model click proxy missing')
-if (!uxControls.includes('qwen3.8-orchestrated') && !uxControls.includes('ORCHESTRATED_MODEL.id')) throw new Error('Web orchestrated choice must target the dedicated model alias')
+if (!uxControls.includes('ORCHESTRATED_MODELS') || !uxControls.includes('nativeOrchestratedChoice')) throw new Error('Web orchestrated choice must target the dedicated model aliases')
 if (!uxControls.includes('window.CustomOpenCodeUX')) throw new Error('Project defaults cannot select orchestrated profile')
 if (!uxControls.includes("setNativeDelivery('queue')")) throw new Error('Automatic queue compatibility bridge missing')
 if (!uxControls.includes("addEventListener('submit', () => setTimeout(syncComposerAction, 0))")) throw new Error('Composer action must resync after programmatic queue clear')
@@ -191,25 +206,32 @@ for (const marker of ['PROJECT_ORDER_KEY', 'SESSION_ORDER_KEY', 'handleDrop', 't
 for (const marker of ["data-action=\"copy-context\"", "data-action=\"move-project\"", 'removeSource:true', "api.deleteSession(session.id)"]) {
   if (!appSource.includes(marker)) throw new Error(`Session copy/move marker missing: ${marker}`)
 }
-if (!appSource.includes('async function changeAgent(agent){if(!state.selected){state.draftAgent=agent;renderControls();return}')) throw new Error('changeAgent must only write the draft when no session is selected')
-if (!appSource.includes('async function changeModel(model){if(!state.selected){state.draftModel={...model};saveLastModel(model);renderControls();return}')) throw new Error('changeModel must only write the draft when no session is selected')
+if (!appSource.includes('async function changeAgent(agent){const sessionID=state.selected?.id||null,previous=state.selected?.agent||state.draftAgent;if(!state.selected){state.draftAgent=agent;renderControls();')) throw new Error('changeAgent must isolate draft and selected-session state')
+if (!appSource.includes('const initialAgent=session.agent')) throw new Error('Session loading must preserve a concurrent agent switch')
+if (!appSource.includes('async function changeModel(model){const sessionID=state.selected?.id||null,previousModel=activeModelRef()?{...activeModelRef()}:null;if(!state.selected){state.draftModel={...model};saveLastModel(model);renderControls();')) throw new Error('changeModel must only write the draft when no session is selected')
 for (const marker of [
   '/client-queue.json', '/client-send.json', '/client-project-settings.json',
   '/api/form/request', '/api/question', 'questionAnswers', 'data-question-custom', 'Разрешать в проекте',
-  '/api/session/${encodeURIComponent(state.sessionID)}/children', '/client-git-revert.json', 'custom-opencode:session-selected',
-  'data-revert-hunk', 'workflowStatus', 'orchestrationTrace',
+  '/api/session/${encodeURIComponent(sessionID)}/children', '/client-git-revert.json', '/client-plan.json', 'custom-opencode:session-selected',
+  'data-revert-hunk', 'workflowStatus', 'orchestrationTrace', 'refreshPlan', 'orchestration-plan',
 ]) {
   if (!advanced.includes(marker)) throw new Error(`Advanced workflow marker missing: ${marker}`)
 }
 if (!advanced.includes('syncProjectModelOptions')) throw new Error('Project settings must use the current model catalog')
+if (!advanced.includes("if (currentProfile() !== 'orchestrated')")) throw new Error('Direct sessions must not load orchestration trace or native plan')
 if (!advanced.includes("const wasOpen = host.querySelector('details')?.open === true")) throw new Error('Orchestration panel must preserve its open state while refreshing')
+if (!advanced.includes('captureScrollState(host.querySelector(\'.plan-panel-body\'))') || !advanced.includes('captureScrollState(host.querySelector(\'.orchestration-nodes\'))') || !advanced.includes('requestAnimationFrame(() =>')) throw new Error('Orchestration panel must preserve both scroll positions after layout while refreshing')
+if (!advanced.includes('orchestrationRevision') || !advanced.includes('orchestrationRenderRevision') || !advanced.includes('state.sessionID !== sessionID')) throw new Error('Orchestration refresh and deferred scroll restoration must reject stale sessions/renders')
+if (advanced.includes('activity-chevron') || advancedCss.includes('activity-chevron')) throw new Error('Orchestration summaries must use only the shared right chevron')
+if (!index.includes('class="messages-frame"') || !index.includes('id="scrollToBottom"') || !appSource.includes('updateScrollToBottomButton') || !appSource.includes('scrollMessagesToBottom')) throw new Error('Messages need an accessible fixed scroll-to-bottom control')
+if (!appSource.includes('loadContext({force:Boolean(cachedContext),initial:true})') || !appSource.includes('bottom:initial||!wasLoaded')) throw new Error('Every initial session selection must open at the newest message')
+if (!advanced.includes('orchestrationPurpose(agent)') || !advanced.includes('class="node-purpose"')) throw new Error('Orchestration nodes must explain their role')
 if (!advanced.includes('!host.contains(event.target)')) throw new Error('Orchestration panel must close on outside click')
 if (!appSource.includes('configuredEffort')) throw new Error('Effort control must expose the configured model default')
 if (!index.includes('class="control-select"')) throw new Error('Effort select must have a dedicated chevron wrapper')
 const modelControlIndex = index.indexOf('id="modelButton"')
 const effortControlIndex = index.indexOf('id="variantSelect"')
-const agentControlIndex = index.indexOf('id="agentControls"')
-if (!(modelControlIndex < effortControlIndex && effortControlIndex < agentControlIndex)) throw new Error('Composer controls must be ordered Model, Effort, Build/Plan')
+if (!(modelControlIndex < effortControlIndex)) throw new Error('Composer controls must be ordered Model, Effort')
 if (index.includes('showArchived') || index.includes('> Архив')) throw new Error('Archive filter must stay removed from the sidebar')
 if (!appSource.includes('PROJECT_COLLAPSE_KEY') || !appSource.includes('class="project-group"')) throw new Error('Session folders must remain collapsible')
 if (!appSource.includes("$('modelChoices').addEventListener('click'")) throw new Error('Favorites must use a stable model-picker click delegate')
@@ -231,9 +253,13 @@ if (advanced.includes('/api/question/request')) throw new Error('Legacy question
 for (const marker of ['/api/form/request', '/api/question', 'question.asked', 'question.v2.asked', 'question.replied', 'question.rejected', 'custom-opencode:event']) {
   if (!advanced.includes(marker) && !appSource.includes(marker)) throw new Error(`Native question marker missing: ${marker}`)
 }
-for (const marker of ['.question-card', '.queue-list', '.orchestration-trace', '.review-hunk', '.workflow-status']) {
+for (const marker of ['.question-card', '.queue-list', '.orchestration-trace', '.orchestration-plan', '.orchestration-plan-meter', '.review-hunk', '.workflow-status']) {
   if (!advancedCss.includes(marker)) throw new Error(`Advanced workflow styling missing: ${marker}`)
 }
+for (const marker of ['orchestration-panels', 'orchestration-summary', 'activity-current-label', 'activityItems', 'activityDescriptor', 'syncPanels']) {
+  if (!(advanced.includes(marker) || advancedCss.includes(marker))) throw new Error(`Activity dock marker missing: ${marker}`)
+}
+if (!advanced.includes('details.forEach((detail) => { detail.open = true })')) throw new Error('Plan and activity panels must open together')
 for (const marker of ['--sidebar-width', '--scrollbar-size', '.sidebar-resizer', '*::-webkit-scrollbar-thumb', '.limits-summary::after', '.model-provider-chevron', 'overflow-y:auto', '.workflow-grid']) {
   if (!designSystem.includes(marker)) throw new Error(`Design-system styling missing: ${marker}`)
 }
@@ -243,6 +269,10 @@ for (const marker of ['pull-refresh', 'role\',\'status', 'pull-refresh-progress'
 for (const marker of ['claimedAttachments', 'previousRun?state.running.set', 'queueFor(session.id).push']) {
   if (!appSource.includes(marker)) throw new Error(`Duplicate-send guard missing: ${marker}`)
 }
+for (const marker of ['promptHistory', 'promptHistoryEntries', 'navigatePromptHistory', 'rememberSubmittedPrompt', "message.type==='user'||message.role==='user'"]) {
+  if (!appSource.includes(marker)) throw new Error(`Session prompt history marker missing: ${marker}`)
+}
+if (!appSource.includes("e.key==='ArrowUp'&&navigatePromptHistory(-1,e)") || !appSource.includes("e.key==='ArrowDown'&&navigatePromptHistory(1,e)")) throw new Error('Web prompt history must use ArrowUp/ArrowDown')
 for (const marker of ['submitPending: false', 'if (state.submitPending) return', 'action.disabled = true', 'state.submitPending = false']) {
   if (!advanced.includes(marker)) throw new Error(`Managed-send duplicate guard missing: ${marker}`)
 }
@@ -254,8 +284,7 @@ for (const marker of ['sidebarResizer', 'localStorage', 'pointerdown', 'ArrowLef
 }
 
 if (!accessFix.includes('resolvedPermissions')) throw new Error('Permission suppression fix missing')
-if (!accessFixCss.includes('#agentControls') || !accessFixCss.includes('grid-template-columns:repeat(2')) throw new Error('Build/Plan switch must remain visible')
-if (accessFix.includes('enforceBuildOnly') || accessFixCss.includes('#agentControls{display:none')) throw new Error('Build/Plan switch must not be forced back to Build')
+if (!accessFixCss.includes('#agentControls{\n  display:none!important') || !uxControls.includes("const mode = 'build'")) throw new Error('Web composer must remain Build-only while normalizing legacy Plan agents')
 if (!accessFixCss.includes('max-height:calc(100dvh')) throw new Error('Mobile dialogs must use the dynamic viewport')
 
 for (const marker of ['opencode:web:appearance-v1', "theme:'system'", '--accent-contrast', 'prefers-color-scheme']) {
@@ -283,7 +312,7 @@ for (const marker of ['AUTH_COOKIE_NAME', 'SameSite=Strict', 'OPENCODE_AUTH_ALLO
 }
 if (serverSource.includes('WWW-Authenticate')) throw new Error('Web server must not trigger browser-native Basic Auth challenge')
 
-for (const marker of ['/client-model-capabilities.json', '/client-tasks.json', '/client-task-control.json', '/client-resource-status.json', '/client-speculate.json', '/client-task-create.json', 'Task Center', 'qwen3.8-coder']) {
+ for (const marker of ['/client-model-capabilities.json', '/client-tasks.json', '/client-task-control.json', '/client-resource-status.json', '/client-speculate.json', '/client-task-create.json', 'Task Center', "profile:profile()"] ) {
   if (!runtimeDashboard.includes(marker)) throw new Error(`Runtime dashboard behavior marker missing: ${marker}`)
 }
 for (const marker of ['runtime-task', 'runtime-profile', 'runtime-state']) {
@@ -312,7 +341,7 @@ for (const marker of ['/client-send.json', 'prompt_async', 'body["system"]', 'fe
 for (const marker of ['/client-queue.json', '/client-project-settings.json', '/client-git-revert.json', 'permissionRules', 'git apply']) {
   if (!featureServer.includes(marker)) throw new Error(`Persistent feature server marker missing: ${marker}`)
 }
-for (const marker of ['/client-tasks.json', 'spawn_speculative', 'mcp_gateway', '_create_worktree', 'runtime.recovery_scan', 'agent.loop_detected', 'agent.stuck']) {
+for (const marker of ['/client-tasks.json', '/client-plan.json', 'latest_plan_document', '_parse_plan_document', 'spawn_speculative', 'mcp_gateway', '_create_worktree', 'runtime.recovery_scan', 'agent.loop_detected', 'agent.stuck']) {
   if (!runtimeServer.includes(marker)) throw new Error(`Runtime server marker missing: ${marker}`)
 }
 if (!service.includes('app/server_workflow.py') || !service.includes('app/server_rag.py')) throw new Error('Production service must compose workflow and RAG layers')
@@ -330,8 +359,14 @@ for (const id of ['build-direct', 'plan-direct']) {
 const orchestrated = config.providers?.['bailian-cli']?.models?.['qwen3.8-orchestrated'] || {}
 if (orchestrated.modelID !== 'qwen3.8-max') throw new Error('Orchestrated catalog model must route to the real qwen3.8-max API model')
 if (orchestrated.name !== 'Qwen3.8 Max · Orchestrated') throw new Error('Orchestrated catalog model label regression')
+const solOrchestrated = config.providers?.openai?.models?.['gpt-5.6-sol-orchestrated'] || {}
+if (solOrchestrated.modelID !== 'gpt-5.6-sol') throw new Error('Orchestrated SOL catalog model must route to the real gpt-5.6-sol API model')
+if (solOrchestrated.name !== 'GPT-5.6 Sol · Orchestrated') throw new Error('Orchestrated SOL catalog model label regression')
+for (const id of ['sol-fast-reader', 'sol-role-builder', 'sol-role-builder-high', 'sol-role-builder-max', 'sol-role-reviewer', 'sol-role-reviewer-max']) {
+  if (!agents[id]) throw new Error(`SOL role agent missing: ${id}`)
+}
 const orchestratedPlugin = readFileSync(resolve(root, 'config/plugins/orchestrated-qwen.js'), 'utf8')
-for (const marker of ['Plugin.define({', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy']) {
+for (const marker of ['Plugin.define({', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'gpt-5.6-sol-orchestrated', 'isOrchestratedSol', 'orchestrator-sol.md', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy']) {
   if (!orchestratedPlugin.includes(marker)) throw new Error(`Orchestrated Qwen plugin marker missing: ${marker}`)
 }
 for (const source of [orchestratedPlugin, readFileSync(resolve(root, 'config/plugins/server-runtime-guard.js'), 'utf8')]) {
@@ -345,4 +380,4 @@ for (const marker of ['doctorButton', 'doctorDialog', 'doctor.js', 'doctor.css',
   if (index.includes(marker)) throw new Error(`Removed Doctor surface is still present: ${marker}`)
 }
 
-console.log('Web smoke passed: Build/Plan UX + native OpenCode agents + dedicated orchestrated Qwen + Runtime V2/V3 + auth/appearance/mobile + queue/questions/permissions/review')
+console.log('Web smoke passed: Build/Plan UX + native OpenCode agents + dedicated Qwen/SOL orchestration + Runtime V2/V3 + auth/appearance/mobile + queue/questions/permissions/review')

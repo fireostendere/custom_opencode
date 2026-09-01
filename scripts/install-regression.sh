@@ -78,19 +78,59 @@ CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
   bash "$COPY/scripts/install.sh" >"$TMP/install.out"
 
 CONFIG="$HOME_DIR/.config/opencode/opencode.json"
+CLI_CONFIG="$HOME_DIR/.config/opencode/cli.json"
 SERVICE="$HOME_DIR/.config/systemd/user/opencode-web-client.service"
 WRAPPER="$HOME_DIR/.local/bin/custom-opencode"
 UPDATER="$HOME_DIR/.local/bin/custom-opencode-update"
 RUNTIME_GUARD="$HOME_DIR/.config/opencode/plugins/server-runtime-guard.js"
 TUI_DIR="$HOME_DIR/.config/opencode/plugins/tui"
 [[ -f "$CONFIG" ]] || { echo "fresh install did not render config" >&2; exit 1; }
+grep -Fq '"app.exit": "<leader>q"' "$CLI_CONFIG"
 [[ -f "$SERVICE" ]] || { echo "fresh install did not render systemd unit" >&2; exit 1; }
 [[ -x "$WRAPPER" ]] || { echo "fresh install did not create executable wrapper" >&2; exit 1; }
 [[ -L "$UPDATER" ]] || { echo "fresh install did not create updater symlink" >&2; exit 1; }
 [[ -f "$RUNTIME_GUARD" ]] || { echo "fresh install did not install runtime guard plugin" >&2; exit 1; }
+if grep -Fq 'pin-orchestrated-recent.py' "$WRAPPER"; then
+  echo "custom-opencode must preserve the last-used model order" >&2
+  exit 1
+fi
 grep -Fq "$COPY/app/server_workflow.py" "$SERVICE"
 grep -Fq 'systemctl --user enable --now opencode-web-client.service' "$LOG"
 grep -Fq 'systemctl --user restart opencode-web-client.service' "$LOG"
+
+# Isolated plan runs cannot infer their parent session model.  The wrapper must
+# reject the bare form while preserving every explicit reference byte-for-byte.
+if CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" run --agent plan >"$TMP/bare-plan.out" 2>&1; then
+  echo "bare isolated plan unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -Fq 'requires --model provider/model[#variant]' "$TMP/bare-plan.out"
+for ref in 'missing-provider' 'provider/' '/model' 'provider/model#' 'provider/model#two#variants' 'provider/model with-space'; do
+  if CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" run --model="$ref" --agent=plan >"$TMP/invalid-plan.out" 2>&1; then
+    echo "malformed isolated plan model unexpectedly succeeded: $ref" >&2
+    exit 1
+  fi
+  grep -Fq 'requires --model provider/model[#variant]' "$TMP/invalid-plan.out"
+done
+if CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" run --model --agent plan >"$TMP/missing-plan-model.out" 2>&1; then
+  echo "isolated plan without a --model value unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -Fq 'requires --model provider/model[#variant]' "$TMP/missing-plan-model.out"
+if CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" run --agent plan --model >"$TMP/final-plan-model.out" 2>&1; then
+  echo "final --model without value unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -Fq 'requires --model provider/model[#variant]' "$TMP/final-plan-model.out"
+: >"$LOG"
+for ref in 'bailian-cli/qwen3.8-orchestrated' 'openai/gpt-5.6-sol-orchestrated' 'example/direct#precise'; do
+  CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" run --model "$ref" --agent plan --help
+  grep -Fxq "opencode2 run --model $ref --agent plan --help" "$LOG"
+  CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" run --agent=plan --model="$ref" --help
+  grep -Fxq "opencode2 run --agent=plan --model=$ref --help" "$LOG"
+done
+CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" run --agent build --model=not-a-model-ref --help
+grep -Fxq 'opencode2 run --agent build --model=not-a-model-ref --help' "$LOG"
 
 for stale in limits-header.js limits-header.jsx limits-panels.js model-selector.js limits-helper.js; do
   [[ ! -e "$TUI_DIR/$stale" ]] || { echo "stale TUI plugin survived install: $stale" >&2; exit 1; }

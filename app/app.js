@@ -12,6 +12,7 @@ const SESSION_ORDER_KEY = 'opencode:web:session-order-v1'
 const NOTIFY_KEY = 'opencode:web:notifications'
 const LAST_MODEL_KEY = 'opencode:web:last-model-v1'
 const PERSONAL_PRO_LIMITS = { fiveHour: 12000, sevenDay: 40000 }
+const CONTEXT_PAGE_SIZE = 80
 const QWEN_SUFFIX_RE = /\s·\sQwen\s+(OK|exhausted→([^·]+))\s*$/
 const PERMISSION_SUPPRESSION_TTL = 15_000
 
@@ -33,6 +34,7 @@ window.__resolvedPermissions = permissionSuppression.resolved
 const state = {
   clientConfig: null,
   sessions: [], projects: [], selected: null, context: [],
+  contextCache: new Map(),
   agents: [], models: [], providers: [], defaultModel: null,
   draftAgent: null, draftModel: null, attachments: [],
   loading: false, running: new Map(), queues: new Map(), deliveryMode: 'steer',
@@ -49,6 +51,8 @@ let gitTimer = null
 let eventSource = null
 let dragPayload = null
 let dragHandlersInstalled = false
+let promptHistory = { sessionID:null, entries:[], cursor:0, draft:'', value:'' }
+let applyingPromptHistory = false
 
 function loadJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || '') || fallback } catch { return fallback }
@@ -57,7 +61,7 @@ function saveJson(key, value) { localStorage.setItem(key, JSON.stringify(value))
 function meta(id) { return sessionMeta[id] ||= { pinned:false } }
 function saveMeta() { saveJson(META_KEY, sessionMeta) }
 function draftKey() { return state.selected?.id || '__new__' }
-function saveDraftNow() { drafts[draftKey()] = $('input').value; saveJson(DRAFT_KEY, drafts) }
+function saveDraftNow() { drafts[draftKey()] = promptHistory.sessionID === state.selected?.id && promptHistory.cursor < promptHistory.entries.length ? promptHistory.draft : $('input').value; saveJson(DRAFT_KEY, drafts) }
 function restoreDraft() { $('input').value = drafts[draftKey()] || ''; autosizeInput() }
 function scheduleDraftSave() { clearTimeout(draftSaveTimer); draftSaveTimer = setTimeout(saveDraftNow, 180) }
 function toast(text, ms = 2600) { const el=$('toast'); el.textContent=text; el.hidden=false; clearTimeout(el._timer); el._timer=setTimeout(()=>el.hidden=true,ms) }
@@ -175,12 +179,21 @@ async function sessionWithControls(session){
     return {...session,...detail,...(model?{model}:{})}
   }catch{return session}
 }
+function primaryAgentFor(model, agent) {
+  const id = String(agent || 'build')
+  if (!['build', 'plan', 'build-direct', 'plan-direct'].includes(id)) return agent
+  const modelID = model?.id || model?.modelID
+  const providerID = model?.providerID || model?.provider
+  const mode = id.startsWith('plan') ? 'plan' : 'build'
+  const orchestrated = (providerID === 'bailian-cli' && modelID === 'qwen3.8-orchestrated') || (providerID === 'openai' && modelID === 'gpt-5.6-sol-orchestrated')
+  return orchestrated ? mode : `${mode}-direct`
+}
 async function transferSessionToProject(session,project,{select=false,removeSource=false}={}) {
   if(state.selected?.id===session.id)saveDraftNow()
   const sourceSession=await sessionWithControls(session)
   const context=state.selected?.id===session.id&&state.context.length?[...state.context]:await api.getContext(session.id)
   const handoff=handoffText(sourceSession,context)
-  const created=await api.createSession({directory:project.canonical,title:`${sessionTitle(sourceSession)} → ${projectLabel(project)}`,agent:sourceSession.agent,model:sourceSession.model})
+  const created=await api.createSession({directory:project.canonical,title:`${sessionTitle(sourceSession)} → ${projectLabel(project)}`,agent:primaryAgentFor(sourceSession.model,sourceSession.agent),model:sourceSession.model})
   if (!created?.id) throw new Error('OpenCode не вернул id новой сессии')
   state.sessions=[created,...state.sessions.filter((item)=>item.id!==created.id)]
   state.running.set(created.id,{status:'handoff',since:Date.now()});renderSessions();renderHeader()
@@ -312,29 +325,103 @@ function renderSessions() {
 async function selectSession(id,{push=true,saveDraft=true}={}) {
   const session=state.sessions.find((s)=>s.id===id); if(!session)return
   if(saveDraft)saveDraftNow()
-  state.selected=session; state.context=[]; state.attachments=[]; state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
-  renderAttachments(); renderSessions(); renderHeader(); renderMessages(); restoreDraft(); $('sidebar').classList.remove('open')
+  const cachedContext=state.contextCache.get(id)
+  state.selected=session; state.context=cachedContext?.messages||[]; state.attachments=[]; state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
+  resetPromptHistory(id)
+  renderAttachments(); renderSessions(); renderHeader(); renderMessages({bottom:true}); restoreDraft(); $('sidebar').classList.remove('open')
   if(push) setSessionHash(id)
   window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:id}}))
-  const [detail]=await Promise.all([api.getSession(id).catch(()=>null),loadContext(),loadControls(),refreshGit()])
-  if(detail&&state.selected?.id===id){state.selected={...state.selected,...detail};const index=state.sessions.findIndex((item)=>item.id===id);if(index>=0)state.sessions[index]=state.selected;renderHeader();renderControls()}
+  const initialAgent=session.agent
+  const [detail]=await Promise.all([api.getSession(id).catch(()=>null),loadContext({force:Boolean(cachedContext),initial:true}),loadControls(),refreshGit()])
+  if(detail&&state.selected?.id===id){const liveAgent=state.selected.agent;state.selected={...state.selected,...detail,...(liveAgent!==initialAgent?{agent:liveAgent}:{})};const index=state.sessions.findIndex((item)=>item.id===id);if(index>=0)state.sessions[index]=state.selected;renderHeader();renderControls()}
 }
 function clearSelection() {
   saveDraftNow(); state.selected=null;state.context=[];state.attachments=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
+  resetPromptHistory(null)
   location.hash=''
   window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:null}}))
   renderSessions();renderHeader();renderMessages();renderAttachments();restoreDraft();loadDraftControls()
 }
 function setSessionHash(id) { const next=`#/session/${encodeURIComponent(id)}`; if(location.hash!==next) history.pushState(null,'',next) }
 function sessionIdFromHash() { const match=/^#\/session\/([^/?]+)/.exec(location.hash); return match?decodeURIComponent(match[1]):null }
-
-async function loadContext() {
-  if(!state.selected)return
-  const id=state.selected.id
-  try { const context=await api.getContext(id); if(state.selected?.id!==id)return; state.context=context.filter((m)=>['user','assistant'].includes(m.type)||['user','assistant'].includes(m.role)); renderMessages(); renderUsage() }
-  catch(error){ if(state.selected?.id===id)$('messagesInner').innerHTML=`<div class="empty">Не удалось открыть сессию: ${escapeHtml(error.message)}</div>` }
+function contextMessages(messages) { return (Array.isArray(messages)?messages:[]).filter((message)=>['user','assistant'].includes(message?.type)||['user','assistant'].includes(message?.role)) }
+function messageKey(message) {
+  const id=message?.id||message?.messageID||message?.info?.id
+  if(id)return `id:${id}`
+  const role=message?.type||message?.role||''
+  const created=message?.time?.created||message?.createdAt||''
+  return `anonymous:${role}:${created}:${messagePlainText(message)}`
 }
-function scheduleContextReload(delay=250) { clearTimeout(contextReloadTimer); contextReloadTimer=setTimeout(()=>loadContext(),delay) }
+function mergeContextMessages(current,incoming,older=false) {
+  const rows=older?[...incoming,...current]:[...current,...incoming],merged=new Map()
+  rows.forEach((message)=>merged.set(messageKey(message),message))
+  return [...merged.values()]
+}
+function contextCacheFor(id) {
+  let value=state.contextCache.get(id)
+  if(!value){value={messages:[],loaded:false,loading:false,nextCursor:null,hasMore:true,complete:false,seenCursors:new Set()};state.contextCache.set(id,value)}
+  return value
+}
+function setContextPageCursor(cache,cursor,nextCursor) {
+  if(!nextCursor||nextCursor===cursor||cache.seenCursors.has(nextCursor)){cache.nextCursor=null;cache.hasMore=false;return}
+  cache.nextCursor=nextCursor;cache.hasMore=true
+}
+function maybeLoadOlderContext() {
+  const view=$('messages'),cache=state.selected&&state.contextCache.get(state.selected.id)
+  if(cache?.hasMore&&view&&view.scrollHeight<=view.clientHeight+8)void loadOlderContext()
+}
+async function loadContext({force=false,initial=false}={}) {
+  if(!state.selected)return
+  const id=state.selected.id,cache=contextCacheFor(id)
+  if(cache.loaded&&!force){state.context=cache.messages;syncPromptHistory();renderMessages({bottom:initial});renderUsage();return}
+  if(cache.loading)return
+  cache.loading=true
+  const wasLoaded=cache.loaded
+  try {
+    const page=await api.getContextPage(id,{limit:CONTEXT_PAGE_SIZE})
+    const incoming=contextMessages(page.messages)
+    cache.messages=wasLoaded?mergeContextMessages(cache.messages,incoming):incoming
+    cache.loaded=true
+    if(!wasLoaded){cache.complete=Boolean(page.complete);setContextPageCursor(cache,'',page.nextCursor)}
+    else if(page.complete){cache.complete=true;cache.nextCursor=null;cache.hasMore=false}
+    else if(!cache.hasMore&&cache.messages.length<=incoming.length)setContextPageCursor(cache,'',page.nextCursor)
+    if(state.selected?.id===id){
+      state.context=cache.messages
+      syncPromptHistory();renderMessages({bottom:initial||!wasLoaded});renderUsage()
+    }
+  }catch(error){
+    if(state.selected?.id===id){if(cache.messages.length)toast(`История: ${error.message}`);else $('messagesInner').innerHTML=`<div class="empty">Не удалось открыть сессию: ${escapeHtml(error.message)}</div>`}
+  }finally{
+    cache.loading=false
+    if(!cache.complete&&state.selected?.id===id)maybeLoadOlderContext()
+  }
+}
+async function loadOlderContext() {
+  const id=state.selected?.id,cache=id&&state.contextCache.get(id),view=$('messages')
+  if(!id||!cache?.loaded||cache.loading||!cache.hasMore||!cache.nextCursor||!view)return
+  const cursor=cache.nextCursor
+  if(cache.seenCursors.has(cursor)){cache.nextCursor=null;cache.hasMore=false;return}
+  cache.seenCursors.add(cursor);cache.loading=true
+  const anchor={top:view.scrollTop,height:view.scrollHeight}
+  try {
+    const page=await api.getContextPage(id,{cursor,limit:CONTEXT_PAGE_SIZE})
+    cache.messages=mergeContextMessages(cache.messages,contextMessages(page.messages),true)
+    if(page.complete){cache.complete=true;cache.nextCursor=null;cache.hasMore=false}
+    else setContextPageCursor(cache,cursor,page.nextCursor)
+    if(state.selected?.id===id){
+      state.context=cache.messages
+      syncPromptHistory();renderMessages({anchor});renderUsage()
+    }
+  }catch(error){
+    cache.seenCursors.delete(cursor)
+    if(state.selected?.id===id)toast(`История: ${error.message}`)
+  }
+  finally{
+    cache.loading=false
+    if(!cache.complete&&state.selected?.id===id)maybeLoadOlderContext()
+  }
+}
+function scheduleContextReload(delay=250) { clearTimeout(contextReloadTimer); contextReloadTimer=setTimeout(()=>loadContext({force:true}),delay) }
 
 async function loadControls() {
   if(!state.selected)return
@@ -345,7 +432,7 @@ async function loadControls() {
 async function loadDraftControls() {
   if(state.selected||!state.clientConfig?.scratchDirectory)return
   state.draftModel ||= loadLastModel()
-  try { const catalog=await api.getControls(state.clientConfig.scratchDirectory); if(state.selected)return; state.draftAgent ||= catalog.agents.find((a)=>a.id==='build')?.id||catalog.agents[0]?.id; if(state.draftModel&&!catalog.models.some((m)=>m.id===state.draftModel.id&&m.providerID===state.draftModel.providerID))state.draftModel=null; state.draftModel ||= catalog.fallback && {id:catalog.fallback.id,providerID:catalog.fallback.providerID}; applyControls(catalog) }
+  try { const catalog=await api.getControls(state.clientConfig.scratchDirectory); if(state.selected)return; state.draftAgent ||= catalog.agents.find((a)=>a.id==='build-direct')?.id||catalog.agents.find((a)=>a.id==='build')?.id||catalog.agents[0]?.id; if(state.draftModel&&!catalog.models.some((m)=>m.id===state.draftModel.id&&m.providerID===state.draftModel.providerID))state.draftModel=null; state.draftModel ||= catalog.fallback && {id:catalog.fallback.id,providerID:catalog.fallback.providerID}; applyControls(catalog) }
   catch(error){toast(`Настройки: ${error.message}`)}
 }
 function applyControls(catalog){state.agents=catalog.agents;state.models=catalog.models;state.providers=catalog.providers;state.defaultModel=catalog.fallback;renderControls();renderUsage()}
@@ -365,8 +452,9 @@ function renderControls(){
   $('variantSelect').innerHTML=variants.length?`<option value="">${escapeHtml(configuredEffort||'default')}</option>${variants.map((v)=>`<option value="${escapeHtml(v.id)}">${escapeHtml(v.id)}</option>`).join('')}`:'<option value="">—</option>'
   $('variantSelect').value=selectedVariant; $('variantSelect').disabled=!variants.length
 }
-async function changeAgent(agent){if(!state.selected){state.draftAgent=agent;renderControls();return}try{await api.switchAgent(state.selected.id,agent);state.selected.agent=agent;renderControls()}catch(e){toast(`Режим: ${e.message}`)}}
-async function changeModel(model){if(!state.selected){state.draftModel={...model};saveLastModel(model);renderControls();return}try{await api.switchModel(state.selected.id,model);state.selected.model={...model};saveLastModel(model);renderControls();renderUsage()}catch(e){toast(`Модель: ${e.message}`)}}
+async function changeAgent(agent){const sessionID=state.selected?.id||null,previous=state.selected?.agent||state.draftAgent;if(!state.selected){state.draftAgent=agent;renderControls();window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:true}}));return true}state.selected.agent=agent;renderControls();try{await api.switchAgent(sessionID,agent);if(state.selected?.id!==sessionID){window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:false,error:'session changed'}}));return false}window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:true}}));return true}catch(e){if(state.selected?.id===sessionID&&state.selected.agent===agent){state.selected.agent=previous;renderControls()}toast(`Режим: ${e.message}`);window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:false,error:String(e?.message||e)}}));return false}}
+async function changeModel(model){const sessionID=state.selected?.id||null,previousModel=activeModelRef()?{...activeModelRef()}:null;if(!state.selected){state.draftModel={...model};saveLastModel(model);renderControls();window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok:true}}));return true}try{await api.switchModel(sessionID,model);if(state.selected?.id!==sessionID){window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok:false,error:'session changed'}}));return false}state.selected.model={...model};saveLastModel(model);renderControls();renderUsage();window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok:true}}));return true}catch(e){toast(`Модель: ${e.message}`);window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok:false,error:String(e?.message||e)}}));return false}}
+window.CustomOpenCodeControls={changeModel,changeAgent}
 
 function renderModelChoices(){
   const query=$('modelSearch').value.trim().toLowerCase(), current=activeModelRef()
@@ -418,12 +506,79 @@ function messagePlainText(message){
   if((message.type||message.role)==='user')return message.text||''
   const parts=message.content||message.parts||[];return parts.filter((p)=>p.type==='text').map((p)=>p.text||'').join('\n')||message.text||''
 }
-function renderMessages(){
-  const inner=$('messagesInner'), view=$('messages'); if(!state.selected){inner.innerHTML='<div class="welcome">Выбери сессию или задай быстрый вопрос.</div>';return} if(!state.context.length){inner.innerHTML='<div class="welcome">Пока нет сообщений.</div>';return}
+function promptHistoryEntries(){
+  if(!state.selected)return []
+  return state.context.filter((message)=>message.type==='user'||message.role==='user').map(messagePlainText).map((text)=>text.trim()).filter(Boolean)
+}
+function resetPromptHistory(sessionID=state.selected?.id||null){
+  const entries=sessionID?promptHistoryEntries():[]
+  promptHistory={sessionID,entries,cursor:entries.length,draft:'',value:''}
+}
+function syncPromptHistory(){
+  const sessionID=state.selected?.id||null
+  if(promptHistory.sessionID!==sessionID){resetPromptHistory(sessionID);return}
+  const entries=promptHistoryEntries()
+  promptHistory.entries=entries
+  if(promptHistory.cursor>entries.length)promptHistory.cursor=entries.length
+  if(promptHistory.cursor===entries.length)promptHistory.value=$('input')?.value||promptHistory.value
+}
+function rememberSubmittedPrompt(sessionID,text){
+  if(!sessionID||!text.trim())return
+  if(promptHistory.sessionID!==sessionID)resetPromptHistory(sessionID)
+  if(promptHistory.entries[promptHistory.entries.length-1]!==text.trim())promptHistory.entries.push(text.trim())
+  promptHistory.cursor=promptHistory.entries.length
+  promptHistory.draft=''
+  promptHistory.value=''
+}
+function notePromptInput(){
+  if(applyingPromptHistory)return
+  syncPromptHistory()
+  promptHistory.cursor=promptHistory.entries.length
+  promptHistory.draft=$('input').value
+  promptHistory.value=promptHistory.draft
+}
+function applyPromptHistoryValue(value){
+  const input=$('input')
+  applyingPromptHistory=true
+  input.value=value
+  input.setSelectionRange(value.length,value.length)
+  promptHistory.value=value
+  autosizeInput()
+  queueMicrotask(()=>{applyingPromptHistory=false})
+}
+function navigatePromptHistory(direction,event){
+  if(!state.selected||event.shiftKey||event.altKey||event.ctrlKey||event.metaKey)return false
+  const input=$('input')
+  if(input.selectionStart!==input.selectionEnd)return false
+  syncPromptHistory()
+  const browsing=promptHistory.cursor<promptHistory.entries.length&&input.value===promptHistory.value
+  const singleLine=!input.value.includes('\n')
+  const atBoundary=singleLine||(direction<0?input.selectionStart===0:input.selectionEnd===input.value.length)
+  if(!browsing&&!atBoundary)return false
+  if(!promptHistory.entries.length)return false
+  const current=input.value
+  if(promptHistory.cursor!==promptHistory.entries.length&&current!==promptHistory.value){
+    promptHistory.cursor=promptHistory.entries.length
+    promptHistory.draft=current
+  }
+  if(promptHistory.cursor===promptHistory.entries.length&&direction<0)promptHistory.draft=current
+  const next=Math.max(0,Math.min(promptHistory.entries.length,promptHistory.cursor+direction))
+  if(next===promptHistory.cursor)return true
+  promptHistory.cursor=next
+  applyPromptHistoryValue(next===promptHistory.entries.length?promptHistory.draft:promptHistory.entries[next])
+  return true
+}
+function renderMessages({anchor=null,bottom=false}={}){
+  const inner=$('messagesInner'), view=$('messages'); if(!state.selected){inner.innerHTML='<div class="welcome">Выбери сессию или задай быстрый вопрос.</div>';updateScrollToBottomButton();return} if(!state.context.length){inner.innerHTML='<div class="welcome">Пока нет сообщений.</div>';updateScrollToBottomButton();return}
   const stick=view.scrollHeight-view.scrollTop-view.clientHeight<100; const prev=view.scrollTop
   inner.innerHTML=state.context.map((message,index)=>{const type=message.type||message.role;const id=message.id||message.messageID||`idx-${index}`;const body=type==='user'?userBody(message):assistantBody(message);return `<article class="message ${type==='user'?'user':'assistant'}" data-message-index="${index}"><div class="avatar">${type==='user'?'Я':'AI'}</div><div class="message-body"><div class="message-head"><span class="message-role">${type==='user'?'Ты':'OpenCode'}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`}).join('')
-  if(stick)view.scrollTop=view.scrollHeight;else view.scrollTop=prev
+  if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height;else if(bottom)view.scrollTop=view.scrollHeight;else if(stick)view.scrollTop=view.scrollHeight;else view.scrollTop=prev
+  updateScrollToBottomButton()
 }
+
+function messagesAtBottom(view=$('messages')){return !view||view.scrollHeight-view.clientHeight-view.scrollTop<=100}
+function updateScrollToBottomButton(){const button=$('scrollToBottom'),view=$('messages');if(button)button.hidden=!state.selected||messagesAtBottom(view)}
+function scrollMessagesToBottom(){const view=$('messages');if(!view)return;view.scrollTo({top:view.scrollHeight,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});requestAnimationFrame(updateScrollToBottomButton)}
 
 function usageForMessage(message){
   const source=message.usage||message.tokens||message.info?.usage||message.info?.tokens||{}
@@ -477,11 +632,11 @@ async function sendMessage(event){
   try {
     session=await ensureQuickSession();const running=isRunning(session.id)
     if(running&&state.deliveryMode==='queue'){
-      queueFor(session.id).push({text,files});renderSessions();toast('Добавлено в очередь');return
+      queueFor(session.id).push({text,files});rememberSubmittedPrompt(session.id,text);renderSessions();toast('Добавлено в очередь');return
     }
     previousRun=state.running.get(session.id)
     state.running.set(session.id,{status:running?'steer':'running',since:Date.now()});renderHeader();renderSessions();updateBadge()
-    await api.sendPrompt(session,{text,files,delivery:running?'steer':'normal'});setTimeout(()=>loadContext(),180)
+    await api.sendPrompt(session,{text,files,delivery:running?'steer':'normal'});rememberSubmittedPrompt(session.id,text);setTimeout(()=>loadContext({force:true}),180)
   } catch(error){
     if(session){previousRun?state.running.set(session.id,previousRun):state.running.delete(session.id);renderHeader();renderSessions();updateBadge()}
     toast(`Отправка: ${error.message}`)
@@ -507,7 +662,7 @@ async function forkWithFallback(session,messageID){
     let end=sourceContext.length
     if(messageID){const idx=sourceContext.findIndex((m)=>m.id===messageID||m.messageID===messageID);if(idx>=0)end=idx+1}
     const context=sourceContext.slice(0,end)
-    const created=await api.createSession({directory:directory(sourceSession),title:`${sessionTitle(sourceSession)} · fork`,agent:sourceSession.agent,model:sourceSession.model})
+    const created=await api.createSession({directory:directory(sourceSession),title:`${sessionTitle(sourceSession)} · fork`,agent:primaryAgentFor(sourceSession.model,sourceSession.agent),model:sourceSession.model})
     if(!created?.id)throw new Error('OpenCode не вернул id новой сессии')
     const handoff=handoffText(sourceSession,context)
     state.running.set(created.id,{status:'fork-handoff',since:Date.now()})
@@ -523,7 +678,7 @@ async function removeSession(session){try{await api.deleteSession(session.id);st
 async function renameCurrent(){const session=state.actionSession||state.selected;if(!session)return;const title=$('renameInput').value.trim();if(!title)return;try{const updated=await api.renameSession(session.id,title);session.title=updated?.title||title;$('renameDialog').close();renderSessions();renderHeader()}catch(e){toast(`Rename: ${e.message}`)}}
 async function forkAtMessage(messageID){if(!state.selected)return;try{const fork=await forkWithFallback(state.selected,messageID.startsWith('idx-')?undefined:messageID);state.sessions=[fork,...state.sessions.filter((s)=>s.id!==fork.id)];await selectSession(fork.id);toast('Fork создан')}catch(e){toast(`Fork: ${e.message}`)}}
 
-function confirmAction(title,text){return new Promise((resolve)=>{const d=$('confirmDialog');$('confirmTitle').textContent=title;$('confirmText').textContent=text;const cleanup=(value)=>{d.close();$('confirmOk').onclick=null;$('confirmCancel').onclick=null;resolve(value)};$('confirmOk').onclick=()=>cleanup(true);$('confirmCancel').onclick=()=>cleanup(false);d.showModal()})}
+  function confirmAction(title,text){return new Promise((resolve)=>{const d=$('confirmDialog');$('confirmTitle').textContent=title;$('confirmText').textContent=text;let settled=false;const onClose=()=>cleanup(false);const cleanup=(value)=>{if(settled)return;settled=true;d.removeEventListener('close',onClose);d.close();$('confirmOk').onclick=null;$('confirmCancel').onclick=null;resolve(value)};d.addEventListener('close',onClose);$('confirmOk').onclick=()=>cleanup(true);$('confirmCancel').onclick=()=>cleanup(false);d.showModal()})}
 
 // `navigator.serviceWorker.ready` never settles when registration failed or
 // the context is not secure; awaiting it forever would silently swallow every
@@ -631,7 +786,7 @@ function setupPullRefresh(){
     const sessionID=gesture?.sessionID
     stopHold();gesture=null;show('refreshing',1)
     const started=performance.now()
-    await Promise.allSettled([loadSessions(),sessionID?loadContext():Promise.resolve()])
+    await Promise.allSettled([loadSessions(),sessionID?loadContext({force:true}):Promise.resolve()])
     const remaining=MIN_REFRESH_TIME-(performance.now()-started)
     if(remaining>0)await new Promise((resolve)=>setTimeout(resolve,remaining))
     if(state.selected?.id===sessionID){show('done',1);hideTimer=setTimeout(()=>{refreshing=false;hide()},700)}
@@ -684,16 +839,18 @@ function autosizeInput(){const el=$('input');el.style.height='auto';el.style.hei
 
 function bindEvents(){
   $('newSession').addEventListener('click',async()=>{clearSelection();try{await createAt(state.clientConfig.scratchDirectory)}catch(e){toast(`Создание: ${e.message}`)}})
-  $('chooseProject').addEventListener('click',()=>openProjectDialog('create'));$('refresh').addEventListener('click',()=>{loadSessions();if(state.selected)loadContext()});$('search').addEventListener('input',renderSessions)
+  $('chooseProject').addEventListener('click',()=>openProjectDialog('create'));$('refresh').addEventListener('click',()=>{loadSessions();if(state.selected)loadContext({force:true})});$('search').addEventListener('input',renderSessions)
   $('menu').addEventListener('click',()=> $('sidebar').classList.toggle('open'));$('sessionActions').addEventListener('click',()=>openSessionActions());$('modelButton').addEventListener('click',()=>{renderModelChoices();$('modelDialog').showModal();$('modelSearch').focus()});$('modelSearch').addEventListener('input',renderModelChoices);$('modelChoices').addEventListener('click',(event)=>{const fav=event.target.closest?.('[data-fav]');if(fav){event.preventDefault();event.stopPropagation();const key=fav.dataset.fav;favorites.has(key)?favorites.delete(key):favorites.add(key);saveJson(FAV_KEY,[...favorites]);renderModelChoices();return}const button=event.target.closest?.('[data-model][data-provider]');if(!button)return;$('modelDialog').close();changeModel({id:button.dataset.model,providerID:button.dataset.provider})})
   $('variantSelect').addEventListener('change',(e)=>{const ref=activeModelRef();if(!ref)return;const model={id:ref.id,providerID:ref.providerID};if(e.target.value)model.variant=e.target.value;changeModel(model)})
-  $('form').addEventListener('submit',sendMessage);$('stop').addEventListener('click',stopSelected);$('input').addEventListener('input',()=>{autosizeInput();scheduleDraftSave()});$('input').addEventListener('keydown',(e)=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('form').requestSubmit()}})
+  $('form').addEventListener('submit',sendMessage);$('stop').addEventListener('click',stopSelected);$('input').addEventListener('input',()=>{notePromptInput();autosizeInput();scheduleDraftSave()});$('input').addEventListener('keydown',(e)=>{if(e.key==='ArrowUp'&&navigatePromptHistory(-1,e)){e.preventDefault();return}if(e.key==='ArrowDown'&&navigatePromptHistory(1,e)){e.preventDefault();return}if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('form').requestSubmit()}})
   $('attachButton').addEventListener('click',()=> $('fileInput').click());$('fileInput').addEventListener('change',(e)=>{addFiles(e.target.files);e.target.value=''});$('input').addEventListener('paste',(e)=>{const files=[...(e.clipboardData?.items||[])].filter((i)=>i.kind==='file').map((i)=>i.getAsFile()).filter(Boolean);if(files.length){e.preventDefault();addFiles(files)}})
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.addEventListener('click',()=>{state.deliveryMode=b.dataset.delivery;renderRunControls()}));$('gitButton').addEventListener('click',openGitDialog);$('usageButton').addEventListener('click',()=>{$('usageDialog').showModal()});$('notifyButton').addEventListener('click',toggleNotifications)
   $('renameForm').addEventListener('submit',(e)=>{e.preventDefault();renameCurrent()});document.querySelectorAll('[data-close]').forEach((b)=>b.addEventListener('click',()=>$(b.dataset.close).close()));document.querySelectorAll('dialog').forEach((d)=>d.addEventListener('click',(e)=>{if(e.target===d)d.close()}))
+  $('messages').addEventListener('scroll',()=>{if($('messages').scrollTop<=80)void loadOlderContext();updateScrollToBottomButton()},{passive:true})
+  $('scrollToBottom').addEventListener('click',scrollMessagesToBottom)
   $('messagesInner').addEventListener('click',(e)=>{const copyCode=e.target.closest('.copy-code');if(copyCode){navigator.clipboard.writeText(copyCode.closest('.code-block').querySelector('code')?.textContent||'');copyCode.textContent='Скопировано';setTimeout(()=>copyCode.textContent='Копировать',900);return}const copy=e.target.closest('[data-copy-message]');if(copy){navigator.clipboard.writeText(messagePlainText(state.context[Number(copy.dataset.copyMessage)])||'');toast('Сообщение скопировано');return}const fork=e.target.closest('[data-fork-message]');if(fork){forkAtMessage(fork.dataset.forkMessage)}})
   window.addEventListener('hashchange',()=>{const id=sessionIdFromHash();if(id&&state.selected?.id!==id)selectSession(id,{push:false});else if(!id&&state.selected)clearSelection()});window.addEventListener('beforeunload',saveDraftNow)
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden){pollStatuses();if(state.selected){loadContext()}}})
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){pollStatuses();if(state.selected){loadContext({force:true})}}})
 }
 
 async function initialize(){

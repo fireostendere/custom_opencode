@@ -1,5 +1,6 @@
 import {
   ORCHESTRATED_MODEL,
+  ORCHESTRATED_MODELS,
   agentFor,
   composerActionState,
   modeFromAgent,
@@ -10,9 +11,11 @@ import {
 const $ = (id) => document.getElementById(id)
 const PROFILE_KEY = 'opencode:web:model-profiles-v1'
 let allowingAgentClick = false
-let suppressDirectSwitch = false
 let lastPermissionRaw = ''
 let desiredProfile = null
+let pendingAgentTarget = ''
+let failedAgentTarget = ''
+let modelTransition = null
 
 function loadProfiles() {
   try { return JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}') || {} } catch { return {} }
@@ -41,10 +44,11 @@ function rawActiveAgent() {
   return agentButtons().find((button) => button.classList.contains('active'))?.dataset.agent || 'build'
 }
 function currentMode() {
-  return modeFromAgent(rawActiveAgent())
+  return 'build'
 }
 function currentProfile() {
-  return desiredProfile || profileFromAgent(rawActiveAgent())
+  if (desiredProfile) return desiredProfile
+  return orchestratedModelSelected() ? 'orchestrated' : profileFromAgent(rawActiveAgent())
 }
 function nativeAgentButton(agentID) {
   return agentButtons().find((button) => button.dataset.agent === agentID) || null
@@ -52,52 +56,84 @@ function nativeAgentButton(agentID) {
 function clickNativeAgent(agentID) {
   const button = nativeAgentButton(agentID)
   if (!button) return false
+  if (rawActiveAgent() === agentID) {
+    pendingAgentTarget = ''
+    failedAgentTarget = ''
+    return true
+  }
+  if (pendingAgentTarget === agentID) return false
+  failedAgentTarget = ''
+  pendingAgentTarget = agentID
   allowingAgentClick = true
   try { button.click() } finally {
     queueMicrotask(() => {
       allowingAgentClick = false
+      if (rawActiveAgent() === agentID) pendingAgentTarget = ''
+      if (pendingAgentTarget === agentID && rawActiveAgent() !== agentID) return
       syncAgentSurface()
       syncModelSurface()
     })
   }
+  setTimeout(() => {
+    if (pendingAgentTarget !== agentID || rawActiveAgent() === agentID) return
+    pendingAgentTarget = ''
+    failedAgentTarget = agentID
+    syncAgentSurface()
+  }, 10000)
   return true
 }
 
 function syncAgentSurface() {
-  const mode = currentMode()
+  const activeAgent = rawActiveAgent()
+  if (pendingAgentTarget && activeAgent === pendingAgentTarget) {
+    pendingAgentTarget = ''
+    failedAgentTarget = ''
+  }
+  const mode = 'build'
   const profile = currentProfile()
+  const expectedAgent = agentFor(mode, profile)
+  if (expectedAgent !== activeAgent && expectedAgent !== failedAgentTarget) clickNativeAgent(expectedAgent)
   document.documentElement.dataset.modelProfile = profile
   document.documentElement.dataset.executionMode = mode
   for (const button of agentButtons()) {
     const id = button.dataset.agent || ''
-    button.classList.toggle('ux-hidden-agent', id !== 'build' && id !== 'plan')
-    const visibleMode = id === 'plan' ? 'plan' : id === 'build' ? 'build' : ''
-    button.classList.toggle('ux-mode-active', Boolean(visibleMode) && visibleMode === mode)
-    if (id === 'build' && button.textContent !== 'Build') button.textContent = 'Build'
-    if (id === 'plan' && button.textContent !== 'Plan') button.textContent = 'Plan'
+    button.classList.toggle('ux-hidden-agent', true)
   }
 }
 
-function orchestratedModelSelected() {
+function selectedOrchestratedModel() {
+  const selectedID = document.documentElement.dataset.orchestratedModel || ''
+  const byID = ORCHESTRATED_MODELS.find((model) => model.id === selectedID)
+  if (byID) return byID
   const text = $('modelButton')?.textContent || ''
-  return /qwen\s*3[.\s]?8.*orchestrat|qwen3\.8-orchestrated|оркестр/i.test(text)
+  return ORCHESTRATED_MODELS.find((model) => text.includes(model.id) || text.includes(model.label)) || null
+}
+function orchestratedModelSelected() {
+  return Boolean(selectedOrchestratedModel())
 }
 function syncOrchestratedChoiceLabel() {
-  const title = document.querySelector('#modelChoices [data-orchestrated-model] .choice-title')
-  if (!title) return
-  const selected = document.documentElement.dataset.modelProfile === 'orchestrated'
-  const next = `${ORCHESTRATED_MODEL.label}${selected ? ' · ✓' : ''}`
-  if (title.textContent !== next) title.textContent = next
+  const selectedID = selectedOrchestratedModel()?.id || ''
+  for (const choice of document.querySelectorAll('#modelChoices [data-orchestrated-model]')) {
+    const model = ORCHESTRATED_MODELS.find((item) => item.id === choice.dataset.model)
+    const title = choice.querySelector('.choice-title')
+    if (!model || !title) continue
+    const selected = document.documentElement.dataset.modelProfile === 'orchestrated' && selectedID === model.id
+    const next = `${model.label}${selected ? ' · ✓' : ''}`
+    if (title.textContent !== next) title.textContent = next
+  }
 }
 function syncModelSurface() {
   const button = $('modelButton')
   if (!button) return
   const profile = currentProfile()
   document.documentElement.dataset.modelProfile = profile
-  if (profile === 'orchestrated' && orchestratedModelSelected()) {
-    if (button.textContent !== ORCHESTRATED_MODEL.label) button.textContent = ORCHESTRATED_MODEL.label
-    button.title = 'Qwen 3.8 Max с автоматической делегацией дешёвому read-only worker и optional RAG'
+  const selectedOrchestrated = selectedOrchestratedModel()
+  if (profile === 'orchestrated' && selectedOrchestrated) {
+    if (button.textContent !== selectedOrchestrated.label) button.textContent = selectedOrchestrated.label
+    document.documentElement.dataset.orchestratedModel = selectedOrchestrated.id
+    button.title = `${selectedOrchestrated.label} с автоматической делегацией read-only worker и optional RAG`
   } else {
+    delete document.documentElement.dataset.orchestratedModel
     button.title = 'Выбрать модель'
   }
   syncOrchestratedChoiceLabel()
@@ -144,34 +180,64 @@ function syncPermission() {
   }
 }
 
-function nativeOrchestratedChoice() {
-  return document.querySelector(`#modelChoices [data-model="${ORCHESTRATED_MODEL.id}"][data-provider="${ORCHESTRATED_MODEL.providerID}"]`)
-}
-function chooseOrchestrated() {
-  const mode = currentMode()
-  const nativeModel = nativeOrchestratedChoice()
-  if (!nativeModel) return
-  desiredProfile = 'orchestrated'
-  persistProfile('orchestrated')
-  clickNativeAgent(agentFor(mode, 'orchestrated'))
-  suppressDirectSwitch = true
-  try { nativeModel.click() } finally {
-    queueMicrotask(() => {
-      suppressDirectSwitch = false
-      desiredProfile = 'orchestrated'
-      document.documentElement.dataset.modelProfile = 'orchestrated'
-      syncAgentSurface()
-      syncModelSurface()
-    })
+function setTransitionControls(disabled) {
+  for (const id of ['input', 'composerAction', 'modelButton', 'variantSelect', 'attachButton']) {
+    const control = $(id)
+    if (control) control.disabled = disabled
   }
 }
-function chooseDirect() {
-  desiredProfile = 'direct'
-  persistProfile('direct')
-  clickNativeAgent(agentFor(currentMode(), 'direct'))
-  document.documentElement.dataset.modelProfile = 'direct'
-  syncModelSurface()
+function nativeOrchestratedChoice(model = ORCHESTRATED_MODEL) {
+  return document.querySelector(`#modelChoices [data-model="${model.id}"][data-provider="${model.providerID}"]`)
 }
+function beginModelTransition(profile, model) {
+  const sessionID = profileSessionKey()
+  const token = Symbol('model-transition')
+  modelTransition = { token, sessionID, profile, model, previousProfile:currentProfile(), previousModel:null }
+  document.documentElement.dataset.modelTransition = '1'
+  setTransitionControls(true)
+  return modelTransition
+}
+function endModelTransition(pending, profile) {
+  if (modelTransition !== pending) return
+  modelTransition = null
+  delete document.documentElement.dataset.modelTransition
+  desiredProfile = profile
+  persistProfile(profile)
+  setTransitionControls(false)
+  syncAgentSurface(); syncModelSurface()
+}
+async function chooseModel(profile, model) {
+  if (modelTransition || !window.CustomOpenCodeControls) return
+  const pending = beginModelTransition(profile, model)
+  const valid = () => modelTransition === pending && pending.sessionID === profileSessionKey()
+  const changed = await window.CustomOpenCodeControls.changeModel(model)
+  if (!valid()) { setTransitionControls(false); return }
+  if (!changed) { endModelTransition(pending, pending.previousProfile); return }
+  pending.agent = agentFor(currentMode(), profile)
+  const agentChanged = await window.CustomOpenCodeControls.changeAgent(pending.agent)
+  if (!valid()) { setTransitionControls(false); return }
+  if (agentChanged) {
+    if (profile === 'orchestrated') document.documentElement.dataset.orchestratedModel = model.id
+    else delete document.documentElement.dataset.orchestratedModel
+    endModelTransition(pending, profile)
+    return
+  }
+  if (pending.previousModel) await window.CustomOpenCodeControls.changeModel(pending.previousModel)
+  if (valid()) endModelTransition(pending, pending.previousProfile)
+}
+function finishModelTransition(detail) {
+  const pending = modelTransition, model = detail?.model || {}
+  if (!pending || pending.sessionID !== profileSessionKey()) return
+  if (detail?.sessionID !== (pending.sessionID === '__new__' ? null : pending.sessionID) || model.id !== pending.model.id || model.providerID !== pending.model.providerID) return
+  pending.previousModel ||= detail.previousModel || null
+}
+function finishAgentTransition(detail) {
+  const pending = modelTransition
+  if (!pending || pending.sessionID !== profileSessionKey() || detail?.agent !== pending.agent) return
+  if (detail?.sessionID !== (pending.sessionID === '__new__' ? null : pending.sessionID)) return
+}
+function chooseOrchestrated(model = ORCHESTRATED_MODEL) { chooseModel('orchestrated', model) }
+function chooseDirect() { chooseModel('direct', ORCHESTRATED_MODEL) }
 
 function installAgentModeProxy() {
   const root = $('agentControls')
@@ -182,6 +248,7 @@ function installAgentModeProxy() {
     const requested = button.dataset.agent
     if (requested !== 'build' && requested !== 'plan') return
     const requestedMode = requested === 'plan' ? 'plan' : 'build'
+    failedAgentTarget = ''
     const target = agentFor(requestedMode, currentProfile())
     if (target === requested) return
     event.preventDefault()
@@ -206,19 +273,18 @@ function installModelProfileProxy() {
     if (orchestrated) {
       event.preventDefault()
       event.stopImmediatePropagation()
-      chooseOrchestrated()
+      const model = ORCHESTRATED_MODELS.find((item) => item.id === orchestrated.dataset.model)
+      if (model) chooseOrchestrated(model)
       return
     }
     const native = event.target.closest('[data-model][data-provider]')
-    if (!native || suppressDirectSwitch || event.target.closest('[data-fav]')) return
-    if (native.dataset.provider === ORCHESTRATED_MODEL.providerID && native.dataset.model === ORCHESTRATED_MODEL.id) {
-      desiredProfile = 'orchestrated'
-      persistProfile('orchestrated')
-      clickNativeAgent(agentFor(currentMode(), 'orchestrated'))
-      document.documentElement.dataset.modelProfile = 'orchestrated'
-      return
-    }
-    chooseDirect()
+    if (!native || event.target.closest('[data-fav]')) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    $('modelDialog')?.close()
+    const model = { id:native.dataset.model, providerID:native.dataset.provider }
+    const profile = ORCHESTRATED_MODELS.some((item) => item.providerID === model.providerID && item.id === model.id) ? 'orchestrated' : 'direct'
+    chooseModel(profile, model)
   }, true)
 
   new MutationObserver(() => queueMicrotask(syncOrchestratedChoiceLabel)).observe(root, { childList:true, subtree:true })
@@ -258,6 +324,11 @@ function installPermissionSummary() {
 function installSessionProfileRestore() {
   window.addEventListener('hashchange', () => {
     restoreDesiredProfile()
+    pendingAgentTarget = ''
+    failedAgentTarget = ''
+    modelTransition = null
+    delete document.documentElement.dataset.modelTransition
+    setTransitionControls(false)
     queueMicrotask(() => {
       syncAgentSurface()
       syncModelSurface()
@@ -266,6 +337,8 @@ function installSessionProfileRestore() {
 }
 
 function init() {
+  window.addEventListener('custom-opencode:model-changed', (event) => finishModelTransition(event.detail))
+  window.addEventListener('custom-opencode:agent-changed', (event) => finishAgentTransition(event.detail))
   restoreDesiredProfile()
   installAgentModeProxy()
   installModelProfileProxy()
@@ -280,6 +353,8 @@ function init() {
     chooseOrchestrated,
     setProfile(profile) {
       if (profile === 'orchestrated') return chooseOrchestrated()
+      const model = ORCHESTRATED_MODELS.find((item) => item.id === profile || item.providerID + '/' + item.id === profile)
+      if (model) return chooseOrchestrated(model)
       return chooseDirect()
     },
   }

@@ -22,6 +22,17 @@ ROLE_ENV = {
     "reviewer": "OPENCODE_REVIEW_MODEL",
     "long_horizon": "OPENCODE_LONG_HORIZON_MODEL",
 }
+SOL_ROLE_DEFAULTS = {
+    "builder": "openai/gpt-5.6-terra",
+    "reader": "openai/gpt-5.6-luna",
+    "reviewer": "openai/gpt-5.6-luna",
+}
+SOL_ROLE_ENV = {
+    "builder": "OPENCODE_SOL_BUILDER_MODEL",
+    "reader": "OPENCODE_SOL_READER_MODEL",
+    "reviewer": "OPENCODE_SOL_REVIEW_MODEL",
+}
+SOL_FORBIDDEN_MODEL_IDS = {"gpt-5.6-sol-fast"}
 ALIBABA_LOCKED_PREFIXES = (
     "qwen",
     "deepseek",
@@ -42,7 +53,9 @@ def _split_ref(ref: str) -> tuple[str, str, str | None]:
 def model_ref(model: dict[str, Any]) -> str:
     provider = str(model.get("providerID") or model.get("provider") or "")
     ident = str(model.get("id") or model.get("modelID") or "")
-    return f"{provider}/{ident}" if provider and ident else ident
+    variant = str(model.get("variant") or "")
+    ref = f"{provider}/{ident}" if provider and ident else ident
+    return f"{ref}#{variant}" if ref and variant else ref
 
 
 def provider_lock_for_ref(ref: str) -> str | None:
@@ -76,6 +89,20 @@ def _role_ref(role: str) -> str:
 
 def role_models() -> dict[str, str]:
     return {role: _role_ref(role) for role in ROLE_DEFAULTS}
+
+
+def sol_role_models() -> dict[str, str]:
+    result = {}
+    for role, default in SOL_ROLE_DEFAULTS.items():
+        value = os.environ.get(SOL_ROLE_ENV[role], default).strip() or default
+        ok, error = validate_provider_ref(value, "openai")
+        if not ok:
+            raise ValueError(f"{SOL_ROLE_ENV[role]}: {error}")
+        _, model, _ = _split_ref(value)
+        if model.casefold() in SOL_FORBIDDEN_MODEL_IDS:
+            raise ValueError(f"{SOL_ROLE_ENV[role]}: gpt-5.6-sol-fast is disabled; use GPT-5.6 Luna")
+        result[role] = value
+    return result
 
 
 def normalize_effort(value: Any, default: str = "auto") -> str:
@@ -247,16 +274,44 @@ class CapabilityRegistry:
 
     def profiles(self) -> dict[str, dict[str, Any]]:
         roles = role_models()
+        sol_roles = sol_role_models()
         orchestrated = os.environ.get("OPENCODE_ORCHESTRATED_MODEL", "bailian-cli/qwen3.8-orchestrated").strip() or "bailian-cli/qwen3.8-orchestrated"
         ok, error = validate_provider_ref(orchestrated, ALIBABA_PROVIDER)
         if not ok:
             raise ValueError(f"OPENCODE_ORCHESTRATED_MODEL: {error}")
+        sol_orchestrated = os.environ.get("OPENCODE_SOL_ORCHESTRATED_MODEL", "openai/gpt-5.6-sol-orchestrated").strip() or "openai/gpt-5.6-sol-orchestrated"
+        ok, error = validate_provider_ref(sol_orchestrated, "openai")
+        if not ok:
+            raise ValueError(f"OPENCODE_SOL_ORCHESTRATED_MODEL: {error}")
 
         direct = {
             "id": "direct", "label": "Selected model", "route": "selected",
-            "agentBuild": "build", "agentPlan": "plan", "orchestrated": False,
+            "agentBuild": "build-direct", "agentPlan": "plan-direct", "orchestrated": False,
             "contextPolicy": {"mode": "model-aware", "targetRatio": .72},
             "sandbox": "repo-write", "autoReview": False,
+        }
+        sol_profile = {
+            "id": "sol-orchestrated", "label": "GPT-5.6 Sol · Orchestrated", "route": "cloud",
+            "cloudModel": sol_orchestrated, "plannerModel": sol_orchestrated, "builderModel": sol_roles["builder"],
+            "readerModel": sol_roles["reader"], "reviewerModel": sol_roles["reviewer"],
+            "agentBuild": "build", "agentPlan": "plan", "orchestrated": True,
+            "planningPolicy": "required", "readerPolicy": "smart", "reviewPolicy": "planner-checkpoint",
+            "effortPolicy": {
+                "planner": {"default": "high", "critical": "max"},
+                "reader": {"default": "high", "maximum": "max"},
+                "builder": {"default": "medium", "afterFailure": "high", "maximum": "max"},
+                "reviewer": {"default": "high", "critical": "max"},
+            },
+            "contextPolicy": {"mode": "model-aware", "targetRatio": .72, "minGrowthBeforeRecompact": 32000},
+            "sandbox": "repo-write", "autoReview": "smart", "requires": {"tools": True, "coding": .80, "planning": .85},
+        }
+        sol_review = {
+            "id": "sol-review", "label": "SOL Review", "route": "cloud",
+            "cloudModel": sol_roles["reviewer"], "reviewerModel": sol_roles["reviewer"],
+            "agentBuild": "plan-direct", "agentPlan": "plan-direct", "orchestrated": False,
+            "reviewPolicy": "independent", "effortPolicy": {"reviewer": {"default": "high", "critical": "max", "maximum": "max"}},
+            "contextPolicy": {"mode": "model-aware", "targetRatio": .70}, "sandbox": "safe",
+            "autoReview": False, "requires": {"tools": True, "review": .80}, "hidden": True,
         }
         fast = {
             "id": "fast", "label": "Fast", "route": "cloud",
@@ -338,6 +393,8 @@ class CapabilityRegistry:
         }
         return {
             "direct": direct,
+            "sol-orchestrated": sol_profile,
+            "sol-review": sol_review,
             "fast": fast,
             "build": build,
             "architect": architect,

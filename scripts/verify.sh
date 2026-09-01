@@ -171,6 +171,7 @@ repo_services_py = (root / "app/repo_services.py").read_text(encoding="utf-8")
 runtime_resume_py = (root / "app/runtime_resume.py").read_text(encoding="utf-8")
 local_router_js = (root / "config/plugins/lazy-local-router.js").read_text(encoding="utf-8")
 orchestrated_plugin_js = (root / "config/plugins/orchestrated-qwen.js").read_text(encoding="utf-8")
+sol_orchestrator = (root / "config/prompts/orchestrator-sol.md").read_text(encoding="utf-8")
 service = (root / "systemd/opencode-web-client.service").read_text(encoding="utf-8")
 orchestrator = (root / "config/prompts/orchestrator.md").read_text(encoding="utf-8")
 agents_policy = (root / "config/AGENTS.md").read_text(encoding="utf-8")
@@ -221,15 +222,20 @@ if 'OPENCODE_LOCAL_PROVIDER || "ollama"' not in local_router_js or "OPENCODE_LOC
 for token in ("qwen3.8-max", "qwen3.8-flash#low", "qwen3.7-plus#medium", "deepseek-v4-pro-0813#high", "glm-5.2", "RAG policy"):
     if token not in orchestrator:
         bad.append(f"orchestrator must keep the provider-pinned role stack / RAG policy token: {token}")
-for token in ("Planning policy", "conditional, not a ritual", "todowrite", "short, obvious, bounded", "two or more meaningful stages", "before the first file mutation"):
+for token in ("Planning policy", "conditional, not a ritual", "V1-only tool", "primary `plan` agent", "short, obvious, bounded", "two or more meaningful stages", "before the first file mutation"):
     if token not in orchestrator:
-        bad.append(f"orchestrator must keep conditional todo planning: {token}")
-for token in ("Планирование задач", "todowrite", "2-7", "до первого изменения файла", "не создавай искусственный план"):
+        bad.append(f"orchestrator must keep conditional V2 planning: {token}")
+for token in ("Планирование задач", "V1", "OpenCode V2", "primary-agent `plan`", "2-7", "до первого изменения файла", "не создавай искусственный план"):
     if token not in agents_policy:
-        bad.append(f"global agent policy must keep conditional todo planning: {token}")
-for marker in ('Plugin.define({', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy'):
+        bad.append(f"global agent policy must keep conditional V2 planning: {token}")
+for marker in ('Plugin.define({', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'gpt-5.6-sol-orchestrated', 'isOrchestratedSol', 'orchestrator-sol.md', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy'):
     if marker not in orchestrated_plugin_js:
-        bad.append(f"orchestrated Qwen plugin marker missing: {marker}")
+        bad.append(f"orchestrated model plugin marker missing: {marker}")
+for marker in ('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'sol-role-builder', 'sol-role-reviewer'):
+    if marker not in sol_orchestrator:
+        bad.append(f"SOL orchestrator prompt marker missing: {marker}")
+if "gpt-5.6-sol-fast" in sol_orchestrator:
+    bad.append("SOL orchestrator must not use gpt-5.6-sol-fast")
 if not (root / "scripts/rag-mcp.sh").is_file():
     bad.append("missing portable RAG MCP launcher")
 if not (root / "scripts/runtime-smoke.py").is_file():
@@ -239,7 +245,7 @@ if not (root / "scripts/runtime-resume-smoke.py").is_file():
 if not (root / "docs/server-runtime-v2.md").is_file():
     bad.append("missing server runtime v2 documentation")
 
-for marker in ("/client-tasks.json", "/client-task-control.json", "/client-model-capabilities.json", "/client-resource-status.json", "Task Center", "qwen3.8-coder"):
+for marker in ("/client-tasks.json", "/client-task-control.json", "/client-model-capabilities.json", "/client-resource-status.json", "Task Center", "profile:profile()"):
     if marker not in runtime_dashboard_js:
         bad.append(f"runtime dashboard marker missing: {marker}")
 for marker in ("runtime-task", "runtime-profile", "runtime-state"):
@@ -251,7 +257,7 @@ for marker in ("CREATE TABLE IF NOT EXISTS tasks", "CREATE TABLE IF NOT EXISTS c
 for marker in ("qwen3.8-orchestrated", "ResourceScheduler", "ROLE_DEFAULTS", "role_models", "validate_provider_ref", "qwen3.7-plus", "deepseek-v4-pro-0813", "glm-5.2"):
     if marker not in model_registry_py:
         bad.append(f"model registry/scheduler marker missing: {marker}")
-for retired in ("qwen3.8-coder", "qwen3.8-review", "game process detected"):
+for retired in ("game process detected",):
     if retired in model_registry_py:
         bad.append(f"retired local-router marker must stay removed from model registry: {retired}")
 for marker in ("class RepoIndexer", "class ContextService", "class ArtifactStore", "class VerificationPipeline", "class SecretBroker", "semantic_diff"):
@@ -359,6 +365,7 @@ expected = {
     "glm-5.2", "deepseek-v4-pro", "deepseek-v4-pro-0813", "deepseek-v4-flash-0731",
 }
 special_ids = {"qwen3.8-orchestrated"}
+openai_special_ids = {"gpt-5.6-sol-orchestrated"}
 compat_ids = {"qwen3.8-max-preview"}
 models_map = provider.get("models", {}) if isinstance(provider, dict) else {}
 models = set(models_map)
@@ -385,6 +392,9 @@ if compat.get("modelID") != "qwen3.8-max": bad.append("legacy qwen3.8-max-previe
 special = models_map.get("qwen3.8-orchestrated", {})
 if special.get("modelID") != "qwen3.8-max": bad.append("orchestrated Qwen catalog alias must map to qwen3.8-max")
 if special.get("name") != "Qwen3.8 Max · Orchestrated": bad.append("orchestrated Qwen catalog alias has unexpected label")
+sol_special = providers.get("openai", {}).get("models", {}).get("gpt-5.6-sol-orchestrated", {}) if isinstance(providers.get("openai"), dict) else {}
+if sol_special.get("modelID") != "gpt-5.6-sol": bad.append("orchestrated SOL catalog alias must map to gpt-5.6-sol")
+if sol_special.get("name") != "GPT-5.6 Sol · Orchestrated": bad.append("orchestrated SOL catalog alias has unexpected label")
 ollama = providers.get("ollama", {})
 if ollama.get("package") != "aisdk:@ai-sdk/openai-compatible": bad.append("local Ollama V2 provider must use aisdk:@ai-sdk/openai-compatible")
 
@@ -423,6 +433,14 @@ role_routes = {
     "role-long-horizon": "bailian-cli/glm-5.2#high",
     "role-long-horizon-max": "bailian-cli/glm-5.2#max",
 }
+role_routes.update({
+    "sol-fast-reader": "openai/gpt-5.6-luna#xhigh",
+    "sol-role-builder": "openai/gpt-5.6-terra#medium",
+    "sol-role-builder-high": "openai/gpt-5.6-terra#high",
+    "sol-role-builder-max": "openai/gpt-5.6-terra#max",
+    "sol-role-reviewer": "openai/gpt-5.6-luna#xhigh",
+    "sol-role-reviewer-max": "openai/gpt-5.6-luna#max",
+})
 for agent_id, model_ref in role_routes.items():
     if (agents.get(agent_id) or {}).get("model") != model_ref:
         bad.append(f"role agent {agent_id} must stay provider-pinned to {model_ref}")
@@ -438,5 +456,5 @@ if not any(rule.get("action") == "kb_knowledge_ingest" and rule.get("effect") ==
 
 if bad:
     raise SystemExit("\n".join(bad))
-print(f"Verification passed; native Build/Plan + dedicated orchestrated Qwen + runtime-v2/checkpoint resume + bounded RAG lifecycle + Alibaba Personal models: {len(expected)} current + {len(special_ids)} orchestrated alias + {len(compat_ids)} compatibility ID")
+print(f"Verification passed; native Build/Plan + dedicated Qwen/SOL orchestration + runtime-v2/checkpoint resume + bounded RAG lifecycle + Alibaba Personal models: {len(expected)} current + {len(special_ids) + len(openai_special_ids)} orchestrated aliases + {len(compat_ids)} compatibility ID")
 PY

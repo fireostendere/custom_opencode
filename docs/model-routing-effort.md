@@ -16,6 +16,17 @@ The orchestration stack uses the existing Alibaba Cloud Token Plan provider ID `
 
 These roles must not silently fall back to OpenRouter, standalone DeepSeek, standalone Zhipu, or another gateway. OpenAI models remain on the existing official OpenAI provider when the user selects them directly.
 
+The dedicated SOL profile uses the same provider boundary:
+
+| Role | Model | Provider |
+| --- | --- | --- |
+| planner | `gpt-5.6-sol` | `openai` |
+| builder | `gpt-5.6-terra` | `openai` |
+| reader | `gpt-5.6-luna` | `openai` |
+| reviewer | `gpt-5.6-luna` | `openai` |
+
+Its trigger is `openai/gpt-5.6-sol-orchestrated`; ordinary SOL, Terra, and Luna selections remain direct.
+
 Canonical environment overrides:
 
 ```bash
@@ -25,6 +36,10 @@ OPENCODE_READER_MODEL=bailian-cli/qwen3.8-flash
 OPENCODE_REVIEW_MODEL=bailian-cli/deepseek-v4-pro-0813
 OPENCODE_LONG_HORIZON_MODEL=bailian-cli/glm-5.2
 OPENCODE_ORCHESTRATED_MODEL=bailian-cli/qwen3.8-orchestrated
+OPENCODE_SOL_ORCHESTRATED_MODEL=openai/gpt-5.6-sol-orchestrated
+OPENCODE_SOL_BUILDER_MODEL=openai/gpt-5.6-terra
+OPENCODE_SOL_READER_MODEL=openai/gpt-5.6-luna
+OPENCODE_SOL_REVIEW_MODEL=openai/gpt-5.6-luna
 ```
 
 Routing is deterministic. `direct` preserves the exact user-selected provider/model. Managed profiles are pinned to their configured role/provider. Host load, games, GPU state, or availability of another inference endpoint do not change the selected model.
@@ -92,6 +107,8 @@ Critical review uses Alibaba DeepSeek V4 Pro 0813 / max and is read-only. The re
 - `critical`: Max planner + Flash reader + Plus builder + DeepSeek reviewer.
 - `research`: Max planner/synthesis + Flash research + DeepSeek contradiction check.
 - `long-horizon`: Max planner + GLM executor + Flash reader + DeepSeek reviewer.
+- `sol-orchestrated`: SOL planner + Terra builder + Luna reader + SOL Fast reviewer.
+- `sol-review`: hidden Luna read-only review route used by the SOL profile's automatic review.
 
 ## Configured subagents
 
@@ -103,8 +120,16 @@ Critical review uses Alibaba DeepSeek V4 Pro 0813 / max and is read-only. The re
 - `role-reviewer-max`: DeepSeek V4 Pro 0813 / max, read-only.
 - `role-long-horizon`: GLM 5.2 / effective high.
 - `role-long-horizon-max`: GLM 5.2 / max.
+- `sol-fast-reader`: GPT-5.6 Luna / xhigh, read-only.
+- `sol-role-builder`: GPT-5.6 Terra / medium.
+- `sol-role-builder-high`: GPT-5.6 Terra / high.
+- `sol-role-builder-max`: GPT-5.6 Terra / max.
+- `sol-role-reviewer`: GPT-5.6 Luna / xhigh, read-only.
+- `sol-role-reviewer-max`: GPT-5.6 Luna / max, read-only.
 
 The `qwen3.8-orchestrated` catalog entry is a dedicated alias for the primary Qwen 3.8 Max orchestration session. The `orchestrated-qwen` plugin injects orchestration policy only for that alias, so ordinary direct Qwen 3.8 Max sessions remain native/direct.
+
+The same plugin handles `gpt-5.6-sol-orchestrated` and injects the SOL policy only for that alias. It never changes direct OpenAI model selections.
 
 ## Handoff discipline
 

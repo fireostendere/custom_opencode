@@ -67,10 +67,9 @@ function preferredVariant(model, preferences) {
     : undefined
 }
 
-// Role-routed orchestration stack (docs/model-routing-effort.md): the
-// provider-pinned planner/builder/reader/reviewer/long-horizon models plus
-// the dedicated `qwen3.8-orchestrated` alias. Surfaced as their own group so
-// the routed models stay visible without crowding the OpenAI section.
+// Role-routed orchestration stacks: provider-pinned worker models plus the
+// dedicated Qwen and SOL aliases. Surfaced as their own group so routed
+// models stay visible without crowding the provider sections.
 const ORCHESTRATED_MODELS = new Set([
   "bailian-cli/qwen3.8-max",
   "bailian-cli/qwen3.8-orchestrated",
@@ -78,6 +77,10 @@ const ORCHESTRATED_MODELS = new Set([
   "bailian-cli/qwen3.7-plus",
   "bailian-cli/deepseek-v4-pro-0813",
   "bailian-cli/glm-5.2",
+  "openai/gpt-5.6-sol",
+  "openai/gpt-5.6-sol-orchestrated",
+  "openai/gpt-5.6-terra",
+  "openai/gpt-5.6-luna",
 ])
 
 function key(model) {

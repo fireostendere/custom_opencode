@@ -176,7 +176,10 @@ GLM 5.2 — отдельный executor для действительно дли
 
 ## Model picker
 
-Picker может показывать обычные provider models и server profiles. Dedicated `Qwen 3.8 Max · Orchestrated` catalog alias используется только как trigger для orchestration prompt/plugin и указывает на реальный Alibaba Qwen 3.8 Max.
+Picker может показывать обычные provider models и server profiles. Dedicated
+`Qwen 3.8 Max · Orchestrated` и `GPT-5.6 Sol · Orchestrated` catalog aliases
+используются только как trigger для orchestration prompt/plugin и указывают на
+реальные модели провайдеров. Обычные Qwen/SOL/Terra/Luna остаются direct.
 
 Orchestration не является отдельным execution mode.
 

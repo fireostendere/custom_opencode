@@ -1,6 +1,10 @@
 const $ = (id) => document.getElementById(id)
 const FAV_KEY = 'opencode:web:favorites'
 const COLLAPSE_KEY = 'opencode:web:model-provider-collapse-v1'
+const ORCHESTRATED_CHOICES = [
+  { providerID:'bailian-cli', id:'qwen3.8-orchestrated', label:'Qwen3.8 Max · Orchestrated', meta:'Max → Flash worker · optional RAG' },
+  { providerID:'openai', id:'gpt-5.6-sol-orchestrated', label:'GPT-5.6 Sol · Orchestrated', meta:'Sol → Terra builder · Luna reader' },
+]
 
 function dataOf(value) {
   return value && typeof value === 'object' && 'data' in value ? value.data : value
@@ -121,7 +125,7 @@ function sortChoices(entries) {
   return [...entries].sort(compareModelEntries)
 }
 
-function providerSection({ id, label, entries, collapsed, providerLabels, orchestrated = false }) {
+function providerSection({ id, label, entries, collapsed, providerLabels, orchestratedModels = [] }) {
   const section = document.createElement('section')
   section.className = 'model-provider-section'
   section.dataset.providerSection = id
@@ -131,18 +135,21 @@ function providerSection({ id, label, entries, collapsed, providerLabels, orches
   toggle.className = 'model-provider-toggle'
   toggle.dataset.providerToggle = id
   toggle.setAttribute('aria-expanded', String(!collapsed.has(id)))
-  toggle.innerHTML = `<span class="model-provider-chevron" aria-hidden="true"></span><strong>${escapeHtml(label)}</strong><span class="model-provider-count">${entries.length + (orchestrated ? 1 : 0)}</span>`
+  toggle.innerHTML = `<span class="model-provider-chevron" aria-hidden="true"></span><strong>${escapeHtml(label)}</strong><span class="model-provider-count">${entries.length + orchestratedModels.length}</span>`
 
   const body = document.createElement('div')
   body.className = 'model-provider-body'
   body.hidden = collapsed.has(id)
 
-  if (orchestrated) {
+  for (const model of orchestratedModels) {
     const special = document.createElement('button')
     special.type = 'button'
     special.className = 'choice orchestrated-model-choice'
     special.dataset.orchestratedModel = '1'
-    special.innerHTML = `<div class="choice-title">Qwen 3.8 Max · Оркестратор${document.documentElement.dataset.modelProfile === 'orchestrated' ? ' · ✓' : ''}</div><div class="choice-meta">Max → Flash worker · optional RAG</div>`
+    special.dataset.model = model.id
+    special.dataset.provider = model.providerID
+    const selected = document.documentElement.dataset.modelProfile === 'orchestrated' && document.documentElement.dataset.orchestratedModel === model.id
+    special.innerHTML = `<div class="choice-title">${escapeHtml(model.label)}${selected ? ' · ✓' : ''}</div><div class="choice-meta">${escapeHtml(model.meta)}</div>`
     body.append(special)
   }
 
@@ -230,14 +237,14 @@ async function decorateModelChoices() {
     sections.sort((a, b) => providerPriority(a) - providerPriority(b) || compareProviderGroups(a, b))
 
     for (const group of sections) {
-      const hasDedicatedOrchestrated = group.entries.some((entry) => entry.key === 'bailian-cli/qwen3.8-orchestrated')
+      const orchestratedModels = ORCHESTRATED_CHOICES.filter((model) => model.providerID === group.id && !group.entries.some((entry) => entry.key === `${model.providerID}/${model.id}`))
       root.append(providerSection({
         id: group.id,
         label: group.label,
         entries: group.entries,
         collapsed,
         providerLabels,
-        orchestrated: group.id === 'bailian-cli' && !hasDedicatedOrchestrated && group.entries.some((entry) => entry.key === 'bailian-cli/qwen3.8-max'),
+        orchestratedModels,
       }))
     }
   } catch (error) {

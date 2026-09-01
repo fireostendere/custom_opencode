@@ -113,7 +113,9 @@ if (sidebar && menu) {
   }, true)
 
   window.addEventListener('popstate', () => {
-    if (waitingForSidebarPop || sidebarOpen()) {
+    const modalOpen = history.state?.__customOpenCodeModal
+    const sidebarEntry = history.state?.[SIDEBAR_STATE_KEY]
+    if (waitingForSidebarPop || (sidebarOpen() && !modalOpen && !sidebarEntry)) {
       finishSidebarClose()
       return
     }

@@ -99,6 +99,80 @@ def login(page, tag: str, remember: bool) -> bool:
 
 def close_dialog(page, dialog_id: str) -> None:
     page.evaluate(f"document.getElementById('{dialog_id}')?.close?.()")
+    wait_dialog_closed(page, dialog_id)
+    wait_modal_history_cleared(page)
+
+
+def wait_dialog_closed(page, dialog_id: str) -> None:
+    page.wait_for_function("id => !document.getElementById(id)?.open", arg=dialog_id, timeout=5000)
+
+
+def wait_modal_history_cleared(page) -> None:
+    page.wait_for_function("!history.state?.__customOpenCodeModal", timeout=5000)
+
+
+def modal_dismissal_flow(page, tag: str, opener: str, dialog_id: str) -> bool:
+    ok = True
+    base_url = page.url
+
+    if page.evaluate("document.getElementById('sidebar')?.classList.contains('open')"):
+        page.click("#menu")
+        page.wait_for_function("!document.getElementById('sidebar')?.classList.contains('open')", timeout=5000)
+
+    page.click(opener)
+    page.wait_for_selector(f"#{dialog_id}[open]", timeout=5000)
+    opened = page.evaluate(
+        """id => {
+            const dialog = document.getElementById(id)
+            return Boolean(dialog?.dataset.modalHistoryToken &&
+                history.state?.__customOpenCodeModal === dialog.dataset.modalHistoryToken)
+        }""",
+        dialog_id,
+    )
+    page.keyboard.press("Escape")
+    wait_dialog_closed(page, dialog_id)
+    wait_modal_history_cleared(page)
+    escape_restored = page.url == base_url
+    ok &= step(opened and escape_restored, f"{tag}: Escape closes modal and restores history")
+
+    page.click(opener)
+    page.wait_for_selector(f"#{dialog_id}[open]", timeout=5000)
+    page.mouse.click(4, 4)
+    wait_dialog_closed(page, dialog_id)
+    wait_modal_history_cleared(page)
+    backdrop_restored = page.url == base_url
+    ok &= step(backdrop_restored, f"{tag}: backdrop click closes modal and restores history")
+
+    page.click(opener)
+    page.wait_for_selector(f"#{dialog_id}[open]", timeout=5000)
+    page.evaluate("history.back()")
+    wait_dialog_closed(page, dialog_id)
+    wait_modal_history_cleared(page)
+    back_restored = page.url == base_url
+    ok &= step(back_restored, f"{tag}: browser Back closes modal without route change")
+    return ok
+
+
+def modal_replacement_flow(page) -> bool:
+    base_url = page.url
+    page.click("#sessionActions")
+    page.wait_for_selector("#sessionDialog[open]", timeout=5000)
+    session_history = page.evaluate("history.length")
+    session_token = page.locator("#sessionDialog").get_attribute("data-modal-history-token")
+    session_state_token = page.evaluate("history.state?.__customOpenCodeModal")
+    page.click("#sessionActionList [data-action='rename']")
+    page.wait_for_selector("#renameDialog[open]", timeout=5000)
+    replacement_history = page.evaluate("history.length")
+    rename_token = page.locator("#renameDialog").get_attribute("data-modal-history-token")
+    page.keyboard.press("Escape")
+    wait_dialog_closed(page, "renameDialog")
+    wait_modal_history_cleared(page)
+    restored = page.url == base_url
+    return step(
+        session_token is not None and session_state_token == session_token and rename_token == session_token and replacement_history == session_history and restored,
+        "desktop: Session -> Rename reuses one history entry",
+        f"session_token={session_token!r}, state_token={session_state_token!r}, rename_token={rename_token!r}, history={session_history}->{replacement_history}, restored={restored}",
+    )
 
 
 def desktop_flow(context) -> bool:
@@ -215,6 +289,12 @@ def desktop_flow(context) -> bool:
     except PWTimeout as exc:
         ok &= step(False, "desktop: usage dialog", str(exc)[:150])
 
+    try:
+        ok &= modal_dismissal_flow(page, "desktop", "#usageButton", "usageDialog")
+        ok &= modal_replacement_flow(page)
+    except PWTimeout as exc:
+        ok &= step(False, "desktop: modal dismissal/history", str(exc)[:150])
+
     # 6. Composer: typing enables send (no actual send).
     try:
         page.fill("#input", "смок-тест: это сообщение не отправляется")
@@ -271,6 +351,11 @@ def mobile_flow(context) -> bool:
             page.click("#menu")
     except PWTimeout as exc:
         ok &= step(False, "mobile: session from drawer", str(exc)[:150])
+
+    try:
+        ok &= modal_dismissal_flow(page, "mobile", "#modelButton", "modelDialog")
+    except PWTimeout as exc:
+        ok &= step(False, "mobile: modal dismissal/history", str(exc)[:150])
 
     # Composer on the phone layout.
     try:
