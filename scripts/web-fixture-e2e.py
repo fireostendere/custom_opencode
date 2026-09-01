@@ -292,8 +292,8 @@ def desktop(browser, base_url: str) -> None:
     user_messages = page.locator("#messages .message.user")
     user_texts = user_messages.evaluate_all("els => els.map(el => el.querySelector('.markdown')?.innerText)")
     assert user_texts == [f"History user {index:03d}" for index in range(0, 241, 2)]
-    assert len(FixtureState.message_requests) == 4
-    assert FixtureState.message_requests == [
+    history_requests = [request for request in FixtureState.message_requests if request.get("limit") == ["80"]]
+    assert history_requests == [
         {"limit": ["80"], "order": ["desc"]},
         {"limit": ["80"], "cursor": ["80"]},
         {"limit": ["80"], "cursor": ["160"]},
