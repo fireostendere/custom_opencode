@@ -9,6 +9,7 @@ import threading
 import time
 from urllib.parse import quote, urlsplit
 
+import github_workflow
 import integration_contract
 import runtime_completion
 import runtime_invariants
@@ -286,6 +287,8 @@ class Handler(rag.Handler, features.Handler):
                 return
             self.json_response(integration_contract.contract())
             return
+        if github_workflow.handle_get(self, parsed, runtime, features):
+            return
         if unified_control.handle_get(self, parsed, runtime, features):
             return
         if runtime_completion.handle_get(self, parsed, runtime, control, features):
@@ -302,6 +305,8 @@ class Handler(rag.Handler, features.Handler):
 
     def do_POST(self) -> None:
         parsed = urlsplit(self.path)
+        if github_workflow.handle_post(self, parsed, runtime, features):
+            return
         if unified_control.handle_post(self, parsed, runtime, features):
             return
         if runtime_completion.handle_post(self, parsed, runtime, control, features):
