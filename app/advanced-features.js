@@ -1173,13 +1173,13 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
     detail.addEventListener('toggle', () => { syncPanels(detail); restoreScrollState($('messages'), detail._conversationScroll || captureScrollState($('messages'))) })
   })
   if (wasOpen) details.forEach((detail) => { detail.open = true })
+  restoreScrollState($('messages'), conversation)
   const sessionID = state.sessionID
   const revision = state.orchestrationRevision
   requestAnimationFrame(() => {
     if (state.sessionID !== sessionID || state.orchestrationRevision !== revision || state.orchestrationRenderRevision !== renderRevision || host.hidden) return
     restoreScrollState(host.querySelector('.plan-panel-body'), planScroll)
     restoreScrollState(host.querySelector('.orchestration-nodes'), nodesScroll)
-    restoreScrollState($('messages'), conversation)
   })
 }
 
