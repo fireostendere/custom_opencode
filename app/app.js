@@ -368,6 +368,7 @@ function setContextPageCursor(cache,cursor,nextCursor) {
   cache.nextCursor=nextCursor;cache.hasMore=true
 }
 function maybeLoadOlderContext() {
+  if(initialMessageScrollSession===state.selected?.id)return
   const view=$('messages'),cache=state.selected&&state.contextCache.get(state.selected.id)
   if(cache?.hasMore&&view&&view.scrollHeight<=view.clientHeight+8)void loadOlderContext()
 }
@@ -581,7 +582,7 @@ function renderMessages({anchor=null,bottom=false}={}){
     settleBottom()
     const frames=new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
     const fonts=document.fonts?.ready?document.fonts.ready.catch(()=>{}):Promise.resolve()
-    Promise.all([frames,fonts]).then(()=>{settleBottom();if(initialMessageScrollSession===sessionID)initialMessageScrollSession=null})
+    Promise.all([frames,fonts]).then(()=>{settleBottom();if(initialMessageScrollSession===sessionID)initialMessageScrollSession=null;maybeLoadOlderContext()})
   }
   else if(stick)view.scrollTop=view.scrollHeight
   else view.scrollTop=prev
