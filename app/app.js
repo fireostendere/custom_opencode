@@ -8,7 +8,7 @@ const DRAFT_KEY = 'opencode:web:drafts-v2'
 const FAV_KEY = 'opencode:web:favorites'
 const PROJECT_COLLAPSE_KEY = 'opencode:web:project-collapse-v1'
 const PROJECT_ORDER_KEY = 'opencode:web:project-order-v1'
-const SESSION_ORDER_KEY = 'opencode:web:session-order-v1'
+const SESSION_TREE_KEY = 'opencode:web:session-tree-v1'
 const NOTIFY_KEY = 'opencode:web:notifications'
 const LAST_MODEL_KEY = 'opencode:web:last-model-v1'
 const PERSONAL_PRO_LIMITS = { fiveHour: 12000, sevenDay: 40000 }
@@ -95,8 +95,9 @@ function sessionTitle(session) { return stripQuota(session?.title?.trim()) || '�
 function sessionTime(session) { return session?.time?.updated || session?.time?.created || 0 }
 function timeText(value) { return value ? new Date(value).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '' }
 function projectOrder() { return loadJson(PROJECT_ORDER_KEY, []) }
-function sessionOrder() { return loadJson(SESSION_ORDER_KEY, {}) }
+function sessionTreeExpanded() { return new Set(loadJson(SESSION_TREE_KEY, [])) }
 function orderIndex(order, value) { const index=order.indexOf(value); return index<0?Number.MAX_SAFE_INTEGER:index }
+function compareSessions(a,b) { return Number(meta(b.id).pinned)-Number(meta(a.id).pinned)||sessionTime(b)-sessionTime(a)||sessionTitle(a).localeCompare(sessionTitle(b),'ru',{sensitivity:'base',numeric:true}) }
 function clearDragState() { dragPayload=null; document.querySelectorAll('.is-dragging,.drop-target').forEach((element)=>element.classList.remove('is-dragging','drop-target')) }
 function setDragData(event,type,value) {
   dragPayload={type,value}
@@ -235,11 +236,7 @@ async function handleDrop(event) {
   const source=state.sessions.find((session)=>session.id===sourceSession)
   if(!source)return
   const sourceInfo=projectInfo(source)
-  if(sourceInfo.key===targetProject){
-    if(targetSession)reorderSessions(sourceSession,targetSession.dataset.sessionDrag,targetProject,after)
-    else appendSessionToOrder(sourceSession,targetProject,'',after)
-    return
-  }
+  if(sourceInfo.key===targetProject)return
   const project=state.projects.find((item)=>item.id===targetProject)
   if(!project||project.id===QUICK_PROJECT_ID)return
   if(!await confirmAction('Перенести через handoff?',`OpenCode не умеет менять папку существующей сессии. В «${projectLabel(project)}» попадут последние 40 текстовых сообщений (до 24 000 символов); файлы проекта и полная tool-история не переносятся. После успешного handoff исходная сессия будет удалена.`))return
@@ -264,8 +261,8 @@ async function loadSessions({ selectHash = false } = {}) {
   try {
     const [projects, sessions, statuses] = await Promise.all([api.listProjects(), api.listSessions(), api.sessionStatuses()])
     state.projects = projects
-    const unique = new Map(sessions.filter((s)=>!s?.parentID).map((s)=>[s.id,s]))
-    state.sessions = [...unique.values()].sort((a,b)=>sessionTime(b)-sessionTime(a))
+    const unique = new Map(sessions.map((s)=>[s.id,s]))
+    state.sessions = [...unique.values()].sort(compareSessions)
     for (const [id,status] of Object.entries(statuses || {})) {
       if (runningStatus(status)) state.running.set(id,{ status:normalizeRunStatus(status), since:Date.now() })
       else state.running.delete(id)
@@ -283,43 +280,50 @@ async function loadSessions({ selectHash = false } = {}) {
   }
 }
 
+function sessionMatches(session,query) {
+  if(!query)return true
+  const info=projectInfo(session)
+  return `${sessionTitle(session)} ${info.label} ${info.directory} ${session.agent||''}`.toLowerCase().includes(query)
+}
+function sessionTree(sessions=state.sessions) {
+  const byID=new Map(sessions.map((session)=>[session.id,session])),children=new Map(),roots=[]
+  for(const session of sessions){
+    const parentID=session?.parentID||session?.parentSessionID||''
+    if(parentID&&byID.has(parentID)){if(!children.has(parentID))children.set(parentID,[]);children.get(parentID).push(session)}
+    else roots.push(session)
+  }
+  roots.sort(compareSessions);for(const rows of children.values())rows.sort(compareSessions)
+  return {roots,children}
+}
+function subtreeMatches(session,children,query) { return sessionMatches(session,query)||(children.get(session.id)||[]).some((child)=>subtreeMatches(child,children,query)) }
+function renderSessionNode(session,children,expanded,query='',depth=0) {
+  const allChildren=children.get(session.id)||[]
+  const ownMatch=sessionMatches(session,query)
+  const visibleChildren=query&&!ownMatch?allChildren.filter((child)=>subtreeMatches(child,children,query)):allChildren
+  const hasChildren=visibleChildren.length>0,open=hasChildren&&(Boolean(query)||expanded.has(session.id))
+  const running=isRunning(session.id),queued=queueFor(session.id).length,m=meta(session.id),agent=String(session.agent||'').trim()
+  const toggle=hasChildren?`<button class="session-tree-toggle" type="button" data-session-tree-toggle="${escapeHtml(session.id)}" aria-expanded="${open?'true':'false'}" aria-label="${open?'Свернуть':'Развернуть'} дочерние диалоги"></button>`:'<span class="session-tree-spacer" aria-hidden="true"></span>'
+  const childBody=hasChildren?`<div class="session-children" data-session-children="${escapeHtml(session.id)}"${open?'':' hidden'}>${visibleChildren.map((child)=>renderSessionNode(child,children,expanded,query,depth+1)).join('')}</div>`:''
+  return `<div class="session-node${depth?' subagent-node':''}" data-session-node="${escapeHtml(session.id)}" data-session-depth="${depth}"><div class="session ${state.selected?.id===session.id?'active':''} ${m.pinned?'pinned':''}${depth?' subagent':''}"${depth?'':` draggable="true" data-session-drag="${escapeHtml(session.id)}"`}>
+    ${toggle}<button class="session-main" data-session="${escapeHtml(session.id)}">
+      <div class="session-title">${escapeHtml(sessionTitle(session))}</div>
+      <div class="session-meta">${running?'<span class="run-dot"></span>':''}${depth&&agent?`<span class="session-kind">${escapeHtml(agent)}</span>`:''}<span>${running?'Выполняется':timeText(sessionTime(session))}</span>${queued?`<span class="queued">очередь ${queued}</span>`:''}${hasChildren?`<span class="session-child-count">${visibleChildren.length} sub</span>`:''}</div>
+    </button><button class="session-more" data-session-more="${escapeHtml(session.id)}">•••</button>
+  </div>${childBody}</div>`
+}
 function renderSessions() {
   if (state.loading) { $('sessions').innerHTML='<div class="loading">Загрузка сессий…</div>'; return }
-  const query = $('search').value.trim().toLowerCase()
-  const visible = state.sessions.filter((session)=>{
-    const m=meta(session.id)
-    const info=projectInfo(session)
-    return `${sessionTitle(session)} ${info.label} ${info.directory}`.toLowerCase().includes(query)
-  }).sort((a,b)=>Number(meta(b.id).pinned)-Number(meta(a.id).pinned)||sessionTime(b)-sessionTime(a))
-  if (!visible.length) { $('sessions').innerHTML='<div class="empty">Сессий не найдено.</div>'; return }
-  const groups = new Map()
-  for (const session of visible) {
-    const info=projectInfo(session)
-    if (!groups.has(info.key)) groups.set(info.key,{ info, items:[] })
-    groups.get(info.key).items.push(session)
-  }
-  const savedProjectOrder=projectOrder(),savedSessionOrder=sessionOrder()
-  const orderedGroups=[...groups.values()].sort((a,b)=>orderIndex(savedProjectOrder,a.info.key)-orderIndex(savedProjectOrder,b.info.key)||Number(meta(b.items[0]?.id).pinned)-Number(meta(a.items[0]?.id).pinned)||sessionTime(b.items[0])-sessionTime(a.items[0]))
-  for(const group of orderedGroups){const order=savedSessionOrder[group.info.key]||[];group.items.sort((a,b)=>orderIndex(order,a.id)-orderIndex(order,b.id)||Number(meta(b.id).pinned)-Number(meta(a.id).pinned)||sessionTime(b)-sessionTime(a))}
-  const collapsedProjects = new Set(loadJson(PROJECT_COLLAPSE_KEY, []))
-  $('sessions').innerHTML=orderedGroups.map(({info,items})=>`
-    <details class="project-group" data-project="${escapeHtml(info.key)}"${collapsedProjects.has(info.key) ? '' : ' open'}>
-      <summary class="project" draggable="true" title="${escapeHtml(info.directory)}"><span>${escapeHtml(info.label)}</span><span class="count">${items.length}</span></summary>
-      <div class="project-sessions">${items.map((session)=>{
-      const running=isRunning(session.id), queued=queueFor(session.id).length, m=meta(session.id)
-      return `<div class="session ${state.selected?.id===session.id?'active':''} ${m.pinned?'pinned':''}" draggable="true" data-session-drag="${escapeHtml(session.id)}">
-        <button class="session-main" data-session="${escapeHtml(session.id)}">
-          <div class="session-title">${escapeHtml(sessionTitle(session))}</div>
-          <div class="session-meta">${running?'<span class="run-dot"></span>':''}<span>${running?'Выполняется':timeText(sessionTime(session))}</span>${queued?`<span class="queued">очередь ${queued}</span>`:''}</div>
-        </button><button class="session-more" data-session-more="${escapeHtml(session.id)}">•••</button>
-      </div>`
-      }).join('')}</div>
-    </details>`).join('')
-  document.querySelectorAll('[data-project]').forEach((group)=>group.addEventListener('toggle',()=>{
-    const values=new Set(loadJson(PROJECT_COLLAPSE_KEY, []))
-    group.open ? values.delete(group.dataset.project) : values.add(group.dataset.project)
-    saveJson(PROJECT_COLLAPSE_KEY, [...values])
-  }))
+  const query=$('search').value.trim().toLowerCase(),tree=sessionTree(),roots=tree.roots.filter((session)=>subtreeMatches(session,tree.children,query))
+  if (!roots.length) { $('sessions').innerHTML='<div class="empty">Сессий не найдено.</div>'; return }
+  const groups=new Map()
+  for(const session of roots){const info=projectInfo(session);if(!groups.has(info.key))groups.set(info.key,{info,items:[]});groups.get(info.key).items.push(session)}
+  for(const group of groups.values())group.items.sort(compareSessions)
+  const savedProjectOrder=projectOrder()
+  const orderedGroups=[...groups.values()].sort((a,b)=>orderIndex(savedProjectOrder,a.info.key)-orderIndex(savedProjectOrder,b.info.key)||sessionTime(b.items[0])-sessionTime(a.items[0])||a.info.label.localeCompare(b.info.label,'ru',{sensitivity:'base',numeric:true}))
+  const collapsedProjects=new Set(loadJson(PROJECT_COLLAPSE_KEY, [])),expanded=sessionTreeExpanded()
+  $('sessions').innerHTML=orderedGroups.map(({info,items})=>`<details class="project-group" data-project="${escapeHtml(info.key)}"${collapsedProjects.has(info.key)?'':' open'}><summary class="project" draggable="true" title="${escapeHtml(info.directory)}"><span>${escapeHtml(info.label)}</span><span class="count">${items.length}</span></summary><div class="project-sessions">${items.map((session)=>renderSessionNode(session,tree.children,expanded,query)).join('')}</div></details>`).join('')
+  document.querySelectorAll('[data-project]').forEach((group)=>group.addEventListener('toggle',()=>{const values=new Set(loadJson(PROJECT_COLLAPSE_KEY, []));group.open?values.delete(group.dataset.project):values.add(group.dataset.project);saveJson(PROJECT_COLLAPSE_KEY,[...values])}))
+  document.querySelectorAll('[data-session-tree-toggle]').forEach((button)=>button.addEventListener('click',(event)=>{event.preventDefault();event.stopPropagation();const id=button.dataset.sessionTreeToggle,body=document.querySelector(`[data-session-children="${CSS.escape(id)}"]`),values=sessionTreeExpanded(),open=button.getAttribute('aria-expanded')!=='true';button.setAttribute('aria-expanded',String(open));button.setAttribute('aria-label',`${open?'Свернуть':'Развернуть'} дочерние диалоги`);if(body)body.hidden=!open;open?values.add(id):values.delete(id);saveJson(SESSION_TREE_KEY,[...values])}))
   document.querySelectorAll('[data-session]').forEach((button)=>button.addEventListener('click',()=>selectSession(button.dataset.session)))
   document.querySelectorAll('[data-session-more]').forEach((button)=>button.addEventListener('click',(event)=>{event.stopPropagation();openSessionActions(button.dataset.sessionMore)}))
 }

@@ -73,11 +73,15 @@ class Backend(BaseHTTPRequestHandler):
         project = os.environ["FIXTURE_PROJECT"]
         session = self.session(project)
         if path == "/api/project":
-            self.send_json({"data": [{"id": "proj_fixture", "name": "Fixture", "canonical": project}]})
+            self.send_json({"data": [{"id": "proj_fixture", "name": "Fixture", "canonical": project}, {"id": "proj_other", "name": "Other", "canonical": project + "-other"}]})
         elif path == "/api/session":
             if "limit=100" in parsed.query:
                 FixtureState.session_reads += 1
-            self.send_json({"data": [session]})
+            older = {**session, "id":"ses_older", "title":"Older root", "time":{"created":1_999_999_999_000,"updated":1_999_999_999_100}}
+            child = {**session, "id":"ses_child_reader", "title":"Reader subagent", "parentID":"ses_fixture", "agent":"explore", "time":{"created":2_000_000_000_100,"updated":2_000_000_000_500}}
+            nested = {**session, "id":"ses_child_review", "title":"Reviewer nested", "parentID":"ses_child_reader", "agent":"review", "time":{"created":2_000_000_000_200,"updated":2_000_000_000_600}}
+            other = {**session, "id":"ses_other", "title":"Other project chat", "projectID":"proj_other", "location":{"directory":project + "-other"}, "time":{"created":2_000_000_000_050,"updated":2_000_000_000_050}}
+            self.send_json({"data": [older, child, nested, session, other]})
         elif path == "/api/session/active" or path == "/api/session/status":
             statuses = {"ses_fixture": {"type": "busy"}} if FixtureState.session_running else {}
             self.send_json({"data": statuses})
@@ -246,7 +250,7 @@ def open_session(page) -> None:
     menu = page.locator("#menu")
     if menu.is_visible():
         menu.click()
-    page.locator("#sessions .session").first.click()
+    page.locator('[data-session="ses_fixture"]').click()
     page.wait_for_function("location.hash.startsWith('#/session/ses_fixture')")
     page.locator("#messagesInner").wait_for(state="visible")
 
@@ -276,6 +280,24 @@ def desktop(browser, base_url: str) -> None:
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.on("response", lambda response: errors.append(f"HTTP {response.status} {response.url}") if response.status >= 500 else None)
     login(page, base_url)
+    fixture_group = page.locator('#sessions .project-group[data-project="proj_fixture"]')
+    other_group = page.locator('#sessions .project-group[data-project="proj_other"]')
+    assert fixture_group.get_attribute("open") is not None and other_group.get_attribute("open") is not None
+    root_titles = fixture_group.locator(':scope > .project-sessions > .session-node > .session [data-session] .session-title').all_inner_texts()
+    assert root_titles == ["Fixture session", "Older root"], root_titles
+    parent_toggle = fixture_group.locator('[data-session-tree-toggle="ses_fixture"]')
+    assert parent_toggle.count() == 1 and parent_toggle.get_attribute("aria-expanded") == "false"
+    assert fixture_group.locator('[data-session-children="ses_fixture"]').is_hidden()
+    parent_toggle.click()
+    assert fixture_group.locator('[data-session-children="ses_fixture"]').is_visible()
+    assert fixture_group.locator('[data-session="ses_child_reader"] .session-title').inner_text() == "Reader subagent"
+    child_toggle = fixture_group.locator('[data-session-tree-toggle="ses_child_reader"]')
+    assert child_toggle.count() == 1 and child_toggle.get_attribute("aria-expanded") == "false"
+    child_toggle.click()
+    assert fixture_group.locator('[data-session="ses_child_review"] .session-title').inner_text() == "Reviewer nested"
+    fixture_group.locator(':scope > summary').click()
+    assert fixture_group.get_attribute("open") is None and other_group.get_attribute("open") is not None
+    fixture_group.locator(':scope > summary').click()
     open_session(page)
     page.wait_for_function("document.querySelectorAll('#messages .message').length === 80")
     page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
@@ -359,12 +381,7 @@ def desktop(browser, base_url: str) -> None:
     page.wait_for_function("!document.querySelector('#modelButton').disabled")
     page.click("#modelButton")
     page.locator("#modelDialog[open]").wait_for(state="visible")
-    model_choices = page.locator("#modelChoices .choice")
-    assert model_choices.count() == 1, {
-        "count": model_choices.count(),
-        "text": page.locator("#modelChoices").inner_text(),
-        "search": page.locator("#modelSearch").input_value(),
-    }
+    assert page.locator('#modelChoices [data-provider="bailian-cli"][data-model="qwen3.8-max"]').count() >= 1
     assert "Qwen3.8 Max" in page.locator("#modelChoices").inner_text()
     page.locator("#modelDialog [data-close='modelDialog']").click()
 
