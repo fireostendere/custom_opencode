@@ -20,7 +20,9 @@ workspace_js = (APP / "unified-workspace.js").read_text(encoding="utf-8")
 workspace_css = (APP / "unified-workspace.css").read_text(encoding="utf-8")
 loader_js = (APP / "access-fix-limits.js").read_text(encoding="utf-8")
 workflow_py = (APP / "server_workflow.py").read_text(encoding="utf-8")
-tui_jsx = (ROOT / "config/plugins/tui/limits-panels.jsx").read_text(encoding="utf-8")
+tui_host = (ROOT / "config/plugins/tui/workspace-panel.jsx").read_text(encoding="utf-8")
+tui_views = (ROOT / "config/plugins/tui/lib/panel-views.jsx").read_text(encoding="utf-8")
+retired_host = (ROOT / "config/plugins/tui/limits-panels.jsx").read_text(encoding="utf-8")
 
 for marker in (
     '"contract": "state-actions-events"',
@@ -64,18 +66,42 @@ assert "@media(prefers-reduced-motion:reduce)" in workspace_css
 assert "import('./unified-workspace.js')" in loader_js
 assert "/unified-workspace.css" in loader_js
 
+# TUI still implements the unified workspace contract, but the single right-side
+# host has evolved into one four-zone host with the same Activity/Plan/Limits
+# behaviors plus Session/Orchestration/History views.
 for marker in (
-    'id: "custom.universal-panel"',
+    'id: "custom.workspace-panel"',
+    'workspace-panel.state',
     'universal-panel.state',
+    'function freshZones()',
+    'left:',
+    'right:',
+    'top:',
+    'bottom:',
     'custom.panel.activity',
     'custom.panel.plan',
     'custom.panel.limits',
     'custom.panel.end',
-    'обновления не сбрасывают scroll',
+    'live updates keep scroll',
+    'jumpToEnd',
+    'cursorUnderOverlay',
+    'context.ui.DialogSelect',
+    'session.sidebar.toggle',
 ):
-    assert marker in tui_jsx, marker
-for retired in ("function EdgePanel(props)", 'side="left"', "planPinned", "homePinned", "target.paddingLeft"):
-    assert retired not in tui_jsx, retired
+    assert marker in tui_host, marker
+for marker in (
+    'function ActivityView',
+    'function PlanView',
+    'function LimitsView',
+    'function SessionView',
+    'function OrchestrationView',
+    'function HistoryView',
+):
+    assert marker in tui_views, marker
+for retired in ("function EdgePanel(props)", "planPinned", "homePinned", 'id: "custom.universal-panel"'):
+    assert retired not in tui_host, retired
+assert 'id: "custom.limits-panels-retired"' in retired_host
+assert 'id: "custom.universal-panel"' not in retired_host
 
 
 class FakeStore:
@@ -172,4 +198,4 @@ assert all(action.get("id") for action in unified.ACTION_REGISTRY)
 assert any(action["id"] == "model.add" and action.get("command") == "/addmodel" for action in unified.ACTION_REGISTRY)
 assert any(action["id"] == "orchestration.add" and action.get("command") == "/addorchestration" for action in unified.ACTION_REGISTRY)
 
-print("Unified workspace regression passed: state/actions/events + durable retry + permission advice + Web/TUI single-panel contracts")
+print("Unified workspace regression passed: state/actions/events + durable retry + permission advice + Web/four-zone TUI contracts")
