@@ -1,0 +1,38 @@
+name: Unified Workspace
+
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'config/plugins/tui/**'
+      - 'scripts/**'
+      - '.github/workflows/unified-workspace.yml'
+  push:
+    branches:
+      - 'feature/unified-ux-runtime-20260901'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax
+        run: |
+          python -m py_compile app/unified_control.py app/server_workflow.py
+          node --check app/unified-workspace.js
+      - name: Unified contract regression
+        run: python scripts/unified-workspace-regression.py
+      - name: TUI regression
+        run: node scripts/tui-regression.mjs
+      - name: Existing verification suite
+        run: bash scripts/verify.sh
