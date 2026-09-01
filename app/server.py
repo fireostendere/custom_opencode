@@ -715,6 +715,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        if status >= 400:
+            # Error handlers may reject a POST before consuming its body. Close
+            # the HTTP/1.1 connection so those bytes cannot be parsed as a new request.
+            self.close_connection = True
+            self.send_header("Connection", "close")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

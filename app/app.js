@@ -572,7 +572,16 @@ function renderMessages({anchor=null,bottom=false}={}){
   const inner=$('messagesInner'), view=$('messages'); if(!state.selected){inner.innerHTML='<div class="welcome">Выбери сессию или задай быстрый вопрос.</div>';updateScrollToBottomButton();return} if(!state.context.length){inner.innerHTML='<div class="welcome">Пока нет сообщений.</div>';updateScrollToBottomButton();return}
   const stick=view.scrollHeight-view.scrollTop-view.clientHeight<100; const prev=view.scrollTop
   inner.innerHTML=state.context.map((message,index)=>{const type=message.type||message.role;const id=message.id||message.messageID||`idx-${index}`;const body=type==='user'?userBody(message):assistantBody(message);return `<article class="message ${type==='user'?'user':'assistant'}" data-message-index="${index}"><div class="avatar">${type==='user'?'Я':'AI'}</div><div class="message-body"><div class="message-head"><span class="message-role">${type==='user'?'Ты':'OpenCode'}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`}).join('')
-  if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height;else if(bottom)view.scrollTop=view.scrollHeight;else if(stick)view.scrollTop=view.scrollHeight;else view.scrollTop=prev
+  if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height
+  else if(bottom){
+    const sessionID=state.selected?.id
+    const settleBottom=()=>{if(state.selected?.id!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
+    settleBottom()
+    requestAnimationFrame(()=>requestAnimationFrame(settleBottom))
+    if(document.fonts?.ready)document.fonts.ready.then(settleBottom).catch(()=>{})
+  }
+  else if(stick)view.scrollTop=view.scrollHeight
+  else view.scrollTop=prev
   updateScrollToBottomButton()
 }
 

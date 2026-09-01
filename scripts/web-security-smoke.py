@@ -82,8 +82,9 @@ with tempfile.TemporaryDirectory() as temp:
         }
         status, _, _ = request("GET", "/client-integration.json", headers=remote_headers)
         assert status == 401, status
-        status, _, _ = request("POST", "/client-send.json", body={"sessionID": "x", "text": "x"}, headers=remote_headers)
+        status, response_headers, _ = request("POST", "/client-send.json", body={"sessionID": "x", "text": "x"}, headers=remote_headers)
         assert status == 401, status
+        assert response_headers.get("connection", "").lower() == "close", response_headers
 
         status, response_headers, _ = request(
             "POST",
