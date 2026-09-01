@@ -61,7 +61,7 @@ exit 99
 EOF
 chmod +x "$FAKE_BIN/opencode"
 
-CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:/usr/bin:/bin" \
+env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:/usr/bin:/bin" \
   bash "$COPY/scripts/install.sh" >"$TMP/install.out"
 
 grep -Fxq "npm install --global --prefix $HOME_DIR/.local @opencode-ai/cli@beta" "$LOG"

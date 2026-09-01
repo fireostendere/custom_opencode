@@ -200,7 +200,7 @@ if (!uxCss.includes('.model-favorite-toggle')) throw new Error('Favorite model c
 for (const marker of ['model-provider-collapse-v1', 'data-fav', 'compareModelEntries', 'compareProviderGroups', 'providerPriority']) {
   if (!uiSource.includes(marker)) throw new Error(`Model picker behavior marker missing: ${marker}`)
 }
-for (const marker of ['PROJECT_ORDER_KEY', 'SESSION_ORDER_KEY', 'handleDrop', 'transferSessionToProject', 'data-session-drag', 'draggable="true"']) {
+for (const marker of ['PROJECT_ORDER_KEY', 'SESSION_TREE_KEY', 'compareSessions', 'handleDrop', 'transferSessionToProject', 'data-session-drag', 'draggable="true"']) {
   if (!appSource.includes(marker)) throw new Error(`Session drag-and-drop marker missing: ${marker}`)
 }
 for (const marker of ["data-action=\"copy-context\"", "data-action=\"move-project\"", 'removeSource:true', "api.deleteSession(session.id)"]) {
@@ -219,7 +219,7 @@ for (const marker of [
 }
 if (!advanced.includes('syncProjectModelOptions')) throw new Error('Project settings must use the current model catalog')
 if (!advanced.includes("if (currentProfile() !== 'orchestrated')")) throw new Error('Direct sessions must not load orchestration trace or native plan')
-if (!advanced.includes("const wasOpen = host.querySelector('details')?.open === true")) throw new Error('Orchestration panel must preserve its open state while refreshing')
+if (!advanced.includes("const panelOpen={plan:host.querySelector('.plan-panel')?.open===true")) throw new Error('Orchestration panel must preserve its open state while refreshing')
 if (!advanced.includes('captureScrollState(host.querySelector(\'.plan-panel-body\'))') || !advanced.includes('captureScrollState(host.querySelector(\'.orchestration-nodes\'))') || !advanced.includes('requestAnimationFrame(() =>')) throw new Error('Orchestration panel must preserve both scroll positions after layout while refreshing')
 if (!advanced.includes('orchestrationRevision') || !advanced.includes('orchestrationRenderRevision') || !advanced.includes('state.sessionID !== sessionID')) throw new Error('Orchestration refresh and deferred scroll restoration must reject stale sessions/renders')
 if (advanced.includes('activity-chevron') || advancedCss.includes('activity-chevron')) throw new Error('Orchestration summaries must use only the shared right chevron')
@@ -256,10 +256,10 @@ for (const marker of ['/api/form/request', '/api/question', 'question.asked', 'q
 for (const marker of ['.question-card', '.queue-list', '.orchestration-trace', '.orchestration-plan', '.orchestration-plan-meter', '.review-hunk', '.workflow-status']) {
   if (!advancedCss.includes(marker)) throw new Error(`Advanced workflow styling missing: ${marker}`)
 }
-for (const marker of ['orchestration-panels', 'orchestration-summary', 'activity-current-label', 'activityItems', 'activityDescriptor', 'syncPanels']) {
+for (const marker of ['orchestration-panels', 'orchestration-summary', 'activity-current-label', 'activityItems', 'activityDescriptor', 'panelOpen']) {
   if (!(advanced.includes(marker) || advancedCss.includes(marker))) throw new Error(`Activity dock marker missing: ${marker}`)
 }
-if (!advanced.includes('details.forEach((detail) => { detail.open = true })')) throw new Error('Plan and activity panels must open together')
+if (!advanced.includes('details.some((detail)=>detail.open)')) throw new Error('Plan and activity panels must share expanded state')
 for (const marker of ['--sidebar-width', '--scrollbar-size', '.sidebar-resizer', '*::-webkit-scrollbar-thumb', '.limits-summary::after', '.model-provider-chevron', 'overflow-y:auto', '.workflow-grid']) {
   if (!designSystem.includes(marker)) throw new Error(`Design-system styling missing: ${marker}`)
 }
