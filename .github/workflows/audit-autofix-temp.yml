@@ -1,0 +1,115 @@
+name: temporary-full-audit
+
+on:
+  push:
+    branches:
+      - audit/full-review-20260901
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Repair leaked fixture path
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('config/opencode.json.template')
+          text = path.read_text(encoding='utf-8')
+          bad = '"command":["bash","/tmp/root/scripts/rag-mcp.sh"]'
+          good = '"command":["bash","__CUSTOM_OPENCODE_ROOT__/scripts/rag-mcp.sh"]'
+          if bad not in text:
+              raise SystemExit('expected leaked fixture path not found')
+          path.write_text(text.replace(bad, good, 1), encoding='utf-8')
+          PY
+          git diff --check
+          git diff -- config/opencode.json.template
+
+      - name: Commit repair on audit branch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add config/opencode.json.template
+          git commit -m 'fix: restore relocatable RAG MCP command path'
+          git push origin HEAD:audit/full-review-20260901
+
+      - name: Repository hygiene scan
+        run: |
+          set -euo pipefail
+          echo '== tracked fixture/user absolute paths =='
+          if git grep -nE '(/tmp/root|/home/[A-Za-z0-9._-]+/|[A-Za-z]:\\\\Users\\\\)' -- . ':!docs/**' ':!scripts/*regression*' ':!scripts/*smoke*'; then
+            echo 'Unexpected machine-specific absolute path found' >&2
+            exit 1
+          fi
+          echo '== credential signatures =='
+          if git grep -nE '(sk-[A-Za-z0-9_-]{24,}|gh[pousr]_[A-Za-z0-9_]{20,}|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY)' -- . ':!.env.example'; then
+            echo 'Possible committed credential found' >&2
+            exit 1
+          fi
+          echo 'Repository hygiene scan PASS'
+
+      - name: Syntax and compile scan
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q app scripts
+          for file in scripts/*.sh; do bash -n "$file"; done
+          for file in app/*.js config/plugins/*.js; do node --check "$file"; done
+          git diff --check
+
+      - name: Existing full verifier
+        run: bash scripts/verify.sh
+
+      - name: Ponytail provisioning regression
+        run: bash scripts/ponytail-provision-regression.sh
+
+      - name: Runtime V3 verifier
+        run: bash scripts/verify-runtime-v3.sh
+
+      - name: Routing and runtime invariants
+        run: |
+          python3 scripts/model-routing-effort-smoke.py
+          python3 scripts/runtime-invariants-smoke.py
+
+      - name: Fresh install and update regression
+        run: bash scripts/install-regression.sh
+
+      - name: Web backend and security regressions
+        run: |
+          python3 scripts/web-server-smoke.py
+          python3 scripts/web-security-smoke.py
+
+      - name: TUI source regressions
+        run: |
+          node scripts/tui-regression.mjs
+          node scripts/model-selector-smoke.mjs
+
+      - name: Clean install OpenCode 2 beta
+        run: |
+          npm install -g @opencode-ai/cli@beta
+          command -v opencode2
+          opencode2 --version
+
+      - name: Packaged OpenCode 2 TUI regression
+        run: bash scripts/tui-package-smoke.sh
+
+      - name: Install browser runtime
+        run: |
+          python3 -m pip install playwright
+          python3 -m playwright install --with-deps chromium
+
+      - name: Browser convergence regressions
+        run: |
+          python3 scripts/queue-badge-convergence.py
+          python3 scripts/web-fixture-e2e.py
