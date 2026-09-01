@@ -571,11 +571,11 @@ function renderMessages({anchor=null,bottom=false}={}){
   else if(bottom){
     const sessionID=state.selected?.id
     initialMessageScrollSession=sessionID
-    const settleBottom=()=>{if(state.selected?.id!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
+    const settleBottom=()=>{if(state.selected?.id!==sessionID||initialMessageScrollSession!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
     settleBottom()
     const frames=new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
     const fonts=document.fonts?.ready?document.fonts.ready.catch(()=>{}):Promise.resolve()
-    Promise.all([frames,fonts]).then(()=>{settleBottom();if(initialMessageScrollSession===sessionID)initialMessageScrollSession=null})
+    Promise.all([frames,fonts]).then(settleBottom)
   }
   else if(stick)view.scrollTop=view.scrollHeight
   else view.scrollTop=prev
@@ -852,7 +852,12 @@ function bindEvents(){
   $('attachButton').addEventListener('click',()=> $('fileInput').click());$('fileInput').addEventListener('change',(e)=>{addFiles(e.target.files);e.target.value=''});$('input').addEventListener('paste',(e)=>{const files=[...(e.clipboardData?.items||[])].filter((i)=>i.kind==='file').map((i)=>i.getAsFile()).filter(Boolean);if(files.length){e.preventDefault();addFiles(files)}})
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.addEventListener('click',()=>{state.deliveryMode=b.dataset.delivery;renderRunControls()}));$('gitButton').addEventListener('click',openGitDialog);$('usageButton').addEventListener('click',()=>{$('usageDialog').showModal()});$('notifyButton').addEventListener('click',toggleNotifications)
   $('renameForm').addEventListener('submit',(e)=>{e.preventDefault();renameCurrent()});document.querySelectorAll('[data-close]').forEach((b)=>b.addEventListener('click',()=>$(b.dataset.close).close()));document.querySelectorAll('dialog').forEach((d)=>d.addEventListener('click',(e)=>{if(e.target===d)d.close()}))
-  $('messages').addEventListener('scroll',()=>{const view=$('messages');if(initialMessageScrollSession!==state.selected?.id&&view.scrollTop<=80)void loadOlderContext();updateScrollToBottomButton()},{passive:true})
+  const messagesView=$('messages')
+  const armHistoryPagination=()=>{if(initialMessageScrollSession===state.selected?.id)initialMessageScrollSession=null}
+  messagesView.addEventListener('wheel',armHistoryPagination,{passive:true})
+  messagesView.addEventListener('touchstart',armHistoryPagination,{passive:true})
+  messagesView.addEventListener('pointerdown',armHistoryPagination,{passive:true})
+  messagesView.addEventListener('scroll',()=>{if(initialMessageScrollSession!==state.selected?.id&&messagesView.scrollTop<=80)void loadOlderContext();updateScrollToBottomButton()},{passive:true})
   $('scrollToBottom').addEventListener('click',scrollMessagesToBottom)
   $('messagesInner').addEventListener('click',(e)=>{const copyCode=e.target.closest('.copy-code');if(copyCode){navigator.clipboard.writeText(copyCode.closest('.code-block').querySelector('code')?.textContent||'');copyCode.textContent='Скопировано';setTimeout(()=>copyCode.textContent='Копировать',900);return}const copy=e.target.closest('[data-copy-message]');if(copy){navigator.clipboard.writeText(messagePlainText(state.context[Number(copy.dataset.copyMessage)])||'');toast('Сообщение скопировано');return}const fork=e.target.closest('[data-fork-message]');if(fork){forkAtMessage(fork.dataset.forkMessage)}})
   window.addEventListener('hashchange',()=>{const id=sessionIdFromHash();if(id&&state.selected?.id!==id)selectSession(id,{push:false});else if(!id&&state.selected)clearSelection()});window.addEventListener('beforeunload',saveDraftNow)
