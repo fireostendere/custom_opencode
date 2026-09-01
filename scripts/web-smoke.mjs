@@ -220,7 +220,8 @@ for (const marker of [
 }
 if (!advanced.includes('syncProjectModelOptions')) throw new Error('Project settings must use the current model catalog')
 if (!advanced.includes("if (currentProfile() !== 'orchestrated')")) throw new Error('Direct sessions must not load orchestration trace or native plan')
-if (!advanced.includes("const wasOpen = host.querySelector('details')?.open === true")) throw new Error('Orchestration panel must preserve its open state while refreshing')
+if (!advanced.includes("const panelOpen={plan:host.querySelector('.plan-panel')?.open===true,live:host.querySelector('.live-panel')?.open===true}")) throw new Error('Orchestration panels must preserve independent open state while refreshing')
+if (!advanced.includes("if(planPanel)planPanel.open=panelOpen.plan") || !advanced.includes("if(livePanel)livePanel.open=panelOpen.live")) throw new Error('Orchestration refresh must restore each panel open state independently')
 if (!advanced.includes('captureScrollState(host.querySelector(\'.plan-panel-body\'))') || !advanced.includes('captureScrollState(host.querySelector(\'.orchestration-nodes\'))') || !advanced.includes('requestAnimationFrame(() =>')) throw new Error('Orchestration panel must preserve both scroll positions after layout while refreshing')
 if (!advanced.includes('orchestrationRevision') || !advanced.includes('orchestrationRenderRevision') || !advanced.includes('state.sessionID !== sessionID')) throw new Error('Orchestration refresh and deferred scroll restoration must reject stale sessions/renders')
 if (advanced.includes('activity-chevron') || advancedCss.includes('activity-chevron')) throw new Error('Orchestration summaries must use only the shared right chevron')
