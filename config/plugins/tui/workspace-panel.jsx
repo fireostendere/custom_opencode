@@ -1,11 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 /**
  * Four-zone workspace dock for OpenCode V2.
- *
- * One manager owns geometry for left/right/top/bottom. Feature views never
- * mutate route layout. Pinned zones reserve space, unpinned zones overlay the
- * route, collapsed zones keep a two-cell edge handle. Each zone has one
- * scrollbox and scroll position is preserved per side/session/view.
+ * One manager owns left/right/top/bottom geometry; views never mutate layout.
  */
 import { Plugin } from "@opencode-ai/plugin/tui"
 import { createEffect, For, onCleanup, onMount, Show } from "solid-js"
@@ -30,8 +26,8 @@ function freshZones() {
 }
 
 function currentRoute(context) {
-  const route = context.ui.router.current
-  return typeof route === "function" ? route() : route
+  const current = context.ui.router.current
+  return typeof current === "function" ? current() : current
 }
 function routeSessionID(context) {
   const route = currentRoute(context)
@@ -55,8 +51,7 @@ export default Plugin.define({
     const views = createPanelViews(context)
     const PanelContent = views.PanelContent
 
-    // New main introduced a single universal right panel. Read its persisted
-    // state once so upgrading to the four-zone host does not lose tab/pin/open.
+    // Migrate the universal right panel that landed in the new main.
     const [legacyUniversal] = context.storage.store("universal-panel.state", {
       initial: { open: false, pinned: false, tab: "plan" },
     })
@@ -64,12 +59,12 @@ export default Plugin.define({
       initial: { version: 3, zones: freshZones(), migratedUniversalV1: false },
     })
 
-    // Migrate the earlier panels branch schema first.
+    // Migrate the previous one-sidebar panels branch schema.
     if (!state.zones) {
       const zones = freshZones()
+      zones.right.enabled = true
       if (PANEL_IDS.includes(state.active)) zones.right.active = state.active
       if (typeof state.pinned === "boolean") zones.right.pinned = state.pinned
-      zones.right.enabled = true
       updateState((draft) => {
         draft.version = 3
         draft.zones = zones
@@ -107,36 +102,20 @@ export default Plugin.define({
       scheduleDockLayout()
     }
     function showZone(side) {
-      mutateZone(side, (item) => {
-        item.enabled = true
-        item.collapsed = false
-      })
+      mutateZone(side, (item) => { item.enabled = true; item.collapsed = false })
     }
     function disableZone(side) {
-      mutateZone(side, (item) => {
-        item.enabled = false
-        item.collapsed = false
-      })
+      mutateZone(side, (item) => { item.enabled = false; item.collapsed = false })
     }
     function setZoneView(side, view) {
       if (!PANEL_IDS.includes(view)) return
-      mutateZone(side, (item) => {
-        item.enabled = true
-        item.collapsed = false
-        item.active = view
-      })
+      mutateZone(side, (item) => { item.enabled = true; item.collapsed = false; item.active = view })
     }
     function setPinned(side, pinned) {
-      mutateZone(side, (item) => {
-        item.enabled = true
-        item.pinned = pinned
-      })
+      mutateZone(side, (item) => { item.enabled = true; item.pinned = pinned })
     }
     function setCollapsed(side, collapsed) {
-      mutateZone(side, (item) => {
-        item.enabled = true
-        item.collapsed = collapsed
-      })
+      mutateZone(side, (item) => { item.enabled = true; item.collapsed = collapsed })
     }
     function toggleZone(side) {
       const item = zone(side)
@@ -170,21 +149,19 @@ export default Plugin.define({
       const item = zone(side)
       if (!item.enabled) return 0
       if (item.collapsed) return HANDLE
-      const raw = Number(item.size ?? (isVertical(side) ? DEFAULT_SIDE_SIZE : 10))
-      if (isVertical(side)) {
-        const max = Math.max(24, Math.floor(Number(renderer.width ?? 120) * 0.45))
-        return Math.max(24, Math.min(max, raw))
-      }
-      const max = Math.max(6, Math.floor(Number(renderer.height ?? 30) * 0.45))
-      return Math.max(6, Math.min(max, raw))
+      const vertical = isVertical(side)
+      const raw = Number(item.size ?? (vertical ? DEFAULT_SIDE_SIZE : 10))
+      const terminal = vertical ? Number(renderer.width ?? 120) : Number(renderer.height ?? 30)
+      const min = vertical ? 24 : 6
+      const max = Math.max(min, Math.floor(terminal * 0.45))
+      return Math.max(min, Math.min(max, raw))
     }
     function reserved(side) {
       const item = zone(side)
       return item.enabled && item.pinned ? extent(side) : 0
     }
 
-    // One compatibility adapter owns every root padding mutation. Views never
-    // touch layout, so four zones cannot fight each other over geometry.
+    // The host is the only layout owner.
     let anchorNode = null
     let dockTarget = null
     let baseline = null
@@ -219,12 +196,7 @@ export default Plugin.define({
       dockScheduled = false
       const target = findDockTarget()
       if (!target) {
-        if (!dockRetry) {
-          dockRetry = setTimeout(() => {
-            dockRetry = null
-            syncDockLayout()
-          }, 50)
-        }
+        if (!dockRetry) dockRetry = setTimeout(() => { dockRetry = null; syncDockLayout() }, 50)
         return
       }
       if (dockTarget !== target) {
@@ -248,6 +220,31 @@ export default Plugin.define({
       dockScheduled = true
       queueMicrotask(syncDockLayout)
     }
+
+    // Preserve new main's cursor-under-overlay protection, generalized to all sides.
+    function cursorUnderOverlay(cursor) {
+      const x = Number(cursor?.x ?? 0)
+      const y = Number(cursor?.y ?? 0)
+      const width = Number(renderer.width ?? 0)
+      const height = Number(renderer.height ?? 0)
+      for (const side of PANEL_SIDES) {
+        const item = zone(side)
+        if (!item.enabled || item.pinned || item.collapsed) continue
+        const size = extent(side)
+        if (side === "left" && x < size) return true
+        if (side === "right" && x > width - size) return true
+        if (side === "top" && y < size) return true
+        if (side === "bottom" && y > height - size) return true
+      }
+      return false
+    }
+    const hideCursorUnderPanels = () => {
+      try {
+        const cursor = renderer.getCursorState?.()
+        if (cursor?.visible && cursorUnderOverlay(cursor)) renderer.setCursorPosition(0, 0, false)
+      } catch {}
+    }
+    renderer.addPostProcessFn?.(hideCursorUnderPanels)
 
     const scrollPositions = new Map()
     const scrollRefs = new Map()
@@ -368,51 +365,68 @@ export default Plugin.define({
       )
     }
 
-    async function configureZone(side) {
-      const item = zone(side)
-      const action = await context.ui.dialog.select({
-        title: `${SIDE_LABEL[side]} panel`,
-        placeholder: "Настроить зону…",
-        options: [
-          { title: item.enabled ? "Показать / развернуть" : "Включить", value: "show", description: `Сейчас: ${item.enabled ? panelTitle(item.active) : "выключена"}` },
-          ...PANEL_DEFS.map((view) => ({ title: `View: ${view.title}`, value: `view:${view.id}`, description: view.id === item.active ? "Текущий вид" : undefined })),
-          { title: item.pinned ? "Unpin → overlay" : "Pin → dock", value: item.pinned ? "unpin" : "pin" },
-          { title: item.collapsed ? "Развернуть" : "Свернуть", value: item.collapsed ? "expand" : "collapse" },
-          { title: isVertical(side) ? "Шире +4" : "Выше +2", value: "grow" },
-          { title: isVertical(side) ? "Уже −4" : "Ниже −2", value: "shrink" },
-          { title: "Перейти в конец", value: "end" },
-          { title: "Выключить зону", value: "disable" },
-        ],
-      })
-      if (!action) return
-      if (action === "show") showZone(side)
-      else if (action === "pin") setPinned(side, true)
-      else if (action === "unpin") setPinned(side, false)
-      else if (action === "collapse") setCollapsed(side, true)
-      else if (action === "expand") setCollapsed(side, false)
-      else if (action === "disable") disableZone(side)
-      else if (action === "grow") adjustSize(side, isVertical(side) ? 4 : 2)
-      else if (action === "shrink") adjustSize(side, isVertical(side) ? -4 : -2)
-      else if (action === "end") jumpToEnd(side)
-      else if (action.startsWith("view:")) setZoneView(side, action.slice(5))
+    function applyZoneAction(side, action) {
+      const value = action?.value ?? action
+      if (!value) return
+      if (value === "show") showZone(side)
+      else if (value === "pin") setPinned(side, true)
+      else if (value === "unpin") setPinned(side, false)
+      else if (value === "collapse") setCollapsed(side, true)
+      else if (value === "expand") setCollapsed(side, false)
+      else if (value === "disable") disableZone(side)
+      else if (value === "grow") adjustSize(side, isVertical(side) ? 4 : 2)
+      else if (value === "shrink") adjustSize(side, isVertical(side) ? -4 : -2)
+      else if (value === "end") jumpToEnd(side)
+      else if (String(value).startsWith("view:")) setZoneView(side, String(value).slice(5))
     }
 
-    async function configurePanels() {
-      const side = await context.ui.dialog.select({
-        title: "Panels",
-        placeholder: "Выбрать dock-зону…",
-        options: PANEL_SIDES.map((name) => {
-          const item = zone(name)
-          return {
-            title: SIDE_LABEL[name],
-            value: name,
-            description: item.enabled
-              ? `${panelTitle(item.active)} · ${item.pinned ? "pinned" : "overlay"}${item.collapsed ? " · collapsed" : ""} · ${extent(name)}`
-              : "disabled",
-          }
-        }),
-      })
-      if (side) await configureZone(side)
+    function configureZone(side) {
+      const DialogSelect = context.ui.DialogSelect
+      const item = zone(side)
+      context.ui.dialog.replace(() => (
+        <DialogSelect
+          title={`${SIDE_LABEL[side]} panel`}
+          placeholder="Настроить зону…"
+          options={[
+            { title: item.enabled ? "Показать / развернуть" : "Включить", value: "show", description: `Сейчас: ${item.enabled ? panelTitle(item.active) : "выключена"}` },
+            ...PANEL_DEFS.map((view) => ({ title: `View: ${view.title}`, value: `view:${view.id}`, description: view.id === item.active ? "Текущий вид" : undefined })),
+            { title: item.pinned ? "Unpin → overlay" : "Pin → dock", value: item.pinned ? "unpin" : "pin" },
+            { title: item.collapsed ? "Развернуть" : "Свернуть", value: item.collapsed ? "expand" : "collapse" },
+            { title: isVertical(side) ? "Шире +4" : "Выше +2", value: "grow" },
+            { title: isVertical(side) ? "Уже −4" : "Ниже −2", value: "shrink" },
+            { title: "Перейти в конец", value: "end" },
+            { title: "Выключить зону", value: "disable" },
+          ]}
+          onSelect={(option) => {
+            context.ui.dialog.clear()
+            applyZoneAction(side, option)
+          }}
+        />
+      ))
+    }
+
+    function configurePanels() {
+      const DialogSelect = context.ui.DialogSelect
+      context.ui.dialog.replace(() => (
+        <DialogSelect
+          title="Panels"
+          placeholder="Выбрать dock-зону…"
+          options={PANEL_SIDES.map((side) => {
+            const item = zone(side)
+            return {
+              title: SIDE_LABEL[side],
+              value: side,
+              description: item.enabled
+                ? `${panelTitle(item.active)} · ${item.pinned ? "pinned" : "overlay"}${item.collapsed ? " · collapsed" : ""} · ${extent(side)}`
+                : "disabled",
+            }
+          })}
+          onSelect={(option) => {
+            context.ui.dialog.clear()
+            configureZone(option.value)
+          }}
+        />
+      ))
     }
 
     function runZoneAction(side, action, view) {
@@ -436,7 +450,7 @@ export default Plugin.define({
           slash: { name: "panel" },
           palette: true,
           suggested: true,
-          run: () => configurePanels(),
+          run: configurePanels,
         },
         { id: "custom.panels.reset", title: "Сбросить раскладку панелей", group: "Панели", palette: true, run: resetZones },
 
@@ -447,7 +461,7 @@ export default Plugin.define({
         { id: "custom.panel.limits", title: "Workspace: Limits", group: "Панели", bind: "ctrl+alt+l", palette: true, run: () => setZoneView("right", "limits") },
         { id: "custom.panel.end", title: "Workspace: перейти в конец", group: "Панели", bind: "ctrl+alt+end", palette: true, run: () => jumpToEnd("right") },
 
-        // Compatibility with the first panels branch commands.
+        // Compatibility with the earlier panels branch commands.
         { id: "custom.panels.toggle", title: "Правая панель: показать/свернуть", group: "Панели", bind: "ctrl+alt+p", palette: false, run: () => toggleZone("right") },
         { id: "custom.panels.pin", title: "Правая панель: pin/unpin", group: "Панели", palette: false, run: () => setPinned("right", !zone("right").pinned) },
         { id: "custom.panels.previous", title: "Правая панель: предыдущий View", group: "Панели", palette: false, run: () => cycleZoneView("right", -1) },
@@ -481,10 +495,8 @@ export default Plugin.define({
 
     function NativeSidebarGuard() {
       onMount(() => {
-        // The stock sidebar is a fifth physical panel. `session.sidebar.toggle`
-        // switches OpenCode's internal mode from auto to hide when it is
-        // currently visible, so doing this only from a mounted sidebar slot
-        // closes both explicit and wide-terminal auto sidebars without guessing.
+        // The stock sidebar would be a fifth panel. This slot only mounts while
+        // it is visible; the native toggle then moves auto -> hide on wide TTYs.
         queueMicrotask(() => context.keymap.dispatchCommand?.("session.sidebar.toggle"))
       })
       return null
@@ -498,11 +510,7 @@ export default Plugin.define({
     const unApp = context.ui.slot({
       append: "app",
       render: () => {
-        context.keymap.layer(() => ({
-          mode: "global",
-          priority: 120,
-          commands: commandRows(),
-        }))
+        context.keymap.layer(() => ({ mode: "global", priority: 120, commands: commandRows() }))
 
         createEffect(() => {
           for (const side of PANEL_SIDES) {
@@ -518,14 +526,10 @@ export default Plugin.define({
         })
 
         onCleanup(() => restoreDockTarget())
-
         return (
           <>
             <box
-              ref={(node) => {
-                anchorNode = node
-                scheduleDockLayout()
-              }}
+              ref={(node) => { anchorNode = node; scheduleDockLayout() }}
               position="absolute"
               top={0}
               left={0}
@@ -541,6 +545,7 @@ export default Plugin.define({
     return () => {
       if (dockRetry) clearTimeout(dockRetry)
       restoreDockTarget()
+      renderer.removePostProcessFn?.(hideCursorUnderPanels)
       unNativeSidebar?.()
       unApp?.()
       views.dispose()
