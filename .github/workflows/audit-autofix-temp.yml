@@ -25,20 +25,21 @@ jobs:
         run: |
           python3 .github/audit-fix-initial-scroll.py
           python3 .github/audit-fix-tree-regression.py
+          python3 .github/audit-fix-session-proxy.py
           git diff --check
           node --check app/app.js
           node --check app/advanced-features.js
-          python3 -m py_compile scripts/web-fixture-e2e.py
+          python3 -m py_compile app/server.py scripts/web-fixture-e2e.py
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          if ! git diff --quiet -- app/app.js app/styles.css app/advanced-features.js scripts/web-fixture-e2e.py; then
-            git add app/app.js app/styles.css app/advanced-features.js scripts/web-fixture-e2e.py
-            git commit -m 'test: cover persisted session tree state'
+          if ! git diff --quiet -- app/app.js app/styles.css app/advanced-features.js app/server.py scripts/web-fixture-e2e.py; then
+            git add app/app.js app/styles.css app/advanced-features.js app/server.py scripts/web-fixture-e2e.py
+            git commit -m 'fix: preserve subagent sessions in web tree'
             git push origin HEAD:audit/full-review-20260901
           fi
 
       - name: Hide audit harness from product checks
-        run: rm -f .github/workflows/audit-autofix-temp.yml .github/audit-fix-initial-scroll.py .github/audit-fix-tree-regression.py .audit-trigger
+        run: rm -f .github/workflows/audit-autofix-temp.yml .github/audit-fix-initial-scroll.py .github/audit-fix-tree-regression.py .github/audit-fix-session-proxy.py .audit-trigger
 
       - name: Browser regression
         run: |
