@@ -4,8 +4,14 @@ import { PANEL_SIDES, PANEL_VIEWS, parsePanelCommand, panelCommandID } from "./l
 
 const SIDE_TITLE = { left: "Left", right: "Right", top: "Top", bottom: "Bottom" }
 
+function isOpenCodePrompt(editor) {
+  if (!editor || editor.isDestroyed) return false
+  const traits = editor.traits ?? {}
+  return traits.owner === "opencode" && traits.role === "prompt" && traits.status !== "SHELL"
+}
+
 function promptText(editor) {
-  if (!editor || editor.isDestroyed) return ""
+  if (!isOpenCodePrompt(editor)) return ""
   if (typeof editor.plainText === "string") return editor.plainText
   if (typeof editor.getText === "function") return String(editor.getText() ?? "")
   return ""
@@ -25,10 +31,15 @@ function isPlainSubmit(event) {
   return !event.ctrl && !event.meta && !event.alt && !event.option && !event.super && !event.hyper && !event.shift
 }
 
+function warn(context, message) {
+  context.ui.toast({ variant: "warning", message })
+}
+
 // `slashName` is useful for autocomplete, but manually typed TUI-plugin slashes
 // are not executed by OpenCode's Prompt.submit(). Therefore `/panel ...` also
-// has a pre-dispatch key intercept below. It consumes only a valid /panel prefix
-// before the event reaches either prompt.submit or TextareaRenderable.onSubmit.
+// has a pre-dispatch key intercept below. It consumes only a /panel command from
+// an OpenCode prompt before the event reaches either prompt.submit or
+// TextareaRenderable.onSubmit. Shell mode and every ordinary prompt fall through.
 export default Plugin.define({
   id: "custom.panel-slash",
   setup(context) {
@@ -71,8 +82,9 @@ export default Plugin.define({
       }
     }
 
-    // Keymap is prepended to the renderer's keypress listeners. Consuming here
-    // prevents both OpenCode's keymap submit and TextareaRenderable.onSubmit.
+    // OpenTUI's keymap host prepends its keypress listener to the renderer.
+    // consume() prevents default and stops propagation, so the Textarea's own
+    // submit listener cannot race this local command into the model pipeline.
     const unIntercept = context.keymap.intercept(
       "key",
       ({ event, consume }) => {
@@ -84,29 +96,20 @@ export default Plugin.define({
 
         consume()
         if (parsed.type === "error") {
-          context.ui.toast.show({
-            variant: "warning",
-            message: `Panel: ${parsed.message}`,
-          })
+          warn(context, `Panel: ${parsed.message}`)
           return
         }
 
         const target = panelCommandID(parsed)
         if (!target) {
-          context.ui.toast.show({
-            variant: "warning",
-            message: "Panel: command is not available",
-          })
+          warn(context, "Panel: command is not available")
           return
         }
 
         clearPromptEditor(editor)
         const result = context.keymap.dispatchCommand?.(target)
         if (result && result.ok === false) {
-          context.ui.toast.show({
-            variant: "warning",
-            message: `Panel: ${result.reason ?? "command is inactive"}`,
-          })
+          warn(context, `Panel: ${result.reason ?? "command is inactive"}`)
         }
       },
       { priority: 10_000 },
