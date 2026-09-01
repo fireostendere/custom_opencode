@@ -76,3 +76,22 @@ if arm_new not in text:
     text = text.replace(arm_old, arm_new, 1)
 
 app.write_text(text, encoding="utf-8")
+
+test = Path("scripts/web-fixture-e2e.py")
+t = test.read_text(encoding="utf-8")
+old = '''    for expected in (160, 240, 241):
+        page.locator("#messages").hover()
+        page.mouse.wheel(0, -100000)
+        page.wait_for_function("document.querySelector('#messages').scrollTop <= 1")
+        page.wait_for_function(f"document.querySelectorAll('#messages .message').length === {expected}")
+'''
+new = '''    for expected in (160, 240, 241):
+        page.locator("#messages").hover()
+        page.mouse.wheel(0, -100000)
+        page.wait_for_function(f"document.querySelectorAll('#messages .message').length === {expected}")
+'''
+if new not in t:
+    if old not in t:
+        raise SystemExit("anchored history pagination loop not found")
+    t = t.replace(old, new, 1)
+test.write_text(t, encoding="utf-8")
