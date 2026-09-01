@@ -440,17 +440,9 @@ def transform_json_response(method: str, path: str, body: bytes) -> bytes:
     elif path == "/api/session":
         if isinstance(payload, dict) and isinstance(payload.get("data"), list):
             payload = dict(payload)
-            payload["data"] = [
-                mark_quick_session(session)
-                for session in payload["data"]
-                if not (isinstance(session, dict) and session.get("parentID"))
-            ]
+            payload["data"] = [mark_quick_session(session) for session in payload["data"]]
         elif isinstance(payload, list):
-            payload = [
-                mark_quick_session(session)
-                for session in payload
-                if not (isinstance(session, dict) and session.get("parentID"))
-            ]
+            payload = [mark_quick_session(session) for session in payload]
     elif path == "/api/project":
         quick_project = {
             "id": SCRATCH_PROJECT_ID,
