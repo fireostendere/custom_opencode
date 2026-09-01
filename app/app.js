@@ -579,6 +579,7 @@ function renderMessages({anchor=null,bottom=false}={}){
     if('ResizeObserver' in window){
       initialMessageScrollObserver=new ResizeObserver(settleBottom)
       initialMessageScrollObserver.observe(inner)
+      initialMessageScrollObserver.observe(view)
     }
     const frames=new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
     const fonts=document.fonts?.ready?document.fonts.ready.catch(()=>{}):Promise.resolve()
