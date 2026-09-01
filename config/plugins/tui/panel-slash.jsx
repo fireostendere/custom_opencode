@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { Plugin } from "@opencode-ai/plugin/tui"
 import { PANEL_SIDES, PANEL_VIEWS, parsePanelCommand, panelCommandID } from "./lib/panel-command.js"
+import { installPanelSubmitRouter } from "./lib/panel-submit-router.js"
 
 const SIDE_TITLE = { left: "Left", right: "Right", top: "Top", bottom: "Bottom" }
 // Concrete generated slash examples: panel left, panel right, panel top, panel bottom.
@@ -26,21 +27,12 @@ function clearPromptEditor(editor) {
   editor.gotoBufferEnd?.()
 }
 
-function isPlainSubmit(event) {
-  if (!event || event.eventType === "release") return false
-  if (event.name !== "return" && event.name !== "enter" && event.name !== "kpenter") return false
-  return !event.ctrl && !event.meta && !event.alt && !event.option && !event.super && !event.hyper && !event.shift
-}
-
 function warn(context, message) {
-  context.ui.toast({ variant: "warning", message })
+  context.ui.toast?.({ variant: "warning", message })
 }
 
-// `slashName` is useful for autocomplete, but manually typed TUI-plugin slashes
-// are not executed by OpenCode's Prompt.submit(). Therefore `/panel ...` also
-// has a pre-dispatch key intercept below. It consumes only a /panel command from
-// an OpenCode prompt before the event reaches either prompt.submit or
-// TextareaRenderable.onSubmit. Shell mode and every ordinary prompt fall through.
+// `slashName` powers autocomplete. Manually typed `/panel ...` is routed locally
+// by a version-compatible pre-submit adapter so it never reaches the model.
 export default Plugin.define({
   id: "custom.panel-slash",
   setup(context) {
@@ -83,38 +75,33 @@ export default Plugin.define({
       }
     }
 
-    // OpenTUI's keymap host prepends its keypress listener to the renderer.
-    // consume() prevents default and stops propagation, so the Textarea's own
-    // submit listener cannot race this local command into the model pipeline.
-    const unIntercept = context.keymap.intercept(
-      "key",
-      ({ event, consume }) => {
-        if (!isPlainSubmit(event)) return
+    const submitRouter = installPanelSubmitRouter(context, () => {
+      const editor = context.renderer?.currentFocusedEditor
+      const parsed = parsePanelCommand(promptText(editor))
+      if (!parsed) return false
 
-        const editor = context.renderer?.currentFocusedEditor
-        const parsed = parsePanelCommand(promptText(editor))
-        if (!parsed) return
+      if (parsed.type === "error") {
+        warn(context, `Panel: ${parsed.message}`)
+        return true
+      }
 
-        consume()
-        if (parsed.type === "error") {
-          warn(context, `Panel: ${parsed.message}`)
-          return
-        }
+      const target = panelCommandID(parsed)
+      if (!target) {
+        warn(context, "Panel: command is not available")
+        return true
+      }
 
-        const target = panelCommandID(parsed)
-        if (!target) {
-          warn(context, "Panel: command is not available")
-          return
-        }
+      clearPromptEditor(editor)
+      const result = context.keymap.dispatchCommand?.(target)
+      if (result && result.ok === false) {
+        warn(context, `Panel: ${result.reason ?? "command is inactive"}`)
+      }
+      return true
+    })
 
-        clearPromptEditor(editor)
-        const result = context.keymap.dispatchCommand?.(target)
-        if (result && result.ok === false) {
-          warn(context, `Panel: ${result.reason ?? "command is inactive"}`)
-        }
-      },
-      { priority: 10_000 },
-    )
+    if (submitRouter.transport === "none") {
+      warn(context, "Panel: this OpenCode build has no local submit interception API")
+    }
 
     const unApp = context.ui.slot({
       append: "app",
@@ -129,7 +116,7 @@ export default Plugin.define({
     })
 
     return () => {
-      unIntercept?.()
+      submitRouter.dispose?.()
       unApp?.()
     }
   },
