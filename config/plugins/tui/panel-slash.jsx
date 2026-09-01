@@ -4,23 +4,19 @@ import { PANEL_SIDES, PANEL_VIEWS } from "./lib/panel-command.js"
 
 const SIDE_TITLE = { left: "Left", right: "Right", top: "Top", bottom: "Bottom" }
 
-function nativeSlash(id, slashName, title, target) {
-  return {
-    id,
-    title,
-    group: "Панели",
-    palette: true,
-    slash: { name: slashName },
-    run: (context) => context.keymap.dispatchCommand?.(target),
-  }
-}
-
+// Examples: panel left, panel right, panel top, panel bottom.
 export default Plugin.define({
   id: "custom.panel-slash",
   setup(context) {
     function row(id, slashName, title, target) {
-      const command = nativeSlash(id, slashName, title, target)
-      return { ...command, run: () => context.keymap.dispatchCommand?.(target) }
+      return {
+        id,
+        title,
+        group: "Панели",
+        palette: true,
+        slash: { name: slashName },
+        run: () => context.keymap.dispatchCommand?.(target),
+      }
     }
 
     const commands = [
