@@ -6,11 +6,10 @@ on:
       - audit/full-review-20260901
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   audit:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -21,21 +20,12 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Apply remaining review fixes
+      - name: Source checks
         run: |
-          python3 .github/audit-fix-session-proxy.py
-          python3 .github/audit-fix-scroll-once.py
           git diff --check
           node --check app/app.js
           node --check app/advanced-features.js
           python3 -m py_compile app/server.py scripts/web-fixture-e2e.py
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          if ! git diff --quiet -- app/app.js app/advanced-features.js app/styles.css app/server.py scripts/web-fixture-e2e.py; then
-            git add app/app.js app/advanced-features.js app/styles.css app/server.py scripts/web-fixture-e2e.py
-            git commit -m 'fix: separate agent sessions and orchestration panels'
-            git push origin HEAD:audit/full-review-20260901
-          fi
 
       - name: Hide audit harness from product checks
         run: rm -f .github/workflows/audit-autofix-temp.yml .github/audit-fix-initial-scroll.py .github/audit-fix-tree-regression.py .github/audit-fix-session-proxy.py .github/audit-fix-scroll-once.py .audit-trigger
