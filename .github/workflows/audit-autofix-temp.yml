@@ -24,7 +24,6 @@ jobs:
       - name: Apply review fixes
         run: |
           python3 .github/audit-fix-initial-scroll.py
-          python3 .github/audit-fix-tree-regression.py
           python3 .github/audit-fix-session-proxy.py
           git diff --check
           node --check app/app.js
