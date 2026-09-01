@@ -1,10 +1,34 @@
 /** @jsxImportSource @opentui/solid */
 import { Plugin } from "@opencode-ai/plugin/tui"
-import { PANEL_SIDES, PANEL_VIEWS } from "./lib/panel-command.js"
+import { PANEL_SIDES, PANEL_VIEWS, parsePanelCommand, panelCommandID } from "./lib/panel-command.js"
 
 const SIDE_TITLE = { left: "Left", right: "Right", top: "Top", bottom: "Bottom" }
 
-// Examples: panel left, panel right, panel top, panel bottom.
+function promptText(editor) {
+  if (!editor || editor.isDestroyed) return ""
+  if (typeof editor.plainText === "string") return editor.plainText
+  if (typeof editor.getText === "function") return String(editor.getText() ?? "")
+  return ""
+}
+
+function clearPromptEditor(editor) {
+  if (!editor || editor.isDestroyed) return
+  if (typeof editor.clear === "function") editor.clear()
+  else if (typeof editor.setText === "function") editor.setText("")
+  editor.extmarks?.clear?.()
+  editor.gotoBufferEnd?.()
+}
+
+function isPlainSubmit(event) {
+  if (!event || event.eventType === "release") return false
+  if (event.name !== "return" && event.name !== "enter" && event.name !== "kpenter") return false
+  return !event.ctrl && !event.meta && !event.alt && !event.option && !event.super && !event.hyper && !event.shift
+}
+
+// `slashName` is useful for autocomplete, but manually typed TUI-plugin slashes
+// are not executed by OpenCode's Prompt.submit(). Therefore `/panel ...` also
+// has a pre-dispatch key intercept below. It consumes only a valid /panel prefix
+// before the event reaches either prompt.submit or TextareaRenderable.onSubmit.
 export default Plugin.define({
   id: "custom.panel-slash",
   setup(context) {
@@ -47,6 +71,47 @@ export default Plugin.define({
       }
     }
 
+    // Keymap is prepended to the renderer's keypress listeners. Consuming here
+    // prevents both OpenCode's keymap submit and TextareaRenderable.onSubmit.
+    const unIntercept = context.keymap.intercept(
+      "key",
+      ({ event, consume }) => {
+        if (!isPlainSubmit(event)) return
+
+        const editor = context.renderer?.currentFocusedEditor
+        const parsed = parsePanelCommand(promptText(editor))
+        if (!parsed) return
+
+        consume()
+        if (parsed.type === "error") {
+          context.ui.toast.show({
+            variant: "warning",
+            message: `Panel: ${parsed.message}`,
+          })
+          return
+        }
+
+        const target = panelCommandID(parsed)
+        if (!target) {
+          context.ui.toast.show({
+            variant: "warning",
+            message: "Panel: command is not available",
+          })
+          return
+        }
+
+        clearPromptEditor(editor)
+        const result = context.keymap.dispatchCommand?.(target)
+        if (result && result.ok === false) {
+          context.ui.toast.show({
+            variant: "warning",
+            message: `Panel: ${result.reason ?? "command is inactive"}`,
+          })
+        }
+      },
+      { priority: 10_000 },
+    )
+
     const unApp = context.ui.slot({
       append: "app",
       render: () => {
@@ -59,6 +124,9 @@ export default Plugin.define({
       },
     })
 
-    return () => unApp?.()
+    return () => {
+      unIntercept?.()
+      unApp?.()
+    }
   },
 })
