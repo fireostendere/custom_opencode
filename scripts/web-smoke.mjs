@@ -200,9 +200,10 @@ if (!uxCss.includes('.model-favorite-toggle')) throw new Error('Favorite model c
 for (const marker of ['model-provider-collapse-v1', 'data-fav', 'compareModelEntries', 'compareProviderGroups', 'providerPriority']) {
   if (!uiSource.includes(marker)) throw new Error(`Model picker behavior marker missing: ${marker}`)
 }
-for (const marker of ['PROJECT_ORDER_KEY', 'SESSION_ORDER_KEY', 'handleDrop', 'transferSessionToProject', 'data-session-drag', 'draggable="true"']) {
-  if (!appSource.includes(marker)) throw new Error(`Session drag-and-drop marker missing: ${marker}`)
+for (const marker of ['PROJECT_ORDER_KEY', 'SESSION_TREE_KEY', 'compareSessions', 'sessionTree', 'handleDrop', 'transferSessionToProject', 'data-session-drag']) {
+  if (!appSource.includes(marker)) throw new Error(`Session tree/drag marker missing: ${marker}`)
 }
+if (appSource.includes('SESSION_ORDER_KEY') || appSource.includes('appendSessionToOrder')) throw new Error('Removed manual per-session ordering must not return')
 for (const marker of ["data-action=\"copy-context\"", "data-action=\"move-project\"", 'removeSource:true', "api.deleteSession(session.id)"]) {
   if (!appSource.includes(marker)) throw new Error(`Session copy/move marker missing: ${marker}`)
 }
@@ -256,10 +257,10 @@ for (const marker of ['/api/form/request', '/api/question', 'question.asked', 'q
 for (const marker of ['.question-card', '.queue-list', '.orchestration-trace', '.orchestration-plan', '.orchestration-plan-meter', '.review-hunk', '.workflow-status']) {
   if (!advancedCss.includes(marker)) throw new Error(`Advanced workflow styling missing: ${marker}`)
 }
-for (const marker of ['orchestration-panels', 'orchestration-summary', 'activity-current-label', 'activityItems', 'activityDescriptor', 'syncPanels']) {
+for (const marker of ['orchestration-panels', 'orchestration-summary', 'activity-current-label', 'activityItems', 'activityDescriptor']) {
   if (!(advanced.includes(marker) || advancedCss.includes(marker))) throw new Error(`Activity dock marker missing: ${marker}`)
 }
-if (!advanced.includes('details.forEach((detail) => { detail.open = true })')) throw new Error('Plan and activity panels must open together')
+if (advanced.includes('syncPanels') || advanced.includes('details.forEach((detail) => { detail.open = true })')) throw new Error('Plan and activity panels must stay independently collapsible')
 for (const marker of ['--sidebar-width', '--scrollbar-size', '.sidebar-resizer', '*::-webkit-scrollbar-thumb', '.limits-summary::after', '.model-provider-chevron', 'overflow-y:auto', '.workflow-grid']) {
   if (!designSystem.includes(marker)) throw new Error(`Design-system styling missing: ${marker}`)
 }
