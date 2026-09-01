@@ -333,6 +333,7 @@ async function selectSession(id,{push=true,saveDraft=true}={}) {
   if(saveDraft)saveDraftNow()
   const cachedContext=state.contextCache.get(id)
   state.selected=session; state.context=cachedContext?.messages||[]; state.attachments=[]; state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
+  initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=id
   resetPromptHistory(id)
   renderAttachments(); renderSessions(); renderHeader(); renderMessages({bottom:true}); restoreDraft(); $('sidebar').classList.remove('open')
   if(push) setSessionHash(id)
@@ -342,7 +343,7 @@ async function selectSession(id,{push=true,saveDraft=true}={}) {
   if(detail&&state.selected?.id===id){const liveAgent=state.selected.agent;state.selected={...state.selected,...detail,...(liveAgent!==initialAgent?{agent:liveAgent}:{})};const index=state.sessions.findIndex((item)=>item.id===id);if(index>=0)state.sessions[index]=state.selected;renderHeader();renderControls()}
 }
 function clearSelection() {
-  saveDraftNow(); state.selected=null;state.context=[];state.attachments=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
+  saveDraftNow();initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=null; state.selected=null;state.context=[];state.attachments=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
   resetPromptHistory(null)
   location.hash=''
   window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:null}}))
@@ -574,27 +575,29 @@ function renderMessages({anchor=null,bottom=false}={}){
   inner.innerHTML=state.context.map((message,index)=>{const type=message.type||message.role;const id=message.id||message.messageID||`idx-${index}`;const body=type==='user'?userBody(message):assistantBody(message);return `<article class="message ${type==='user'?'user':'assistant'}" data-message-index="${index}"><div class="avatar">${type==='user'?'Я':'AI'}</div><div class="message-body"><div class="message-head"><span class="message-role">${type==='user'?'Ты':'OpenCode'}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`}).join('')
   if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height
   else if(bottom){
-    const sessionID=state.selected?.id
-    initialMessageScrollObserver?.disconnect()
-    initialMessageScrollObserver=null
-    initialMessageScrollSession=sessionID
-    let settling=true, observer=null
-    const stopSettling=()=>{
-      settling=false
-      if(initialMessageScrollObserver===observer){observer?.disconnect();initialMessageScrollObserver=null}
+    const sessionID=state.selected?.id,stabilize=initialMessageScrollSession===sessionID
+    view.scrollTop=view.scrollHeight
+    if(stabilize){
+      initialMessageScrollObserver?.disconnect()
+      initialMessageScrollObserver=null
+      let settling=true,observer=null
+      const stopSettling=()=>{
+        settling=false
+        if(initialMessageScrollSession===sessionID)initialMessageScrollSession=null
+        if(initialMessageScrollObserver===observer){observer?.disconnect();initialMessageScrollObserver=null}
+      }
+      const settleBottom=()=>{if(!settling||state.selected?.id!==sessionID||initialMessageScrollSession!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
+      if('ResizeObserver' in window){
+        observer=new ResizeObserver(settleBottom)
+        initialMessageScrollObserver=observer
+        observer.observe(inner)
+        observer.observe(view)
+      }
+      setTimeout(stopSettling,1500)
+      const frames=new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
+      const fonts=document.fonts?.ready?document.fonts.ready.catch(()=>{}):Promise.resolve()
+      Promise.all([frames,fonts]).then(settleBottom)
     }
-    const settleBottom=()=>{if(!settling||state.selected?.id!==sessionID||initialMessageScrollSession!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
-    settleBottom()
-    if('ResizeObserver' in window){
-      observer=new ResizeObserver(settleBottom)
-      initialMessageScrollObserver=observer
-      observer.observe(inner)
-      observer.observe(view)
-    }
-    setTimeout(stopSettling,1500)
-    const frames=new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
-    const fonts=document.fonts?.ready?document.fonts.ready.catch(()=>{}):Promise.resolve()
-    Promise.all([frames,fonts]).then(settleBottom)
   }
   else if(stick)view.scrollTop=view.scrollHeight
   else view.scrollTop=prev
