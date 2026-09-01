@@ -1106,7 +1106,7 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   if (!host) return
   const renderRevision = ++state.orchestrationRenderRevision
   const conversation = captureScrollState($('messages'))
-  const wasOpen = host.querySelector('details')?.open === true
+  const panelOpen={plan:host.querySelector('.plan-panel')?.open===true,live:host.querySelector('.live-panel')?.open===true}
   const planScroll = captureScrollState(host.querySelector('.plan-panel-body'))
   const nodesScroll = captureScrollState(host.querySelector('.orchestration-nodes'))
   const children = state.children || []
@@ -1160,19 +1160,17 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   const history = state.activityItems.filter((item) => item.id !== currentActivity?.id).slice(-6).reverse().map((item) => renderActivityItem(item)).join('')
   host.innerHTML = `<div class="orchestration-panels"><details class="orchestration-panel plan-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${panelStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>План</strong><span>${escapeHtml(currentStage)} · ${escapeHtml(panelMeta)}</span></span><span class="orchestration-summary-status ${panelStatus}">${panelStatusLabel}</span></summary><div class="activity-panel-body plan-panel-body">${planMarkup}</div></details><details class="orchestration-panel live-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${liveStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>Инструменты и агенты</strong><span>${escapeHtml(liveSummary)}</span></span><span class="orchestration-summary-status ${liveStatus}">${liveStatusLabel}</span></summary><div class="orchestration-nodes activity-panel-body">${currentActivity ? `<div class="activity-current-label">Сейчас</div>${renderActivityItem(currentActivity, true)}` : '<div class="activity-empty">Сейчас инструмент не выполняется.</div>'}<div class="activity-agents-label">Участники оркестрации</div>${nodes.join('')}${history ? `<div class="activity-history-label">Последние события</div>${history}` : ''}</div></details></div>`
   const details = [...host.querySelectorAll('details')]
-  const syncPanels = (source) => {
-    const open = source.open
-    details.forEach((detail) => { if (detail !== source) detail.open = open })
-    host.classList.toggle('is-expanded', open)
-  }
   details.forEach((detail) => {
     const rememberConversation = () => { detail._conversationScroll = captureScrollState($('messages')) }
     const summary = detail.querySelector('summary')
     summary?.addEventListener('pointerdown', rememberConversation)
     summary?.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') rememberConversation() })
-    detail.addEventListener('toggle', () => { syncPanels(detail); restoreScrollState($('messages'), detail._conversationScroll || captureScrollState($('messages'))) })
+    detail.addEventListener('toggle', () => { host.classList.toggle('is-expanded',details.some((row)=>row.open));restoreScrollState($('messages'), detail._conversationScroll || captureScrollState($('messages'))) })
   })
-  if (wasOpen) details.forEach((detail) => { detail.open = true })
+  const planPanel=host.querySelector('.plan-panel'),livePanel=host.querySelector('.live-panel')
+  if(planPanel)planPanel.open=panelOpen.plan
+  if(livePanel)livePanel.open=panelOpen.live
+  host.classList.toggle('is-expanded',details.some((detail)=>detail.open))
   restoreScrollState($('messages'), conversation)
   const sessionID = state.sessionID
   const revision = state.orchestrationRevision

@@ -87,6 +87,15 @@ class Backend(BaseHTTPRequestHandler):
             self.send_json({"data": statuses})
         elif path == "/api/session/ses_fixture":
             self.send_json({"data": session})
+        elif path == "/api/session/ses_child_reader":
+            child = {**session, "id":"ses_child_reader", "title":"Reader subagent", "parentID":"ses_fixture", "agent":"explore", "time":{"created":2_000_000_000_100,"updated":2_000_000_000_500}}
+            self.send_json({"data": child})
+        elif path == "/api/session/ses_child_reader/message":
+            rows = [
+                {"info":{"id":"child_assistant","role":"assistant","time":{"created":2_000_000_000_102}},"parts":[{"type":"text","text":"Delegated answer"}]},
+                {"info":{"id":"child_user","role":"user","time":{"created":2_000_000_000_101}},"parts":[{"type":"text","text":"Delegated request"}]},
+            ]
+            self.send_json({"data": rows, "cursor":{"next": None}})
         elif path == "/api/session/ses_fixture/context":
             FixtureState.context_reads += 1
             self.send_json({"error": "context endpoint unavailable"}, status=404)
@@ -285,24 +294,30 @@ def desktop(browser, base_url: str) -> None:
     assert fixture_group.get_attribute("open") is not None and other_group.get_attribute("open") is not None
     root_titles = fixture_group.locator(':scope > .project-sessions > .session-node > .session [data-session] .session-title').all_inner_texts()
     assert root_titles == ["Fixture session", "Older root"], root_titles
-    parent_toggle = fixture_group.locator('[data-session-tree-toggle="ses_fixture"]')
+    parent_folder = fixture_group.locator('[data-agent-folder="ses_fixture"]')
     parent_children = fixture_group.locator('[data-session-children="ses_fixture"]')
-    assert parent_toggle.count() == 1
-    if parent_toggle.get_attribute("aria-expanded") == "true":
-        parent_toggle.click()
-    assert parent_toggle.get_attribute("aria-expanded") == "false" and parent_children.is_hidden()
-    parent_toggle.click()
-    assert parent_toggle.get_attribute("aria-expanded") == "true" and parent_children.is_visible()
+    assert parent_folder.count() == 1
+    assert "Агентские диалоги" in parent_folder.locator(':scope > summary').inner_text()
+    if parent_folder.get_attribute("open") is not None:
+        parent_folder.locator(':scope > summary').click()
+    assert parent_folder.get_attribute("open") is None and parent_children.is_hidden()
+    parent_folder.locator(':scope > summary').click()
+    assert parent_folder.get_attribute("open") is not None and parent_children.is_visible()
     assert fixture_group.locator('[data-session="ses_child_reader"] .session-title').inner_text() == "Reader subagent"
-    child_toggle = fixture_group.locator('[data-session-tree-toggle="ses_child_reader"]')
+    child_folder = fixture_group.locator('[data-agent-folder="ses_child_reader"]')
     child_children = fixture_group.locator('[data-session-children="ses_child_reader"]')
-    assert child_toggle.count() == 1
-    if child_toggle.get_attribute("aria-expanded") == "true":
-        child_toggle.click()
-    assert child_toggle.get_attribute("aria-expanded") == "false" and child_children.is_hidden()
-    child_toggle.click()
-    assert child_toggle.get_attribute("aria-expanded") == "true" and child_children.is_visible()
+    assert child_folder.count() == 1
+    child_folder.locator(':scope > summary').click()
+    assert child_folder.get_attribute("open") is not None and child_children.is_visible()
     assert fixture_group.locator('[data-session="ses_child_review"] .session-title').inner_text() == "Reviewer nested"
+    fixture_group.locator('[data-session="ses_child_reader"]').click()
+    page.wait_for_function("location.hash.startsWith('#/session/ses_child_reader')")
+    page.wait_for_function("document.querySelectorAll('#messages .message').length === 2")
+    assert page.locator('#messages .message.user').get_attribute('data-origin') == 'agent-prompt'
+    assert page.locator('#messages .message.user .message-role').inner_text() == 'Запрос модели/агента → explore'
+    assert page.locator('#messages .message.assistant').get_attribute('data-origin') == 'agent-response'
+    assert page.locator('#messages .message.assistant .message-role').inner_text().startswith('Агент explore')
+    open_session(page)
     fixture_group.locator(':scope > summary').click()
     assert fixture_group.get_attribute("open") is None and other_group.get_attribute("open") is not None
     fixture_group.locator(':scope > summary').click()
@@ -458,9 +473,13 @@ def desktop(browser, base_url: str) -> None:
     page.wait_for_function("document.querySelectorAll('.orchestration-plan-list li').length === 48", timeout=5000)
     assert page.locator(".activity-chevron").count() == 0
     assert page.locator(".plan-panel > summary").evaluate("el => getComputedStyle(el, '::after').content") != "none"
+    assert not page.locator('.plan-panel').evaluate('el => el.open')
+    assert not page.locator('.live-panel').evaluate('el => el.open')
     page.locator("#messages").evaluate("el => el.scrollTop = Math.min(1, Math.max(0, el.scrollHeight - el.clientHeight))")
     conversation_before = page.locator("#messages").evaluate("el => el.scrollTop")
     page.locator(".plan-panel > summary").click()
+    assert page.locator('.plan-panel').evaluate('el => el.open')
+    assert not page.locator('.live-panel').evaluate('el => el.open')
     page.locator(".plan-panel-body").evaluate("el => { el.scrollTop = Math.max(1, el.scrollHeight - el.clientHeight - 30) }")
     before = page.locator(".plan-panel-body").evaluate("el => el.scrollTop")
     page.wait_for_timeout(1200)  # The live one-second render must not reset an expanded plan.
@@ -468,6 +487,10 @@ def desktop(browser, base_url: str) -> None:
     assert abs(after - before) <= 2, (before, after)
     conversation_after = page.locator("#messages").evaluate("el => el.scrollTop")
     assert abs(conversation_after - conversation_before) <= 2, (conversation_before, conversation_after)
+    page.locator('.live-panel > summary').click()
+    assert page.locator('.plan-panel').evaluate('el => el.open') and page.locator('.live-panel').evaluate('el => el.open')
+    page.locator('.live-panel > summary').click()
+    assert page.locator('.plan-panel').evaluate('el => el.open') and not page.locator('.live-panel').evaluate('el => el.open')
 
     page.click("#logoutButton")
     page.locator("#loginForm").wait_for(state="visible")
@@ -584,6 +607,17 @@ def mobile(browser, base_url: str) -> None:
     assert page.locator(".pull-refresh svg").count() == 1
     page.wait_for_timeout(600)
     assert page.locator(".pull-refresh").is_hidden(), "pull refresh result did not dismiss"
+    page.evaluate("document.documentElement.dataset.modelProfile = 'orchestrated'")
+    page.wait_for_function("document.querySelectorAll('.orchestration-plan-list li').length === 48", timeout=5000)
+    plan = page.locator('.plan-panel')
+    live = page.locator('.live-panel')
+    assert not plan.evaluate('el => el.open') and not live.evaluate('el => el.open')
+    plan.locator(':scope > summary').click()
+    assert plan.evaluate('el => el.open') and not live.evaluate('el => el.open')
+    live.locator(':scope > summary').click()
+    assert plan.evaluate('el => el.open') and live.evaluate('el => el.open')
+    plan.locator(':scope > summary').click()
+    assert not plan.evaluate('el => el.open') and live.evaluate('el => el.open')
     context.close()
 
 
