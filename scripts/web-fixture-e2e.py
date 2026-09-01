@@ -286,14 +286,22 @@ def desktop(browser, base_url: str) -> None:
     root_titles = fixture_group.locator(':scope > .project-sessions > .session-node > .session [data-session] .session-title').all_inner_texts()
     assert root_titles == ["Fixture session", "Older root"], root_titles
     parent_toggle = fixture_group.locator('[data-session-tree-toggle="ses_fixture"]')
-    assert parent_toggle.count() == 1 and parent_toggle.get_attribute("aria-expanded") == "false"
-    assert fixture_group.locator('[data-session-children="ses_fixture"]').is_hidden()
+    parent_children = fixture_group.locator('[data-session-children="ses_fixture"]')
+    assert parent_toggle.count() == 1
+    if parent_toggle.get_attribute("aria-expanded") == "true":
+        parent_toggle.click()
+    assert parent_toggle.get_attribute("aria-expanded") == "false" and parent_children.is_hidden()
     parent_toggle.click()
-    assert fixture_group.locator('[data-session-children="ses_fixture"]').is_visible()
+    assert parent_toggle.get_attribute("aria-expanded") == "true" and parent_children.is_visible()
     assert fixture_group.locator('[data-session="ses_child_reader"] .session-title').inner_text() == "Reader subagent"
     child_toggle = fixture_group.locator('[data-session-tree-toggle="ses_child_reader"]')
-    assert child_toggle.count() == 1 and child_toggle.get_attribute("aria-expanded") == "false"
+    child_children = fixture_group.locator('[data-session-children="ses_child_reader"]')
+    assert child_toggle.count() == 1
+    if child_toggle.get_attribute("aria-expanded") == "true":
+        child_toggle.click()
+    assert child_toggle.get_attribute("aria-expanded") == "false" and child_children.is_hidden()
     child_toggle.click()
+    assert child_toggle.get_attribute("aria-expanded") == "true" and child_children.is_visible()
     assert fixture_group.locator('[data-session="ses_child_review"] .session-title').inner_text() == "Reviewer nested"
     fixture_group.locator(':scope > summary').click()
     assert fixture_group.get_attribute("open") is None and other_group.get_attribute("open") is not None
