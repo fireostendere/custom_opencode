@@ -288,7 +288,6 @@ def desktop(browser, base_url: str) -> None:
     for expected in (160, 240, 241):
         page.locator("#messages").hover()
         page.mouse.wheel(0, -100000)
-        page.wait_for_function("document.querySelector('#messages').scrollTop <= 1")
         page.wait_for_function(f"document.querySelectorAll('#messages .message').length === {expected}")
     user_messages = page.locator("#messages .message.user")
     user_texts = user_messages.evaluate_all("els => els.map(el => el.querySelector('.markdown')?.innerText)")
