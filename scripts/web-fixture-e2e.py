@@ -331,10 +331,11 @@ def desktop(browser, base_url: str) -> None:
     page.locator("#scrollToBottom").click()
     page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
     assert page.locator("#scrollToBottom").is_hidden()
-    for expected in (160, 240, 241):
-        page.locator("#messages").hover()
-        page.mouse.wheel(0, -100000)
-        page.wait_for_function(f"document.querySelectorAll('#messages .message').length === {expected}")
+    initial_history_requests = [request for request in FixtureState.message_requests if request.get("limit") == ["80"]]
+    assert initial_history_requests == [{"limit": ["80"], "order": ["desc"]}], "initial layout must not page older history"
+    page.locator("#messages").hover()
+    page.mouse.wheel(0, -100000)
+    page.wait_for_function("document.querySelectorAll('#messages .message').length === 241")
     user_messages = page.locator("#messages .message.user")
     user_texts = user_messages.evaluate_all("els => els.map(el => el.querySelector('.markdown')?.innerText)")
     assert user_texts == [f"History user {index:03d}" for index in range(0, 241, 2)]
