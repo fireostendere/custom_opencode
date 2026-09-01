@@ -8,9 +8,18 @@ const helperUrl = new URL('config/plugins/tui/lib/limits-helper.js', root)
 const promptHistory = await readFile(new URL('config/plugins/tui/prompt-history.jsx', root), 'utf8')
 const limitsPanels = await readFile(new URL('config/plugins/tui/limits-panels.jsx', root), 'utf8')
 const cliConfig = JSON.parse(await readFile(new URL('config/cli.json', root), 'utf8'))
+const envExample = await readFile(new URL('.env.example', root), 'utf8')
+const updater = await readFile(new URL('scripts/update.sh', root), 'utf8')
 assert.equal(cliConfig.keybinds['prompt.history.previous'], 'none')
 assert.equal(cliConfig.keybinds['prompt.history.next'], 'none')
-assert.equal(cliConfig.keybinds['app.exit'], '<leader>q')
+assert.equal(cliConfig.keybinds['app.exit'], 'ctrl+shift+q')
+assert.equal(cliConfig.mouse, true, 'TUI mouse support must stay enabled for clickable controls')
+assert.match(envExample, /^OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT=1$/m)
+assert.ok(
+  updater.includes("^OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT=") &&
+    updater.includes('OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT=1'),
+  'Updater must migrate existing .env files to explicit Ctrl+C copy mode',
+)
 for (const marker of ['session_prompt', 'context.state.session.messages', 'custom.prompt-history.previous', 'custom.prompt-history.next', 'context.ui.Prompt', 'focused', 'sessionID']) {
   assert.ok(promptHistory.includes(marker), `TUI session prompt history marker missing: ${marker}`)
 }
@@ -115,4 +124,4 @@ assert.ok(elapsed < 2500, `Bailian watchdog took ${elapsed}ms`)
 assert.equal(timeoutHelper.getAutoRefreshState().pending, false)
 
 await rm(temp, { recursive: true, force: true })
-console.log('TUI limits regression passed: parsing + promo + refcount + bounded child process')
+console.log('TUI limits regression passed: copy/mouse contract + parsing + promo + refcount + bounded child process')

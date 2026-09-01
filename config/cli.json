@@ -14,7 +14,7 @@
   "keybinds": {
     "prompt.history.previous": "none",
     "prompt.history.next": "none",
-    "app.exit": "<leader>q"
+    "app.exit": "ctrl+shift+q"
   },
   "animations": true,
   "mouse": true
