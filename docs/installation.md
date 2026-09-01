@@ -116,6 +116,10 @@ password = OPENCODE_SERVER_PASSWORD
 
 После входа UI settings находятся в sidebar: `Аккаунт → Настройки`. Тема и accent сохраняются только в текущем browser profile.
 
+## Автоматическая verification pipeline
+
+Repository-defined `lint`/`test`/`pytest`/`cargo`/`go` команды считаются исполняемым кодом проекта. Поэтому даже при `OPENCODE_VERIFY_PIPELINE=auto` сервер не запускает их, пока для доверенного checkout явно не задано `OPENCODE_VERIFY_TRUST_REPO=1`. Для чужих или только что клонированных репозиториев оставляйте значение `0`.
+
 ## Что проверяет install self-test
 
 До изменений на диске запускается полный `scripts/verify.sh`: Python/JS/bash syntax, web smoke, router/config invariants, project-browser boundaries, RAG mocked lifecycle, secret/path guards.

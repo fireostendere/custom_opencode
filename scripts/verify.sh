@@ -71,6 +71,7 @@ done
 "$PYTHON3" "$ROOT/scripts/rag-start-smoke.py"
 "$PYTHON3" "$ROOT/scripts/runtime-smoke.py"
 "$PYTHON3" "$ROOT/scripts/runtime-resume-smoke.py"
+"$PYTHON3" "$ROOT/scripts/security-boundary-smoke.py"
 for file in "$ROOT/scripts/"*.sh; do
   bash -n "$file"
 done

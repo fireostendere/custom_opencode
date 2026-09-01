@@ -28,7 +28,7 @@ from urllib import request as urlrequest
 from urllib.error import URLError
 from urllib.parse import quote
 
-from repo_services import ArtifactStore, git_snapshot
+from repo_services import ArtifactStore, git_snapshot, safe_repo_file
 from runtime_store import RuntimeStore, now_ms
 
 WRITE_TOOLS={"edit","write","apply_patch","patch","multiedit"}
@@ -141,9 +141,10 @@ class SemanticRepoIndexer:
     def refresh(self,project_dir:str,*,force:bool=False)->dict[str,Any]:
         root=Path(project_dir).resolve(strict=True); snap=git_snapshot(str(root)); fingerprint=f"v{self.VERSION}:{snap.get('head')}:{snap.get('statusHash')}"; key=self._key(str(root)); cached=self.store.cache_get("repo-index-v3",key)
         if not force and isinstance(cached,dict) and cached.get("fingerprint")==fingerprint: result=dict(cached); result["cacheHit"]=True; return result
-        files=self._files(root); file_set=set(files); symbols=[]; dependency_edges=[]; manifests=[]; file_docs=[]; indexed_bytes=0
+        files=[relative for relative in self._files(root) if safe_repo_file(root,relative) is not None]; file_set=set(files); symbols=[]; dependency_edges=[]; manifests=[]; file_docs=[]; indexed_bytes=0
         for relative in files:
-            path=root/relative
+            path=safe_repo_file(root,relative)
+            if path is None: continue
             try: size=path.stat().st_size
             except OSError: continue
             if size>2_000_000: continue

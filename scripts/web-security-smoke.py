@@ -80,6 +80,11 @@ with tempfile.TemporaryDirectory() as temp:
             "X-Forwarded-Proto": "https",
             "X-Forwarded-For": "198.51.100.77",
         }
+        status, _, _ = request("GET", "/client-integration.json", headers=remote_headers)
+        assert status == 401, status
+        status, _, _ = request("POST", "/client-send.json", body={"sessionID": "x", "text": "x"}, headers=remote_headers)
+        assert status == 401, status
+
         status, response_headers, _ = request(
             "POST",
             "/auth/login",

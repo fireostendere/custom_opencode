@@ -278,6 +278,7 @@ class Handler(rag.Handler, features.Handler):
         parsed = urlsplit(self.path)
         if parsed.path == "/client-integration.json":
             if not self.authenticated():
+                self.unauthorized()
                 return
             self.json_response(integration_contract.contract())
             return
@@ -305,6 +306,7 @@ class Handler(rag.Handler, features.Handler):
             return
         if parsed.path == "/client-send.json":
             if not self.authenticated():
+                self.unauthorized()
                 return
             try:
                 payload = self._feature_body()

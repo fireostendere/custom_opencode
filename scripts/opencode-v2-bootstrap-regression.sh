@@ -76,7 +76,7 @@ CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:/usr/bi
   "$WRAPPER" --version
 
 grep -Fxq 'opencode2 --version' "$LOG"
-if grep -Fq 'FORBIDDEN-opencode-v1' "$LOG"; then
+if grep -Fq 'FORBIDDEN-opencode' "$LOG"; then
   echo "unversioned compatibility path was executed" >&2
   exit 1
 fi
