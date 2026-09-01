@@ -3,6 +3,7 @@ import { Plugin } from "@opencode-ai/plugin/tui"
 import { PANEL_SIDES, PANEL_VIEWS, parsePanelCommand, panelCommandID } from "./lib/panel-command.js"
 
 const SIDE_TITLE = { left: "Left", right: "Right", top: "Top", bottom: "Bottom" }
+// Concrete generated slash examples: panel left, panel right, panel top, panel bottom.
 
 function isOpenCodePrompt(editor) {
   if (!editor || editor.isDestroyed) return false
