@@ -1,14 +1,18 @@
 /** @jsxImportSource @opentui/solid */
 /**
- * Keep prompt history scoped to the active TUI session.
- * The native prompt history is global, so its bindings are disabled in cli.json
- * and replaced with these session-local up/down commands.
+ * Keep prompt history scoped to the active TUI session and intercept local
+ * /panel commands before they can be submitted to the model.
  */
 import { Plugin } from "@opencode-ai/plugin/tui"
+import { parsePanelCommand, panelCommandID } from "./lib/panel-command.js"
+
+function currentRoute(context) {
+  const current = context.ui.router.current
+  return typeof current === "function" ? current() : current
+}
 
 function currentSessionID(context, promptSessionID = "") {
-  const current = context.ui.router.current
-  const route = typeof current === "function" ? current() : current
+  const route = currentRoute(context)
   const type = route?.type ?? route?.name
   if (type !== "session") return ""
   return String(route?.sessionID ?? route?.params?.sessionID ?? promptSessionID ?? "")
@@ -97,6 +101,54 @@ export default Plugin.define({
       return true
     }
 
+    function activePanelPrompt() {
+      const route = currentRoute(context)
+      const type = route?.type ?? route?.name
+      if (type === "session") {
+        const ref = promptRef
+        if (!ref?.focused || ref.current?.mode === "shell") return null
+        return {
+          text: () => ref.current?.input ?? "",
+          clear: () => ref.reset(),
+        }
+      }
+
+      // Home uses a separate native prompt slot. Do not replace it just to
+      // capture a ref: use the currently focused TextareaRenderable instead,
+      // preserving native placeholders and home_prompt_right content.
+      if (type === "home") {
+        const editor = context.renderer?.currentFocusedEditor
+        if (!editor || typeof editor.getText !== "function" || typeof editor.setText !== "function") return null
+        return {
+          text: () => editor.getText(),
+          clear: () => {
+            editor.setText("")
+            if (typeof editor.gotoBufferEnd === "function") editor.gotoBufferEnd()
+          },
+        }
+      }
+      return null
+    }
+
+    function runPanelSlash() {
+      const prompt = activePanelPrompt()
+      if (!prompt) return false
+      const parsed = parsePanelCommand(prompt.text())
+      if (!parsed) return false
+      if (parsed.type === "error") {
+        context.ui.toast.show({
+          message: `Panel: ${parsed.message}`,
+          variant: "warning",
+        })
+        return true
+      }
+      const command = panelCommandID(parsed)
+      if (!command) return false
+      prompt.clear()
+      context.keymap.dispatchCommand?.(command)
+      return true
+    }
+
     const unprompt = context.ui.slot({
       append: "session_prompt",
       render: (props = {}) => {
@@ -127,8 +179,16 @@ export default Plugin.define({
       render: () => {
         context.keymap.layer(() => ({
           mode: "global",
-          priority: 1000,
+          priority: 1100,
           commands: [
+            {
+              id: "custom.panels.inline-submit",
+              title: "Локальная команда /panel",
+              group: "Панели",
+              bind: "enter",
+              palette: false,
+              run: runPanelSlash,
+            },
             {
               id: "custom.prompt-history.previous",
               title: "Предыдущий prompt текущей сессии",
