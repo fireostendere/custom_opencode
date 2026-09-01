@@ -22,6 +22,9 @@ if (!document.querySelector('link[data-unified-workspace]')) {
   document.head.append(style)
 }
 
-import('./unified-workspace.js').catch((error) => {
+Promise.all([
+  import('./unified-workspace.js'),
+  import('./unified-workspace-ext.js'),
+]).catch((error) => {
   console.error('unified workspace failed to load', error)
 })
