@@ -34,5 +34,7 @@ jobs:
         run: python scripts/unified-workspace-regression.py
       - name: TUI regression
         run: node scripts/tui-regression.mjs
+      - name: Panel local-submit regression
+        run: node scripts/panel-submit-regression.mjs
       - name: Existing verification suite
         run: bash scripts/verify.sh
