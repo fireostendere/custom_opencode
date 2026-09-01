@@ -574,13 +574,20 @@ function renderMessages({anchor=null,bottom=false}={}){
     initialMessageScrollObserver?.disconnect()
     initialMessageScrollObserver=null
     initialMessageScrollSession=sessionID
-    const settleBottom=()=>{if(state.selected?.id!==sessionID||initialMessageScrollSession!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
+    let settling=true, observer=null
+    const stopSettling=()=>{
+      settling=false
+      if(initialMessageScrollObserver===observer){observer?.disconnect();initialMessageScrollObserver=null}
+    }
+    const settleBottom=()=>{if(!settling||state.selected?.id!==sessionID||initialMessageScrollSession!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
     settleBottom()
     if('ResizeObserver' in window){
-      initialMessageScrollObserver=new ResizeObserver(settleBottom)
-      initialMessageScrollObserver.observe(inner)
-      initialMessageScrollObserver.observe(view)
+      observer=new ResizeObserver(settleBottom)
+      initialMessageScrollObserver=observer
+      observer.observe(inner)
+      observer.observe(view)
     }
+    setTimeout(stopSettling,1500)
     const frames=new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
     const fonts=document.fonts?.ready?document.fonts.ready.catch(()=>{}):Promise.resolve()
     Promise.all([frames,fonts]).then(settleBottom)
