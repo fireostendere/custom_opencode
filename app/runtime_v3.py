@@ -36,8 +36,8 @@ READ_TOOLS={"read","grep","glob","list","lsp"}
 SHELL_TOOLS={"shell","bash"}
 DANGEROUS_SHELL=re.compile(r"(?i)(?:^|[;&|])\s*(?:sudo\b|su\b|rm\s+-[^\n]*r|mkfs\b|dd\s+if=|shutdown\b|reboot\b|git\s+push\b|git\s+reset\s+--hard\b)")
 SECRET_NAME=re.compile(r"^[A-Z][A-Z0-9_]{2,127}$")
-IMPORT_JS=re.compile(r"(?:import\s+(?:[^;]*?\s+from\s+)?|require\s*\()\s*['\"]([^'\"]+)['\"]")
-SYMBOL_JS=re.compile(r"^\s*(?:export\s+)?(?:(?:async\s+)?function\s+|class\s+|(?:const|let|var)\s+)([A-Za-z_$][\w$]*)",re.M)
+IMPORT_JS=re.compile(r"(?:(?:import|export)\s+(?:[\s\S]*?\s+from\s+)?|(?:import|require)\s*\()\s*['\"]([^'\"]+)['\"]")
+SYMBOL_JS=re.compile(r"^\s*(?:export\s+(?:default\s+)?)?(?:(?:async\s+)?function\*?\s+|class\s+|(?:const|let|var)\s+|interface\s+|type\s+|enum\s+)([A-Za-z_$][\w$]*)",re.M)
 WORD_RE=re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,63}")
 ENGINEERING_HINT=re.compile(r"(?i)\b(pcb|schematic|datasheet|diptrace|voltage|current|mosfet|pmic|usb|uart|esp32|i2c|spi|rf|power|signal integrity|layout|footprint|component)\b")
 
@@ -128,7 +128,11 @@ class SemanticRepoIndexer:
                 if node.module: imports.append(prefix+node.module)
         Visitor().visit(tree); return symbols,imports
     def _generic(self,relative:str,text:str)->tuple[list[dict[str,Any]],list[str]]:
-        symbols=[{"name":m.group(1),"qualified":m.group(1),"kind":"symbol","path":relative,"line":text.count("\n",0,m.start())+1,"endLine":text.count("\n",0,m.end())+1} for m in SYMBOL_JS.finditer(text)]
+        symbols=[]
+        for m in SYMBOL_JS.finditer(text):
+            name=m.group(1); prefix=m.group(0).lower()
+            kind="class" if "class" in prefix else ("function" if "function" in prefix else ("interface" if "interface" in prefix else ("type" if "type" in prefix else ("enum" if "enum" in prefix else ("variable" if any(k in prefix for k in ("const","let","var")) else "symbol")))))
+            symbols.append({"name":name,"qualified":name,"kind":kind,"path":relative,"line":text.count("\n",0,m.start())+1,"endLine":text.count("\n",0,m.end())+1})
         return symbols,[m.group(1) for m in IMPORT_JS.finditer(text)]
     def _git_graph(self,root:Path)->list[dict[str,Any]]:
         proc=_run(root,["git","log","--all","--max-count=250","--pretty=format:%H%x09%P%x09%ct%x09%s"],12.)
@@ -248,6 +252,8 @@ class SandboxManager:
             if not shutil.which("docker"): raise RuntimeError("docker sandbox requested but docker is unavailable")
             mount=f"{root}:/workspace"+(":ro" if os.environ.get("OPENCODE_DOCKER_READONLY","0")=="1" else ""); network="--network none " if os.environ.get("OPENCODE_DOCKER_NETWORK","0")!="1" else ""; wrapped=f"docker run --rm {network}-v {shlex.quote(mount)} -w /workspace {shlex.quote(self.docker_image)} /bin/sh -lc {shlex.quote(command)}"; return {"command":wrapped,"cwd":root,"shell":"/bin/sh"}
         if profile=="wsl":
+            if os.environ.get("WSL_DISTRO_NAME") or os.path.exists("/proc/sys/fs/binfmt_misc/WSLInterop"):
+                return {"command":command,"cwd":root,"shell":"/bin/sh"}
             wsl=shutil.which("wsl.exe") or shutil.which("wsl")
             if not wsl: raise RuntimeError("WSL sandbox requested but wsl is unavailable")
             return {"command":f"{shlex.quote(wsl)} --cd {shlex.quote(root)} -- /bin/sh -lc {shlex.quote(command)}","cwd":root,"shell":"/bin/sh"}

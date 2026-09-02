@@ -156,7 +156,10 @@ class RuntimeStore:
         db = sqlite3.connect(str(self.paths.db), timeout=10.0, isolation_level=None)
         db.row_factory = sqlite3.Row
         try:
-            db.execute("PRAGMA journal_mode=WAL")
+            try:
+                db.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.OperationalError:
+                db.execute("PRAGMA journal_mode=TRUNCATE")
             db.execute("PRAGMA synchronous=NORMAL")
             db.execute("PRAGMA foreign_keys=OFF")
             yield db

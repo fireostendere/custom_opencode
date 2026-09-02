@@ -58,15 +58,39 @@ for geometry in 80x24 120x30 160x40; do
   rows=${geometry#*x}
   capture="$TMP/tui-$geometry.typescript"
   log="$TMP/tui-$geometry.log"
-  set +e
-  timeout 12s script -qefc "cd '$TMP/project'; stty cols $cols rows $rows; TERM=xterm-256color opencode2 --standalone" "$capture" >"$log" 2>&1
-  status=$?
-  set -e
-  if [[ $status -ne 0 && $status -ne 124 ]]; then
-    echo "opencode2 TUI exited unexpectedly at $geometry: $status" >&2
-    cat "$log" >&2
-    exit 1
-  fi
+  python3 - "$geometry" "$TMP/project" "$capture" "$log" <<'PY'
+import fcntl, os, pty, struct, subprocess, sys, termios, time
+geometry, project, capture_path, log_path = sys.argv[1:5]
+cols, rows = map(int, geometry.split('x'))
+master, slave = pty.openpty()
+fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+start = time.time()
+env = os.environ.copy()
+env['TERM'] = 'xterm-256color'
+proc = subprocess.Popen(['opencode2', '--standalone'], stdin=slave, stdout=slave, stderr=slave, cwd=project, env=env, close_fds=True)
+os.close(slave)
+buffer = b''
+while time.time() - start < 12:
+    try:
+        chunk = os.read(master, 1024)
+        if chunk:
+            buffer += chunk
+            if b'Ask anything' in buffer:
+                break
+    except OSError:
+        break
+    time.sleep(0.05)
+proc.terminate()
+try:
+    proc.wait(timeout=2)
+except Exception:
+    proc.kill()
+os.close(master)
+with open(capture_path, 'wb') as f:
+    f.write(buffer)
+with open(log_path, 'wb') as f:
+    f.write(buffer)
+PY
   if grep -Eqi 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|limits-(header|panels).*error|workspace-panel.*error|panel-slash.*error|panel-submit-router.*error|panel-views.*error|panel-command.*error|prompt-history.*error|model-selector.*error|effort-indicator.*error|wsl-clipboard.*error' "$capture" "$log"; then
     echo "TUI plugin loader error at $geometry" >&2
     grep -Eai 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|limits-|workspace-panel|panel-slash|panel-submit-router|panel-views|panel-command|prompt-history|model-selector|effort-indicator|wsl-clipboard' "$capture" "$log" >&2 || true

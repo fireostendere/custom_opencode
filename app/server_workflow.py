@@ -347,6 +347,7 @@ class Handler(rag.Handler, features.Handler):
 def main() -> None:
     rag.plus.ext.base.SCRATCH_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     server = rag.plus.ext.base.ThreadingHTTPServer((rag.plus.ext.base.WEB_HOST, rag.plus.ext.base.WEB_PORT), Handler)
+    server.daemon_threads = True
     features._ensure_worker()
     print(f"OpenCode web client started on configured port {rag.plus.ext.base.WEB_PORT}", flush=True)
     try:

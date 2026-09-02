@@ -790,8 +790,12 @@ class Handler(BaseHTTPRequestHandler):
                     line = response.readline()
                     if not line:
                         break
-                    self.wfile.write(line)
-                    self.wfile.flush()
+                    try:
+                        self.wfile.write(line)
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        self.close_connection = True
+                        break
                 return
 
             response_body = response.read()
@@ -832,6 +836,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     SCRATCH_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     server = ThreadingHTTPServer((WEB_HOST, WEB_PORT), Handler)
+    server.daemon_threads = True
     print(f"OpenCode web client started on configured port {WEB_PORT}", flush=True)
     try:
         server.serve_forever()

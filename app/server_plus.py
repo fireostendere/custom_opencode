@@ -260,11 +260,12 @@ def _rag_runtime() -> dict[str, object]:
         except OSError:
             pass
     python = executable.parent / "python" if executable else None
+    has_runtime = bool(root and ((root / "src/knowledge_base/runtime.py").is_file() or (root / "knowledge_base/runtime.py").is_file()))
     return {
         "root": str(root) if root else None,
         "executable": str(executable) if executable else None,
         "python": str(python) if python and python.is_file() else None,
-        "available": bool(root and executable and executable.is_file() and python and python.is_file()),
+        "available": bool(root and executable and executable.is_file() and python and python.is_file() and has_runtime),
     }
 
 

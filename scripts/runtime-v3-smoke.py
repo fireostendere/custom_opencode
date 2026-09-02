@@ -39,6 +39,8 @@ with tempfile.TemporaryDirectory() as temp:
     (project/"src.py").write_text("from .dep import helper\n\nclass Engine:\n    def alpha(self):\n        return helper()\n",encoding="utf-8")
     (project/"ui.js").write_text("import x from './util.js'\nexport function render(){ return x }\n",encoding="utf-8")
     (project/"util.js").write_text("export const x = 1\n",encoding="utf-8")
+    (project/"types.ts").write_text("export interface UserConfig { id: string }\nexport type Status = 'active' | 'inactive'\n",encoding="utf-8")
+    (project/"api.js").write_text("import {\n  x\n} from './util.js'\nexport default function handle() {}\n",encoding="utf-8")
     subprocess.run(["git","-C",str(project),"add","."],check=True)
     subprocess.run(["git","-C",str(project),"commit","-qm","base"],check=True)
     baseline=git_snapshot(str(project))
@@ -47,7 +49,11 @@ with tempfile.TemporaryDirectory() as temp:
     assert index["version"]==3
     assert index["embeddingBackend"]=="hashed-lexical-v1"
     assert any(s.get("qualified")=="Engine.alpha" for s in index["symbols"])
+    assert any(s.get("name")=="UserConfig" and s.get("kind")=="interface" for s in index["symbols"])
+    assert any(s.get("name")=="Status" and s.get("kind")=="type" for s in index["symbols"])
+    assert any(s.get("name")=="handle" and s.get("kind")=="function" for s in index["symbols"])
     assert any(edge.get("from")=="ui.js" and str(edge.get("to")).endswith("util.js") for edge in index["dependencyGraph"])
+    assert any(edge.get("from")=="api.js" and str(edge.get("to")).endswith("util.js") for edge in index["dependencyGraph"])
     assert index["gitGraph"] and index["gitGraph"][0]["sha"]==baseline["head"]
     search=indexer.search(str(project),"Engine alpha")
     assert any(hit.get("qualified")=="Engine.alpha" for hit in search["hits"])
