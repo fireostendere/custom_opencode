@@ -13,12 +13,14 @@ const state={
   timer:null,
   actions:[],
   selectedCommand:0,
+  refreshSeq:0,
+  planSeq:0,
 }
 
 function esc(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function sid(){const match=/^#\/session\/([^/?]+)/.exec(location.hash||'');return match?decodeURIComponent(match[1]):''}
 function qs(path){const session=sid();return `${path}${session?`${path.includes('?')?'&':'?'}sessionID=${encodeURIComponent(session)}`:''}`}
-async function req(path,options={}){const response=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});if(!response.ok){const text=await response.text().catch(()=>'');throw new Error(`${response.status} ${response.statusText}${text?`: ${text.slice(0,280)}`:''}`)}return response.json()}
+async function req(path,options={}){const response=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});if(!response.ok){const text=await response.text().catch(()=>'');throw new Error(`${response.status} ${response.statusText}${text?`: ${text.slice(0,280)}`:''}`)}if(response.status===204)return null;const type=response.headers.get('content-type')||'';return type.includes('application/json')?response.json():response.text()}
 function toast(text){const el=$('toast');if(!el)return;el.textContent=text;el.hidden=false;clearTimeout(el._unifiedTimer);el._unifiedTimer=setTimeout(()=>el.hidden=true,3200)}
 function timeLabel(value){if(!value)return'';try{return new Date(Number(value)).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return''}}
 function statusClass(ok){return ok===true?'unified-ok':ok===false?'unified-danger':''}
@@ -96,6 +98,7 @@ function stopPolling(){if(state.timer){clearInterval(state.timer);state.timer=nu
 
 async function refreshAll(force=false){
   const session=sid()
+  const refreshSeq=++state.refreshSeq
   $('unifiedPanelContext').textContent=session?session.slice(0,10):'no session'
   if(!session){state.snapshot=null;state.activity=[];renderCurrent();return}
   try{
@@ -103,6 +106,7 @@ async function refreshAll(force=false){
       req(qs('/client-unified.json')),
       req(`${qs('/client-activity.json')}&after=${force?0:state.lastEventID}&limit=300`),
     ])
+    if(sid()!==session||state.refreshSeq!==refreshSeq)return
     state.snapshot=snapshot
     state.actions=snapshot.actions||state.actions
     const incoming=activity.events||[]
@@ -119,7 +123,7 @@ async function refreshAll(force=false){
   }catch(error){console.debug('unified workspace refresh',error)}
 }
 
-async function loadPlan(){try{const value=await req('/client-plan.json');state.plan=value.plan||null;if(state.tab==='plan')renderPlan()}catch(error){state.plan=null;console.debug('unified plan',error)}}
+async function loadPlan(){const sessionID=sid(),planSeq=++state.planSeq;try{const value=await req(qs('/client-plan.json'));if(sid()!==sessionID||state.planSeq!==planSeq)return;state.plan=value.plan||null;if(state.tab==='plan')renderPlan()}catch(error){if(sid()!==sessionID||state.planSeq!==planSeq)return;state.plan=null;console.debug('unified plan',error)}}
 
 function renderCurrent(){
   ensureUI()
@@ -158,9 +162,53 @@ async function globalSearch(){const input=$('unifiedSearchInput');const query=in
 
 function prefillCommand(command){const input=$('input');if(!input)return;input.value=command;input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();closePalette();closePanel()}
 
+function wizardError(form,message){const error=form.querySelector('[data-wizard-error]');if(error){error.textContent=message;error.hidden=!message}}
+function wizardValue(form,name){return String(form.elements[name]?.value||'').trim()}
+function validID(value){return /^[A-Za-z][A-Za-z0-9._-]{0,63}$/.test(value)}
+const sensitiveName=/(?:^|[-_])(?:api[-_]?key|key|token|access[-_]?token|secret|password|passphrase|authorization|auth|credential)(?:$|[-_])/i
+function isSensitiveName(value){return sensitiveName.test(String(value).replace(/([a-z])([A-Z])/g,'$1_$2'))}
+function credential(name,value){if(isSensitiveName(name)&&!/^\{env:[A-Z_][A-Z0-9_]*\}$/.test(String(value||'').trim()))throw new Error(`${name} must use {env:VAR}.`)}
+function localCredentialArgument(argument){const value=String(argument||''),assignment=/^([A-Za-z_][A-Za-z0-9_-]*)=(.*)$/.exec(value),header=/^([^:]+):\s*(.*)$/.exec(value);if(assignment)credential(assignment[1],assignment[2]);else if(header)credential(header[1],header[2])}
+function parseLocalCommand(value){let command;try{command=JSON.parse(value)}catch{throw new Error('Local command must be a JSON array of strings.')}if(!Array.isArray(command)||!command.length||command.some(item=>typeof item!=='string'||!item.trim()))throw new Error('Local command must be a non-empty JSON array of strings.');for(let index=0;index<command.length;index+=1){const argument=command[index],flag=/^--([^=]+)(?:=(.*))?$/i.exec(argument);if(flag&&isSensitiveName(flag[1]))credential(flag[1],flag[2]===undefined?command[++index]:flag[2]);else if(flag&&/^(?:env|header)$/i.test(flag[1]))localCredentialArgument(flag[2]===undefined?command[++index]:flag[2]);else if(/^-[eH]$/.test(argument))localCredentialArgument(command[++index]);else localCredentialArgument(argument)}return command}
+function safeRemoteMcpURL(value){let url;try{url=new URL(value)}catch{throw new Error('Remote MCP requires an http(s) URL.')}if(!['http:','https:'].includes(url.protocol))throw new Error('Remote MCP requires an http(s) URL.');if(url.username||url.password)throw new Error('Remote MCP URL must not include credentials.');for(const [key,item] of url.searchParams)credential(key,item);return value}
+
+function openConfigWizard(kind){
+  const session=sid()
+  if(!session){toast('Select an active session before adding configuration.');return}
+  closePalette()
+  const isMcp=kind==='mcp'
+  const dialog=document.createElement('dialog')
+  dialog.className='unified-wizard'
+  dialog.setAttribute('aria-label',isMcp?'Add MCP server':'Add skill')
+  dialog.innerHTML=isMcp?`<form method="dialog" class="unified-wizard-form"><div class="unified-wizard-head"><h3>Add MCP server</h3><button type="button" data-wizard-close aria-label="Close">×</button></div><p class="unified-muted">Credentials must use env references. Known credential-bearing URL parameters and command arguments are rejected when literal; arbitrary positional values are not inferred.</p><label>Name<input name="name" required maxlength="64" autocomplete="off" pattern="[A-Za-z][A-Za-z0-9._-]{0,63}"></label><label>Type<select name="type"><option value="remote">Remote</option><option value="local">Local</option></select></label><label data-mcp-remote>URL<input name="url" type="url" placeholder="https://mcp.example.com" autocomplete="url"></label><label data-mcp-local hidden>Command (JSON array)<textarea name="command" rows="3" placeholder='["npx","-y","example-mcp"]'></textarea></label><div class="unified-wizard-checks"><label><input name="codemode" type="checkbox"> Code mode</label><label><input name="disabled" type="checkbox"> Disabled</label></div><div class="unified-wizard-error" data-wizard-error hidden role="alert"></div><div class="unified-wizard-actions"><button type="button" data-wizard-close>Cancel</button><button type="submit">Save MCP</button></div></form>`:`<form method="dialog" class="unified-wizard-form"><div class="unified-wizard-head"><h3>Add skill</h3><button type="button" data-wizard-close aria-label="Close">×</button></div><label>ID<input name="id" required maxlength="64" autocomplete="off" pattern="[A-Za-z][A-Za-z0-9._-]{0,63}"></label><label>Name<input name="name" required autocomplete="off"></label><label>Description<textarea name="description" rows="2" required></textarea></label><label>Content<textarea name="content" rows="9" required></textarea></label><label class="unified-wizard-check"><input name="autoinvoke" type="checkbox"> Autoinvoke</label><div class="unified-wizard-error" data-wizard-error hidden role="alert"></div><div class="unified-wizard-actions"><button type="button" data-wizard-close>Cancel</button><button type="submit">Save skill</button></div></form>`
+  document.body.append(dialog)
+  const form=dialog.querySelector('form')
+  const close=()=>dialog.close()
+  dialog.querySelectorAll('[data-wizard-close]').forEach(button=>button.addEventListener('click',close))
+  dialog.addEventListener('click',event=>{if(event.target===dialog)close()})
+  dialog.addEventListener('close',()=>dialog.remove(),{once:true})
+  const type=form.elements.type
+  const syncType=()=>{if(!type)return;const remote=type.value==='remote';form.querySelector('[data-mcp-remote]').hidden=!remote;form.querySelector('[data-mcp-local]').hidden=remote;form.elements.url.required=remote;form.elements.command.required=!remote}
+  type?.addEventListener('change',syncType);syncType()
+  form.addEventListener('submit',async event=>{
+    event.preventDefault()
+    if(form.dataset.pending)return
+    wizardError(form,'')
+    let input
+    try{
+      if(isMcp){const name=wizardValue(form,'name'),type=wizardValue(form,'type');if(!validID(name))throw new Error('Name must start with a letter and be at most 64 characters.');const config={type,codemode:form.elements.codemode.checked,disabled:form.elements.disabled.checked};if(type==='remote')config.url=safeRemoteMcpURL(wizardValue(form,'url'));else config.command=parseLocalCommand(wizardValue(form,'command'));input={name,config}}
+      else{const id=wizardValue(form,'id'),name=wizardValue(form,'name'),description=wizardValue(form,'description'),content=wizardValue(form,'content');if(!validID(id))throw new Error('ID must start with a letter and be at most 64 characters.');if(!name||!description||!content)throw new Error('Name, description, and content are required.');input={id,name,description,content,autoinvoke:form.elements.autoinvoke.checked}}
+    }catch(error){wizardError(form,error.message);return}
+    form.dataset.pending='1';const submit=form.querySelector('[type="submit"]');submit.disabled=true
+    try{await req(`/api/session/${encodeURIComponent(session)}/command`,{method:'POST',body:JSON.stringify({command:isMcp?'addmcp':'addskill',text:JSON.stringify(input)})});close();toast(`${isMcp?'MCP':'Skill'} saved`);await refreshAll(true)}catch(error){wizardError(form,`Save failed: ${error.message}`);submit.disabled=false;delete form.dataset.pending}
+  })
+  dialog.showModal()
+  requestAnimationFrame(()=>form.elements[isMcp?'name':'id'].focus())
+}
+
 async function runServerAction(action,extra={}){try{const value=await req('/client-unified-action.json',{method:'POST',body:JSON.stringify({action,sessionID:sid(),...extra})});if(action==='time.fork'&&value.session?.id){location.hash=`#/session/${encodeURIComponent(value.session.id)}`;toast('Forked from checkpoint')}else toast(`${action}: ok`);await refreshAll(true)}catch(error){toast(`${action}: ${error.message}`)}}
 
-function runAction(id){const action=state.actions.find(item=>item.id===id);if(!action)return;if(id.startsWith('panel.')){closePalette();openPanel(id.slice('panel.'.length));return}if(id==='project.control'){closePalette();openPanel('runtime');return}if(id==='search.global'){closePalette();openPanel('search');requestAnimationFrame(()=>$('unifiedSearchInput')?.focus());return}if(action.surface==='slash'&&action.command){prefillCommand(action.command);return}if(action.surface==='server'){if(id.startsWith('resource.profile.'))runServerAction(id);else{closePalette();openPanel(id==='time.fork'?'verification':'runtime');toast('Select a task in Recovery/Runtime to run this action.')}return}}
+function runAction(id){if(id==='mcp.add'){openConfigWizard('mcp');return}if(id==='skill.add'){openConfigWizard('skill');return}const action=state.actions.find(item=>item.id===id);if(!action)return;if(id.startsWith('panel.')){closePalette();openPanel(id.slice('panel.'.length));return}if(id==='project.control'){closePalette();openPanel('runtime');return}if(id==='search.global'){closePalette();openPanel('search');requestAnimationFrame(()=>$('unifiedSearchInput')?.focus());return}if(action.surface==='slash'&&action.command){prefillCommand(action.command);return}if(action.surface==='server'){if(id.startsWith('resource.profile.'))runServerAction(id);else{closePalette();openPanel(id==='time.fork'?'verification':'runtime');toast('Select a task in Recovery/Runtime to run this action.')}return}}
 
 function filteredActions(){const query=($('unifiedPaletteInput')?.value||'').trim().toLowerCase();const actions=state.actions.length?state.actions:defaultActions();if(!query)return actions;return actions.filter(item=>`${item.title} ${item.group} ${item.id} ${item.command||''}`.toLowerCase().includes(query))}
 function defaultActions(){return[
@@ -178,7 +226,7 @@ function closePalette(){if($('unifiedPalette'))$('unifiedPalette').hidden=true}
 
 function bindKeys(){document.addEventListener('keydown',event=>{const key=event.key.toLowerCase();if((event.ctrlKey&&key==='k')||(event.ctrlKey&&event.shiftKey&&key==='p')){event.preventDefault();openPalette();return}if(event.key==='Escape'){if(!$('unifiedPalette')?.hidden){closePalette();return}if(state.open)closePanel()}if(event.ctrlKey&&event.altKey&&!event.shiftKey){if(key==='a'){event.preventDefault();openPanel('activity')}else if(key==='p'){event.preventDefault();openPanel('plan')}else if(key==='c'){event.preventDefault();openPanel('runtime')}}},true)}
 
-function boot(){ensureUI();bindKeys();window.addEventListener('hashchange',()=>{state.activity=[];state.lastEventID=0;state.unseen=0;state.followActivity=true;if(state.open)refreshAll(true)});window.addEventListener('custom-opencode:session-selected',()=>{if(state.open)refreshAll(true)});setTimeout(()=>refreshAll(true),500)}
+function boot(){ensureUI();bindKeys();window.addEventListener('hashchange',()=>{state.refreshSeq+=1;state.planSeq+=1;state.activity=[];state.plan=null;state.lastEventID=0;state.unseen=0;state.followActivity=true;if(state.open)refreshAll(true)});window.addEventListener('custom-opencode:session-selected',()=>{if(state.open)refreshAll(true)});setTimeout(()=>refreshAll(true),500)}
 
 window.CustomOpenCodeWorkspace={open:openPanel,close:closePanel,tab:setTab,refresh:()=>refreshAll(true),palette:openPalette,action:runAction}
 boot()
