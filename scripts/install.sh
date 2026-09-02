@@ -167,15 +167,16 @@ if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   install -m 0644 "$ROOT/config/events.js" "$CONFIG_DIR/events.js"
   install -m 0644 "$ROOT/config/prompts/"* "$CONFIG_DIR/prompts/"
   install -m 0644 "$ROOT"/config/plugins/*.js "$CONFIG_DIR/plugins/"
-  # TUI plugins renamed from .js to .jsx in newer revisions; the loader
-  # auto-discovers plugins/tui, so stale copies would load as broken plugins.
+  # TUI sources live in the discovered custom-opencode-tui package. Remove
+  # obsolete top-level files so an older install cannot load duplicate plugins.
   # limits-header.jsx was removed entirely (top status bar dropped), so it
   # must be cleaned from existing installs as well.
   rm -f "$CONFIG_DIR"/plugins/tui/limits-header.js \
         "$CONFIG_DIR"/plugins/tui/limits-header.jsx \
         "$CONFIG_DIR"/plugins/tui/limits-panels.js \
         "$CONFIG_DIR"/plugins/tui/model-selector.js \
-        "$CONFIG_DIR"/plugins/tui/limits-helper.js
+        "$CONFIG_DIR"/plugins/tui/limits-helper.js \
+        "$CONFIG_DIR"/plugins/tui/lib/clipboard.js
   if compgen -G "$ROOT/config/plugins/tui/*" > /dev/null; then
     while IFS= read -r -d '' rel; do
       install -D -m 0644 "$ROOT/config/plugins/tui/$rel" "$CONFIG_DIR/plugins/tui/$rel"
@@ -245,6 +246,12 @@ export PATH="$BIN_DIR:\$PATH"
 set -a
 source "$ROOT/.env"
 set +a
+# OpenTUI gives Wayland priority over X11. Some WSLg sessions expose a
+# seat-less Wayland socket even though the X11 clipboard is fully usable.
+# Keep Wayland available as an explicit opt-in for sessions where it works.
+if [[ -n "\${WSL_DISTRO_NAME:-}" && -n "\${DISPLAY:-}" && "\${OPENCODE_TUI_PREFER_WAYLAND:-0}" != 1 ]]; then
+  unset WAYLAND_DISPLAY WAYLAND_SOCKET
+fi
 # An isolated V2 plan has no safe parent-session model mapping. Refuse the
 # otherwise-valid CLI form before it can silently use the global default.
 args=("\$@")

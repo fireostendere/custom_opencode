@@ -67,7 +67,9 @@ def main()->int:
             target=server_workflow.rag._v2_workspace_target("/api/plugin",str(server_workflow.rag.plus.ext.base.SCRATCH_ROOT))
             plugins=server_workflow.features._data(server_workflow.features._backend_request_json("GET",target,timeout=8.0))
             rows=[item for item in (plugins or []) if isinstance(item,dict)]; guard=next((item for item in rows if item.get("id")=="custom-opencode.server-runtime-guard" or str((item.get("source") or {}).get("path","")).endswith("server-runtime-guard.js")),None)
-            add("runtime-v3-plugin-active",bool(guard and guard.get("status")=="active"),guard.get("status") if guard else "not found")
+            state=guard.get("state") if guard else None
+            status=state.get("status") if isinstance(state,dict) and state.get("status") is not None else (guard.get("status") if guard else None)
+            add("runtime-v3-plugin-active",bool(guard and status=="active"),status if guard else "not found")
         except Exception as exc: add("runtime-v3-plugin-active",False,f"{type(exc).__name__}: {exc}")
     else:
         add("runtime-v3-service-env",False,"opencode2 not found")

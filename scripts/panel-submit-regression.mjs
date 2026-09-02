@@ -15,13 +15,14 @@ for (const marker of [
   'traits.status !== "SHELL"',
   'context.ui.toast?.(',
   'clearPromptEditor(editor)',
-  'context.keymap.dispatchCommand?.(target)',
+  'context.keymap.dispatch(target)',
 ]) {
   assert.ok(source.includes(marker), `Typed /panel submit contract missing: ${marker}`)
 }
 
 for (const forbidden of [
   'context.keymap.intercept(',
+  'context.keymap.dispatchCommand',
   'bind: "enter"',
   'bind: "return"',
   'context.ui.toast.show(',

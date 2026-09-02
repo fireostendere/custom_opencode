@@ -59,7 +59,7 @@ for geometry in 80x24 120x30 160x40; do
   capture="$TMP/tui-$geometry.typescript"
   log="$TMP/tui-$geometry.log"
   set +e
-  timeout 9s script -qefc "cd '$TMP/project'; stty cols $cols rows $rows; TERM=xterm-256color opencode2" "$capture" >"$log" 2>&1
+  timeout 12s script -qefc "cd '$TMP/project'; stty cols $cols rows $rows; TERM=xterm-256color opencode2 --standalone" "$capture" >"$log" 2>&1
   status=$?
   set -e
   if [[ $status -ne 0 && $status -ne 124 ]]; then
@@ -67,11 +67,15 @@ for geometry in 80x24 120x30 160x40; do
     cat "$log" >&2
     exit 1
   fi
-  if grep -Eqi 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|limits-(header|panels).*error|workspace-panel.*error|panel-slash.*error|panel-submit-router.*error|panel-views.*error|panel-command.*error|prompt-history.*error|model-selector.*error|effort-indicator.*error' "$capture" "$log"; then
+  if grep -Eqi 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|limits-(header|panels).*error|workspace-panel.*error|panel-slash.*error|panel-submit-router.*error|panel-views.*error|panel-command.*error|prompt-history.*error|model-selector.*error|effort-indicator.*error|wsl-clipboard.*error' "$capture" "$log"; then
     echo "TUI plugin loader error at $geometry" >&2
-    grep -Eai 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|limits-|workspace-panel|panel-slash|panel-submit-router|panel-views|panel-command|prompt-history|model-selector|effort-indicator' "$capture" "$log" >&2 || true
+    grep -Eai 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|limits-|workspace-panel|panel-slash|panel-submit-router|panel-views|panel-command|prompt-history|model-selector|effort-indicator|wsl-clipboard' "$capture" "$log" >&2 || true
     exit 1
   fi
+  grep -Fq 'Ask anything' "$capture" || {
+    echo "TUI did not reach the prompt at $geometry" >&2
+    exit 1
+  }
 done
 
 echo "Packaged TUI smoke passed: opencode2 loader + local panel router + four-zone panels at 80x24/120x30/160x40"

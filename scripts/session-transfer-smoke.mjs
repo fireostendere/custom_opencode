@@ -114,7 +114,17 @@ assert.equal(state.running.has('ses_new'), true, 'handoff session stays running 
 assert.equal(state.running.has('ses_src'), false)
 assert.deepEqual(calls.deleteSession, ['ses_src'])
 
-// ── Scenario 2: sendPrompt failure rolls the created session back ──────────
+// ── Scenario 2: empty transfer creates a session without a handoff ──────────
+reset()
+state.sessions = [sourceSession]
+
+result = await app.transferSessionToProject(sourceSession, targetProject)
+assert.equal(result.created.id, 'ses_new')
+assert.equal(calls.createSession.length, 1)
+assert.equal(calls.sendPrompt.length, 0, 'empty transfer must not send a handoff prompt')
+assert.equal(state.running.has('ses_new'), false, 'empty transfer must not mark a handoff as running')
+
+// ── Scenario 3: sendPrompt failure rolls the created session back ──────────
 reset()
 handlers.getContext = async () => [{ type: 'user', text: 'вопрос' }]
 handlers.sendPrompt = async () => { throw error(500) }
@@ -130,7 +140,7 @@ assert.ok(!state.sessions.some((session) => session.id === 'ses_new'), 'rolled-b
 assert.equal(state.running.has('ses_new'), false)
 assert.ok(state.sessions.some((session) => session.id === 'ses_src'), 'source session must survive the failed copy')
 
-// ── Scenario 3: source delete failure keeps the copy and the source ────────
+// ── Scenario 4: source delete failure keeps the copy and the source ────────
 reset()
 handlers.getContext = async () => [{ type: 'user', text: 'вопрос' }]
 handlers.deleteSession = async (id) => { calls.deleteSession.push(id); if (id === 'ses_src') throw error(500, 'locked') }
@@ -144,7 +154,7 @@ assert.ok(state.sessions.some((session) => session.id === 'ses_new'), 'copy must
 assert.equal(app.draftOf('ses_src'), 'черновик', 'source draft must survive failed removal')
 assert.equal(app.draftOf('ses_new'), 'черновик')
 
-// ── Scenario 4: sessionWithControls merges detail over the list item ───────
+// ── Scenario 5: sessionWithControls merges detail over the list item ───────
 reset()
 handlers.getSession = async () => ({ model: { variant: 'low' }, agent: 'plan' })
 let merged = await app.sessionWithControls({ id: 's1', model: { providerID: 'p', id: 'm' } })
@@ -155,7 +165,7 @@ const original = { id: 's2' }
 merged = await app.sessionWithControls(original)
 assert.equal(merged, original, 'detail fetch failure must fall back to the list item')
 
-// ── Scenario 5: fork fallback (404) slices context at messageID ────────────
+// ── Scenario 6: fork fallback (404) slices context at messageID ────────────
 reset()
 state.selected = sourceSession
 state.context = [
@@ -173,7 +183,18 @@ assert.ok(forkPrompt.includes('один') && forkPrompt.includes('два'), 'for
 assert.ok(!forkPrompt.includes('три'), 'fork handoff must not carry messages after messageID')
 assert.equal(state.running.has('ses_fork'), true)
 
-// ── Scenario 6: fork fallback validates the created session id ─────────────
+// ── Scenario 7: empty fork fallback creates a session without a handoff ────
+reset()
+state.selected = sourceSession
+handlers.createSession = async (value) => { calls.createSession.push(value); return { id: 'ses_empty_fork' } }
+
+const emptyFork = await app.forkWithFallback(sourceSession, undefined)
+assert.equal(emptyFork.id, 'ses_empty_fork')
+assert.equal(calls.createSession.length, 1)
+assert.equal(calls.sendPrompt.length, 0, 'empty fork fallback must not send a handoff prompt')
+assert.equal(state.running.has('ses_empty_fork'), false, 'empty fork fallback must not mark a handoff as running')
+
+// ── Scenario 8: fork fallback validates the created session id ─────────────
 reset()
 handlers.forkSession = async () => { throw error(405, 'no fork route') }
 handlers.createSession = async () => ({})
@@ -183,7 +204,7 @@ state.context = [{ id: 'm1', type: 'user', text: 'один' }]
 await assert.rejects(app.forkWithFallback(sourceSession, undefined), /id/, 'missing session id must throw')
 assert.equal(calls.sendPrompt.length, 0, 'no prompt may be sent without a valid session id')
 
-// ── Scenario 7: fork fallback rolls back on sendPrompt failure ─────────────
+// ── Scenario 9: fork fallback rolls back on sendPrompt failure ─────────────
 reset()
 state.selected = sourceSession
 state.context = [{ id: 'm1', type: 'user', text: 'один' }]
@@ -194,7 +215,7 @@ await assert.rejects(app.forkWithFallback(sourceSession, undefined), /boom/)
 assert.deepEqual(calls.deleteSession, ['ses_fork2'], 'failed fork handoff must delete the created session')
 assert.equal(state.running.has('ses_fork2'), false)
 
-// ── Scenario 8: handoffText keeps only the last 40 messages ────────────────
+// ── Scenario 10: handoffText keeps only the last 40 messages ───────────────
 const manyMessages = Array.from({ length: 45 }, (_, index) => ({
   type: index % 2 ? 'assistant' : 'user',
   text: `msg-${String(index).padStart(2, '0')}`,
@@ -205,7 +226,7 @@ assert.equal(rows, 40, 'handoff must cap at the last 40 messages')
 assert.ok(clippedHandoff.includes('msg-44') && clippedHandoff.includes('msg-05'))
 assert.ok(!clippedHandoff.includes('msg-04'), 'messages beyond the 40-message window must be dropped')
 
-// ── Scenario 9: handoffText caps the transcript at 24 000 characters ───────
+// ── Scenario 11: handoffText caps the transcript at 24 000 characters ──────
 const bigMessages = Array.from({ length: 3 }, (_, index) => ({
   type: 'user',
   text: 'abc'[index].repeat(10000),
@@ -217,14 +238,14 @@ assert.ok(clippedHandoff.endsWith(joined.slice(-24000)), 'handoff must keep exac
 const prefixLength = app.handoffText({ id: 'ses_x', location: { directory: '/d' } }, []).length
 assert.equal(clippedHandoff.length, prefixLength + 24000)
 
-// ── Scenario 10: messagePlainText extracts text parts only ─────────────────
+// ── Scenario 12: messagePlainText extracts text parts only ─────────────────
 assert.equal(app.messagePlainText({ type: 'user', text: 'привет' }), 'привет')
 assert.equal(
   app.messagePlainText({ type: 'assistant', content: [{ type: 'text', text: 'a' }, { type: 'tool', text: 'skip' }, { type: 'text', text: 'b' }] }),
   'a\nb',
 )
 
-// ── Scenario 11: prompt history is limited to the selected session ──────────
+// ── Scenario 13: prompt history is limited to the selected session ──────────
 reset()
 state.selected = { id: 'ses_current' }
 state.context = [
@@ -246,7 +267,7 @@ assert.equal(promptInput.value, 'второй prompt')
 assert.equal(app.navigatePromptHistory(1, promptKey), true)
 assert.equal(promptInput.value, 'новый draft')
 
-// ── Scenario 12: draft isolation for agent/model controls ──────────────────
+// ── Scenario 14: draft isolation for agent/model controls ──────────────────
 reset()
 state.selected = null
 await app.changeAgent('plan')

@@ -60,18 +60,24 @@ chmod +x "$FAKE_BIN/systemctl"
 cat >"$FAKE_BIN/opencode2" <<'EOF'
 #!/usr/bin/env bash
 printf 'opencode2 %s\n' "$*" >>"${CUSTOM_OPENCODE_REGRESSION_LOG:?}"
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'runtime-env WSL_DISTRO_NAME=%s DISPLAY=%s WAYLAND_DISPLAY=%s WAYLAND_SOCKET=%s\n' \
+    "${WSL_DISTRO_NAME-}" "${DISPLAY-}" "${WAYLAND_DISPLAY-}" "${WAYLAND_SOCKET-}" \
+    >>"${CUSTOM_OPENCODE_REGRESSION_LOG:?}"
+fi
 exit 0
 EOF
 chmod +x "$FAKE_BIN/opencode2"
 
 # Seed files left by older TUI revisions. A fresh install/update must remove
 # renamed top-level copies instead of allowing the loader to discover both.
-mkdir -p "$HOME_DIR/.config/opencode/plugins/tui"
+mkdir -p "$HOME_DIR/.config/opencode/plugins/tui/lib"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-header.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-header.jsx"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-panels.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/model-selector.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-helper.js"
+printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/lib/clipboard.js"
 
 # Fresh install: no real OpenCode service, model call or systemd user manager.
 CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
@@ -85,11 +91,12 @@ UPDATER="$HOME_DIR/.local/bin/custom-opencode-update"
 RUNTIME_GUARD="$HOME_DIR/.config/opencode/plugins/server-runtime-guard.js"
 TUI_DIR="$HOME_DIR/.config/opencode/plugins/tui"
 [[ -f "$CONFIG" ]] || { echo "fresh install did not render config" >&2; exit 1; }
-grep -Fq '"app.exit": "<leader>q"' "$CLI_CONFIG"
+grep -Fq '"app.exit": "ctrl+shift+q"' "$CLI_CONFIG"
 [[ -f "$SERVICE" ]] || { echo "fresh install did not render systemd unit" >&2; exit 1; }
 [[ -x "$WRAPPER" ]] || { echo "fresh install did not create executable wrapper" >&2; exit 1; }
 [[ -L "$UPDATER" ]] || { echo "fresh install did not create updater symlink" >&2; exit 1; }
 [[ -f "$RUNTIME_GUARD" ]] || { echo "fresh install did not install runtime guard plugin" >&2; exit 1; }
+grep -Fq 'unset WAYLAND_DISPLAY WAYLAND_SOCKET' "$WRAPPER"
 if grep -Fq 'pin-orchestrated-recent.py' "$WRAPPER"; then
   echo "custom-opencode must preserve the last-used model order" >&2
   exit 1
@@ -132,9 +139,22 @@ done
 CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" run --agent build --model=not-a-model-ref --help
 grep -Fxq 'opencode2 run --agent build --model=not-a-model-ref --help' "$LOG"
 
+: >"$LOG"
+CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+  WSL_DISTRO_NAME=Ubuntu DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 WAYLAND_SOCKET=fd \
+  "$WRAPPER" --version
+grep -Fq 'runtime-env WSL_DISTRO_NAME=Ubuntu DISPLAY=:0 WAYLAND_DISPLAY= WAYLAND_SOCKET=' "$LOG"
+
+: >"$LOG"
+CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+  WSL_DISTRO_NAME=Ubuntu DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 WAYLAND_SOCKET=fd \
+  OPENCODE_TUI_PREFER_WAYLAND=1 "$WRAPPER" --version
+grep -Fq 'runtime-env WSL_DISTRO_NAME=Ubuntu DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 WAYLAND_SOCKET=fd' "$LOG"
+
 for stale in limits-header.js limits-header.jsx limits-panels.js model-selector.js limits-helper.js; do
   [[ ! -e "$TUI_DIR/$stale" ]] || { echo "stale TUI plugin survived install: $stale" >&2; exit 1; }
 done
+[[ ! -e "$TUI_DIR/lib/clipboard.js" ]] || { echo "stale TUI clipboard helper survived install" >&2; exit 1; }
 python3 - "$COPY/config/plugins/tui" "$TUI_DIR" <<'PY'
 from pathlib import Path
 import sys
