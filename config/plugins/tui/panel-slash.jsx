@@ -43,7 +43,7 @@ export default Plugin.define({
         group: "Панели",
         palette: true,
         slash: { name: slashName },
-        run: () => context.keymap.dispatchCommand?.(target),
+        run: () => context.keymap.dispatch(target),
       }
     }
 
@@ -92,10 +92,7 @@ export default Plugin.define({
       }
 
       clearPromptEditor(editor)
-      const result = context.keymap.dispatchCommand?.(target)
-      if (result && result.ok === false) {
-        warn(context, `Panel: ${result.reason ?? "command is inactive"}`)
-      }
+      context.keymap.dispatch(target)
       return true
     })
 
