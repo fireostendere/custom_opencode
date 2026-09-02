@@ -114,7 +114,7 @@ for marker in (
     "state.planRefreshSeq === refreshSeq",
     "if (current() && [404,405].includes(error.status)) state.childrenTransport = 'unsupported'",
     "try { statuses = dataOf(await request('/api/session/active')) || {}; if (!current()) return } catch {}\n  if (!current()) return",
-    "if (!current()) return\n      if (!state.activityItems.length)",
+    "if (!sameSession()) return\n      if (!state.activityItems.length)",
     "state.activityHydrated = true\n    }).catch(() => {})",
 ):
     assert marker in advanced_features_js, marker
