@@ -8,13 +8,14 @@ import { createEffect, For, onCleanup, onMount, Show } from "solid-js"
 import { PANEL_DEFS, PANEL_IDS, createPanelViews } from "./lib/panel-views.jsx"
 import { PANEL_SIDES, PANEL_VIEWS } from "./lib/panel-command.js"
 
-const HANDLE = 2
+const HANDLE = 1
 const DEFAULT_SIDE_SIZE = 36
 const DEFAULT_TOP_SIZE = 10
 const DEFAULT_BOTTOM_SIZE = 12
 const SIDE_LABEL = { left: "LEFT", right: "RIGHT", top: "TOP", bottom: "BOTTOM" }
 const COLLAPSE_ICON = { left: "◂", right: "▸", top: "▴", bottom: "▾" }
 const EXPAND_ICON = { left: "▸", right: "◂", top: "▾", bottom: "▴" }
+const PIN_ICON = "📌"
 
 function freshZones() {
   return {
@@ -47,7 +48,6 @@ export default Plugin.define({
   setup(context) {
     const theme = context.theme
     const renderer = context.renderer
-    const accent = () => theme.hue?.orange?.[400] ?? theme.text.default
     const views = createPanelViews(context)
     const PanelContent = views.PanelContent
 
@@ -167,6 +167,7 @@ export default Plugin.define({
     let baseline = null
     let dockRetry = null
     let dockScheduled = false
+    let disposed = false
 
     function restoreDockTarget() {
       if (!dockTarget || !baseline) return
@@ -193,10 +194,16 @@ export default Plugin.define({
       return null
     }
     function syncDockLayout() {
+      if (disposed) return
       dockScheduled = false
       const target = findDockTarget()
       if (!target) {
-        if (!dockRetry) dockRetry = setTimeout(() => { dockRetry = null; syncDockLayout() }, 50)
+        restoreDockTarget()
+        if (!dockRetry) dockRetry = setTimeout(() => {
+          if (disposed) return
+          dockRetry = null
+          syncDockLayout()
+        }, 50)
         return
       }
       if (dockTarget !== target) {
@@ -216,9 +223,11 @@ export default Plugin.define({
       renderer.requestRender?.()
     }
     function scheduleDockLayout() {
-      if (dockScheduled) return
+      if (disposed || dockScheduled) return
       dockScheduled = true
-      queueMicrotask(syncDockLayout)
+      queueMicrotask(() => {
+        if (!disposed) syncDockLayout()
+      })
     }
 
     // Preserve new main's cursor-under-overlay protection, generalized to all sides.
@@ -251,20 +260,25 @@ export default Plugin.define({
     function scrollKey(side, sessionID, view) {
       return `${side}:${sessionID || "home"}:${view}`
     }
+    function saveScrollPosition(key, node) {
+      if (!key || !node || node.isDestroyed) return
+      const top = Number(node.scrollTop ?? 0)
+      const max = Math.max(0, Number(node.scrollHeight ?? 0) - Number(node.viewport?.height ?? 0))
+      scrollPositions.set(key, { top, atBottom: top >= max })
+    }
+    function scrollToEnd(node) {
+      if (typeof node?.scrollTo === "function") node.scrollTo(Number.MAX_SAFE_INTEGER)
+    }
     function jumpToEnd(side) {
       const node = scrollRefs.get(side)
-      try {
-        if (typeof node?.scrollToBottom === "function") node.scrollToBottom()
-        else if (typeof node?.scrollToEnd === "function") node.scrollToEnd()
-        else if (typeof node?.scrollTo === "function") node.scrollTo(0, Number.MAX_SAFE_INTEGER)
-      } catch {}
+      try { scrollToEnd(node) } catch {}
     }
 
     function Tab(props) {
       const active = () => zone(props.side).active === props.view
       return (
         <box paddingX={1} onMouseDown={(event) => { event?.stopPropagation?.(); setZoneView(props.side, props.view) }}>
-          <text fg={active() ? accent() : theme.text.subdued}><span>{active() ? `[${props.label}]` : props.label}</span></text>
+          <text fg={active() ? theme.text.formfield.$selected : theme.text.subdued}><span>{active() ? `[${props.label}]` : props.label}</span></text>
         </box>
       )
     }
@@ -272,6 +286,24 @@ export default Plugin.define({
       return (
         <box width="100%" height="100%" justifyContent="center" alignItems="center" onMouseDown={() => setCollapsed(props.side, false)}>
           <text fg={theme.text.subdued}><span>{EXPAND_ICON[props.side]}</span></text>
+        </box>
+      )
+    }
+    function ExpandedHandle(props) {
+      const vertical = isVertical(props.side)
+      const atStart = props.side === "right" || props.side === "bottom"
+      return (
+        <box
+          position="absolute"
+          zIndex={1}
+          {...(vertical
+            ? { [atStart ? "left" : "right"]: 0, top: 0, width: HANDLE, height: "100%" }
+            : { [atStart ? "top" : "bottom"]: 0, left: 0, height: HANDLE, width: "100%" })}
+          justifyContent="center"
+          alignItems="center"
+          onMouseDown={(event) => { event?.stopPropagation?.(); setCollapsed(props.side, true) }}
+        >
+          <text fg={theme.text.subdued}><span>{COLLAPSE_ICON[props.side]}</span></text>
         </box>
       )
     }
@@ -283,15 +315,18 @@ export default Plugin.define({
 
       createEffect(() => {
         const key = scrollKey(props.side, sessionID(), item().active)
-        if (previousKey && scroll && !scroll.isDestroyed) scrollPositions.set(previousKey, Number(scroll.y ?? 0))
+        saveScrollPosition(previousKey, scroll)
         previousKey = key
         queueMicrotask(() => {
           if (!scroll || scroll.isDestroyed) return
-          scroll.scrollTo(scrollPositions.get(key) ?? 0)
+          const saved = scrollPositions.get(key)
+          if (!saved || saved.atBottom) scrollToEnd(scroll)
+          else if (typeof scroll.scrollTo === "function") scroll.scrollTo({ y: saved.top })
+          else if ("scrollTop" in scroll) scroll.scrollTop = saved.top
         })
       })
       onCleanup(() => {
-        if (previousKey && scroll && !scroll.isDestroyed) scrollPositions.set(previousKey, Number(scroll.y ?? 0))
+        saveScrollPosition(previousKey, scroll)
         scrollRefs.delete(props.side)
       })
 
@@ -318,7 +353,7 @@ export default Plugin.define({
             minHeight={!vertical() ? HANDLE : 0}
             backgroundColor={theme.background.default}
             border={props.side === "left" ? ["right"] : props.side === "right" ? ["left"] : props.side === "top" ? ["bottom"] : ["top"]}
-            borderColor={theme.text.subdued}
+            borderColor={theme.border.default}
             flexDirection="column"
           >
             <Show when={!item().collapsed} fallback={<Handle side={props.side} />}>
@@ -329,8 +364,7 @@ export default Plugin.define({
                     <text fg={theme.text.default}><b>{panelTitle(item().active)}</b></text>
                   </box>
                   <box flexDirection="row" gap={1}>
-                    <box onMouseDown={() => setPinned(props.side, !item().pinned)}><text fg={item().pinned ? accent() : theme.text.subdued}><span>📌</span></text></box>
-                    <box onMouseDown={() => setCollapsed(props.side, true)}><text fg={theme.text.subdued}><span>{COLLAPSE_ICON[props.side]}</span></text></box>
+                    <box backgroundColor={item().pinned ? theme.background.action.primary.default : undefined} onMouseDown={() => setPinned(props.side, !item().pinned)}><text fg={item().pinned ? theme.text.action.primary.default : theme.text.subdued}><span>{PIN_ICON}</span></text></box>
                     <box onMouseDown={() => disableZone(props.side)}><text fg={theme.text.subdued}><span>×</span></text></box>
                   </box>
                 </box>
@@ -344,21 +378,23 @@ export default Plugin.define({
                 minHeight={0}
                 width="100%"
                 scrollY={true}
+                stickyScroll={true}
+                stickyStart="bottom"
                 viewportOptions={{ paddingRight: 1 }}
                 verticalScrollbarOptions={{
                   visible: true,
                   paddingLeft: 1,
-                  trackOptions: { backgroundColor: theme.background.default, foregroundColor: accent() },
+                  trackOptions: { backgroundColor: theme.background.surface.offset, foregroundColor: theme.scrollbar.default },
                 }}
               >
                 <box flexDirection="column" paddingX={1} paddingTop={1} paddingBottom={1} gap={1} flexShrink={0}>
                   <PanelContent view={item().active} sessionID={sessionID()} />
                 </box>
               </scrollbox>
-              <box flexDirection="row" justifyContent="space-between" paddingX={1} flexShrink={0}>
-                <text fg={theme.text.subdued}><span>live updates keep scroll</span></text>
-                <box onMouseDown={() => jumpToEnd(props.side)}><text fg={accent()}><span>↓ конец</span></text></box>
+              <box flexDirection="row" justifyContent="flex-end" paddingX={1} flexShrink={0}>
+                <box onMouseDown={() => jumpToEnd(props.side)}><text fg={theme.text.action.secondary.default}><span>↓ конец</span></text></box>
               </box>
+              <ExpandedHandle side={props.side} />
             </Show>
           </box>
         </Show>
@@ -497,7 +533,7 @@ export default Plugin.define({
       onMount(() => {
         // The stock sidebar would be a fifth panel. This slot only mounts while
         // it is visible; the native toggle then moves auto -> hide on wide TTYs.
-        queueMicrotask(() => context.keymap.dispatchCommand?.("session.sidebar.toggle"))
+        queueMicrotask(() => context.keymap.dispatch("session.sidebar.toggle"))
       })
       return null
     }
@@ -543,6 +579,7 @@ export default Plugin.define({
     })
 
     return () => {
+      disposed = true
       if (dockRetry) clearTimeout(dockRetry)
       restoreDockTarget()
       renderer.removePostProcessFn?.(hideCursorUnderPanels)

@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import { createSignal, For, Match, onMount, Show, Switch } from "solid-js"
+import { createEffect, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js"
 import { readdir, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -11,6 +11,7 @@ import {
   stopAutoRefresh,
   getNightPromoStatus,
 } from "./limits-helper.js"
+import { normalizeFamilyIDs, resolvePlanSources, resolveRootID, selectV2PlanCandidates, selectV2PlanEntries, syncFamilyMessages } from "./panel-data.js"
 
 export const PANEL_DEFS = [
   { id: "session", title: "Сессия", short: "Сесс" },
@@ -24,6 +25,7 @@ export const PANEL_IDS = PANEL_DEFS.map((item) => item.id)
 
 const BAR_WIDTH = 8
 const V2_PLAN_DIRECTORY = join(homedir(), ".opencode", "plan")
+const V2_PLAN_MAX_BYTES = 1_000_000
 const MONTHS_RU = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 
 function clampPercent(value) {
@@ -100,17 +102,19 @@ function parsePlanDocument(text, fallbackTitle) {
   return { todos: checkedTodos.length ? checkedTodos : bulletTodos, title: title || fallbackTitle }
 }
 
-async function readLatestV2Plan() {
+async function readV2Plan(sessionID) {
   let entries
   try { entries = await readdir(V2_PLAN_DIRECTORY, { withFileTypes: true }) } catch { return null }
   const candidates = []
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".md")) continue
+  for (const entry of selectV2PlanEntries(entries, sessionID)) {
     const path = join(V2_PLAN_DIRECTORY, entry.name)
-    try { candidates.push({ path, name: entry.name, updated: (await stat(path)).mtimeMs }) } catch {}
+    try {
+      const details = await stat(path)
+      if (details.size > V2_PLAN_MAX_BYTES) continue
+      candidates.push({ path, name: entry.name, updated: details.mtimeMs })
+    } catch {}
   }
-  candidates.sort((a, b) => b.updated - a.updated)
-  for (const candidate of candidates) {
+  for (const candidate of selectV2PlanCandidates(candidates, sessionID)) {
     try {
       const parsed = parsePlanDocument(await readFile(candidate.path, "utf8"), candidate.name.replace(/\.md$/, ""))
       if (parsed.todos.length) return { ...parsed, updated: candidate.updated, source: "native-v2" }
@@ -185,7 +189,6 @@ function activityRows(context, messages) {
 
 export function createPanelViews(context) {
   const theme = context.theme
-  const accent = () => theme.hue?.orange?.[400] ?? theme.text.default
 
   startAutoRefresh()
   const [limits, setLimits] = createSignal(getLimitsSync())
@@ -196,29 +199,40 @@ export function createPanelViews(context) {
   ticker.unref?.()
 
   const [version, setVersion] = createSignal(0)
-  const [documentPlan, setDocumentPlan] = createSignal(null)
-  let planPromise = null
-  async function refreshDocumentPlan() {
-    if (planPromise) return planPromise
-    planPromise = readLatestV2Plan()
-      .then((value) => {
-        setDocumentPlan(value)
-        setVersion((current) => current + 1)
-        return value
-      })
-      .finally(() => { planPromise = null })
-    return planPromise
+  const [sessionTreeVersion, setSessionTreeVersion] = createSignal(0)
+  const subscriptions = []
+  function subscribe(event, callback) {
+    try {
+      const unsubscribe = context.data.on?.(event, callback)
+      if (typeof unsubscribe === "function") subscriptions.push(unsubscribe)
+    } catch {}
   }
-  refreshDocumentPlan().catch(() => {})
-  const unsubscribeMessages = context.data.on("session.message.content.updated", () => {
-    setVersion((current) => current + 1)
-    refreshDocumentPlan().catch(() => {})
-  })
+  for (const event of ["message.updated", "message.part.updated", "session.message.content.updated"]) {
+    subscribe(event, () => setVersion((current) => current + 1))
+  }
+  for (const event of ["session.created", "session.updated", "session.deleted"]) {
+    subscribe(event, () => {
+      setVersion((current) => current + 1)
+      setSessionTreeVersion((current) => current + 1)
+    })
+  }
 
   function usageColor(used) {
     if (Number(used ?? 0) >= 90) return theme.text.feedback.error.default
     if (Number(used ?? 0) >= 70) return theme.text.feedback.warning.default
     return theme.text.feedback.success.default
+  }
+  function useSessionMessageSync(props) {
+    createEffect(() => {
+      const sessionID = props.sessionID
+      let current = true
+      if (sessionID) {
+        Promise.resolve().then(() => context.data.session.message.sync(sessionID)).then(() => {
+          if (current && props.sessionID === sessionID) setVersion((value) => value + 1)
+        }).catch(() => {})
+      }
+      onCleanup(() => { current = false })
+    })
   }
   function WindowRows(props) {
     const win = () => props.win
@@ -264,39 +278,59 @@ export function createPanelViews(context) {
       const active = todo.status === "in_progress"
       return (
         <box flexDirection="row" gap={1} width="100%" flexShrink={0}>
-          <text width={1} flexShrink={0} fg={active ? accent() : done ? theme.text.feedback.success.default : theme.text.subdued}><span>{done ? "✓" : active ? "●" : "○"}</span></text>
+          <text width={1} flexShrink={0} fg={active ? theme.text.status.running : done ? theme.text.feedback.success.default : theme.text.subdued}><span>{done ? "✓" : active ? "●" : "○"}</span></text>
           <text fg={done ? theme.text.subdued : theme.text.default} flexGrow={1} minWidth={0} wrapMode="word"><span>{todo.content}</span></text>
         </box>
       )
     }}</For>
   }
   function PlanView(props) {
-    const [historicalTodos, setHistoricalTodos] = createSignal([])
-    onMount(() => {
-      refreshDocumentPlan().catch(() => {})
-      if (!props.sessionID) return
-      context.data.session.message.sync(props.sessionID).then(() => setVersion((v) => v + 1)).catch(() => {})
+    const [historicalTodos, setHistoricalTodos] = createSignal(null)
+    const [nativePlan, setNativePlan] = createSignal({ sessionID: null, document: null })
+    useSessionMessageSync(props)
+    createEffect(() => {
+      const sessionID = props.sessionID ?? null
+      version()
+      let current = true
+      setNativePlan((previous) => previous.sessionID === sessionID ? previous : { sessionID, document: null })
+      readV2Plan(sessionID).then((document) => {
+        if (current && (props.sessionID ?? null) === sessionID) setNativePlan({ sessionID, document })
+      }).catch(() => {})
+      onCleanup(() => { current = false })
+    })
+    createEffect(() => {
+      const sessionID = props.sessionID
+      let current = true
+      setHistoricalTodos(null)
+      if (!sessionID) return onCleanup(() => { current = false })
       ;(async () => {
         let cursor
         do {
-          const response = await context.client.message.list({ sessionID: props.sessionID, limit: 200, ...(cursor ? { cursor } : { order: "desc" }) })
+          const response = await context.client.message.list({ sessionID, limit: 200, ...(cursor ? { cursor } : { order: "desc" }) })
           const found = latestTodos(context, response.data ?? [])
-          if (found?.length) { setHistoricalTodos(found); return }
+          if (found !== null) {
+            if (current && props.sessionID === sessionID) setHistoricalTodos(found)
+            return
+          }
           cursor = response.cursor?.next ?? undefined
         } while (cursor)
       })().catch(() => {})
+      onCleanup(() => { current = false })
     })
     const plan = () => {
       version()
-      const cached = latestTodos(context, sessionMessages(context, props.sessionID))
-      const doc = documentPlan()
+      const sessionID = props.sessionID
+      const cached = latestTodos(context, sessionMessages(context, sessionID))
+      const document = nativePlan().sessionID === (sessionID ?? null) ? nativePlan().document : null
+      const sources = resolvePlanSources(cached, historicalTodos(), document)
+      const doc = sources.document
       let info
-      try { info = props.sessionID ? context.data.session.get(props.sessionID) : null } catch { info = null }
+      try { info = sessionID ? context.data.session.get(sessionID) : null } catch { info = null }
       return {
-        todos: cached?.length ? cached : historicalTodos().length ? historicalTodos() : doc?.todos ?? [],
+        todos: sources.todos,
         title: info?.title || doc?.title,
         updated: info?.time?.updated || doc?.updated,
-        source: cached?.length || historicalTodos().length ? "session-todo" : doc?.source,
+        source: sources.source,
       }
     }
     return (
@@ -305,10 +339,11 @@ export function createPanelViews(context) {
           {(() => {
             const current = plan()
             const completed = current.todos.filter((todo) => todo.status === "completed").length
+            const running = current.todos.some((todo) => todo.status === "in_progress")
             const percent = current.todos.length ? Math.round((completed / current.todos.length) * 100) : 0
             return <>
               <box flexDirection="row" gap={1} flexShrink={0}>
-                <text fg={completed === current.todos.length ? theme.text.feedback.success.default : accent()}><span>{bar(percent)}</span></text>
+                <text fg={completed === current.todos.length ? theme.text.feedback.success.default : running ? theme.text.status.running : theme.text.default}><span>{bar(percent)}</span></text>
                 <text fg={theme.text.default}><span>{completed}/{current.todos.length}</span></text>
                 <text fg={theme.text.subdued}><span>· {percent}%</span></text>
               </box>
@@ -323,6 +358,7 @@ export function createPanelViews(context) {
     )
   }
   function ActivityView(props) {
+    useSessionMessageSync(props)
     const rows = () => {
       version()
       return activityRows(context, sessionMessages(context, props.sessionID))
@@ -333,7 +369,7 @@ export function createPanelViews(context) {
           <For each={rows()}>{(row) => (
             <box flexDirection="column" width="100%" flexShrink={0}>
               <box flexDirection="row" gap={1}>
-                <text fg={row.role === "assistant" ? accent() : theme.text.subdued}><span>{row.role}</span></text>
+                <text fg={row.role === "assistant" ? theme.text.default : theme.text.subdued}><span>{row.role}</span></text>
                 <Show when={row.created}><text fg={theme.text.subdued}><span>{fmtWhen(row.created)}</span></text></Show>
               </box>
               <text fg={theme.text.default} wrapMode="word"><span>{row.summary}</span></text>
@@ -344,6 +380,7 @@ export function createPanelViews(context) {
     )
   }
   function HistoryView(props) {
+    useSessionMessageSync(props)
     const rows = () => {
       version()
       return sessionMessages(context, props.sessionID)
@@ -366,20 +403,55 @@ export function createPanelViews(context) {
     )
   }
   function OrchestrationView(props) {
+    const [sessionIDs, setSessionIDs] = createSignal([])
+    const [rootSessionID, setRootSessionID] = createSignal(null)
+    createEffect(() => {
+      const sessionID = props.sessionID
+      sessionTreeVersion()
+      let current = true
+      setSessionIDs(sessionID ? [sessionID] : [])
+      setRootSessionID(sessionID ?? null)
+      if (!sessionID) return onCleanup(() => { current = false })
+      ;(async () => {
+        let rootID = sessionID
+        let ids = [rootID]
+        try {
+          const root = await context.data.session.root(sessionID)
+          rootID = resolveRootID(sessionID, root)
+          await context.data.session.sync(rootID)
+          const family = await context.data.session.family(rootID)
+          ids = normalizeFamilyIDs(rootID, family)
+        } catch {
+          ids = normalizeFamilyIDs(rootID, [])
+        }
+        await syncFamilyMessages(ids, (id) => context.data.session.message.sync(id))
+        if (current && props.sessionID === sessionID) {
+          setSessionIDs(ids)
+          setRootSessionID(rootID)
+          setVersion((value) => value + 1)
+        }
+      })().catch(() => {})
+      onCleanup(() => { current = false })
+    })
     const rows = () => {
       version()
       const result = []
-      for (const message of sessionMessages(context, props.sessionID)) {
-        for (const part of messageParts(context, message)) {
-          if (part?.type !== "tool") continue
-          const name = String(part.name ?? part.tool ?? "tool")
-          result.push({
-            name,
-            status: String(part.state?.status ?? ""),
-            detail: toolSummary(part),
-            created: message.time?.created ?? message.info?.time?.created,
-            taskLike: /task|agent|subagent|handoff|orchestr|execute/i.test(name),
-          })
+      const rootID = rootSessionID()
+      for (const sessionID of sessionIDs()) {
+        let info
+        try { info = context.data.session.get(sessionID) } catch { info = null }
+        for (const message of sessionMessages(context, sessionID)) {
+          for (const part of messageParts(context, message)) {
+            if (part?.type !== "tool") continue
+            const name = String(part.name ?? part.tool ?? "tool")
+            result.push({
+              name,
+              status: String(part.state?.status ?? ""),
+              detail: toolSummary(part),
+              created: message.time?.created ?? message.info?.time?.created,
+              session: sessionID === rootID ? "root" : truncate(info?.title || sessionID, 36),
+            })
+          }
         }
       }
       return result.slice(-80).reverse()
@@ -390,7 +462,8 @@ export function createPanelViews(context) {
           <For each={rows()}>{(row) => (
             <box flexDirection="column" flexShrink={0}>
               <box flexDirection="row" gap={1}>
-                <text fg={row.taskLike ? accent() : theme.text.default}><span>{row.name}</span></text>
+                <text fg={row.status === "running" || row.status === "in_progress" ? theme.text.status.running : theme.text.default}><span>{row.name}</span></text>
+                <Show when={row.session !== "root"}><text fg={theme.text.subdued}><span>{row.session}</span></text></Show>
                 <Show when={row.status}><text fg={row.status === "completed" ? theme.text.feedback.success.default : row.status === "error" ? theme.text.feedback.error.default : theme.text.subdued}><span>{row.status}</span></text></Show>
                 <Show when={row.created}><text fg={theme.text.subdued}><span>{fmtWhen(row.created)}</span></text></Show>
               </box>
@@ -402,6 +475,7 @@ export function createPanelViews(context) {
     )
   }
   function SessionView(props) {
+    useSessionMessageSync(props)
     const snapshot = () => {
       version()
       let info
@@ -443,7 +517,7 @@ export function createPanelViews(context) {
     PanelContent,
     dispose() {
       unsubscribeLimits?.()
-      unsubscribeMessages?.()
+      for (const unsubscribe of subscriptions) unsubscribe()
       clearInterval(ticker)
       stopAutoRefresh()
     },
