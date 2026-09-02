@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - 'app/**'
-      - 'config/plugins/tui/**'
+      - 'config/plugins/**'
       - 'scripts/**'
       - '.github/workflows/unified-workspace.yml'
   push:

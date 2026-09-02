@@ -306,11 +306,13 @@ function renderDirectorySnapshot(snapshot) {
       <button type="button" class="primary" data-open-directory="${escapeHtml(snapshot.current)}">Открыть эту папку</button>
     </div>
     <div class="project-browser-path">${escapeHtml(snapshot.current)}</div>
+    <form class="directory-create-form" data-create-directory><input name="name" maxlength="120" required placeholder="Имя новой папки" aria-label="Имя новой папки"><button type="submit" class="primary">Создать папку</button></form><div class="directory-create-error" hidden></div>
     ${(snapshot.directories || []).map((item) => `<button type="button" class="directory-choice" data-directory="${escapeHtml(item.path)}"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.path)}</span></button>`).join('') || '<div class="project-browser-empty">Нет вложенных папок</div>'}`
   }
   browser.hidden = false
   browser.querySelectorAll('[data-directory]').forEach((button) => button.addEventListener('click', () => browseDirectory(button.dataset.directory)))
   browser.querySelector('[data-open-directory]')?.addEventListener('click', () => openDirectoryAsProject(snapshot.current))
+  browser.querySelector('[data-create-directory]')?.addEventListener('submit', (event) => createChildDirectory(event, snapshot.current))
 }
 
 async function browseDirectory(path) {
@@ -334,13 +336,22 @@ async function openProjectBrowser() {
 }
 
 async function openDirectoryAsProject(directory) {
-  const created = dataOf(await request('/api/session', {
-    method: 'POST',
-    body: JSON.stringify({ location:{ directory }, title:'Новая сессия' }),
-  }))
-  if (!created?.id) throw new Error('OpenCode не вернул id новой сессии')
-  location.hash = `/session/${encodeURIComponent(created.id)}`
-  location.reload()
+  const bridge = window.CustomOpenCodeProjects?.selectDirectory
+  if (!bridge) throw new Error('Выбор проекта пока недоступен')
+  await bridge(directory)
+}
+
+async function createChildDirectory(event, parent) {
+  event.preventDefault()
+  const form = event.currentTarget, button = form.querySelector('button'), error = form.parentElement.querySelector('.directory-create-error')
+  error.hidden = true; button.disabled = true
+  try {
+    const result = await request('/client-directories.json', { method:'POST', body:JSON.stringify({ parent, name:new FormData(form).get('name') }) })
+    if (!result?.ok || !result.directory) throw new Error(result?.error || 'Не удалось создать папку')
+    await openDirectoryAsProject(result.directory)
+  } catch (exception) {
+    error.textContent = exception.message || 'Не удалось создать папку'; error.hidden = false
+  } finally { button.disabled = false }
 }
 
 function installProjectBrowser() {
