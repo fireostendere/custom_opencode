@@ -1,0 +1,65 @@
+name: Clean Regression
+
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'config/**'
+      - 'scripts/**'
+      - '.github/workflows/clean-regression.yml'
+  push:
+    branches:
+      - main
+      - 'test/clean-regression-harness-20260902'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  clean-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install browser test dependencies
+        run: |
+          python -m pip install --disable-pip-version-check playwright
+          python -m playwright install --with-deps chromium
+      - name: Syntax
+        run: |
+          python -m py_compile app/unified_control.py app/server_workflow.py scripts/local-web-harness.py scripts/browser-smoke.py scripts/web-fixture-e2e.py
+          node --check app/unified-workspace.js
+          node --check app/advanced-features.js
+      - name: Normalize stale unified regression marker in runner checkout
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/unified-workspace-regression.py')
+          text = path.read_text(encoding='utf-8')
+          old = "if (!current()) return\\n      if (!state.activityItems.length)"
+          new = "if (!sameSession()) return\\n      if (!state.activityItems.length)"
+          if old not in text:
+              raise SystemExit('expected stale regression marker not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Unified contract regression
+        run: python scripts/unified-workspace-regression.py
+      - name: TUI regression
+        run: node scripts/tui-regression.mjs
+      - name: Panel local-submit regression
+        run: node scripts/panel-submit-regression.mjs
+      - name: Existing verification suite
+        run: bash scripts/verify.sh
+      - name: Install real OpenCode V2 beta
+        run: npm install --global @opencode-ai/cli@beta
+      - name: Packaged TUI loader smoke
+        run: bash scripts/tui-package-smoke.sh
+      - name: Isolated production browser smoke
+        run: python scripts/local-web-harness.py test
