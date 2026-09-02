@@ -176,16 +176,18 @@ async function transferSessionToProject(session,project,{select=false,removeSour
   if(state.selected?.id===session.id)saveDraftNow()
   const sourceSession=await sessionWithControls(session)
   const context=state.selected?.id===session.id&&state.context.length?[...state.context]:await api.getContext(session.id)
-  const handoff=handoffText(sourceSession,context)
   const created=await api.createSession({directory:project.canonical,title:`${sessionTitle(sourceSession)} → ${projectLabel(project)}`,agent:primaryAgentFor(sourceSession.model,sourceSession.agent),model:sourceSession.model})
   if (!created?.id) throw new Error('OpenCode не вернул id новой сессии')
   state.sessions=[created,...state.sessions.filter((item)=>item.id!==created.id)]
-  state.running.set(created.id,{status:'handoff',since:Date.now()});renderSessions();renderHeader()
-  try { await api.sendPrompt(created,{text:handoff,files:[],delivery:'normal'}) }
-  catch (error) {
-    state.running.delete(created.id);state.sessions=state.sessions.filter((item)=>item.id!==created.id)
-    try{await api.deleteSession(created.id)}catch{}
-    renderSessions();renderHeader();throw error
+  if(context.length){
+    const handoff=handoffText(sourceSession,context)
+    state.running.set(created.id,{status:'handoff',since:Date.now()});renderSessions();renderHeader()
+    try { await api.sendPrompt(created,{text:handoff,files:[],delivery:'normal'}) }
+    catch (error) {
+      state.running.delete(created.id);state.sessions=state.sessions.filter((item)=>item.id!==created.id)
+      try{await api.deleteSession(created.id)}catch{}
+      renderSessions();renderHeader();throw error
+    }
   }
   let sourceRemoved=false
   if(removeSource){
@@ -682,8 +684,10 @@ async function sendMessage(event){
 async function flushQueue(sessionID){const queue=queueFor(sessionID);if(!queue.length||isRunning(sessionID))return;const session=state.sessions.find((s)=>s.id===sessionID);if(!session)return;const next=queue.shift();state.running.set(sessionID,{status:'queued-start',since:Date.now()});renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();try{await api.sendPrompt(session,{...next,delivery:'normal'})}catch(e){state.running.delete(sessionID);queue.unshift(next);notifyUser('OpenCode: очередь остановлена',e.message,`queue-${sessionID}`)}renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
 async function stopSelected(){if(!state.selected)return;try{await api.abortSession(state.selected.id);toast('Остановка отправлена')}catch(e){toast(`Остановка: ${e.message}`)}}
 
-function openProjectDialog(mode='create'){state.projectDialogMode=mode;const titles={copy:'Копировать с контекстом',move:'Перенести в проект'};$('projectDialogTitle').textContent=titles[mode]||'Создать в проекте';const currentDirectory=directory(state.selected);const projects=state.projects.filter((p)=>p.id!==QUICK_PROJECT_ID&&!(mode==='move'&&(p.id===state.selected?.projectID||p.canonical===currentDirectory)));$('projectChoices').innerHTML=projects.map((p)=>`<button class="choice" data-project="${escapeHtml(p.id)}"><div class="choice-title">${escapeHtml(projectLabel(p))}</div><div class="choice-meta">${escapeHtml(p.canonical||p.id)}</div></button>`).join('')||'<div class="empty">Проекты не найдены.</div>';document.querySelectorAll('[data-project]').forEach((b)=>b.addEventListener('click',()=>chooseProject(b.dataset.project)));$('projectDialog').showModal()}
-async function chooseProject(projectID){const project=state.projects.find((p)=>p.id===projectID);if(!project)return;$('projectDialog').close();if(state.projectDialogMode==='copy'||state.projectDialogMode==='move')await continueInProject(project,state.projectDialogMode==='move');else try{await createAt(project.canonical,'Новая сессия')}catch(e){toast(`Создание: ${e.message}`)}}
+function openProjectDialog(mode='create'){state.projectDialogMode=mode;const titles={copy:'Копировать с контекстом',move:'Перенести в проект'};$('projectDialogTitle').textContent=titles[mode]||'Создать в проекте';const currentDirectory=directory(state.selected);const projects=state.projects.filter((p)=>p.id!==QUICK_PROJECT_ID&&!(mode==='move'&&(p.id===state.selected?.projectID||p.canonical===currentDirectory)));$('projectChoices').hidden=false;$('projectBrowser')?.setAttribute('hidden','');$('projectChoices').innerHTML=projects.map((p)=>`<button class="choice" data-project="${escapeHtml(p.id)}"><div class="choice-title">${escapeHtml(projectLabel(p))}</div><div class="choice-meta">${escapeHtml(p.canonical||p.id)}</div></button>`).join('')||'<div class="empty">Проекты не найдены.</div>';$('projectChoices').querySelectorAll('button[data-project]').forEach((b)=>b.addEventListener('click',()=>chooseProject(b.dataset.project)));$('projectDialog').showModal()}
+async function selectProjectTarget(project){if(!project?.canonical)return;$('projectDialog').close();if(state.projectDialogMode==='copy'||state.projectDialogMode==='move')await continueInProject(project,state.projectDialogMode==='move');else try{await createAt(project.canonical,'Новая сессия')}catch(e){toast(`Создание: ${e.message}`)}}
+async function chooseProject(projectID){await selectProjectTarget(state.projects.find((p)=>p.id===projectID))}
+window.CustomOpenCodeProjects={selectDirectory:async(directory)=>selectProjectTarget({canonical:directory,name:String(directory).split(/[\\/]/).filter(Boolean).at(-1)||directory})}
 function handoffText(sourceSession,sourceContext){const rows=sourceContext.slice(-40).map((m)=>`${(m.type||m.role)==='user'?'USER':'ASSISTANT'}:\n${messagePlainText(m)}`).join('\n\n');const clippedRows=rows.length>24000?rows.slice(-24000):rows;return `Продолжи работу из предыдущей OpenCode-сессии. Это перенос контекста, а не новая независимая задача.\n\nИсходная сессия: ${sourceSession?.id}\nИсходная директория: ${directory(sourceSession)}\n\nПоследний контекст:\n${clippedRows}`}
 async function continueInProject(project,removeSource=false){if(!state.selected)return;if(removeSource&&!await confirmAction('Перенести через handoff?',`OpenCode не умеет менять папку существующей сессии. Будут перенесены последние 40 текстовых сообщений (до 24 000 символов), но не файлы проекта и полная tool-история. После успешного handoff исходная сессия будет удалена.`))return;try{const result=await transferSessionToProject(state.selected,project,{select:true,removeSource});toast(removeSource?(result.sourceRemoved?'Сессия перенесена':'Создана копия; исходная сессия сохранена'):'Создана копия с контекстом')}catch(e){toast(`${removeSource?'Перенос':'Копирование'}: ${e.message}`)}}
 
@@ -698,10 +702,12 @@ async function forkWithFallback(session,messageID){
     const context=sourceContext.slice(0,end)
     const created=await api.createSession({directory:directory(sourceSession),title:`${sessionTitle(sourceSession)} · fork`,agent:primaryAgentFor(sourceSession.model,sourceSession.agent),model:sourceSession.model})
     if(!created?.id)throw new Error('OpenCode не вернул id новой сессии')
-    const handoff=handoffText(sourceSession,context)
-    state.running.set(created.id,{status:'fork-handoff',since:Date.now()})
-    try{await api.sendPrompt(created,{text:handoff,files:[],delivery:'normal'})}
-    catch(promptError){state.running.delete(created.id);try{await api.deleteSession(created.id)}catch{};throw promptError}
+    if(context.length){
+      const handoff=handoffText(sourceSession,context)
+      state.running.set(created.id,{status:'fork-handoff',since:Date.now()})
+      try{await api.sendPrompt(created,{text:handoff,files:[],delivery:'normal'})}
+      catch(promptError){state.running.delete(created.id);try{await api.deleteSession(created.id)}catch{};throw promptError}
+    }
     return created
   }
 }
@@ -872,11 +878,11 @@ function setupPullRefresh(){
 function autosizeInput(){const el=$('input');el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}
 
 function bindEvents(){
-  $('newSession').addEventListener('click',async()=>{clearSelection();try{await createAt(state.clientConfig.scratchDirectory)}catch(e){toast(`Создание: ${e.message}`)}})
+   $('newSession').addEventListener('click',()=>openProjectDialog('create'))
   $('chooseProject').addEventListener('click',()=>openProjectDialog('create'));$('refresh').addEventListener('click',()=>{loadSessions();if(state.selected)loadContext({force:true})});$('search').addEventListener('input',renderSessions)
   $('menu').addEventListener('click',()=> $('sidebar').classList.toggle('open'));$('sessionActions').addEventListener('click',()=>openSessionActions());$('modelButton').addEventListener('click',()=>{renderModelChoices();$('modelDialog').showModal();$('modelSearch').focus()});$('modelSearch').addEventListener('input',renderModelChoices);$('modelChoices').addEventListener('click',(event)=>{const fav=event.target.closest?.('[data-fav]');if(fav){event.preventDefault();event.stopPropagation();const key=fav.dataset.fav;favorites.has(key)?favorites.delete(key):favorites.add(key);saveJson(FAV_KEY,[...favorites]);renderModelChoices();return}const button=event.target.closest?.('[data-model][data-provider]');if(!button)return;$('modelDialog').close();changeModel({id:button.dataset.model,providerID:button.dataset.provider})})
   $('variantSelect').addEventListener('change',(e)=>{const ref=activeModelRef();if(!ref)return;const model={id:ref.id,providerID:ref.providerID};if(e.target.value)model.variant=e.target.value;changeModel(model)})
-  $('form').addEventListener('submit',sendMessage);$('stop').addEventListener('click',stopSelected);$('input').addEventListener('input',()=>{notePromptInput();autosizeInput();scheduleDraftSave()});$('input').addEventListener('keydown',(e)=>{if(e.key==='ArrowUp'&&navigatePromptHistory(-1,e)){e.preventDefault();return}if(e.key==='ArrowDown'&&navigatePromptHistory(1,e)){e.preventDefault();return}if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('form').requestSubmit()}})
+  $('form').addEventListener('submit',sendMessage);$('stop').addEventListener('click',stopSelected);$('input').addEventListener('input',()=>{notePromptInput();autosizeInput();scheduleDraftSave()});$('input').addEventListener('keydown',(e)=>{if(e.key==='ArrowUp'&&navigatePromptHistory(-1,e)){e.preventDefault();return}if(e.key==='ArrowDown'&&navigatePromptHistory(1,e)){e.preventDefault();return}if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!window.matchMedia('(max-width: 760px)').matches){e.preventDefault();$('form').requestSubmit()}})
   $('attachButton').addEventListener('click',()=> $('fileInput').click());$('fileInput').addEventListener('change',(e)=>{addFiles(e.target.files);e.target.value=''});$('input').addEventListener('paste',(e)=>{const files=[...(e.clipboardData?.items||[])].filter((i)=>i.kind==='file').map((i)=>i.getAsFile()).filter(Boolean);if(files.length){e.preventDefault();addFiles(files)}})
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.addEventListener('click',()=>{state.deliveryMode=b.dataset.delivery;renderRunControls()}));$('gitButton').addEventListener('click',openGitDialog);$('usageButton').addEventListener('click',()=>{$('usageDialog').showModal()});$('notifyButton').addEventListener('click',toggleNotifications)
   $('renameForm').addEventListener('submit',(e)=>{e.preventDefault();renameCurrent()});document.querySelectorAll('[data-close]').forEach((b)=>b.addEventListener('click',()=>$(b.dataset.close).close()));document.querySelectorAll('dialog').forEach((d)=>d.addEventListener('click',(e)=>{if(e.target===d)d.close()}))

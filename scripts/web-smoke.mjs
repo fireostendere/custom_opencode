@@ -64,10 +64,13 @@ if (!controls.agents.some((agent) => agent.id === 'build-direct')) throw new Err
 if (controls.agents.some((agent) => agent.id === 'role-builder')) throw new Error('Hidden role agents must not leak into web controls')
 
 const enhancements = await loadSource('app/enhancements.js')
+const enhancementsSource = readFileSync(resolve(root, 'app/enhancements.js'), 'utf8')
 if (enhancements.parseSlash('/status')?.command !== 'status') throw new Error('Slash parser failed')
 if (enhancements.parseSlash('/review foo bar')?.arguments !== 'foo bar') throw new Error('Slash arguments parser failed')
 if (enhancements.parseSlash('ordinary text') !== null) throw new Error('Slash parser accepted normal text')
 if (enhancements.commandName({ name:'/init' }) !== 'init') throw new Error('Slash command normalization failed')
+if (!enhancementsSource.includes('const body = { command:parsed.command, text:parsed.arguments }')) throw new Error('Slash command transport must use OpenCode V2 text')
+if (enhancementsSource.includes('const body = { command:parsed.command, arguments:parsed.arguments }')) throw new Error('Slash command transport must not send arguments')
 if (!readFileSync(resolve(root, 'app/enhancements.js'), 'utf8').includes("RETIRED_COMMANDS = new Set(['doctor'])")) throw new Error('Retired Doctor command must stay blocked')
 if (enhancements.windowLabel(300) !== 'Сессия · 5ч' || enhancements.windowLabel(10080) !== 'Неделя · 7д') throw new Error('Rate-limit window labels failed')
 
@@ -78,6 +81,14 @@ if (rag.parseRagStart('/rag-start full')?.mode !== 'full') throw new Error('RAG 
 if (rag.parseRagStart('/rag-start nope') !== null) throw new Error('RAG parser accepted unknown mode')
 
 const ui = await loadSource('app/ui-enhancements.js')
+const uiProjectSource = readFileSync(resolve(root, 'app/ui-enhancements.js'), 'utf8')
+const appProjectSource = readFileSync(resolve(root, 'app/app.js'), 'utf8')
+if (uiProjectSource.includes("request('/api/session'")) throw new Error('Directory browser must delegate session creation to app bridge')
+for (const marker of ['CustomOpenCodeProjects', "request('/client-directories.json'", 'data-create-directory']) {
+  if (!uiProjectSource.includes(marker)) throw new Error(`Directory creation flow marker missing: ${marker}`)
+}
+if (!appProjectSource.includes("$('newSession').addEventListener('click',()=>openProjectDialog('create'))")) throw new Error('New session must open the project dialog')
+if (appProjectSource.includes("$('newSession').addEventListener('click',async()=>{clearSelection()")) throw new Error('New session must not clear the current selection')
 const zeroCost = [{ input:0, output:0, cache:{ read:0, write:0 } }]
 const paidCost = [{ input:0.1, output:0, cache:{ read:0, write:0 } }]
 if (!ui.isFreeModel({ id:'dynamic-free', cost:zeroCost })) throw new Error('Zero-cost model was not grouped as free')

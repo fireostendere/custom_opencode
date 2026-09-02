@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 from pathlib import Path
 import subprocess
 from typing import Any
@@ -87,6 +88,72 @@ def directory_snapshot(raw_path: str | None = None) -> dict[str, object]:
         "parent": parent_value,
         "directories": directories,
     }
+
+
+def _child_name(value: object) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > 120:
+        return None
+    if value in (".", "..") or "/" in value or "\\" in value:
+        return None
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return None
+    return value
+
+
+def _creation_root(parent: Path, roots: tuple[Path, ...]) -> Path | None:
+    # Prefer the deepest root so the descriptor walk is as short as possible.
+    matches = [root for root in roots if _inside(parent, root)]
+    return max(matches, key=lambda root: len(root.parts), default=None)
+
+
+def create_child_directory(raw_parent: object, raw_name: object) -> tuple[int, dict[str, object]]:
+    """Create one directory below an allowed parent without following links."""
+    name = _child_name(raw_name)
+    if not isinstance(raw_parent, str) or not name:
+        return 400, {"ok": False, "error": "invalid-directory"}
+    try:
+        parent = Path(raw_parent).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError):
+        return 404, {"ok": False, "error": "directory-not-found"}
+    if not parent.is_dir():
+        return 404, {"ok": False, "error": "directory-not-found"}
+    roots = _project_roots()
+    root = _creation_root(parent, roots)
+    if root is None:
+        return 403, {"ok": False, "error": "directory-outside-allowed-roots"}
+
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        if not hasattr(os, "supports_dir_fd") or os.open not in os.supports_dir_fd:
+            raise NotImplementedError
+        fd = os.open(root, flags)
+        try:
+            for part in parent.relative_to(root).parts:
+                next_fd = os.open(part, flags, dir_fd=fd)
+                os.close(fd)
+                fd = next_fd
+            os.mkdir(name, mode=0o700, dir_fd=fd)
+        finally:
+            os.close(fd)
+    except FileExistsError:
+        return 409, {"ok": False, "error": "directory-exists"}
+    except (NotImplementedError, TypeError):
+        # Platforms without dir_fd still get a post-create containment check.
+        try:
+            target = parent / name
+            target.mkdir(mode=0o700, exist_ok=False)
+            resolved = target.resolve(strict=True)
+            if not resolved.is_dir() or not _allowed(resolved, roots):
+                return 403, {"ok": False, "error": "directory-outside-allowed-roots"}
+        except FileExistsError:
+            return 409, {"ok": False, "error": "directory-exists"}
+        except OSError:
+            return 500, {"ok": False, "error": "directory-create-failed"}
+    except FileNotFoundError:
+        return 404, {"ok": False, "error": "directory-not-found"}
+    except OSError:
+        return 500, {"ok": False, "error": "directory-create-failed"}
+    return 201, {"ok": True, "directory": str(parent / name), "name": name}
 
 
 def _data(value: Any) -> Any:
@@ -247,12 +314,34 @@ class Handler(ext.Handler):
         parsed = urlsplit(self.path)
         if parsed.path == "/client-directories.json":
             if not self.authenticated():
+                self.json_response({"ok": False, "error": "authentication-required"}, status=401)
                 return
             params = parse_qs(parsed.query)
             raw_path = (params.get("path") or [None])[0]
             self.json_response(directory_snapshot(raw_path))
             return
         super().do_GET()
+
+    def do_POST(self) -> None:
+        if urlsplit(self.path).path != "/client-directories.json":
+            return super().do_POST()
+        if not self.authenticated():
+            self.json_response({"ok": False, "error": "authentication-required"}, status=401)
+            self.close_connection = True
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length < 0 or length > 16_384:
+                raise ValueError
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            self.json_response({"ok": False, "error": "invalid-directory"}, status=400)
+            return
+        if not isinstance(payload, dict):
+            self.json_response({"ok": False, "error": "invalid-directory"}, status=400)
+            return
+        status, value = create_child_directory(payload.get("parent"), payload.get("name"))
+        self.json_response(value, status=status)
 
 def main() -> None:
     ext.base.SCRATCH_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)

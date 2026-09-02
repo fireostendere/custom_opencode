@@ -253,7 +253,7 @@ async function executeSlash(value) {
     return
   }
   const sessionID = await ensureSessionID()
-  const body = { command:parsed.command, arguments:parsed.arguments }
+  const body = { command:parsed.command, text:parsed.arguments }
   await request(`/api/session/${encodeURIComponent(sessionID)}/command`, { method:'POST', body:JSON.stringify(body) })
   input.value = ''
   input.dispatchEvent(new Event('input', { bubbles:true }))
@@ -281,7 +281,7 @@ function bindSlashCommands() {
       renderPalette()
     } else if (event.key === 'Tab') {
       event.preventDefault(); event.stopImmediatePropagation(); insertCommand()
-    } else if (event.key === 'Enter' && !event.shiftKey && paletteItems.length && !input.value.trim().includes(' ')) {
+    } else if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !window.matchMedia('(max-width: 760px)').matches && paletteItems.length && !input.value.trim().includes(' ')) {
       const selected = paletteItems[paletteIndex]
       const exact = commandName(selected).toLowerCase() === input.value.trim().slice(1).toLowerCase()
       event.preventDefault(); event.stopImmediatePropagation()
