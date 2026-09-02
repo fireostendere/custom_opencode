@@ -1,0 +1,28 @@
+name: Local Web Harness
+
+on:
+  push:
+    branches:
+      - 'feat/local-web-harness-20260902'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Playwright
+        run: |
+          python -m pip install --disable-pip-version-check playwright
+          python -m playwright install --with-deps chromium
+      - name: Syntax check
+        run: python -m py_compile scripts/local-web-harness.py scripts/browser-smoke.py scripts/web-fixture-e2e.py
+      - name: Run browser smoke against isolated production server
+        run: python scripts/local-web-harness.py test
