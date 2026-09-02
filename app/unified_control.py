@@ -168,12 +168,13 @@ def _event_group(kind: str) -> str:
 
 def _activity(runtime: Any, *, directory: str | None, session_id: str | None, after: int = 0, limit: int = 250) -> list[dict[str, Any]]:
     rows = runtime.STORE.events(
+        session_id=session_id,
         project_dir=directory,
         after=max(0, int(after)),
         limit=max(1, min(1000, int(limit))),
     )
-    if session_id:
-        rows = [item for item in rows if not item.get("session_id") or str(item.get("session_id")) == session_id]
+    if session_id is not None:
+        rows = [item for item in rows if str(item.get("session_id") or "") == session_id]
     out = []
     for row in rows:
         kind = str(row.get("kind") or "event")

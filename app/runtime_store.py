@@ -306,9 +306,10 @@ class RuntimeStore:
                   project_dir: str | None, kind: str, data: dict[str, Any], timestamp: int) -> int:
         cur=db.execute("INSERT INTO events(task_id,session_id,project_dir,kind,data_json,created_at) VALUES(?,?,?,?,?,?)",(task_id,session_id,project_dir,kind,_json(data),timestamp)); return int(cur.lastrowid)
 
-    def events(self, *, task_id: str | None = None, project_dir: str | None = None, after: int = 0, limit: int = 500) -> list[dict[str, Any]]:
+    def events(self, *, task_id: str | None = None, session_id: str | None = None, project_dir: str | None = None, after: int = 0, limit: int = 500) -> list[dict[str, Any]]:
         self.initialize(); clauses=["id>?"]; args:list[Any]=[int(after)]
         if task_id: clauses.append("task_id=?"); args.append(task_id)
+        if session_id is not None: clauses.append("session_id=?"); args.append(session_id)
         if project_dir: clauses.append("project_dir=?"); args.append(project_dir)
         args.append(max(1,min(2000,int(limit))))
         with self.connect() as db: rows=db.execute(f"SELECT * FROM events WHERE {' AND '.join(clauses)} ORDER BY id ASC LIMIT ?",args).fetchall()
