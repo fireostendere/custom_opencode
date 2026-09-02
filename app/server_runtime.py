@@ -525,6 +525,18 @@ def latest_plan_document()->dict[str,Any]|None:
     return None
 
 
+def session_plan_document(session_id:str)->dict[str,Any]|None:
+    """Read only the native plan owned by one session (never a global fallback)."""
+    root=PLAN_DIRECTORY
+    try:
+        root_resolved=root.resolve(strict=True)
+        if not root_resolved.is_dir(): return None
+    except (OSError,RuntimeError): return None
+    # _read_plan_candidate resolves and confines this derived path to root, so a
+    # hostile session id cannot escape the plan directory.
+    return _read_plan_candidate(root_resolved/f"{session_id}-plan.md",root_resolved)
+
+
 def runtime_snapshot(features:Any,directory:str|None=None)->dict[str,Any]:
     tasks=STORE.list_tasks(project_dir=directory,limit=500) if directory else STORE.list_tasks(limit=500)
     return {"version":2,"store":str(STORE.paths.db),"taskCounts":_counts(tasks),"tasks":[_public(task) for task in tasks[:100]],"usage":STORE.usage_summary(),"routing":resource_snapshot(),"secretBroker":SECRETS.snapshot(),"services":{"durableQueue":True,"checkpoints":True,"eventReplay":True,"largeOutputArtifacts":True,"repoIndex":True,"semanticDiff":True,"contextCache":True,"toolResultCache":True,"agentMailbox":True,"typedHandoff":True,"verification":True,"failureClassifier":True,"loopDetector":True,"stuckWatchdog":True,"patchOwnership":True,"speculativeParallelism":True,"providerPinnedRoleRouter":True,"capabilityRegistry":True,"mcpGatewayMetadata":True,"worktreeIsolation":True}}
@@ -534,9 +546,11 @@ def handle_get(handler:Any,parsed:Any,features:Any)->bool:
     paths={"/client-runtime.json","/client-tasks.json","/client-task.json","/client-task-events.json","/client-model-capabilities.json","/client-resource-status.json","/client-repo-index.json","/client-artifact.json","/client-project-memory.json","/client-decisions.json","/client-mcp-gateway.json","/client-plan.json"}
     if parsed.path not in paths: return False
     if not handler.authenticated(): handler.unauthorized(); return True
-    params=parse_qs(parsed.query)
+    params=parse_qs(parsed.query,keep_blank_values=True)
     if parsed.path=="/client-plan.json":
-        try: handler.json_response({"ok":True,"plan":latest_plan_document()})
+        try:
+            plan=session_plan_document(str(params["sessionID"][0])) if "sessionID" in params else latest_plan_document()
+            handler.json_response({"ok":True,"plan":plan})
         except Exception as exc: _error(handler,exc)
         return True
     try:

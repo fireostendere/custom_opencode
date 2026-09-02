@@ -324,7 +324,7 @@ function installPermissionSummary() {
   syncPermission()
 }
 function installSessionProfileRestore() {
-  window.addEventListener('hashchange', () => {
+  const restoreSessionProfile = () => {
     restoreDesiredProfile()
     pendingAgentTarget = ''
     failedAgentTarget = ''
@@ -335,7 +335,9 @@ function installSessionProfileRestore() {
       syncAgentSurface()
       syncModelSurface()
     })
-  })
+  }
+  window.addEventListener('hashchange', restoreSessionProfile)
+  window.addEventListener('custom-opencode:session-selected', restoreSessionProfile)
 }
 
 function syncScrollToBottomButton() {

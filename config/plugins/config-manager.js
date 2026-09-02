@@ -6,6 +6,7 @@ const STORAGE_KEY = "registry-v1"
 const CONFIG_DIR = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", "opencode")
 const ID_RE = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/
 const ENV_REF_RE = /^\{env:[A-Z_][A-Z0-9_]*\}$/
+const SENSITIVE_NAME_RE = /(?:^|[-_])(?:api[-_]?key|key|token|access[-_]?token|secret|password|passphrase|authorization|auth|credential)(?:$|[-_])/i
 
 function emptyRegistry() {
   return { version: 1, providers: {}, models: {}, mcp: {}, skills: {}, orchestrations: {} }
@@ -43,6 +44,14 @@ function isSafeSecretReference(value) {
   return typeof value !== "string" || !value || ENV_REF_RE.test(value)
 }
 
+function isSensitiveName(value) {
+  return SENSITIVE_NAME_RE.test(String(value).replace(/([a-z])([A-Z])/g, "$1_$2"))
+}
+
+function assertCredentialReference(name, value) {
+  if (isSensitiveName(name) && !ENV_REF_RE.test(String(value || "").trim())) throw new Error(`${name} must use {env:VAR}`)
+}
+
 function rejectInlineSecrets(value, path = "definition") {
   if (Array.isArray(value)) {
     value.forEach((item, index) => rejectInlineSecrets(item, `${path}[${index}]`))
@@ -51,7 +60,7 @@ function rejectInlineSecrets(value, path = "definition") {
   if (!value || typeof value !== "object") return
   for (const [key, item] of Object.entries(value)) {
     const next = `${path}.${key}`
-    if (/api.?key|token|secret|password|authorization/i.test(key) && typeof item === "string" && !isSafeSecretReference(item)) {
+    if (isSensitiveName(key) && typeof item === "string" && !isSafeSecretReference(item)) {
       throw new Error(`${next} must use {env:VAR}; literal secrets are not stored`)
     }
     rejectInlineSecrets(item, next)
@@ -102,12 +111,40 @@ function mcpDefinition(input) {
   if (!config.type || !["local", "remote"].includes(String(config.type))) throw new Error("MCP config.type must be local or remote")
   if (config.type === "remote") {
     const url = String(config.url || "")
-    if (!/^https?:\/\//.test(url)) throw new Error("remote MCP requires http(s) url")
-  } else if (!Array.isArray(config.command) || !config.command.length) {
-    throw new Error("local MCP requires command array")
+    let parsed
+    try { parsed = new URL(url) } catch { throw new Error("remote MCP requires http(s) url") }
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error("remote MCP requires http(s) url")
+    if (parsed.username || parsed.password) throw new Error("remote MCP URL must not include credentials")
+    for (const [key, value] of parsed.searchParams) {
+      assertCredentialReference(key, value)
+    }
+  } else {
+    if (!Array.isArray(config.command) || !config.command.length || config.command.some((item) => typeof item !== "string" || !item.trim())) {
+      throw new Error("local MCP requires command array")
+    }
+    rejectLocalCommandSecrets(config.command)
   }
   rejectInlineSecrets(config, "mcp")
   return { name, config }
+}
+
+function rejectLocalCommandSecrets(command) {
+  for (let index = 0; index < command.length; index += 1) {
+    const argument = command[index]
+    const flag = /^--([^=]+)(?:=(.*))?$/i.exec(argument)
+    if (flag && isSensitiveName(flag[1])) assertCredentialReference(flag[1], flag[2] === undefined ? command[++index] : flag[2])
+    else if (flag && /^(?:env|header)$/i.test(flag[1])) rejectLocalCredentialArgument(flag[2] === undefined ? command[++index] : flag[2])
+    else if (/^-[eH]$/.test(argument)) rejectLocalCredentialArgument(command[++index])
+    else rejectLocalCredentialArgument(argument)
+  }
+}
+
+function rejectLocalCredentialArgument(argument) {
+  const value = String(argument || "")
+  const assignment = /^([A-Za-z_][A-Za-z0-9_-]*)=(.*)$/.exec(value)
+  const header = /^([^:]+):\s*(.*)$/.exec(value)
+  if (assignment) assertCredentialReference(assignment[1], assignment[2])
+  else if (header) assertCredentialReference(header[1], header[2])
 }
 
 function skillDefinition(input) {
@@ -172,7 +209,26 @@ export default Plugin.define({
 
     const save = async () => { await ctx.storage.set(STORAGE_KEY, registry) }
     const reloadAll = async () => {
-      await Promise.all([ctx.catalog.reload(), ctx.mcp.reload(), ctx.skill.reload()])
+      const settled = await Promise.allSettled([ctx.catalog.reload(), ctx.mcp.reload(), ctx.skill.reload()])
+      const failures = settled.filter((item) => item.status === "rejected").map((item) => item.reason?.message || String(item.reason))
+      if (failures.length) throw new Error(`managed reload failed: ${failures.join("; ")}`)
+    }
+    let mutationQueue = Promise.resolve()
+    const enqueueMutation = (operation) => {
+      const result = mutationQueue.then(operation, operation)
+      mutationQueue = result.catch(() => {})
+      return result
+    }
+    const rollback = async (previous) => {
+      registry = previous
+      const failures = []
+      try { await save() } catch (error) { failures.push(error) }
+      try { await reloadAll() } catch (error) { failures.push(error) }
+      return failures
+    }
+    const mutationError = (error, rollbackFailures) => {
+      if (!rollbackFailures.length) return error
+      return new Error(`${error.message}; rollback failed: ${rollbackFailures.map((item) => item.message || String(item)).join("; ")}`)
     }
 
     await ctx.catalog.transform((catalog) => {
@@ -221,46 +277,45 @@ export default Plugin.define({
       const add = (name, description, handler, help) => commands.add({
         name,
         description,
-        execute: async ({ sessionID, prompt }) => {
+        execute: ({ sessionID, prompt }) => enqueueMutation(async () => {
+          const previous = registry
           try {
             const input = extractJson(prompt)
             await handler(input)
             await save()
-            await synthetic(ctx, sessionID, `${name}: saved\n${JSON.stringify(publicSummary(registry), null, 2)}`)
+            await reloadAll()
           } catch (error) {
-            await synthetic(ctx, sessionID, `${name}: ${error.message}\n\n${help}`)
+            const failure = mutationError(error, registry === previous ? [] : await rollback(previous))
+            try { await synthetic(ctx, sessionID, `${name}: ${failure.message}\n\n${help}`) } catch {}
+            throw failure
           }
-        },
+          try { await synthetic(ctx, sessionID, `${name}: saved\n${JSON.stringify(publicSummary(registry), null, 2)}`) } catch {}
+        }),
       })
 
       add("addprovider", "Add or update a durable managed provider", async (input) => {
         const { id, definition } = providerDefinition(input)
-        registry.providers = { ...registry.providers, [id]: definition }
-        await ctx.catalog.reload()
+        registry = { ...registry, providers: { ...registry.providers, [id]: definition } }
       }, usage("addprovider", '/addprovider {"id":"acme","name":"Acme","package":"@opencode-ai/ai/providers/openai-compatible","env":["ACME_API_KEY"],"settings":{"baseURL":"https://llm.example/v1","apiKey":"{env:ACME_API_KEY}"}}'))
 
       add("addmodel", "Add or update a durable managed model", async (input) => {
         const { providerID, id, definition } = modelDefinition(input)
-        registry.models = { ...registry.models, [`${providerID}/${id}`]: definition }
-        await ctx.catalog.reload()
+        registry = { ...registry, models: { ...registry.models, [`${providerID}/${id}`]: definition } }
       }, usage("addmodel", '/addmodel {"providerID":"acme","id":"coder","modelID":"qwen3-coder","name":"Coder","capabilities":{"tools":true,"input":["text"],"output":["text"]}}'))
 
       add("addmcp", "Add or update a durable managed MCP server", async (input) => {
         const { name, config } = mcpDefinition(input)
-        registry.mcp = { ...registry.mcp, [name]: config }
-        await ctx.mcp.reload()
+        registry = { ...registry, mcp: { ...registry.mcp, [name]: config } }
       }, usage("addmcp", '/addmcp {"name":"docs","config":{"type":"remote","url":"https://mcp.example.com"}}'))
 
       add("addskill", "Add or update a durable managed skill", async (input) => {
         const { id, definition } = skillDefinition(input)
-        registry.skills = { ...registry.skills, [id]: definition }
-        await ctx.skill.reload()
+        registry = { ...registry, skills: { ...registry.skills, [id]: definition } }
       }, usage("addskill", '/addskill {"id":"review","name":"Review","description":"Review current changes","content":"Review the current changes for correctness and regressions."}'))
 
       add("addorchestration", "Add a model-picker orchestration alias with a managed system policy", async (input) => {
         const { key, definition } = orchestrationDefinition(input)
-        registry.orchestrations = { ...registry.orchestrations, [key]: definition }
-        await ctx.catalog.reload()
+        registry = { ...registry, orchestrations: { ...registry.orchestrations, [key]: definition } }
       }, usage("addorchestration", '/addorchestration {"providerID":"acme","id":"coder-orchestrated","baseModelID":"coder","name":"Coder · Orchestrated","prompt":"Plan only when needed, delegate bounded reads, verify before completion."}'))
 
       commands.add({
@@ -272,7 +327,8 @@ export default Plugin.define({
       commands.add({
         name: "remove-managed",
         description: "Remove a managed item: /remove-managed {\"type\":\"models\",\"id\":\"provider/model\"}",
-        execute: async ({ sessionID, prompt }) => {
+        execute: ({ sessionID, prompt }) => enqueueMutation(async () => {
+          const previous = registry
           try {
             const input = extractJson(prompt)
             const type = String(input.type || "")
@@ -284,11 +340,13 @@ export default Plugin.define({
             registry = { ...registry, [type]: next }
             await save()
             await reloadAll()
-            await synthetic(ctx, sessionID, `remove-managed: removed ${type}/${id}`)
           } catch (error) {
-            await synthetic(ctx, sessionID, `remove-managed: ${error.message}`)
+            const failure = mutationError(error, registry === previous ? [] : await rollback(previous))
+            try { await synthetic(ctx, sessionID, `remove-managed: ${failure.message}`) } catch {}
+            throw failure
           }
-        },
+          try { await synthetic(ctx, sessionID, "remove-managed: removed") } catch {}
+        }),
       })
     })
   },
@@ -300,6 +358,37 @@ if (process.env.OPENCODE_CONFIG_MANAGER_SELF_CHECK) {
   let rejected = false
   try { providerDefinition({ id: "bad", settings: { apiKey: "literal-secret" } }) } catch { rejected = true }
   if (!rejected) throw new Error("inline secret self-check failed")
+  const camelProvider = providerDefinition({ id: "camel-provider", settings: { privateKey: "{env:PRIVATE_KEY}" } })
+  const camelModel = modelDefinition({ providerID: "acme", id: "camel-model", settings: { clientSecret: "{env:CLIENT_SECRET}" } })
+  if (camelProvider.id !== "camel-provider" || camelModel.id !== "camel-model") throw new Error("camel inline reference self-check failed")
+  for (const [definition, input] of [[providerDefinition, { id: "bad-private", settings: { privateKey: "literal" } }], [modelDefinition, { providerID: "acme", id: "bad-client", settings: { clientSecret: "literal" } }]]) {
+    rejected = false
+    try { definition(input) } catch { rejected = true }
+    if (!rejected) throw new Error("camel inline secret self-check failed")
+  }
+  const remote = mcpDefinition({ name: "docs", config: { type: "remote", url: "https://mcp.example.com?api_key={env:DOCS_TOKEN}&key={env:DOCS_KEY}" } })
+  if (remote.config.type !== "remote") throw new Error("remote MCP self-check failed")
+  const camelURL = mcpDefinition({ name: "camel-url", config: { type: "remote", url: "https://mcp.example.com?clientSecret={env:CLIENT_SECRET}&bearerToken={env:BEARER_TOKEN}" } })
+  if (camelURL.config.type !== "remote") throw new Error("camel URL self-check failed")
+  rejected = false
+  try { mcpDefinition({ name: "bad-url", config: { type: "remote", url: "https://user:pass@mcp.example.com?clientSecret=literal" } }) } catch { rejected = true }
+  if (!rejected) throw new Error("remote MCP secret self-check failed")
+  const local = mcpDefinition({ name: "local", config: { type: "local", command: ["tool", "--api_key", "{env:API_KEY}", "--env", "TOKEN={env:TOKEN}", "--header", "X-Api-Key: {env:API_KEY}"] } })
+  if (local.config.type !== "local") throw new Error("local MCP self-check failed")
+  const camelLocal = mcpDefinition({ name: "camel-local", config: { type: "local", command: ["tool", "--refreshToken", "{env:REFRESH_TOKEN}", "--privateKey={env:PRIVATE_KEY}", "--xApiKey", "{env:X_API_KEY}", "--profile", "literal"] } })
+  if (camelLocal.config.type !== "local") throw new Error("camel local self-check failed")
+  for (const name of ["clientSecret", "bearerToken", "refreshToken", "privateKey", "xApiKey"]) {
+    assertCredentialReference(name, "{env:TEST_SECRET}")
+    rejected = false
+    try { assertCredentialReference(name, "literal") } catch { rejected = true }
+    if (!rejected) throw new Error("camel secret self-check failed")
+  }
+  assertCredentialReference("profile", "literal")
+  for (const command of [["tool", "--key=literal"], ["tool", "PASSWORD=literal"], ["tool", "Authorization: literal"]]) {
+    rejected = false
+    try { mcpDefinition({ name: "bad-local", config: { type: "local", command } }) } catch { rejected = true }
+    if (!rejected) throw new Error("local MCP secret self-check failed")
+  }
   const orchestration = orchestrationDefinition({ providerID: "acme", id: "coder-orchestrated", baseModelID: "coder", prompt: "Verify." })
   if (orchestration.key !== "acme/coder-orchestrated") throw new Error("orchestration self-check failed")
   console.log("config-manager self-check OK")

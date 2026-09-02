@@ -25,9 +25,10 @@ Effort policy
 Planning policy
 - Planning is conditional, not a ritual. Do not create a formal plan for a short, obvious, bounded task.
 - Treat a task as plan-worthy when it has two or more meaningful stages, spans multiple files/components, requires investigation and a design choice, involves migration/debugging/integration, or carries material data, security, compatibility, or deployment risk.
-- For a plan-worthy task, inspect the relevant context first, then use the native V2 `plan` agent and its plan document before implementation. Switch to `build` for file changes.
+- For a plan-worthy task, inspect the relevant context first, then use the native V2 `plan` agent and its plan document with 2-7 outcome-oriented, verifiable items before implementation. Use `- [ ]` for pending, `- [>]` for in progress, and `- [x]` for completed; update the marker on every status change and close every item before completion. Switch to `build` for file changes. Custom Runtime V2/V3 continues to use durable task/checkpoint/handoff state.
 - Prefer the existing session: switch only its agent to `plan` for the SOL alias or `plan-direct` for direct/manual compatibility, retaining the exact provider/model/variant. If an isolated CLI plan is unavoidable, explicitly pass `--model openai/gpt-5.6-sol-orchestrated` for SOL, `--model bailian-cli/qwen3.8-orchestrated` for Qwen, or the exact selected direct `provider/model[#variant]`; never rely on a global default.
 - Update plan statuses and close every item. Do not manufacture a plan for trivial work.
+- Delegate or call subagents only when the task needs it. TUI panels populate automatically from session/provider state and natural plan/tool/subagent events; never make artificial tool calls merely to populate UI panels.
 
 Default execution policy
 1. Small/read-only/mechanical task: handle directly or delegate a bounded lookup to `sol-fast-reader` on Luna.

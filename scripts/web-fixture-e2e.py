@@ -39,6 +39,9 @@ class FixtureState:
     managed_sends: list[dict[str, object]] = []
     managed_failures = 0
     session_running = False
+    queued_prompt_event = threading.Event()
+    session_payloads: list[dict[str, object]] = []
+    created_sessions: dict[str, dict[str, object]] = {}
 
 
 class Backend(BaseHTTPRequestHandler):
@@ -67,26 +70,42 @@ class Backend(BaseHTTPRequestHandler):
             "time": {"created": 2_000_000_000_000, "updated": 2_000_000_000_000},
         }
 
+    @staticmethod
+    def created_session(session_id: str, payload: dict[str, object]) -> dict[str, object]:
+        location = payload.get("location") if isinstance(payload.get("location"), dict) else {}
+        directory = location.get("directory") if isinstance(location.get("directory"), str) else ""
+        return {
+            "id": session_id, "title": str(payload.get("title") or "Новая сессия"),
+            "projectID": "proj_other" if directory == os.environ["FIXTURE_OTHER_PROJECT"] else "proj_fixture", "agent": payload.get("agent") or "build",
+            "model": payload.get("model") or {"providerID":"bailian-cli", "id":"qwen3.8-max"},
+            "location": {"directory": directory}, "time":{"created":2_000_000_001_000,"updated":2_000_000_001_000},
+        }
+
     def do_GET(self) -> None:
         parsed = urlsplit(self.path)
         path = parsed.path
         project = os.environ["FIXTURE_PROJECT"]
         session = self.session(project)
         if path == "/api/project":
-            self.send_json({"data": [{"id": "proj_fixture", "name": "Fixture", "canonical": project}, {"id": "proj_other", "name": "Other", "canonical": project + "-other"}]})
+            self.send_json({"data": [{"id": "proj_fixture", "name": "Fixture", "canonical": project}, {"id": "proj_other", "name": "Other", "canonical": os.environ["FIXTURE_OTHER_PROJECT"]}]})
         elif path == "/api/session":
             if "limit=100" in parsed.query:
                 FixtureState.session_reads += 1
             older = {**session, "id":"ses_older", "title":"Older root", "time":{"created":1_999_999_999_000,"updated":1_999_999_999_100}}
             child = {**session, "id":"ses_child_reader", "title":"Reader subagent", "parentID":"ses_fixture", "agent":"explore", "time":{"created":2_000_000_000_100,"updated":2_000_000_000_500}}
             nested = {**session, "id":"ses_child_review", "title":"Reviewer nested", "parentID":"ses_child_reader", "agent":"review", "time":{"created":2_000_000_000_200,"updated":2_000_000_000_600}}
-            other = {**session, "id":"ses_other", "title":"Other project chat", "projectID":"proj_other", "location":{"directory":project + "-other"}, "time":{"created":2_000_000_000_050,"updated":2_000_000_000_050}}
-            self.send_json({"data": [older, child, nested, session, other]})
+            other = {**session, "id":"ses_other", "title":"Other project chat", "projectID":"proj_other", "location":{"directory":os.environ["FIXTURE_OTHER_PROJECT"]}, "time":{"created":2_000_000_000_050,"updated":2_000_000_000_050}}
+            other_child = {**other, "id":"ses_other_agent", "title":"Other agent", "parentID":"ses_other", "agent":"review", "time":{"created":2_000_000_000_110,"updated":2_000_000_000_510}}
+            self.send_json({"data": [*FixtureState.created_sessions.values(), older, child, nested, session, other_child, other]})
         elif path == "/api/session/active" or path == "/api/session/status":
-            statuses = {"ses_fixture": {"type": "busy"}} if FixtureState.session_running else {}
+            statuses = {"ses_fixture": {"type": "busy" if FixtureState.session_running else "idle"}}
             self.send_json({"data": statuses})
         elif path == "/api/session/ses_fixture":
             self.send_json({"data": session})
+        elif path.startswith("/api/session/") and path.endswith("/message") and path.split("/")[3] in FixtureState.created_sessions:
+            self.send_json({"data": [], "cursor":{"next":None}})
+        elif path.startswith("/api/session/") and path.split("/")[3] in FixtureState.created_sessions:
+            self.send_json({"data": FixtureState.created_sessions[path.split("/")[3]]})
         elif path == "/api/session/ses_child_reader":
             child = {**session, "id":"ses_child_reader", "title":"Reader subagent", "parentID":"ses_fixture", "agent":"explore", "time":{"created":2_000_000_000_100,"updated":2_000_000_000_500}}
             self.send_json({"data": child})
@@ -96,6 +115,12 @@ class Backend(BaseHTTPRequestHandler):
                 {"info":{"id":"child_user","role":"user","time":{"created":2_000_000_000_101}},"parts":[{"type":"text","text":"Delegated request"}]},
             ]
             self.send_json({"data": rows, "cursor":{"next": None}})
+        elif path == "/api/session/ses_other":
+            self.send_json({"data": {**session, "id":"ses_other", "title":"Other project chat", "projectID":"proj_other", "location":{"directory":os.environ["FIXTURE_OTHER_PROJECT"]}}})
+        elif path == "/api/session/ses_other_agent/message":
+            self.send_json({"data": [{"info":{"id":"other_agent_assistant","role":"assistant","time":{"created":2_000_000_000_510}},"parts":[{"type":"tool","id":"other_tool","name":"other_tool","state":{"status":"completed","content":"other result"}}]}]})
+        elif path == "/api/session/ses_other/message":
+            self.send_json({"data": [], "cursor":{"next": None}})
         elif path == "/api/session/ses_fixture/context":
             FixtureState.context_reads += 1
             self.send_json({"error": "context endpoint unavailable"}, status=404)
@@ -180,7 +205,14 @@ class Backend(BaseHTTPRequestHandler):
                         "header": "Среда",
                         "question": "Как продолжить fixture?",
                         "multiple": False,
-                        "options": [{"label": "Использовать fixture", "description": "Проверка native question reply"}],
+                        "options": [
+                            {"label": "Использовать fixture", "description": "Проверка native question reply с длинным описанием для тестирования переполнения на мобильных устройствах"},
+                            {"label": "Альтернативный подход", "description": "Еще один вариант с подробным описанием, чтобы карточка вопроса переполняла экран мобильного устройства"},
+                            {"label": "Третий вариант", "description": "Дополнительное описание для третьего варианта, увеличивающее высоту карточки вопроса"},
+                            {"label": "Четвертый вариант", "description": "Подробное описание четвертого варианта для создания переполнения контента в мобильном вьюпорте"},
+                            {"label": "Пятый вариант", "description": "Еще одно длинное описание для пятого варианта, чтобы гарантировать переполнение карточки на экране 412x915"},
+                            {"label": "Шестой вариант", "description": "Финальное описание для шестого варианта, завершающее список опций для тестирования мобильной верстки"}
+                        ],
                     }],
                 })
             self.send_json({"data": rows})
@@ -223,6 +255,13 @@ class Backend(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         length = int(self.headers.get("Content-Length", "0") or 0)
         payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+        if path == "/api/session":
+            FixtureState.session_payloads.append(payload)
+            session_id = f"ses_created_{len(FixtureState.session_payloads)}"
+            created = self.created_session(session_id, payload)
+            FixtureState.created_sessions[session_id] = created
+            self.send_json({"data": created})
+            return
         if path in ("/api/session/ses_fixture/prompt_async", "/api/session/ses_fixture/prompt"):
             text = str(payload.get("text") or "")
             if not text and isinstance(payload.get("prompt"), dict):
@@ -230,6 +269,8 @@ class Backend(BaseHTTPRequestHandler):
             if not text and isinstance(payload.get("parts"), list):
                 text = "\n".join(str(part.get("text") or "") for part in payload["parts"] if isinstance(part, dict) and part.get("type") == "text").strip()
             FixtureState.managed_sends.append({"text": text})
+            if text == "queue exactly once":
+                FixtureState.queued_prompt_event.set()
             if FixtureState.managed_failures > 0:
                 FixtureState.managed_failures -= 1
                 self.send_json({"error": "fixture managed send failure"}, status=500)
@@ -277,6 +318,39 @@ def open_session(page) -> None:
     page.locator("#messagesInner").wait_for(state="visible")
 
 
+def assert_created_session(page, previous_hash: str, payload_count: int, directory: str) -> None:
+    page.wait_for_function("document.querySelector('#projectDialog').open === false")
+    page.wait_for_function("previousHash => location.hash !== previousHash && location.hash.startsWith('#/session/')", arg=previous_hash)
+    assert len(FixtureState.session_payloads) == payload_count + 1
+    assert FixtureState.session_payloads[payload_count]["location"]["directory"] == directory
+
+
+def universal_plan_session_switch(browser, base_url: str) -> None:
+    context = browser.new_context(viewport={"width": 1366, "height": 850})
+    page = context.new_page()
+    login(page, base_url)
+    open_session(page)
+    page.evaluate("window.CustomOpenCodeWorkspace.open('plan')")
+    page.wait_for_function("document.querySelector('#unified-plan').innerText.includes('Fixture plan') && document.querySelector('#unified-plan').innerText.includes('Fixture step 00')", timeout=5000)
+    unified_plan = page.locator('#unified-plan')
+    assert "Fixture plan" in unified_plan.inner_text()
+    assert "Fixture step 00" in unified_plan.inner_text()
+
+    page.evaluate("location.hash = '#/session/ses_other'")
+    page.wait_for_function("location.hash.startsWith('#/session/ses_other')")
+    page.wait_for_function("document.querySelector('#unified-plan').innerText.includes('Other root plan') && document.querySelector('#unified-plan').innerText.includes('Other isolated step')", timeout=5000)
+    assert "Other root plan" in unified_plan.inner_text()
+    assert "Other isolated step" in unified_plan.inner_text()
+    assert "Fixture plan" not in unified_plan.inner_text()
+    assert "Fixture step 00" not in unified_plan.inner_text()
+
+    page.evaluate("window.CustomOpenCodeWorkspace.close()")
+    page.click("#logoutButton")
+    page.locator("#loginForm").wait_for(state="visible")
+    context.close()
+    print("Universal Plan session-switch scenario passed", flush=True)
+
+
 def pull_messages(page, cdp, distance: int, hold_ms: int) -> None:
     box = page.locator("#messages").bounding_box()
     assert box
@@ -294,19 +368,49 @@ def desktop(browser, base_url: str) -> None:
     FixtureState.managed_sends = []
     FixtureState.managed_failures = 0
     FixtureState.session_running = False
+    FixtureState.queued_prompt_event.clear()
     FixtureState.message_requests = []
     FixtureState.message_order = "desc"
+    FixtureState.session_payloads = []
+    FixtureState.created_sessions = {}
     context = browser.new_context(viewport={"width": 1366, "height": 850})
     page = context.new_page()
     errors: list[str] = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.on("response", lambda response: errors.append(f"HTTP {response.status} {response.url}") if response.status >= 500 else None)
     login(page, base_url)
+    # New session is a target chooser: it must not create a scratch session.
+    page.click("#newSession")
+    page.locator("#projectDialog[open]").wait_for(state="visible")
+    assert FixtureState.session_payloads == []
+    previous_hash = page.evaluate("location.hash")
+    payload_count = len(FixtureState.session_payloads)
+    page.locator('#projectDialog button[data-project="proj_other"]').click()
+    assert_created_session(page, previous_hash, payload_count, os.environ["FIXTURE_OTHER_PROJECT"])
+
+    # Browsing an existing directory and creating a child both use the same bridge.
+    page.click("#chooseProject")
+    page.click("#browseProjects")
+    page.locator("#projectBrowser .directory-choice").filter(has_text="existing").click()
+    previous_hash = page.evaluate("location.hash")
+    payload_count = len(FixtureState.session_payloads)
+    page.locator("[data-open-directory]").click()
+    assert_created_session(page, previous_hash, payload_count, os.environ["FIXTURE_EXISTING_PROJECT"])
+    page.click("#chooseProject")
+    page.click("#browseProjects")
+    form = page.locator("[data-create-directory]")
+    form.locator("input").fill("child-created")
+    previous_hash = page.evaluate("location.hash")
+    payload_count = len(FixtureState.session_payloads)
+    form.locator("button").click()
+    child_directory = str(Path(os.environ["FIXTURE_PROJECT"]) / "child-created")
+    assert_created_session(page, previous_hash, payload_count, child_directory)
+    assert Path(child_directory).is_dir()
     fixture_group = page.locator('#sessions .project-group[data-project="proj_fixture"]')
     other_group = page.locator('#sessions .project-group[data-project="proj_other"]')
     assert fixture_group.get_attribute("open") is not None and other_group.get_attribute("open") is not None
     root_titles = fixture_group.locator(':scope > .project-sessions > .session-node > .session [data-session] .session-title').all_inner_texts()
-    assert root_titles == ["Fixture session", "Older root"], root_titles
+    assert root_titles == ["Новая сессия", "Новая сессия", "Fixture session", "Older root"], root_titles
     parent_folder = fixture_group.locator('[data-agent-folder="ses_fixture"]')
     parent_children = fixture_group.locator('[data-session-children="ses_fixture"]')
     assert parent_folder.count() == 1
@@ -446,12 +550,15 @@ def desktop(browser, base_url: str) -> None:
     page.wait_for_function("el => el.scrollTop + el.clientHeight >= el.scrollHeight - 2", arg=page.locator("#messages").element_handle())
     page.locator("#scrollToBottom").wait_for(state="hidden")
 
+    assert not errors, errors
     FixtureState.managed_failures = 1
     page.fill("#input", "send exactly once")
     page.click("#composerAction")
     page.wait_for_function("document.querySelector('#input').value === 'send exactly once'")
     page.wait_for_function("document.querySelector('#composerAction').getAttribute('aria-label') === 'Отправить'")
     assert len(FixtureState.managed_sends) == 1
+    assert errors == [f"HTTP 500 {base_url}/client-send.json"], errors
+    errors.clear()
 
     page.evaluate("""() => {
         const button = document.querySelector('#composerAction')
@@ -462,6 +569,7 @@ def desktop(browser, base_url: str) -> None:
     assert len(FixtureState.managed_sends) == 2, FixtureState.managed_sends
     assert [payload.get("text") for payload in FixtureState.managed_sends] == ["send exactly once", "send exactly once"]
 
+    FixtureState.session_running = True
     page.click("#refresh")
     page.wait_for_function("!document.querySelector('#stop').hidden")
     page.fill("#input", "queue exactly once")
@@ -473,6 +581,27 @@ def desktop(browser, base_url: str) -> None:
     page.locator('[data-session-drag="ses_fixture"] .queued').wait_for()
     assert page.locator('[data-session-drag="ses_fixture"] .queued').inner_text() == "очередь 1"
     assert len(FixtureState.managed_sends) == 2
+
+    FixtureState.session_running = False
+    page.click("#refresh")
+    page.wait_for_function("document.querySelector('#composerAction').getAttribute('aria-label') === 'Отправить'")
+    assert FixtureState.queued_prompt_event.wait(timeout=5), "queued prompt was not dispatched"
+    assert [payload.get("text") for payload in FixtureState.managed_sends] == [
+        "send exactly once", "send exactly once", "queue exactly once",
+    ]
+
+    sends_before_enter = len(FixtureState.managed_sends)
+    page.fill("#input", "desktop enter")
+    page.locator("#input").press("Enter")
+    page.wait_for_function("document.querySelector('#input').value === ''")
+    page.wait_for_function("!document.querySelector('#stop').hidden")
+    assert [payload.get("text") for payload in FixtureState.managed_sends][sends_before_enter:] == ["desktop enter"]
+
+    page.fill("#input", "desktop shift")
+    page.locator("#input").press("Shift+Enter")
+    assert page.locator("#input").input_value() == "desktop shift\n"
+    assert len(FixtureState.managed_sends) == sends_before_enter + 1
+    page.fill("#input", "")
 
     page.click("#appearanceButton")
     page.locator("#appearanceDialog[open]").wait_for(state="visible")
@@ -486,15 +615,24 @@ def desktop(browser, base_url: str) -> None:
     assert page.locator(".plan-panel > summary").evaluate("el => getComputedStyle(el, '::after').content") != "none"
     assert not page.locator('.plan-panel').evaluate('el => el.open')
     assert not page.locator('.live-panel').evaluate('el => el.open')
-    page.locator("#messages").evaluate("el => el.scrollTop = Math.min(1, Math.max(0, el.scrollHeight - el.clientHeight))")
-    conversation_before = page.locator("#messages").evaluate("el => el.scrollTop")
+    messages = page.locator("#messages")
+    conversation_before = messages.evaluate("""el => {
+        const scrollBehavior = el.style.scrollBehavior
+        el.style.scrollBehavior = 'auto'
+        el.scrollTop = Math.min(1, Math.max(0, el.scrollHeight - el.clientHeight))
+        const top = el.scrollTop
+        el.style.scrollBehavior = scrollBehavior
+        return top
+    }""")
+    assert conversation_before <= 1
     page.locator(".plan-panel > summary").click()
     assert page.locator('.plan-panel').evaluate('el => el.open')
     assert not page.locator('.live-panel').evaluate('el => el.open')
-    page.locator(".plan-panel-body").evaluate("el => { el.scrollTop = Math.max(1, el.scrollHeight - el.clientHeight - 30) }")
-    before = page.locator(".plan-panel-body").evaluate("el => el.scrollTop")
+    plan_body = page.locator(".plan-panel-body")
+    page.wait_for_function("() => { const el = document.querySelector('.plan-panel-body'); return el && el.scrollHeight > el.clientHeight }")
+    before = plan_body.evaluate("el => { el.scrollTop = Math.max(1, el.scrollHeight - el.clientHeight - 30); return el.scrollTop }")
     page.wait_for_timeout(1200)  # The live one-second render must not reset an expanded plan.
-    after = page.locator(".plan-panel-body").evaluate("el => el.scrollTop")
+    after = plan_body.evaluate("el => el.scrollTop")
     assert abs(after - before) <= 2, (before, after)
     conversation_after = page.locator("#messages").evaluate("el => el.scrollTop")
     assert abs(conversation_after - conversation_before) <= 2, (conversation_before, conversation_after)
@@ -503,6 +641,39 @@ def desktop(browser, base_url: str) -> None:
     page.locator('.live-panel > summary').click()
     assert page.locator('.plan-panel').evaluate('el => el.open') and not page.locator('.live-panel').evaluate('el => el.open')
 
+    # A root-session switch must replace all orchestration data, rather than
+    # briefly retaining the prior root's plan, child agent, or tool output.
+    # Hash navigation restores the model profile per session.
+    page.evaluate("""() => {
+        const key = 'opencode:web:model-profiles-v1'
+        const profiles = JSON.parse(localStorage.getItem(key) || '{}') || {}
+        profiles.ses_other = 'orchestrated'
+        localStorage.setItem(key, JSON.stringify(profiles))
+    }""")
+    other_group.locator('[data-session="ses_other"]').click()
+    page.wait_for_function("location.hash.startsWith('#/session/ses_other')")
+    page.wait_for_function("""() =>
+        document.querySelectorAll('.orchestration-plan-list li').length === 1 &&
+        document.querySelector('.orchestration-plan-copy strong')?.textContent === 'Other root plan'
+    """, timeout=5000)
+    trace = page.locator('#orchestrationTrace')
+    page.wait_for_function("""() => {
+        const trace = document.querySelector('#orchestrationTrace')
+        return trace?.textContent.includes('Other agent') && trace?.textContent.includes('other_tool')
+    }""", timeout=5000)
+    trace_text = trace.text_content() or ''
+    assert "Other root plan" in trace_text
+    assert "Fixture step 00" not in trace_text
+    assert "Reader subagent" not in trace_text
+    live_panel = page.locator('.live-panel')
+    if not live_panel.evaluate('el => el.open'):
+        live_panel.locator(':scope > summary').click()
+    page.wait_for_function("""() => {
+        const panel = document.querySelector('.live-panel')
+        const trace = document.querySelector('#orchestrationTrace')
+        return panel?.open === true && trace?.innerText.includes('Other agent') && trace?.innerText.includes('other_tool')
+    }""", timeout=5000)
+
     page.click("#logoutButton")
     page.locator("#loginForm").wait_for(state="visible")
     assert not errors, errors
@@ -510,6 +681,7 @@ def desktop(browser, base_url: str) -> None:
 
 
 def mobile(browser, base_url: str) -> None:
+    FixtureState.managed_sends = []
     FixtureState.session_running = False
     FixtureState.permission_pending = True
     FixtureState.form_pending = True
@@ -530,12 +702,26 @@ def mobile(browser, base_url: str) -> None:
     login(page, base_url)
     page.click("#menu")
     assert page.locator("#sidebar").evaluate("el => el.classList.contains('open')")
-    page.locator("#sessions .session").first.click()
+    page.locator('[data-session="ses_fixture"]').click()
     page.wait_for_function("location.hash.startsWith('#/session/ses_fixture')")
     page.wait_for_timeout(250)
     assert not page.locator("#sidebar").evaluate("el => el.classList.contains('open')")
 
     page.locator("#questionHost .question-card").wait_for(state="visible")
+
+    # Проверка видимости кнопки "Продолжить" и её положения в viewport
+    submit_button = page.locator("[data-question-submit]")
+    assert submit_button.is_visible(), "[data-question-submit] должна быть видима"
+    submit_box = submit_button.bounding_box()
+    viewport = page.viewport_size
+    assert submit_box is not None, "bounding_box кнопки submit не должен быть None"
+    assert submit_box["y"] + submit_box["height"] <= viewport["height"], \
+        f"Кнопка submit выходит за нижнюю границу viewport: bottom={submit_box['y'] + submit_box['height']}, viewport_height={viewport['height']}"
+    assert submit_box["y"] >= 0, f"Кнопка submit выходит за верхнюю границу viewport: top={submit_box['y']}"
+    assert submit_box["x"] >= 0, f"Кнопка submit выходит за левую границу viewport: left={submit_box['x']}"
+    assert submit_box["x"] + submit_box["width"] <= viewport["width"], \
+        f"Кнопка submit выходит за правую границу viewport: right={submit_box['x'] + submit_box['width']}, viewport_width={viewport['width']}"
+
     page.click("[data-question-reject]")
     page.wait_for_function("document.querySelector('#questionHost').hidden")
     assert FixtureState.form_cancelled
@@ -545,6 +731,17 @@ def mobile(browser, base_url: str) -> None:
     page.wait_for_function("document.querySelector('#permissionBanner').hidden")
     page.wait_for_timeout(2200)
     assert page.locator("#permissionBanner").is_hidden()
+
+    page.fill("#input", "mobile enter")
+    page.locator("#input").press("Enter")
+    assert page.locator("#input").input_value() == "mobile enter\n"
+    assert FixtureState.managed_sends == []
+    with page.expect_response(lambda response: "/client-send.json" in response.url and response.request.method == "POST") as response_info:
+        page.click("#composerAction")
+    assert response_info.value.ok, f"mobile send failed: {response_info.value.status} {response_info.value.url}"
+    page.wait_for_function("document.querySelector('#input').value === ''")
+    page.wait_for_function("!document.querySelector('#stop').hidden")
+    assert [payload.get("text") for payload in FixtureState.managed_sends] == ["mobile enter"]
 
     page.fill("#input", "mobile fixture")
     assert page.locator("#composerAction").is_visible()
@@ -562,20 +759,24 @@ def mobile(browser, base_url: str) -> None:
     messages = page.locator("#messages")
     messages.evaluate("el => { el.scrollTop = el.scrollHeight }")
     assert page.locator(".pull-refresh").is_hidden(), "pull refresh hint is visible without a gesture"
-    reads = (FixtureState.session_reads, FixtureState.context_reads)
+    def pull_len() -> int:
+        return len([q for q in FixtureState.message_requests if q.get("limit") == ["80"] and "cursor" not in q])
+    # Snapshot only the pull-specific counter; background session polling
+    # (every 30s) would otherwise make the combined (session,context) tuple flaky.
+    reads = (FixtureState.session_reads, pull_len())
     pull_messages(page, cdp, 104, 720)
-    assert (FixtureState.session_reads, FixtureState.context_reads) == reads, "downward pull refreshed session data"
+    assert pull_len() == reads[1], "downward pull refreshed session data"
     assert page.locator(".pull-refresh").is_hidden()
 
     messages.evaluate("el => { el.scrollTop = el.scrollHeight }")
     pull_messages(page, cdp, -8, 720)
-    assert (FixtureState.session_reads, FixtureState.context_reads) == reads, "short pull refreshed session data"
+    assert pull_len() == reads[1], "short pull refreshed session data"
     assert page.locator(".pull-refresh").is_hidden()
 
     messages.evaluate("el => { el.scrollTop = el.scrollHeight }")
     pull_messages(page, cdp, -44, 180)
     page.wait_for_timeout(700)
-    assert (FixtureState.session_reads, FixtureState.context_reads) == reads, "early release refreshed session data"
+    assert pull_len() == reads[1], "early release refreshed session data"
     assert page.locator(".pull-refresh").is_hidden()
 
     messages.evaluate("el => { el.scrollTop = el.scrollHeight }")
@@ -590,7 +791,7 @@ def mobile(browser, base_url: str) -> None:
     cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [point(start_y - 4)]})
     page.wait_for_timeout(700)
     assert page.locator(".pull-refresh").is_hidden(), "reversed pull kept holding"
-    assert (FixtureState.session_reads, FixtureState.context_reads) == reads, "reversed pull refreshed session data"
+    assert pull_len() == reads[1], "reversed pull refreshed session data"
     cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
 
     cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [point(start_y)]})
@@ -609,9 +810,9 @@ def mobile(browser, base_url: str) -> None:
     page.wait_for_function("document.querySelector('.pull-refresh')?.dataset.state === 'refreshing'")
     assert page.locator(".pull-refresh-icon").evaluate("el => getComputedStyle(el).animationName") == "pull-refresh-spin"
     deadline = time.monotonic() + 2
-    while time.monotonic() < deadline and not (FixtureState.session_reads > reads[0] and FixtureState.context_reads > reads[1]):
+    while time.monotonic() < deadline and not (FixtureState.session_reads > reads[0] and pull_len() > reads[1]):
         page.wait_for_timeout(20)
-    assert FixtureState.session_reads > reads[0] and FixtureState.context_reads > reads[1]
+    assert FixtureState.session_reads > reads[0] and pull_len() > reads[1]
     cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
     page.wait_for_timeout(500)
     assert page.locator(".pull-refresh").get_attribute("data-state") == "done"
@@ -637,9 +838,16 @@ def main() -> int:
         root = Path(temp)
         project = root / "project"
         project.mkdir()
-        (root / "plan.md").write_text("# Fixture plan\n" + "\n".join(f"- [ ] Fixture step {index:02d}" for index in range(48)), encoding="utf-8")
+        existing = project / "existing"
+        existing.mkdir()
+        other_project = project / "other-known"
+        other_project.mkdir()
+        (root / "ses_fixture-plan.md").write_text("# Fixture plan\n" + "\n".join(f"- [ ] Fixture step {index:02d}" for index in range(48)), encoding="utf-8")
+        (root / "ses_other-plan.md").write_text("# Other root plan\n\n- [ ] Other isolated step\n", encoding="utf-8")
         os.environ.update({
             "FIXTURE_PROJECT": str(project),
+            "FIXTURE_EXISTING_PROJECT": str(existing),
+            "FIXTURE_OTHER_PROJECT": str(other_project),
             "OPENCODE_SERVER_USERNAME": "opencode",
             "OPENCODE_SERVER_PASSWORD": "fixture-password",
             "OPENCODE_WEB_ALLOW_LOCAL": "0",
@@ -669,6 +877,7 @@ def main() -> int:
         base_url = f"http://{host}:{port}"
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
+            universal_plan_session_switch(browser, base_url)
             desktop(browser, base_url)
             mobile(browser, base_url)
             browser.close()

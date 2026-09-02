@@ -16,6 +16,9 @@ const state = {
   questionTransport: 'unknown',
   questionRevision: 0,
   questionRefreshSeq: 0,
+  queueRefreshSeq: 0,
+  orchestrationRefreshSeq: 0,
+  planRefreshSeq: 0,
   questionSelection: [],
   pendingPermission: null,
   children: [],
@@ -167,6 +170,9 @@ async function refreshSelectedSession() {
   state.sessionID = id
   resetSubmitControls()
   state.orchestrationRevision += 1
+  state.queueRefreshSeq += 1
+  state.orchestrationRefreshSeq += 1
+  state.planRefreshSeq += 1
   state.session = null
   state.directory = ''
    state.settings = null
@@ -411,12 +417,15 @@ async function interceptSubmit(event) {
 
 async function refreshQueue(sessionID = state.sessionID) {
   if (!sessionID) return
+  const revision = state.orchestrationRevision
+  const refreshSeq = ++state.queueRefreshSeq
+  const current = () => state.sessionID === sessionID && state.orchestrationRevision === revision && state.queueRefreshSeq === refreshSeq
   try {
     const [selected, global] = await Promise.all([
       request(`/client-queue.json?sessionID=${encodeURIComponent(sessionID)}`),
       request('/client-queue.json'),
     ])
-    if (state.sessionID !== sessionID) return
+    if (!current()) return
     state.queue = selected || { count:0, items:[] }
     state.queueCounts = global?.counts || {}
     syncQueueBadges()
@@ -1029,8 +1038,11 @@ async function refreshOrchestration() {
   if (!state.sessionID) return
   const sessionID = state.sessionID
   const revision = state.orchestrationRevision
-  const current = () => state.sessionID === sessionID && state.orchestrationRevision === revision
+  const refreshSeq = ++state.orchestrationRefreshSeq
+  const sameSession = () => state.sessionID === sessionID && state.orchestrationRevision === revision
+  const current = () => sameSession() && state.orchestrationRefreshSeq === refreshSeq
   if (currentProfile() !== 'orchestrated') {
+    if (!current()) return
     state.children = []
     state.orchestrationStatuses = {}
     state.childDetails.clear()
@@ -1045,7 +1057,7 @@ async function refreshOrchestration() {
       state.childrenTransport = 'supported'
       if (Array.isArray(value)) children = value
     } catch (error) {
-      if ([404,405].includes(error.status)) state.childrenTransport = 'unsupported'
+      if (current() && [404,405].includes(error.status)) state.childrenTransport = 'unsupported'
     }
   }
   if (!children.length) {
@@ -1059,28 +1071,31 @@ async function refreshOrchestration() {
   state.children = children
   let statuses = {}
   try { statuses = dataOf(await request('/api/session/active')) || {}; if (!current()) return } catch {}
+  if (!current()) return
   if (!state.activityHydrated) {
-    state.activityHydrated = true
     request(`/api/session/${encodeURIComponent(sessionID)}/message?limit=100`).then((value) => {
-      if (!current() || state.activityItems.length) return
-      const latest = latestActivityFromMessages(dataOf(value) || [], state.session)
-      if (latest) {
-        state.activityItems = [latest]
-        state.currentActivityID = latest.id
-        renderOrchestration()
+      if (!sameSession()) return
+      if (!state.activityItems.length) {
+        const latest = latestActivityFromMessages(dataOf(value) || [], state.session)
+        if (latest) {
+          state.activityItems = [latest]
+          state.currentActivityID = latest.id
+          renderOrchestration()
+        }
       }
+      state.activityHydrated = true
     }).catch(() => {})
   }
   for (const child of children.slice(0, 12)) {
     const id = child?.id
     if (!id || state.childDetails.has(id)) continue
     request(`/api/session/${encodeURIComponent(id)}/message?limit=100`).then((value) => {
-      if (!current()) return
+      if (!sameSession()) return
       const messages = dataOf(value) || []
       const blob = JSON.stringify(messages)
       state.childDetails.set(id, { rag:/kb_knowledge_|knowledge_search|knowledge_get/i.test(blob), error:/"error"/i.test(blob), latest: latestActivityFromMessages(messages, child) })
       renderOrchestration(statuses)
-    }).catch(() => { if (current()) state.childDetails.set(id, {}) })
+    }).catch(() => { if (sameSession()) state.childDetails.set(id, {}) })
   }
   state.orchestrationStatuses = statuses
   renderOrchestration(statuses)
@@ -1089,14 +1104,17 @@ async function refreshPlan() {
   if (!state.sessionID) return
   const sessionID = state.sessionID
   const revision = state.orchestrationRevision
+  const refreshSeq = ++state.planRefreshSeq
+  const current = () => state.sessionID === sessionID && state.orchestrationRevision === revision && state.planRefreshSeq === refreshSeq
   if (currentProfile() !== 'orchestrated') {
+    if (!current()) return
     state.plan = null
     renderOrchestration()
     return
   }
   try {
     const value = await request(`/client-plan.json?sessionID=${encodeURIComponent(sessionID)}`)
-    if (state.sessionID !== sessionID || state.orchestrationRevision !== revision) return
+    if (!current()) return
     state.plan = value?.plan || null
     renderOrchestration()
   } catch (error) { console.debug('native V2 plan refresh', error) }
@@ -1144,13 +1162,14 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
     const rawModel = child?.model
     const model = rawModel?.id || rawModel?.modelID || child?.modelID || rawModel || 'subagent'
     const provider = rawModel?.providerID || child?.providerID || ''
-    const agent = child?.agent || child?.title || 'subagent'
+    const role = child?.agent || child?.title || 'subagent'
+    const label = child?.title || role
     const detail = state.childDetails.get(id) || {}
     const created = child?.time?.created || child?.createdAt || 0
     const updated = child?.time?.updated || child?.updatedAt || Date.now()
     const modelLabel = `${provider ? `${provider}/` : ''}${typeof model === 'string' ? model : JSON.stringify(model)}`
-    nodes.push(`<div class="orchestration-node child-node ${detail.error ? 'error' : status}"><span class="node-icon"></span><div class="node-main"><div class="node-title">${escapeHtml(agent)}</div><div class="node-meta">${escapeHtml(modelLabel)}${detail.rag ? ' · RAG ✓' : ''}</div><div class="node-purpose">${escapeHtml(orchestrationPurpose(agent))}</div></div><span class="node-time">${created ? fmtDuration(Math.max(0, updated - created)) : ''}</span></div>`)
-    if (detail.latest || status === 'running') childActivities.push({ ...(detail.latest || {}), id:detail.latest?.id || `agent:${id}`, kind:detail.latest?.kind || 'model', title:detail.latest?.title || agent, detail:detail.latest?.detail || modelLabel, status:status === 'running' ? 'running' : detail.latest?.status || 'completed' })
+    nodes.push(`<div class="orchestration-node child-node ${detail.error ? 'error' : status}"><span class="node-icon"></span><div class="node-main"><div class="node-title">${escapeHtml(label)}</div><div class="node-meta">${role !== label ? `${escapeHtml(role)} · ` : ''}${escapeHtml(modelLabel)}${detail.rag ? ' · RAG ✓' : ''}</div><div class="node-purpose">${escapeHtml(orchestrationPurpose(role))}</div></div><span class="node-time">${created ? fmtDuration(Math.max(0, updated - created)) : ''}</span></div>`)
+    if (detail.latest || status === 'running') childActivities.push({ ...(detail.latest || {}), id:detail.latest?.id || `agent:${id}`, kind:detail.latest?.kind || 'model', title:detail.latest?.title || role, detail:detail.latest?.detail || modelLabel, status:status === 'running' ? 'running' : detail.latest?.status || 'completed' })
   }
   const liveActivities = [...state.activityItems, ...childActivities]
   const currentActivity = liveActivities.find((item) => item.id === state.currentActivityID) || liveActivities.find((item) => item.status === 'running' || item.status === 'streaming') || liveActivities[liveActivities.length - 1]

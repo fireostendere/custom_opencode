@@ -66,6 +66,9 @@ for file in "$ROOT/app/"*.js "$ROOT/config/events.js" "$ROOT/config/plugins/"*.j
   "$NODE" --check "$file"
 done
 "$NODE" "$ROOT/scripts/web-smoke.mjs"
+"$NODE" "$ROOT/scripts/wizard-validation-smoke.mjs"
+"$NODE" "$ROOT/scripts/config-manager-regression.mjs"
+"$PYTHON3" "$ROOT/scripts/unified-workspace-regression.py"
 "$NODE" "$ROOT/scripts/session-transfer-smoke.mjs"
 "$PYTHON3" "$ROOT/scripts/limits-smoke.py"
 "$PYTHON3" "$ROOT/scripts/rag-start-smoke.py"
@@ -227,6 +230,10 @@ for token in ("qwen3.8-max", "qwen3.8-flash#low", "qwen3.7-plus#medium", "deepse
 for token in ("Planning policy", "conditional, not a ritual", "primary `plan` agent", "short, obvious, bounded", "two or more meaningful stages", "before the first file mutation"):
     if token not in orchestrator:
         bad.append(f"orchestrator must keep conditional V2 planning: {token}")
+for name, policy, producer_token in (("orchestrator", orchestrator, "TUI panels populate automatically from session/provider state and natural plan/tool/subagent events"), ("SOL orchestrator", sol_orchestrator, "TUI panels populate automatically from session/provider state and natural plan/tool/subagent events"), ("global AGENTS", agents_policy, "Вкладки `Сессия`, `Activity`, `История`, `Оркестрация`, `Лимиты` заполняются автоматически из состояния session/provider и реальных tool/subagent событий")):
+    for token in ("2-7", "- [ ]", "- [>]", "- [x]", producer_token):
+        if token not in policy:
+            bad.append(f"{name} must keep visible plan status/UI producer policy: {token}")
 for token in ("Планирование задач", "OpenCode V2", "primary-agent `plan`", "2-7", "до первого изменения файла", "не создавай искусственный план"):
     if token not in agents_policy:
         bad.append(f"global agent policy must keep conditional V2 planning: {token}")

@@ -71,6 +71,9 @@ with tempfile.TemporaryDirectory() as temp:
         "# Web V2 plan\n\n- [x] Expose the plan\n- [>] Render checklist\n- [ ] Keep Build-only UI\n",
         encoding="utf-8",
     )
+    second_plan = plan_dir / "ses_web_plan_two-plan.md"
+    second_plan.write_text("# Second web plan\n\n- [ ] Keep sessions isolated\n", encoding="utf-8")
+    os.utime(second_plan, (2_000_000_000, 2_000_000_000))
 
     sys.path.insert(0, str(ROOT / "app"))
     import server_workflow
@@ -108,6 +111,28 @@ with tempfile.TemporaryDirectory() as temp:
         assert plan_denied == 401, plan_denied
         remote_denied,_,_=request("GET","/client-remote-status.json",authenticated=False)
         assert remote_denied==401,remote_denied
+        create_denied,_,_=request("POST","/client-directories.json",{"parent":str(project),"name":"denied"},authenticated=False)
+        assert create_denied==401,create_denied
+
+        status, _, body = request("POST", "/client-directories.json", {"parent":str(project), "name":"created"})
+        created = json.loads(body)
+        assert status == 201 and created == {"ok":True,"directory":str(project / "created"),"name":"created"}
+        duplicate, _, _ = request("POST", "/client-directories.json", {"parent":str(project), "name":"created"})
+        assert duplicate == 409, duplicate
+        for invalid in ("", ".", "..", "../escape", "a/b", "a\\b", "bad\x00name", "bad\nname"):
+            bad, _, _ = request("POST", "/client-directories.json", {"parent":str(project), "name":invalid})
+            assert bad == 400, (invalid, bad)
+        outside = Path(temp) / "outside"
+        outside.mkdir()
+        forbidden, _, _ = request("POST", "/client-directories.json", {"parent":str(outside), "name":"nope"})
+        assert forbidden == 403, forbidden
+        try:
+            link = project / "outside-link"
+            link.symlink_to(outside, target_is_directory=True)
+            forbidden, _, _ = request("POST", "/client-directories.json", {"parent":str(link), "name":"nope"})
+            assert forbidden == 403, forbidden
+        except (NotImplementedError, OSError):
+            pass
 
         status, content_type, body = request("GET","/client-runtime.json")
         assert status == 200, status
@@ -123,7 +148,11 @@ with tempfile.TemporaryDirectory() as temp:
         assert plan["total"] == 3 and plan["completed"] == 1 and plan["truncated"] is False
         assert [item["status"] for item in plan["todos"]] == ["completed", "in_progress", "pending"]
         status, _, body = request("GET", "/client-plan.json?sessionID=missing-backend-session")
-        assert status == 200 and json.loads(body)["plan"]["title"] == "Web V2 plan"
+        assert status == 200 and json.loads(body)["plan"] is None
+        status, _, body = request("GET", "/client-plan.json?sessionID=ses_web_plan_two")
+        assert status == 200 and json.loads(body)["plan"]["title"] == "Second web plan"
+        status, _, body = request("GET", "/client-plan.json")
+        assert status == 200 and json.loads(body)["plan"]["title"] == "Second web plan"
         plain = server_workflow.runtime._parse_plan_document("# Plain\n\n- First\n- Second\n\n```\n- ignored\n```", "fallback")
         assert plain["title"] == "Plain" and [item["content"] for item in plain["todos"]] == ["First", "Second"]
 
