@@ -179,8 +179,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         plugins = plus._data(plus._backend_request_json(
             "GET", server_rag._v2_workspace_target("/api/plugin", str(base.SCRATCH_ROOT)), timeout=5.0))
+        # V2 exposes the lifecycle state below `state.status`; older endpoint
+        # responses used a top-level `status` field.
+        def plugin_state(item):
+            state = item.get("state")
+            if isinstance(state, dict) and state.get("status") is not None:
+                return state["status"]
+            return item.get("status")
+
         plugin_status = {
-            item.get("id"): item.get("status") for item in plugins or []
+            item.get("id"): plugin_state(item)
+            for item in plugins or []
             if isinstance(item, dict) and isinstance(item.get("id"), str)
         }
         configured_dir = os.environ.get("OPENCODE_CONFIG_DIR") or str(
@@ -190,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
             Path(str((item.get("source") or {}).get("path"))).name
             for item in plugins or []
             if isinstance(item, dict)
-            and item.get("status") == "failed"
+            and plugin_state(item) == "failed"
             and isinstance(item.get("source"), dict)
             and str((item.get("source") or {}).get("path", "")).startswith(plugin_dir + "/")
         )
