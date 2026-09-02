@@ -43,10 +43,24 @@ fixture = load_module("custom_opencode_web_fixture", SCRIPTS / "web-fixture-e2e.
 
 
 class BrowserBackend(fixture.Backend):
-    """Fixture backend with a large enough model catalog for browser-smoke."""
+    """Fixture backend shaped for the generic browser-smoke expectations."""
 
     def do_GET(self) -> None:
         path = urlsplit(self.path).path
+        if path.startswith("/api/session/") and path.endswith("/message") and path != "/api/session/ses_fixture/message":
+            session_id = path.split("/")[3]
+            self.send_json({
+                "data": [{
+                    "info": {
+                        "id": f"{session_id}_assistant",
+                        "role": "assistant",
+                        "time": {"created": 2_000_000_000_500},
+                    },
+                    "parts": [{"type": "text", "text": f"Fixture message for {session_id}"}],
+                }],
+                "cursor": {"next": None},
+            })
+            return
         if path == "/api/model":
             models = []
             for index in range(36):
@@ -125,6 +139,8 @@ class LocalStack:
         self.server: ThreadingHTTPServer | None = None
         self.server_thread: threading.Thread | None = None
         self.base_url = ""
+        self._previous_backend_url = os.environ.get("OPENCODE_BACKEND_URL")
+        self._previous_backend_password = os.environ.get("OPENCODE_BACKEND_PASSWORD")
 
     def start(self) -> str:
         self.backend = ThreadingHTTPServer(("127.0.0.1", 0), BrowserBackend)
@@ -158,6 +174,14 @@ class LocalStack:
             self.server_thread.join(timeout=2)
         if self.backend_thread is not None:
             self.backend_thread.join(timeout=2)
+        if self._previous_backend_url is None:
+            os.environ.pop("OPENCODE_BACKEND_URL", None)
+        else:
+            os.environ["OPENCODE_BACKEND_URL"] = self._previous_backend_url
+        if self._previous_backend_password is None:
+            os.environ.pop("OPENCODE_BACKEND_PASSWORD", None)
+        else:
+            os.environ["OPENCODE_BACKEND_PASSWORD"] = self._previous_backend_password
 
 
 def reset_fixture_state() -> None:
