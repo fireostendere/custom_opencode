@@ -76,7 +76,7 @@ export default Plugin.define({
     }
 
     const submitRouter = installPanelSubmitRouter(context, () => {
-      const editor = context.renderer?.currentFocusedEditor
+      const editor = context.renderer?.currentFocusedEditor ?? context.renderer?.currentFocusedRenderable
       const parsed = parsePanelCommand(promptText(editor))
       if (!parsed) return false
 

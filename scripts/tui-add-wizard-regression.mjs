@@ -165,7 +165,7 @@ const dialog = {
 
 const context = {
   renderer: {
-    currentFocusedEditor: null,
+    currentFocusedRenderable: null,
     keyInput: {
       prependListener(name, listener) {
         assert.equal(name, 'keypress')
@@ -280,7 +280,7 @@ const canonicalEditor = {
   clear() { this.plainText = '' },
   gotoBufferEnd() {},
 }
-context.renderer.currentFocusedEditor = canonicalEditor
+context.renderer.currentFocusedRenderable = canonicalEditor
 configureDialog(['acme-ui', 'alias-model', 'alias-upstream', 'Alias model'], [])
 const beforeCanonical = commandCalls.length
 const canonicalEvent = {
@@ -294,6 +294,22 @@ await waitFor(() => commandCalls.length === beforeCanonical + 1 && commandCalls.
 assert.equal(canonicalEditor.plainText, '')
 assert.equal(canonicalEvent.prevented, true)
 assert.equal(canonicalEvent.stopped, true)
+
+// The exact beta-18743 field must route an empty native alias into the wizard.
+canonicalEditor.plainText = '/addmcp'
+configureDialog(['typed-docs', 'https://mcp.example.com/typed'], ['remote', false, false])
+const beforeEmptyAlias = commandCalls.length
+const emptyAliasEvent = {
+  name: 'return', eventType: 'press', ctrl: false, meta: false, alt: false,
+  option: false, super: false, hyper: false, shift: false,
+  preventDefault() { this.prevented = true },
+  stopPropagation() { this.stopped = true },
+}
+submitListener(emptyAliasEvent)
+await waitFor(() => commandCalls.length === beforeEmptyAlias + 1 && commandCalls.at(-1).completed, 'typed empty /addmcp wizard mutation')
+assert.equal(canonicalEditor.plainText, '')
+assert.equal(emptyAliasEvent.prevented, true)
+assert.equal(emptyAliasEvent.stopped, true)
 
 // A native alias with JSON bypasses the wizard and still reaches the real handler.
 const aliasInput = { name: 'alias-docs', config: { type: 'remote', url: 'https://mcp.example.com' } }
@@ -394,7 +410,7 @@ const report = {
     skills: Object.keys(registry.skills).sort(),
     orchestrations: Object.keys(registry.orchestrations).sort(),
   },
-  checks: ['canonical /add routing', 'all five wizard buttons', 'applied provider/model settings', 'applied orchestration policy', 'applied remote and local MCP', 'applied skill content', 'native JSON alias', 'cancel', 'secret validation', 'file-backed registry persistence', 'fresh setup reapplies persisted settings'],
+  checks: ['canonical /add routing', 'all five wizard buttons', 'currentFocusedRenderable submit interception', 'empty /addmcp opens wizard', 'applied provider/model settings', 'applied orchestration policy', 'applied remote and local MCP', 'applied skill content', 'native JSON alias', 'cancel', 'secret validation', 'file-backed registry persistence', 'fresh setup reapplies persisted settings'],
 }
 
 const reportArgument = process.argv.find((argument) => argument.startsWith('--report='))

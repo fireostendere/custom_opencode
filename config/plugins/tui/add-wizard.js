@@ -310,7 +310,7 @@ export default Plugin.define({
   id: "custom.add-wizard",
   setup(context) {
     const submitRouter = installPanelSubmitRouter(context, () => {
-      const editor = context.renderer?.currentFocusedEditor
+      const editor = context.renderer?.currentFocusedEditor ?? context.renderer?.currentFocusedRenderable
       if (!isOpenCodePrompt(editor)) return false
       const parsed = parseAddCommand(promptText(editor))
       if (!parsed) return false

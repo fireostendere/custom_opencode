@@ -6,6 +6,10 @@ function isOpenCodePrompt(editor) {
   return Boolean(editor && !editor.isDestroyed && traits.owner === "opencode" && traits.role === "prompt" && traits.status !== "SHELL")
 }
 
+function focusedPrompt(context) {
+  return context.renderer?.currentFocusedEditor ?? context.renderer?.currentFocusedRenderable
+}
+
 function warning(context, message) {
   if (typeof context.ui.toast?.show === "function") context.ui.toast.show({ message, variant: "warning" })
   else context.ui.toast?.({ message, variant: "warning" })
@@ -22,7 +26,7 @@ export default Plugin.define({
     const cleanups = new Set()
 
     function valid(editor) {
-      return !disposed && context.renderer?.currentFocusedEditor === editor && isOpenCodePrompt(editor)
+      return !disposed && focusedPrompt(context) === editor && isOpenCodePrompt(editor)
     }
 
     function inject(editor, bytes, metadata) {
@@ -92,7 +96,7 @@ export default Plugin.define({
     const keyInput = context.renderer?.keyInput
     const pasteListener = (event) => {
       if (injecting) return
-      const editor = context.renderer?.currentFocusedEditor
+      const editor = focusedPrompt(context)
       if (!isOpenCodePrompt(editor)) return
       event.preventDefault?.()
       event.stopPropagation?.()
@@ -111,9 +115,9 @@ export default Plugin.define({
             title: "Paste Windows clipboard",
             bind: "ctrl+v",
             palette: false,
-            enabled: () => isOpenCodePrompt(context.renderer?.currentFocusedEditor),
+            enabled: () => isOpenCodePrompt(focusedPrompt(context)),
             run: () => {
-              const editor = context.renderer?.currentFocusedEditor
+              const editor = focusedPrompt(context)
               if (!isOpenCodePrompt(editor)) return false
               enqueue(editor)
               return true

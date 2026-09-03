@@ -37,6 +37,7 @@
     "addorchestration",
     "addprovider",
     "addmodel",
+    "addmcp",
     "addmcp"
   ],
   "mutations": {
@@ -51,7 +52,8 @@
     "mcp": [
       "alias-docs",
       "docs",
-      "filesystem"
+      "filesystem",
+      "typed-docs"
     ],
     "skills": [
       "review"
@@ -63,6 +65,8 @@
   "checks": [
     "canonical /add routing",
     "all five wizard buttons",
+    "currentFocusedRenderable submit interception",
+    "empty /addmcp opens wizard",
     "applied provider/model settings",
     "applied orchestration policy",
     "applied remote and local MCP",

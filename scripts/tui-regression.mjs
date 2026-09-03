@@ -95,6 +95,7 @@ for (const source of [
 for (const marker of [
   'id: "custom.add-wizard"',
   'installPanelSubmitRouter',
+  'currentFocusedRenderable',
   'context.ui.dialog.prompt',
   'context.ui.dialog.select',
   'context.client.session.command',
