@@ -100,6 +100,42 @@ const serverContext = {
 await configManager.default.setup(serverContext)
 for (const kind of expectedKinds) assert.ok(serverCommands.has(addCommand.nativeAddCommand(kind)))
 
+function appliedSettings() {
+  const providers = {}
+  const models = {
+    'acme-ui/coder': {
+      id: 'coder',
+      modelID: 'qwen3-coder',
+      name: 'Existing Coder',
+      capabilities: { tools: true },
+      limit: { context: 32768 },
+    },
+  }
+  const mcp = new Map()
+  const skills = {}
+  catalogTransform({
+    provider: {
+      update: (id, updater) => {
+        const draft = {}
+        updater(draft)
+        providers[id] = draft
+      },
+    },
+    model: {
+      get: (providerID, id) => models[`${providerID}/${id}`],
+      update: (providerID, id, updater) => {
+        const key = `${providerID}/${id}`
+        const draft = structuredClone(models[key] || {})
+        updater(draft)
+        models[key] = draft
+      },
+    },
+  })
+  mcpTransform({ set: (name, config) => mcp.set(name, config) })
+  skillTransform({ add: (definition) => { skills[definition.id] = definition } })
+  return { providers, models, mcp, skills }
+}
+
 const commandCalls = []
 const prompts = []
 const selects = []
@@ -285,6 +321,58 @@ assert.ok(registry.mcp['alias-docs'])
 assert.equal(registry.skills.review.content, 'Review the current changes.\nVerify the result.')
 assert.ok(registry.orchestrations['acme-ui/coder-orchestrated'])
 assert.equal(registry.orchestrations['acme-ui/coder-orchestrated'].prompt, 'Verify before completion.')
+
+const applied = appliedSettings()
+assert.deepEqual(applied.providers['acme-ui'], {
+  name: 'Acme UI',
+  package: 'aisdk:@ai-sdk/openai-compatible',
+  env: ['REGION', 'ACME_UI_KEY'],
+  settings: {
+    baseURL: 'https://llm.example/v1',
+    apiKey: '{env:ACME_UI_KEY}',
+  },
+})
+assert.deepEqual(applied.models['acme-ui/coder'], {
+  id: 'coder',
+  modelID: 'qwen3-coder',
+  name: 'Coder',
+  capabilities: { tools: true },
+  limit: { context: 32768 },
+})
+assert.deepEqual(applied.models['acme-ui/alias-model'], {
+  modelID: 'alias-upstream',
+  name: 'Alias model',
+})
+assert.deepEqual(applied.models['acme-ui/coder-orchestrated'], {
+  id: 'coder-orchestrated',
+  modelID: 'coder',
+  name: 'Coder · Orchestrated',
+  capabilities: { tools: true },
+  limit: { context: 32768 },
+})
+assert.deepEqual(applied.mcp.get('docs'), {
+  type: 'remote',
+  url: 'https://mcp.example.com?api_key={env:DOCS_TEST_KEY}',
+  codemode: false,
+  disabled: false,
+})
+assert.deepEqual(applied.mcp.get('filesystem'), {
+  type: 'local',
+  command: ['npx', '-y', 'example-mcp', '--header', 'Authorization: {env:MCP_TEST_KEY}'],
+  codemode: false,
+  disabled: false,
+})
+assert.equal(applied.skills.review.name, 'Review')
+assert.equal(applied.skills.review.description, 'Review changes')
+assert.equal(applied.skills.review.content, 'Review the current changes.\nVerify the result.')
+assert.equal(applied.skills.review.autoinvoke, false)
+assert.match(applied.skills.review.location, /managed-skills[\\/]review[\\/]SKILL\.md$/)
+const orchestrationEvent = { model: { providerID: 'acme-ui', id: 'coder-orchestrated' }, system: [] }
+await hooks.get('context')(orchestrationEvent)
+assert.equal(orchestrationEvent.system.length, 1)
+assert.equal(orchestrationEvent.system[0].text, 'Managed orchestration acme-ui/coder-orchestrated:\nVerify before completion.')
+await configManager.default.setup(serverContext)
+assert.deepEqual(appliedSettings(), applied, 'persisted settings must apply after a fresh config-manager setup')
 assert.equal(hooks.has('context'), true)
 assert.equal(synthetic.filter((item) => item.includes(': saved\n')).length, commandCalls.length)
 assert.equal(reloads.length, commandCalls.length * 3)
@@ -306,7 +394,7 @@ const report = {
     skills: Object.keys(registry.skills).sort(),
     orchestrations: Object.keys(registry.orchestrations).sort(),
   },
-  checks: ['canonical /add routing', 'all five wizard buttons', 'remote and local MCP', 'native JSON alias', 'cancel', 'secret validation', 'file-backed registry persistence'],
+  checks: ['canonical /add routing', 'all five wizard buttons', 'applied provider/model settings', 'applied orchestration policy', 'applied remote and local MCP', 'applied skill content', 'native JSON alias', 'cancel', 'secret validation', 'file-backed registry persistence', 'fresh setup reapplies persisted settings'],
 }
 
 const reportArgument = process.argv.find((argument) => argument.startsWith('--report='))

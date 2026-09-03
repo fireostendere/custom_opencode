@@ -32,7 +32,9 @@ Regression реально вызывает зарегистрированные 
 - remote и local MCP;
 - отмена wizard без mutation;
 - ID/content/URL secret validation;
-- итоговая file-backed persistence и synthetic receipts.
+- итоговая file-backed persistence и synthetic receipts;
+- фактическое применение provider/model/MCP/skill settings и orchestration policy;
+- повторное применение сохранённых настроек после нового config-manager setup.
 
 Для сохранения машиночитаемого отчёта:
 

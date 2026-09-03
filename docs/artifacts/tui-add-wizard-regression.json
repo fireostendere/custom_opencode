@@ -63,10 +63,14 @@
   "checks": [
     "canonical /add routing",
     "all five wizard buttons",
-    "remote and local MCP",
+    "applied provider/model settings",
+    "applied orchestration policy",
+    "applied remote and local MCP",
+    "applied skill content",
     "native JSON alias",
     "cancel",
     "secret validation",
-    "file-backed registry persistence"
+    "file-backed registry persistence",
+    "fresh setup reapplies persisted settings"
   ]
 }
