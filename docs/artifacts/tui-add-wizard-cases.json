@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "purpose": "Deterministic, secret-free inputs for the TUI add wizard regression.",
+  "buttons": [
+    {
+      "id": "provider",
+      "nativeCommand": "addprovider",
+      "prompts": ["9bad", "acme-ui", "Acme UI", "aisdk:@ai-sdk/openai-compatible", "https://llm.example/v1", "ACME_UI_KEY", "REGION"],
+      "expected": "providers.acme-ui"
+    },
+    {
+      "id": "model",
+      "nativeCommand": "addmodel",
+      "prompts": ["acme-ui", "coder", "qwen3-coder", "Coder"],
+      "expected": "models.acme-ui/coder"
+    },
+    {
+      "id": "mcp-remote",
+      "kind": "mcp",
+      "nativeCommand": "addmcp",
+      "prompts": ["docs", "https://mcp.example.com?api_key=literal", "https://mcp.example.com?api_key={env:DOCS_TEST_KEY}"],
+      "selects": ["remote", false, false],
+      "expected": "mcp.docs"
+    },
+    {
+      "id": "mcp-local",
+      "kind": "mcp",
+      "nativeCommand": "addmcp",
+      "prompts": ["filesystem", "[\"npx\", \"-y\", \"example-mcp\", \"--header\", \"Authorization: {env:MCP_TEST_KEY}\"]"],
+      "selects": ["local", false, false],
+      "expected": "mcp.filesystem"
+    },
+    {
+      "id": "skill",
+      "nativeCommand": "addskill",
+      "prompts": ["review", "Review", "Review changes", "", "Review the current changes.\nVerify the result."],
+      "selects": [false],
+      "expected": "skills.review"
+    },
+    {
+      "id": "orchestration",
+      "nativeCommand": "addorchestration",
+      "prompts": ["acme-ui", "coder-orchestrated", "coder", "Coder · Orchestrated", "Verify before completion."],
+      "expected": "orchestrations.acme-ui/coder-orchestrated"
+    }
+  ],
+  "additionalRoutes": [
+    { "route": "/add provider", "expected": "wizard" },
+    { "route": "/addmcp {json}", "expected": "native" },
+    { "route": "/add skill", "expected": "wizard" },
+    { "route": "/addorchestration", "expected": "wizard" }
+  ]
+}

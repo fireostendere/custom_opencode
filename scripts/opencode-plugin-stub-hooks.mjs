@@ -4,7 +4,7 @@
 const stubURL = new URL('./opencode-plugin-stub.mjs', import.meta.url).href
 
 export async function resolve(specifier, context, nextResolve) {
-  if (specifier === '@opencode-ai/plugin') {
+  if (specifier === '@opencode-ai/plugin' || specifier === '@opencode-ai/plugin/tui') {
     return { url: stubURL, shortCircuit: true }
   }
   return nextResolve(specifier, context)

@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "runtime": "OpenCode V2 TUI command layer + real config-manager handlers",
+  "buttons": [
+    "custom.add-wizard.add",
+    "custom.add-wizard.provider",
+    "custom.add-wizard.model",
+    "custom.add-wizard.mcp",
+    "custom.add-wizard.skill",
+    "custom.add-wizard.orchestration"
+  ],
+  "routes": [
+    {
+      "route": "/add provider",
+      "expected": "wizard"
+    },
+    {
+      "route": "/addmcp {json}",
+      "expected": "native"
+    },
+    {
+      "route": "/add skill",
+      "expected": "wizard"
+    },
+    {
+      "route": "/addorchestration",
+      "expected": "wizard"
+    }
+  ],
+  "nativeCommands": [
+    "addprovider",
+    "addmodel",
+    "addmcp",
+    "addmcp",
+    "addskill",
+    "addorchestration",
+    "addprovider",
+    "addmodel",
+    "addmcp"
+  ],
+  "mutations": {
+    "providers": [
+      "acme-generic",
+      "acme-ui"
+    ],
+    "models": [
+      "acme-ui/alias-model",
+      "acme-ui/coder"
+    ],
+    "mcp": [
+      "alias-docs",
+      "docs",
+      "filesystem"
+    ],
+    "skills": [
+      "review"
+    ],
+    "orchestrations": [
+      "acme-ui/coder-orchestrated"
+    ]
+  },
+  "checks": [
+    "canonical /add routing",
+    "all five wizard buttons",
+    "remote and local MCP",
+    "native JSON alias",
+    "cancel",
+    "secret validation",
+    "file-backed registry persistence"
+  ]
+}

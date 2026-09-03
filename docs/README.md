@@ -16,6 +16,7 @@
 - [`/rag-start`](rag-start.md) — запуск/проверка RAG без LLM-токенов.
 - [Эксплуатация и recovery](operations.md) — systemd, update, backup, logs и recovery.
 - [Troubleshooting](troubleshooting.md) — типовые симптомы, включая login/theme/mobile cases.
+- [TUI add wizard](tui-add-wizard.md) — `/add` для provider/model/MCP/skill/orchestration, тестовые сценарии и regression.
 - [VSCode: хоткеи терминала](vscode-terminal.md) — проброс `ctrl+f/p/r/b` в OpenCode TUI вместо команд VSCode (перехват по фокусу).
 
 ## Репозитории

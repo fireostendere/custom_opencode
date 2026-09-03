@@ -16,6 +16,8 @@ const retiredPanel = await readFile(new URL('config/plugins/tui/limits-panels.js
 const tuiPackage = JSON.parse(await readFile(new URL('config/plugins/tui/package.json', root), 'utf8'))
 const tuiServerEntry = await readFile(new URL('config/plugins/tui/index.js', root), 'utf8')
 const tuiEntry = await readFile(new URL('config/plugins/tui/tui.js', root), 'utf8')
+const addWizard = await readFile(new URL('config/plugins/tui/add-wizard.js', root), 'utf8')
+const addCommand = await readFile(new URL('config/plugins/tui/lib/add-command.js', root), 'utf8')
 const wslClipboard = await readFile(new URL('config/plugins/tui/wsl-clipboard.jsx', root), 'utf8')
 const cliConfig = JSON.parse(await readFile(new URL('config/cli.json', root), 'utf8'))
 const envExample = await readFile(new URL('.env.example', root), 'utf8')
@@ -79,6 +81,7 @@ assert.equal(tuiPackage.exports['./tui'], './tui.js', 'TUI package must expose t
 assert.equal(tuiPackage.exports['.'], './index.js', 'TUI package must expose a valid server entrypoint')
 assert.match(tuiServerEntry, /id: "custom\.tui-bundle"/)
 for (const source of [
+  'add-wizard.js',
   'effort-indicator.jsx',
   'model-selector.jsx',
   'panel-slash.jsx',
@@ -88,6 +91,28 @@ for (const source of [
   'wsl-clipboard.jsx',
 ]) {
   assert.ok(tuiEntry.includes(`./${source}`), `TUI bundle must include ${source}`)
+}
+for (const marker of [
+  'id: "custom.add-wizard"',
+  'installPanelSubmitRouter',
+  'context.ui.dialog.prompt',
+  'context.ui.dialog.select',
+  'context.client.session.command',
+  'custom.add-wizard.add',
+  'custom.add-wizard.${kind}',
+]) {
+  assert.ok(addWizard.includes(marker), `TUI add wizard marker missing: ${marker}`)
+}
+for (const marker of [
+  'export const ADD_KINDS',
+  'parseAddCommand',
+  'addprovider',
+  'addmodel',
+  'addmcp',
+  'addskill',
+  'addorchestration',
+]) {
+  assert.ok(addCommand.includes(marker), `TUI add parser marker missing: ${marker}`)
 }
 for (const marker of [
   'id: "custom.wsl-clipboard"',

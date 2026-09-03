@@ -68,6 +68,7 @@ done
 "$NODE" "$ROOT/scripts/web-smoke.mjs"
 "$NODE" "$ROOT/scripts/wizard-validation-smoke.mjs"
 "$NODE" "$ROOT/scripts/config-manager-regression.mjs"
+"$NODE" "$ROOT/scripts/tui-add-wizard-regression.mjs"
 "$PYTHON3" "$ROOT/scripts/unified-workspace-regression.py"
 "$NODE" "$ROOT/scripts/session-transfer-smoke.mjs"
 "$PYTHON3" "$ROOT/scripts/limits-smoke.py"
