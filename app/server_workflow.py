@@ -89,13 +89,16 @@ def _send_with_project_context(session_id: str, text: str, files: list[object]) 
         parts.append({"type": "text", "text": effective_text})
     parts.extend(_file_parts(effective_files))
     body: dict[str, object] = {"parts": parts}
+    body["system"] = (
+        "Server runtime context policy (deduplicated, budgeted, checkpoint/RAG/repo aware). "
+        "Operate as an engineering pair-programmer. Respect project instructions, durable decisions, "
+        "repository standards, and safety boundaries."
+    ) + (f"\n\n{instructions}" if instructions else "")
     if context:
-        body["system"] = (
-            "Server runtime context (deduplicated, budgeted, checkpoint/RAG/repo aware). "
-            "It may include project policy, durable decisions, semantic symbol diff, structured mailbox/handoff, "
-            "repository index matches and server-managed engineering RAG. Use it as project/task context unless "
-            "it conflicts with higher-priority instructions.\n\n" + context
-        )
+        parts.insert(0, {
+            "type": "text",
+            "text": f"--- Dynamic Session Context ---\n{context}\n--- End Dynamic Session Context ---",
+        })
     try:
         return features._backend_request_json("POST", target, body, timeout=30.0)
     except features.BackendHTTPError as exc:

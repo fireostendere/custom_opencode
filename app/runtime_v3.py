@@ -291,13 +291,13 @@ class DynamicContextManager:
     def _active_tokens(self,features:Any,sid:str)->tuple[int,list[Any]]:
         try: value=features._data(features._backend_request_json("GET",f"/api/session/{quote(sid,safe='')}/context",timeout=10.))
         except Exception: return 0,[]
-        rows=value if isinstance(value,list) else []; return max(1,len(json.dumps(rows,ensure_ascii=False,default=str))//4),rows
+        rows=value if isinstance(value,list) else []; return max(1,int(len(json.dumps(rows,ensure_ascii=False,default=str))/2.2)),rows
     def _budget(self,runtime:Any,task:dict[str,Any]|None)->tuple[int,int,int,str|None,int]:
         profiles=runtime.REGISTRY.profiles(); profile=profiles.get(str(task.get("profile")) if task else "direct",profiles["direct"])
-        policy=profile.get("contextPolicy") if isinstance(profile.get("contextPolicy"),dict) else {}
-        try: ratio=float(policy.get("targetRatio") or .72)
-        except (TypeError,ValueError): ratio=.72
-        ratio=max(.50,min(.90,ratio))
+        policy=profile.get("contextPolicy") if isinstance(policy_raw:=profile.get("contextPolicy"),dict) else {}
+        try: ratio=float(policy.get("targetRatio") or .42)
+        except (TypeError,ValueError): ratio=.42
+        ratio=max(.30,min(.75,ratio))
         route=task.get("route") if isinstance(task,dict) and isinstance(task.get("route"),dict) else {}
         selected=str(route.get("selectedModel") or "") if route else ""
         candidate=selected or str(profile.get("cloudModel") or profile.get("builderModel") or profile.get("plannerModel") or profile.get("readerModel") or profile.get("reviewerModel") or "")
@@ -305,7 +305,7 @@ class DynamicContextManager:
         limit=int((model or {}).get("context") or 128000)
         reserve=max(16000,min(131072,int(limit*.12)))
         hard=max(16000,limit-reserve)
-        budget=max(16000,min(hard,int(limit*ratio)))
+        budget=max(16000,min(hard,min(48000,int(limit*ratio))))
         default_growth=max(8000,min(40000,int(limit*.03)))
         min_growth=max(1000,int(policy.get("minGrowthBeforeRecompact") or default_growth))
         return budget,reserve,limit,candidate or None,min_growth
@@ -332,7 +332,7 @@ class DynamicContextManager:
             state["completedCount"]=completed_count; self.store.cache_set("context-compaction-state",key,state,ttl_seconds=21600)
         return {"activeTokens":active,"budgetTokens":budget,"reserveTokens":reserve,"contextLimit":limit,"model":model_ref,"minGrowthTokens":min_growth,"growthTokens":growth,"compactionRequested":triggered,"compactionPending":bool(pending),"hasCompaction":bool(completed)}
     def envelope(self,features:Any,runtime:Any,sid:str,project_instructions:str,rag_mode:str="auto")->dict[str,Any]:
-        tasks=self.store.list_tasks(session_id=sid,states=["submitted","running","waiting_permission","verifying","recovering","queued"],limit=10); task=tasks[0] if tasks else None; compact=self.maybe_compact(features,runtime,sid,task); directory=features._session_directory(sid); budget_chars=max(8000,min(100000,compact["budgetTokens"]*2)); base=runtime.CONTEXT.envelope(project_dir=directory,task=task,project_instructions=project_instructions,budget_chars=min(48000,budget_chars)); parts=[str(base.get("text") or "")]; query=str(task.get("text") or "") if task else ""
+        tasks=self.store.list_tasks(session_id=sid,states=["submitted","running","waiting_permission","verifying","recovering","queued"],limit=10); task=tasks[0] if tasks else None; compact=self.maybe_compact(features,runtime,sid,task); directory=features._session_directory(sid); budget_chars=max(6000,min(24000,compact["budgetTokens"]*2)); base=runtime.CONTEXT.envelope(project_dir=directory,task=task,project_instructions=project_instructions,budget_chars=min(24000,budget_chars)); parts=[str(base.get("text") or "")]; query=str(task.get("text") or "") if task else ""
         if query:
             try:
                 repo=self.indexer.search(directory,query,limit=20); hits=repo.get("hits") or []
@@ -342,7 +342,11 @@ class DynamicContextManager:
             except Exception as exc: self.store.event(kind="context.repo_error",session_id=sid,project_dir=directory,data={"error":str(exc)[:500]})
             if rag_mode=="on" or (rag_mode=="auto" and bool(ENGINEERING_HINT.search(query))):
                 result=self.rag.search(features,query,3)
-                if result is not None: parts.append("Shared engineering knowledge retrieval (server-managed RAG):\n"+json.dumps(result,ensure_ascii=False,default=str)[:14000])
+                if result is not None:
+                    if isinstance(result,dict) and "context" in result:
+                        ctx_text=str(result["context"]).strip()
+                        if ctx_text: parts.append(f"Shared engineering knowledge retrieval (server-managed RAG):\n{ctx_text[:8000]}")
+                    else: parts.append("Shared engineering knowledge retrieval (server-managed RAG):\n"+json.dumps(result,ensure_ascii=False,default=str)[:8000])
         output=[]; seen=set(); used=0
         for part in parts:
             compact_part="\n".join(line.rstrip() for line in part.strip().splitlines()).strip()
