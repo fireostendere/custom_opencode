@@ -297,8 +297,8 @@ export default Plugin.define({
           position="absolute"
           zIndex={1}
           {...(vertical
-            ? { [atStart ? "left" : "right"]: 0, top: 0, width: HANDLE, height: "100%" }
-            : { [atStart ? "top" : "bottom"]: 0, left: 0, height: HANDLE, width: "100%" })}
+            ? { [atStart ? "left" : "right"]: 0, top: 1, width: HANDLE, height: 1 }
+            : { [atStart ? "top" : "bottom"]: 0, left: 1, height: HANDLE, width: 1 })}
           justifyContent="center"
           alignItems="center"
           onMouseDown={(event) => { event?.stopPropagation?.(); setCollapsed(props.side, true) }}
