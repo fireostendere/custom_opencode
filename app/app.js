@@ -458,9 +458,40 @@ function renderHeader(){
   $('headerSub').textContent=s?`${projectInfo(s).label} · ${directory(s)}${isRunning(s.id)?' · выполняется':''}`:''
   renderRunControls(); renderUsage(); renderGitButton(); renderNotifyButton()
 }
+let rateLimitActiveState=false
+async function pollRateLimit(){
+  if(!state.running.size){
+    if(rateLimitActiveState){
+      rateLimitActiveState=false
+      const span=$('chatStatus')?.querySelector('span:not(.run-dot)')
+      if(span)span.textContent='Модель работает…'
+    }
+    return
+  }
+  try{
+    const res=await fetch('/client-rate-limit.json')
+    if(!res.ok)return
+    const data=await res.json()
+    const span=$('chatStatus')?.querySelector('span:not(.run-dot)')
+    if(data?.active&&data?.seconds>0){
+      rateLimitActiveState=true
+      if(span)span.textContent=`Лимит Gemini (429): повтор через ${data.seconds}с…`
+      window.dispatchEvent(new CustomEvent('custom-rate-limit', { detail: data }))
+    }else if(rateLimitActiveState){
+      rateLimitActiveState=false
+      if(span)span.textContent='Модель работает…'
+      window.dispatchEvent(new CustomEvent('custom-rate-limit', { detail: { active: false, seconds: 0 } }))
+    }
+  }catch{}
+}
 function renderRunControls(){
   const running=!!state.selected&&isRunning(state.selected.id); $('stop').hidden=!running; $('deliveryControls').hidden=!running
   $('chatStatus').hidden=!running
+  if(!running&&rateLimitActiveState){
+    rateLimitActiveState=false
+    const span=$('chatStatus')?.querySelector('span:not(.run-dot)')
+    if(span)span.textContent='Модель работает…'
+  }
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.classList.toggle('active',b.dataset.delivery===state.deliveryMode))
   $('input').placeholder=running?(state.deliveryMode==='queue'?'Сообщение будет отправлено после завершения…':'Steer: скорректировать текущую работу…'):'Сообщение…'
 }
@@ -916,6 +947,6 @@ function bindEvents(){
 }
 
 async function initialize(){
-  state.clientConfig=await api.getClientConfig();bindEvents();attachDragHandlers();setupPullRefresh();await initNotifications();connectEventStream();await loadSessions({selectHash:true});if(!state.selected){restoreDraft();await loadDraftControls()}statusTimer=setInterval(pollStatuses,5000);setInterval(()=>{if(!state.loading)loadSessions()},30000);autosizeInput();renderHeader()
+  state.clientConfig=await api.getClientConfig();bindEvents();attachDragHandlers();setupPullRefresh();await initNotifications();connectEventStream();await loadSessions({selectHash:true});if(!state.selected){restoreDraft();await loadDraftControls()}statusTimer=setInterval(pollStatuses,5000);setInterval(pollRateLimit,1000);setInterval(()=>{if(!state.loading)loadSessions()},30000);autosizeInput();renderHeader()
 }
 initialize().catch((error)=>{console.error(error);toast(`Ошибка запуска: ${error.message}`,7000)})

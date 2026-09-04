@@ -259,6 +259,7 @@ mapping = {
     "openai": {"type": "oauth", "access": "OPENCODE_OPENAI_ACCESS", "refresh": "OPENCODE_OPENAI_REFRESH", "expires": "OPENCODE_OPENAI_EXPIRES", "accountId": "OPENCODE_OPENAI_ACCOUNT_ID"},
     "opencode": {"type": "api", "key": "OPENCODE_ZEN_KEY"},
     "opencode-go": {"type": "api", "key": "OPENCODE_GO_KEY"},
+    "google": {"type": "api", "key": "GEMINI_API_KEY"},
 }
 try:
     with open(target, encoding="utf-8") as handle:
@@ -270,8 +271,12 @@ for provider, fields in mapping.items():
     for key, env in fields.items():
         if key == "type":
             values[key] = env
-        elif os.environ.get(env) and os.environ.get(env) != "CHANGE_ME":
-            values[key] = os.environ[env]
+        else:
+            val = os.environ.get(env)
+            if not val and provider == "google" and key == "key":
+                val = os.environ.get("GOOGLE_API_KEY")
+            if val and val != "CHANGE_ME":
+                values[key] = val
     if "expires" in values:
         values["expires"] = int(values["expires"])
     if len(values) > 1:
@@ -369,7 +374,7 @@ SERVICE_ENV=(
   OPENCODE_READER_MODEL OPENCODE_REVIEW_MODEL OPENCODE_LONG_HORIZON_MODEL
   OPENCODE_ORCHESTRATED_MODEL OPENCODE_SOL_ORCHESTRATED_MODEL
   OPENCODE_SOL_BUILDER_MODEL OPENCODE_SOL_READER_MODEL OPENCODE_SOL_REVIEW_MODEL
-  PONYTAIL_DEFAULT_MODE
+  PONYTAIL_DEFAULT_MODE GEMINI_API_KEY GOOGLE_API_KEY
 )
 for name in "${SERVICE_ENV[@]}"; do
   value=${!name:-}

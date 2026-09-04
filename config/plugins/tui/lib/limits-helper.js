@@ -5,12 +5,16 @@
  * single-flight refresh for every TUI consumer, and owns the periodic timer
  * through reference counting so unloading one panel cannot stop another.
  */
-import { accessSync, constants as fsConstants } from "node:fs"
+import { accessSync, constants as fsConstants, existsSync, readFileSync } from "node:fs"
 import { delimiter, join } from "node:path"
+import { homedir } from "node:os"
 import { spawn } from "node:child_process"
 
 const QWEN_FIVE_HOUR_LIMIT = 12_000
 const QWEN_SEVEN_DAY_LIMIT = 40_000
+const GEMINI_TPM_LIMIT = 2_000_000
+const GEMINI_RPM_LIMIT = 1_000
+const GEMINI_RPD_LIMIT = 4_000_000
 const CACHE_TTL = 60_000
 const REFRESH_INTERVAL = 120_000
 const COMMAND_TIMEOUT_MS = Math.max(
@@ -267,7 +271,76 @@ export function getNightPromoStatus(nowMs = Date.now()) {
   }
 }
 
-const EMPTY = { codex: { available: false }, qwen: { available: false } }
+function checkAuthFileForGoogle() {
+  try {
+    const authPath = join(homedir(), ".local", "share", "opencode", "auth.json")
+    if (existsSync(authPath)) {
+      const parsed = JSON.parse(readFileSync(authPath, "utf8"))
+      return Boolean(parsed?.google)
+    }
+  } catch {}
+  return false
+}
+
+function queryGemini() {
+  const hasKey = Boolean(
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY ||
+    checkAuthFileForGoogle()
+  )
+  if (!hasKey) {
+    return { available: false, reason: "key-not-found" }
+  }
+
+  let rateLimitState = null
+  try {
+    const p = join(homedir(), ".local", "state", "custom-opencode", "rate-limit.json")
+    if (existsSync(p)) {
+      rateLimitState = JSON.parse(readFileSync(p, "utf8"))
+    }
+  } catch {}
+
+  const isRateLimited = Boolean(rateLimitState?.active)
+  const seconds = Number(rateLimitState?.seconds || 0)
+  const resetsAt = isRateLimited
+    ? (rateLimitState?.until ? Math.round(rateLimitState.until / 1000) : Math.round(Date.now() / 1000) + seconds)
+    : null
+
+  const usedTokens = isRateLimited ? GEMINI_TPM_LIMIT : Number(rateLimitState?.usage?.tokensLastMinute || 0)
+  const usedRequests = Number(rateLimitState?.usage?.requestsLastMinute || 0)
+
+  const usedPercentTokens = isRateLimited ? 100 : Math.min(100, Math.round((usedTokens / GEMINI_TPM_LIMIT) * 1000) / 10)
+  const usedPercentRequests = Math.min(100, Math.round((usedRequests / GEMINI_RPM_LIMIT) * 1000) / 10)
+
+  return {
+    available: true,
+    planType: "Pay-as-you-go (Standard)",
+    state: isRateLimited ? "exhausted" : "ok",
+    rateLimited: isRateLimited,
+    seconds: isRateLimited ? seconds : 0,
+    resetsAt,
+    minuteTokens: {
+      limit: GEMINI_TPM_LIMIT,
+      usedCredits: usedTokens,
+      remainingCredits: Math.max(0, GEMINI_TPM_LIMIT - usedTokens),
+      usedPercent: usedPercentTokens,
+      remainingPercent: Math.max(0, Math.round((100 - usedPercentTokens) * 10) / 10),
+      windowDurationMins: 1,
+      resetsAt,
+    },
+    minuteRequests: {
+      limit: GEMINI_RPM_LIMIT,
+      usedCredits: usedRequests,
+      remainingCredits: Math.max(0, GEMINI_RPM_LIMIT - usedRequests),
+      usedPercent: usedPercentRequests,
+      remainingPercent: Math.max(0, Math.round((100 - usedPercentRequests) * 10) / 10),
+      windowDurationMins: 1,
+      resetsAt,
+    },
+  }
+}
+
+const EMPTY = { codex: { available: false }, qwen: { available: false }, gemini: { available: false } }
 let cache = { at: 0, data: EMPTY }
 let refreshTimer = null
 let refreshOwners = 0
@@ -281,7 +354,8 @@ async function refresh() {
     codexBin ? queryCodex(codexBin) : { available: false, reason: "codex-not-found" },
     blBin ? queryBailian(blBin) : { available: false, reason: "bailian-cli-not-found" },
   ])
-  const data = { codex, qwen }
+  const gemini = queryGemini()
+  const data = { codex, qwen, gemini }
   cache = { at: Date.now(), data }
   for (const listener of [...listeners]) {
     try { listener() } catch {}

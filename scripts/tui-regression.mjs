@@ -455,6 +455,8 @@ assert.equal(limits.qwen.planName, 'Personal Pro')
 assert.equal(limits.qwen.fiveHour.remainingPercent, 62.5)
 assert.equal(limits.qwen.fiveHour.remainingCredits, 7500)
 assert.equal(limits.qwen.sevenDay.remainingCredits, 11200)
+assert.ok(limits.gemini)
+assert.equal(limits.gemini.minuteTokens.limit, 2000000)
 
 helper.startAutoRefresh()
 helper.startAutoRefresh()

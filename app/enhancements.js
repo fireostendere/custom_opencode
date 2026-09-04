@@ -119,13 +119,43 @@ function renderQwenQuota(value) {
   </section>`
 }
 
+function renderGeminiWindow(window, fallbackLabel, fallbackLimit) {
+  const label = window?.label || fallbackLabel
+  const limit = Number(window?.limit || fallbackLimit)
+  const remaining = Number(window?.remainingPercent)
+  const used = Number(window?.usedCredits)
+  if (Number.isFinite(remaining)) {
+    const credits = Number.isFinite(used) ? `${used.toLocaleString('ru-RU')} / ${limit.toLocaleString('ru-RU')}` : `${remaining}%`
+    return `<div class="quota-row"><div class="quota-label"><span>${escapeHtml(label)}</span><strong>${escapeHtml(credits)}</strong></div>${progress(remaining, quotaTone(remaining))}<div class="quota-reset">${remaining}% свободно${window?.resetsAt ? ` · ${escapeHtml(resetText(window.resetsAt))}` : ''}</div></div>`
+  }
+  return `<div class="quota-cap"><span>${escapeHtml(label)}</span><strong>${limit.toLocaleString('ru-RU')}</strong></div>`
+}
+
+function renderGeminiQuota(value) {
+  if (!value?.available) {
+    return `<section class="quota-provider"><div class="quota-provider-head"><strong>Google Gemini</strong><span class="quota-muted">не настроен</span></div><div class="quota-note">${escapeHtml(value?.reason === 'key-not-found' ? 'GEMINI_API_KEY не задан в .env' : 'Лимиты Gemini недоступны')}</div></section>`
+  }
+  const isRateLimited = Boolean(value?.rateLimited || value?.state === 'exhausted')
+  const stateLabel = isRateLimited
+    ? (value.seconds ? `429 (${value.seconds}с)` : 'исчерпан')
+    : (value.state === 'ok' ? 'OK' : 'активен')
+  const stateClass = isRateLimited ? 'quota-bad' : 'quota-good'
+  return `<section class="quota-provider">
+    <div class="quota-provider-head"><strong>Google Gemini</strong><span class="${stateClass}">${escapeHtml(stateLabel)}</span></div>
+    ${renderGeminiWindow(value?.minuteTokens, '1 мин (TPM)', 2000000)}
+    ${renderGeminiWindow(value?.minuteRequests, '1 мин (RPM)', 1000)}
+    ${isRateLimited && value?.resetAt ? `<div class="quota-reset">сброс через ${escapeHtml(String(value?.seconds || 0))}с · ${escapeHtml(resetText(value?.resetAt))}</div>` : ''}
+    <div class="quota-note">${escapeHtml(value?.note || 'Google AI Studio · Pay-as-you-go (2M TPM / 1K RPM)')}</div>
+  </section>`
+}
+
 async function refreshLimits() {
   const panel = $('providerLimits')
   if (!panel) return
   panel.classList.add('loading-limits')
   try {
     const value = await request('/client-limits.json')
-    panel.innerHTML = `${renderQwenQuota(value?.qwen)}${renderOpenAIQuota(value?.openai)}`
+    panel.innerHTML = `${renderQwenQuota(value?.qwen)}${renderOpenAIQuota(value?.openai)}${renderGeminiQuota(value?.gemini)}`
   } catch (error) {
     panel.innerHTML = `<div class="quota-note">Не удалось обновить: ${escapeHtml(error.message)}</div>`
   } finally {
@@ -318,6 +348,7 @@ async function initializeEnhancements() {
   void refreshLimits()
   limitsTimer = setInterval(() => { if (!document.hidden) refreshLimits() }, 60_000)
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshLimits() })
+  window.addEventListener('custom-rate-limit', () => { void refreshLimits() })
 }
 
 if (typeof document !== 'undefined') initializeEnhancements().catch((error) => console.warn('enhancements init failed', error))

@@ -62,6 +62,32 @@ export default Plugin.define({
       setRevision((value) => value + 1)
     })
 
+    const [rateLimit, setRateLimit] = createSignal({ active: false, seconds: 0 })
+    let lastNotifiedUntil = 0
+
+    const rateLimitTimer = setInterval(async () => {
+      try {
+        const home = typeof process !== "undefined" ? process.env.HOME : ""
+        const stateFile = `${home}/.local/state/custom-opencode/rate-limit.json`
+        if (globalThis.Bun?.file) {
+          const file = globalThis.Bun.file(stateFile)
+          if (await file.exists()) {
+            const data = await file.json()
+            setRateLimit(data || { active: false, seconds: 0 })
+            if (data?.active && data?.until && data.until !== lastNotifiedUntil) {
+              lastNotifiedUntil = data.until
+              context.ui.toast?.show?.({
+                message: `Лимит Gemini (429): ожидание ${data.seconds}с…`,
+                variant: "warning",
+              })
+            }
+            return
+          }
+        }
+      } catch {}
+      setRateLimit({ active: false, seconds: 0 })
+    }, 500)
+
     loadPreferredVariants().then(setPreferred).catch(() => undefined)
     context.client.model
       .list({ location: { directory: location.directory } })
@@ -72,6 +98,14 @@ export default Plugin.define({
       append: "prompt.footer.status",
       render: ({ sessionID } = {}) => {
         revision()
+        const rl = rateLimit()
+        if (rl?.active && rl?.seconds > 0) {
+          return (
+            <text fg={context.theme.warning || "yellow"}>
+              ⏳ Лимит Gemini: повтор через {rl.seconds}с
+            </text>
+          )
+        }
         if (!sessionID) return null
         const session = context.data.session.get(sessionID)
         const ref = session?.model
@@ -95,6 +129,7 @@ export default Plugin.define({
     })
 
     return () => {
+      clearInterval(rateLimitTimer)
       unmodel()
       unslot()
     }

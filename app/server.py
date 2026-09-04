@@ -628,6 +628,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/client-config.json":
             self.json_response({"scratchDirectory": SCRATCH_DIRECTORY})
             return
+        if path == "/client-rate-limit.json":
+            rate_limit_path = Path.home() / ".local/state/custom-opencode/rate-limit.json"
+            data = {"active": False, "seconds": 0}
+            try:
+                if rate_limit_path.is_file():
+                    content = rate_limit_path.read_text(encoding="utf-8")
+                    if content.strip():
+                        data = json.loads(content)
+            except Exception:
+                pass
+            self.json_response(data)
+            return
         self.static_file(path)
 
     def do_HEAD(self) -> None:

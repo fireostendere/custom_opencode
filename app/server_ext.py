@@ -17,6 +17,9 @@ import server as base
 
 QWEN_FIVE_HOUR_LIMIT = 12_000
 QWEN_SEVEN_DAY_LIMIT = 40_000
+GEMINI_TPM_LIMIT = 2_000_000
+GEMINI_RPM_LIMIT = 1_000
+GEMINI_RPD_LIMIT = 4_000_000
 QWEN_SUFFIX_RE = re.compile(r"\s·\sQwen\s+(OK|exhausted→([^·]+))\s*$")
 try:
     LIMITS_CACHE_SECONDS = max(10.0, float(base.setting("OPENCODE_LIMITS_CACHE_SECONDS", "60") or "60"))
@@ -317,11 +320,93 @@ def query_qwen_status() -> dict[str, object]:
     }
 
 
+def query_gemini_status() -> dict[str, object]:
+    has_key = bool(
+        base.setting("GEMINI_API_KEY")
+        or base.setting("GOOGLE_API_KEY")
+    )
+    if not has_key:
+        auth_file = base.Path.home() / ".local/share/opencode/auth.json"
+        if auth_file.is_file():
+            try:
+                data = json.loads(auth_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and "google" in data:
+                    has_key = True
+            except Exception:
+                pass
+
+    if not has_key:
+        return {"available": False, "reason": "key-not-found"}
+
+    state_file = base.Path.home() / ".local/state/custom-opencode/rate-limit.json"
+    rl_data: dict[str, object] = {}
+    if state_file.is_file():
+        try:
+            loaded = json.loads(state_file.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                rl_data = loaded
+        except Exception:
+            pass
+
+    is_rate_limited = bool(rl_data.get("active"))
+    seconds = int(rl_data.get("seconds") or 0)
+    until = rl_data.get("until")
+    now_ts = int(time.time())
+    resets_at = int(float(until) / 1000) if isinstance(until, (int, float)) else (now_ts + seconds if is_rate_limited else None)
+
+    usage = rl_data.get("usage") if isinstance(rl_data.get("usage"), dict) else {}
+    used_tokens = GEMINI_TPM_LIMIT if is_rate_limited else int(usage.get("tokensLastMinute") or 0)
+    used_requests = int(usage.get("requestsLastMinute") or 0)
+    daily_requests = int(usage.get("requestsToday") or 0)
+
+    used_pct_tokens = 100.0 if is_rate_limited else round(min(100.0, (used_tokens / GEMINI_TPM_LIMIT) * 100.0), 1)
+    used_pct_requests = round(min(100.0, (used_requests / GEMINI_RPM_LIMIT) * 100.0), 1)
+    used_pct_daily = round(min(100.0, (daily_requests / GEMINI_RPD_LIMIT) * 100.0), 1)
+
+    return {
+        "available": True,
+        "planType": "Pay-as-you-go (Standard)",
+        "state": "exhausted" if is_rate_limited else "ok",
+        "rateLimited": is_rate_limited,
+        "seconds": seconds if is_rate_limited else 0,
+        "resetAt": resets_at,
+        "minuteTokens": {
+            "limit": GEMINI_TPM_LIMIT,
+            "usedCredits": used_tokens,
+            "remainingCredits": max(0, GEMINI_TPM_LIMIT - used_tokens),
+            "usedPercent": used_pct_tokens,
+            "remainingPercent": max(0.0, round(100.0 - used_pct_tokens, 1)),
+            "windowDurationMins": 1,
+            "resetsAt": resets_at if is_rate_limited else None,
+        },
+        "minuteRequests": {
+            "limit": GEMINI_RPM_LIMIT,
+            "usedCredits": used_requests,
+            "remainingCredits": max(0, GEMINI_RPM_LIMIT - used_requests),
+            "usedPercent": used_pct_requests,
+            "remainingPercent": max(0.0, round(100.0 - used_pct_requests, 1)),
+            "windowDurationMins": 1,
+            "resetsAt": resets_at if is_rate_limited else None,
+        },
+        "dailyRequests": {
+            "limit": GEMINI_RPD_LIMIT,
+            "usedCredits": daily_requests,
+            "remainingCredits": max(0, GEMINI_RPD_LIMIT - daily_requests),
+            "usedPercent": used_pct_daily,
+            "remainingPercent": max(0.0, round(100.0 - used_pct_daily, 1)),
+            "windowDurationMins": 1440,
+            "resetsAt": None,
+        },
+        "note": "Google AI Studio · Pay-as-you-go (2M TPM / 1K RPM)",
+    }
+
+
 def limits_snapshot() -> dict[str, object]:
     return {
         "generatedAt": int(time.time()),
         "qwen": query_qwen_status(),
         "openai": query_codex_rate_limits(),
+        "gemini": query_gemini_status(),
     }
 
 

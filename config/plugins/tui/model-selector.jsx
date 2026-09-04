@@ -164,6 +164,7 @@ function buildOptions(models, providerNames, recentEntries, current, favoriteEnt
   )
   takeSorted("OpenAI", (model) => OPENAI_PROVIDERS.has(model.providerID))
   takeSorted("Orchestrated", (model) => ORCHESTRATED_MODELS.has(key(model)))
+  takeSorted("Google", (model) => model.providerID === "google")
   takeSorted(
     "Free",
     (model) => model.providerID === "opencode" && model.cost?.[0]?.input === 0,
@@ -539,7 +540,7 @@ export default Plugin.define({
               id: "model.list",
               title: "Select Model",
               description:
-                "Sorted list: Current → Favorites → Recent → Alibaba → OpenAI → Orchestrated → Free → Others; Ctrl+F toggles a favorite; Shift+Down/Up jumps categories",
+                "Sorted list: Current → Favorites → Recent → Alibaba → OpenAI → Orchestrated → Google → Free → Others; Ctrl+F toggles a favorite; Shift+Down/Up jumps categories",
               group: "Model",
               slash: { name: "models", aliases: ["mo"] },
               palette: true,

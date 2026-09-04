@@ -73,6 +73,12 @@ with tempfile.TemporaryDirectory() as temp:
     assert qwen["sevenDay"]["remainingCredits"] == 11_200
     assert qwen["sevenDay"]["resetsAt"] == 2_000_100_000
 
+    gemini = server_ext.query_gemini_status()
+    assert gemini["available"] is True
+    assert gemini["minuteTokens"]["limit"] == 2_000_000
+    assert gemini["minuteRequests"]["limit"] == 1_000
+    assert gemini["dailyRequests"]["limit"] == 4_000_000
+
     project = Path(temp) / "project"
     project.mkdir()
     os.environ["OPENCODE_PROJECT_ROOTS"] = str(project)

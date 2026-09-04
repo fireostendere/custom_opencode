@@ -215,7 +215,7 @@ for marker in ("/api/command", "/command`", "parseSlash", "slashPalette"):
 for marker in ("parseRagStart", "/client-rag-start.json", "/rag-start", "sessionID"):
     if marker not in rag_control_js:
         bad.append(f"RAG slash-control capability missing: {marker}")
-for marker in ("account/rateLimits/read", "QWEN_FIVE_HOUR_LIMIT = 12_000", "QWEN_SEVEN_DAY_LIMIT = 40_000", "/client-limits.json"):
+for marker in ("account/rateLimits/read", "QWEN_FIVE_HOUR_LIMIT = 12_000", "QWEN_SEVEN_DAY_LIMIT = 40_000", "GEMINI_TPM_LIMIT = 2_000_000", "/client-limits.json"):
     if marker not in server_ext_py:
         bad.append(f"provider-limit capability missing: {marker}")
 for marker in ("isFreeModel", "Бесплатные модели", "/client-directories.json", "openDirectoryAsProject"):
@@ -322,7 +322,7 @@ personal_paths = [
     re.compile(r"[A-Za-z]:\\Users\\[^\\\s'\"<>]+\\", re.I),
 ]
 for path in root.rglob("*"):
-    if not path.is_file() or ".git" in path.parts or "__pycache__" in path.parts or path.name == ".env":
+    if not path.is_file() or ".git" in path.parts or "__pycache__" in path.parts or ".tmp_verify" in path.parts or path.name == ".env":
         continue
     text = path.read_text(encoding="utf-8", errors="ignore")
     rel = path.relative_to(root)

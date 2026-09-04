@@ -254,6 +254,7 @@ export function createPanelViews(context) {
     const data = () => limits() ?? {}
     const codex = () => data().codex ?? { available: false }
     const qwen = () => data().qwen ?? { available: false }
+    const gemini = () => data().gemini ?? { available: false }
     return (
       <box flexDirection="column" gap={1} flexShrink={0}>
         <Show when={codex().available} fallback={<text fg={theme.text.subdued}><span>ChatGPT: нет данных</span></text>}>
@@ -263,6 +264,10 @@ export function createPanelViews(context) {
         <Show when={qwen().available && qwen().state === "ok"} fallback={<text fg={theme.text.subdued}><span>Alibaba: нет данных</span></text>}>
           <WindowRows label="Alibaba · 5ч" win={qwen().fiveHour} />
           <WindowRows label="Alibaba · 7д" win={qwen().sevenDay} />
+        </Show>
+        <Show when={gemini().available} fallback={<text fg={theme.text.subdued}><span>Gemini: не настроен</span></text>}>
+          <WindowRows label="Gemini · 1м (TPM)" win={gemini().minuteTokens} />
+          <WindowRows label="Gemini · 1м (RPM)" win={gemini().minuteRequests} />
         </Show>
         {(() => {
           tick()
