@@ -2,14 +2,14 @@
 
 ## Пользовательская модель выполнения
 
-Web UI поддерживает `Build` и `Plan`. Модель или server profile выбирается в model picker, а режим выполнения переключается отдельно.
+Web UI всегда работает в `Build`. Модель или server profile выбирается в model picker; native `Plan` доступен в TUI/CLI.
 
 Есть два принципиально разных пути:
 
 1. обычная конкретная модель — direct/manual selection;
 2. server profile Runtime V2/V3 — role-based orchestration policy.
 
-`plan`/`plan-direct` остаются native upstream agent IDs. Для обычной модели UI предпочитает `build-direct`/`plan-direct`, если compatibility agents доступны, и иначе использует native `build`/`plan`; для orchestration alias используются native `build`/`plan`. Provider/model/variant при смене режима сохраняются.
+`plan`/`plan-direct` остаются native upstream agent IDs для TUI/CLI. В web обычная модель использует `build-direct`, если compatibility agent доступен, иначе native `build`; orchestration alias использует native `build`. Provider/model/variant сохраняются.
 
 ## Direct/manual model
 

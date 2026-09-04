@@ -108,10 +108,10 @@ Mobile dialogs используют доступный `dvh` viewport вмест
 
 ## Execution mode
 
-Пользовательский интерфейс поддерживает `Build` и `Plan`. Для обычной модели UI выбирает `build-direct` или `plan-direct`, если эти compatibility agents доступны, иначе использует native `build` или `plan`; для оркестрированной модели сохраняет native `build` или `plan`. Provider/model/variant при смене режима не меняются.
+Web UI всегда работает в `Build`: для обычной модели выбирается `build-direct`, если compatibility agent доступен, иначе native `build`; для оркестрированной модели сохраняется native `build`. Переключатель режима скрыт, provider/model/variant не меняются.
 
-Оркестрация по-прежнему выбирается моделью/profile в model picker, а режим `Build / Plan` выбирается отдельно.
+Native `plan`/`plan-direct` остаются доступны в TUI и CLI. Оркестрация по-прежнему выбирается моделью/profile в model picker.
 
 В поле текущего диалога `ArrowUp` и `ArrowDown` перебирают только пользовательские prompt’ы этой session. Текущий draft сохраняется и возвращается при переходе вниз; история других сессий и проектов не используется.
 
-Native V2 plan documents доступны в web UI через authenticated read-only route `/client-plan.json?sessionID=...`. Route читает только plan-документ текущей session из `~/.opencode/plan`, поэтому планы разных диалогов не смешиваются; уже созданный план показывается и во время `Build`, и во время `Plan` в левой раскрываемой панели `План` с текущим этапом, прогрессом и чек-листом. Сам режим `Build` при этом сохраняет обычные write-возможности, а `Plan` остаётся read-only режимом. Справа находится синхронная панель `Инструменты и агенты`: она показывает текущий tool/модель/Skill/MCP-вызов, его input/output и участников оркестрации. На телефоне панель открывается кнопкой `Panel` в header, без keyboard shortcuts. Fallback для legacy `todowrite` сохраняется в TUI.
+Native V2 plan documents доступны в web UI через authenticated read-only route `/client-plan.json?sessionID=...`. Route читает только plan-документ текущей session из `~/.opencode/plan`, поэтому планы разных диалогов не смешиваются; уже созданный в TUI/CLI план показывается в Build в левой раскрываемой панели `План` с текущим этапом, прогрессом и чек-листом. Панель `Инструменты и агенты` показывается в любой web Build-session и содержит текущий tool/модель/Skill/MCP-вызов, его input/output и участников оркестрации. На телефоне панель открывается кнопкой `Panel` в header, без keyboard shortcuts. Fallback для legacy `todowrite` сохраняется в TUI.

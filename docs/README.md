@@ -11,7 +11,7 @@
 - [Server Runtime V3](server-runtime-v3.md) — durable tasks/checkpoints, capability registry, adaptive scheduler, native compaction, AST/embedding repo index, MCP Code Mode gateway, sandbox/secret boundary, shared RAG, worktrees, replay и telemetry.
 - [Server Runtime V2](server-runtime-v2.md) — фундамент task/control runtime и история перехода к V3.
 - [Permission control plane](control-plane.md) — R0–R4 risk policy, safe auto-approval, project rules и audit.
-- [Модели и routing](models-and-routing.md) — Build/Plan UI, direct/server profiles, adaptive local/cloud routing и orchestration.
+- [Модели и routing](models-and-routing.md) — web Build, TUI Plan, direct/server profiles, adaptive local/cloud routing и orchestration.
 - [Интеграция RAG](rag.md) — `mcp-rag`, lifecycle и server-managed retrieval.
 - [`/rag-start`](rag-start.md) — запуск/проверка RAG без LLM-токенов.
 - [Эксплуатация и recovery](operations.md) — systemd, update, backup, logs и recovery.
@@ -49,7 +49,7 @@ server_workflow.py
     |
     +--> OpenCode V2 native model/tool/session/MCP engine
             |
-            +--> Build/Plan user surface
+            +--> web Build / TUI Plan surface
             +--> manual direct model
             +--> adaptive/orchestrated/review server profiles
             +--> optional kb / mcp-rag
@@ -57,7 +57,7 @@ server_workflow.py
 
 ## Основные safety/UX invariants
 
-- user-visible execution mode выбирается как Build или Plan; `plan*` остаётся native compatibility ID;
+- web execution mode всегда Build; `plan*` доступен в TUI/CLI как native compatibility ID;
 - direct/manual model selection не меняется adaptive scheduler-ом;
 - auto local/cloud routing работает только внутри явно выбранного server profile;
 - R3/R4 permission floor остаётся interactive;

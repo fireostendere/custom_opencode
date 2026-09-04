@@ -9,9 +9,9 @@
 - custom login page вместо browser-native Basic Auth prompt;
 - signed `HttpOnly; SameSite=Strict` web sessions, `Запомнить вход`, logout и возврат в исходный `#/session/...` после re-auth;
 - root sessions в sidebar и isolated quick-session workspaces;
-- Build/Plan пользовательский execution surface с сохранением выбранного профиля;
+- web всегда работает в `Build`, а native `Plan` остаётся доступен в TUI;
 - web- и TUI-model picker с зеркальной секцией favorites: модель остаётся и в исходной группе;
-- session-scoped model, effort и Build/Plan controls без переноса выбора между диалогами;
+- session-scoped model и effort controls без переноса выбора между диалогами;
 - копирование диалога с контекстом и подтверждаемый перенос через handoff между проектами;
 - одна контекстная кнопка composer: send / cancel / persistent queue;
 - native OpenCode questions: single/multi-select, descriptions и custom answer;
@@ -19,7 +19,8 @@
 - Changes/Review: file stats, hunks, safe file/hunk revert;
 - orchestration trace, runtime/RAG/queue/status surfaces;
 - light / dark / system theme, accent color и reduced-motion-aware микроанимации;
-- mobile drawer, provider limits, Markdown/code/tool/reasoning renderers, files, clipboard images, Git/VCS UI, drafts, notifications и deep links.
+- mobile drawer, provider limits, Markdown/code, files, clipboard images, Git/VCS UI, drafts, notifications и deep links;
+- постоянно доступная панель `Инструменты и агенты`, куда вынесены tool/reasoning events.
 
 ### Server Runtime V2/V3
 

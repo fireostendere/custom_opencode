@@ -299,7 +299,7 @@ Catalog check не доказывает provider execution.
 - отсутствие automatic Ollama route;
 - upstream session/subagent API после OpenCode upgrade.
 
-Visible UI поддерживает Build и Plan; для native plan document проверьте, что выбран режим Plan и session имеет agent `plan` или `plan-direct`.
+В web режим всегда Build. Для создания native plan document откройте session в TUI/CLI и выберите agent `plan` или `plan-direct`; готовый план будет виден и в web.
 
 ## На телефоне model picker открывает клавиатуру
 

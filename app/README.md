@@ -15,19 +15,20 @@
 - short reduced-motion-aware microanimations;
 - native slash commands и control-команда `/rag-start`;
 - isolated quick-session workspaces и безопасный browser локальных project roots;
-- Build/Plan пользовательский execution surface с сохранением выбранного профиля;
+- web всегда использует `Build`, native `Plan` остаётся доступен в TUI;
 - web- и TUI-model picker с зеркальной секцией favorites, collapsible providers, free-model group, ordinary models и server profiles;
-- model, effort и Build/Plan берутся из активной сессии, а не из предыдущего открытого диалога;
+- model и effort берутся из активной сессии, а не из предыдущего открытого диалога;
 - сессию можно скопировать с контекстом либо перенести через handoff в другой проект; UI предупреждает об ограничении в 40 текстовых сообщений / 24 000 символов и удаляет источник только после успешного handoff;
 - contextual composer action: send / cancel / durable queue;
 - native question cards, compact session-scoped permission banner, project policies;
 - Project settings: system instructions/model profile/RAG/permission defaults;
 - Changes/Review, file/hunk revert, orchestration trace и workflow/runtime status;
-- Markdown/code/tool/reasoning, images/files, Git/VCS, drafts, notifications.
+- Markdown/code, images/files, Git/VCS, drafts, notifications;
+- постоянно доступная панель `Инструменты и агенты` для tool/reasoning events.
 
-## Build/Plan UX и routing
+## Web Build, TUI Plan и routing
 
-Visible `Build / Plan` switch управляет native primary agent. Для direct-профиля используются `build-direct` и `plan-direct`, если compatibility agents есть в каталоге, иначе native `build` и `plan`; для orchestrated-профиля используются native `build` и `plan`. Selected provider/model/variant при смене режима сохраняется.
+В web переключатель режима скрыт: direct-профиль всегда использует `build-direct` (или native `build`), orchestrated-профиль — native `build`. Native `plan`/`plan-direct` остаются доступны в TUI и CLI. Selected provider/model/variant сохраняется.
 
 Обычная модель из model picker остаётся direct/manual selection:
 
@@ -135,7 +136,7 @@ OpenCode V2 остаётся native model/tool/session/MCP execution engine.
 - `mobile-ui.js`, `sidebar-mobile.css` — mobile drawer lifecycle;
 - `enhancements.*`, `ui-enhancements.*`, `ux-controls.*`, `advanced-features.*` — UI/features compatibility layers;
 - `runtime-dashboard.*`, `runtime-v3-dashboard.*` — Task Center/Runtime V3 controls;
-- `access-fix.*` — Build/Plan/permissions/mobile dialog corrections;
+- `access-fix.*` — web Build/permissions/mobile dialog corrections;
 - `design-system.css`, `sidebar-resize.js` — единая геометрия/chevrons, адаптивные dialog scroll surfaces и desktop resize sidebar;
 - `rag-control.js`, `control-plane.*` — RAG/risk surfaces;
 - `api.js`, `markdown.js`, `app.js` — OpenCode adapter/render/store core;

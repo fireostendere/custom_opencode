@@ -9,7 +9,8 @@
   "session": {
     "sidebar": "auto",
     "scrollbar": false,
-    "thinking": "show"
+    "thinking": "hide",
+    "grouping": "auto"
   },
   "keybinds": {
     "prompt.history.previous": "none",

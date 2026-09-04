@@ -76,6 +76,8 @@ for (const entry of await readdir(themesRoot, { withFileTypes: true })) {
 assert.equal(cliConfig.keybinds['prompt.history.previous'], 'none')
 assert.equal(cliConfig.keybinds['prompt.history.next'], 'none')
 assert.equal(cliConfig.keybinds['app.exit'], 'ctrl+shift+q')
+assert.equal(cliConfig.session.thinking, 'hide', 'TUI reasoning must stay out of the conversation')
+assert.equal(cliConfig.session.grouping, 'auto', 'TUI tool calls must stay grouped as one compact execution status')
 assert.equal(cliConfig.mouse, true, 'TUI mouse support must stay enabled for clickable controls')
 assert.equal(tuiPackage.exports['./tui'], './tui.js', 'TUI package must expose the V2 ./tui entrypoint')
 assert.equal(tuiPackage.exports['.'], './index.js', 'TUI package must expose a valid server entrypoint')

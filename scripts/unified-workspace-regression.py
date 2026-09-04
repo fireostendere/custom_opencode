@@ -90,12 +90,13 @@ for marker in (
 assert "arguments:JSON.stringify(input)" not in workspace_js
 
 for marker in (
-    "function workflowSurfaceEnabled() { return currentProfile() === 'orchestrated' || currentMode() === 'plan' }",
-    "const workflowVisible = workflowSurfaceEnabled()",
-    "const visible = workflowVisible || Boolean(state.plan)",
-    "if (!workflowSurfaceEnabled())",
+    "if (!state.sessionID || !activityBelongsToSession(payload)) return",
+    "host.hidden = !state.sessionID",
+    "const planPanelMarkup = plan ?",
+    "const livePanelMarkup = `<details class=\"orchestration-panel live-panel\">",
 ):
     assert marker in advanced_features_js, marker
+assert "workflowSurfaceEnabled" not in advanced_features_js
 
 wizard_action = workspace_js[workspace_js.index("function runAction"):workspace_js.index("function filteredActions")]
 assert "prefillCommand(action.command)" in wizard_action

@@ -70,6 +70,7 @@
       <div class="messages-frame">
         <section class="messages" id="messages">
           <div id="messagesInner"><div class="welcome">Выбери сессию или задай быстрый вопрос.</div></div>
+          <div class="chat-status" id="chatStatus" role="status" aria-live="polite" hidden><span class="run-dot"></span><span>Модель работает…</span></div>
         </section>
         <button id="scrollToBottom" class="scroll-to-bottom" type="button" hidden aria-label="Прокрутить к последним сообщениям" title="Прокрутить к последним сообщениям"><span aria-hidden="true"></span></button>
       </div>
@@ -97,7 +98,7 @@
             <div class="controls">
               <button class="control" id="modelButton" disabled>Модель</button>
               <div class="control-select"><select class="control" id="variantSelect" aria-label="Effort" disabled><option>—</option></select></div>
-              <div class="mode-group" id="agentControls" role="group" aria-label="Режим работы"></div>
+              <div id="agentControls" hidden aria-hidden="true"></div>
             </div>
           <div class="delivery" id="deliveryControls" hidden aria-hidden="true">
             <button class="delivery-button active" data-delivery="steer">Steer</button>

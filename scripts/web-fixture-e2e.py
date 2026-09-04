@@ -111,6 +111,7 @@ class Backend(BaseHTTPRequestHandler):
             self.send_json({"data": child})
         elif path == "/api/session/ses_child_reader/message":
             rows = [
+                {"info":{"id":"child_tool","role":"assistant","time":{"created":2_000_000_000_103}},"parts":[{"type":"tool","id":"child_shell","name":"shell","state":{"status":"completed","content":"technical output"}}]},
                 {"info":{"id":"child_assistant","role":"assistant","time":{"created":2_000_000_000_102}},"parts":[{"type":"text","text":"Delegated answer"}]},
                 {"info":{"id":"child_user","role":"user","time":{"created":2_000_000_000_101}},"parts":[{"type":"text","text":"Delegated request"}]},
             ]
@@ -557,6 +558,7 @@ def desktop(browser, base_url: str) -> None:
     page.click("#composerAction")
     page.wait_for_function("document.querySelector('#input').value === 'send exactly once'")
     page.wait_for_function("document.querySelector('#composerAction').getAttribute('aria-label') === 'Отправить'")
+    assert page.locator("#messages .chat-status").is_hidden()
     assert len(FixtureState.managed_sends) == 1
     assert errors == [f"HTTP 500 {base_url}/client-send.json"], errors
     errors.clear()
@@ -566,6 +568,8 @@ def desktop(browser, base_url: str) -> None:
         button.click(); button.click(); button.click()
     }""")
     page.wait_for_function("document.querySelector('#input').value === '' && !document.querySelector('#stop').hidden")
+    assert page.locator("#messages .chat-status").is_visible()
+    assert page.locator("#messages .chat-status").inner_text() == "Модель работает…"
     page.wait_for_timeout(200)
     assert len(FixtureState.managed_sends) == 2, FixtureState.managed_sends
     assert [payload.get("text") for payload in FixtureState.managed_sends] == ["send exactly once", "send exactly once"]
@@ -586,6 +590,7 @@ def desktop(browser, base_url: str) -> None:
     FixtureState.session_running = False
     page.click("#refresh")
     page.wait_for_function("document.querySelector('#composerAction').getAttribute('aria-label') === 'Отправить'")
+    page.wait_for_function("document.querySelector('#messages .chat-status').hidden")
     assert FixtureState.queued_prompt_event.wait(timeout=5), "queued prompt was not dispatched"
     assert [payload.get("text") for payload in FixtureState.managed_sends] == [
         "send exactly once", "send exactly once", "queue exactly once",
@@ -603,6 +608,9 @@ def desktop(browser, base_url: str) -> None:
     assert page.locator("#input").input_value() == "desktop shift\n"
     assert len(FixtureState.managed_sends) == sends_before_enter + 1
     page.fill("#input", "")
+
+    page.wait_for_function("document.documentElement.dataset.executionMode === 'build' && document.querySelector('.live-panel')")
+    assert page.locator("#agentControls").is_hidden()
 
     page.click("#appearanceButton")
     page.locator("#appearanceDialog[open]").wait_for(state="visible")

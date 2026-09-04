@@ -1,16 +1,6 @@
 /* Branch-local visual cleanup for the compact composer. */
 #agentControls{
-  display:flex!important;
-  align-items:center;
-  gap:3px;
-  min-width:0;
-  height:44px;
-  padding:3px;
-}
-
-#agentControls button{
-  min-width:0;
-  padding:0 9px;
+  display:none!important;
 }
 
 .composer-meta{
@@ -21,7 +11,7 @@
 .controls{
   flex:0 1 540px;
   display:grid;
-  grid-template-columns:minmax(0,1.4fr) minmax(128px,.8fr) minmax(128px,auto);
+  grid-template-columns:minmax(0,1.4fr) minmax(128px,.8fr);
   gap:8px;
   overflow:visible;
 }
@@ -159,11 +149,6 @@ dialog .workflow-modal.large{
     max-width:none;
     grid-template-columns:minmax(0,1.3fr) minmax(116px,.9fr);
     gap:8px;
-  }
-
-  #agentControls{
-    grid-column:1 / -1;
-    width:100%;
   }
 
   #modelButton,

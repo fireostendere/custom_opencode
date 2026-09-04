@@ -443,7 +443,7 @@ function directModelRef(){
   if(current&&!ORCHESTRATED_MODELS.some((model)=>model.id===current.id&&model.providerID===current.providerID))return {...current}
   return state.defaultModel?{...state.defaultModel}:null
 }
-window.CustomOpenCodeControls={changeModel,changeAgent,directModel:directModelRef}
+window.CustomOpenCodeControls={changeModel,changeAgent,directModel:directModelRef,startRun:markStarted}
 
 function renderModelChoices(){
   const query=$('modelSearch').value.trim().toLowerCase(), current=activeModelRef()
@@ -460,35 +460,18 @@ function renderHeader(){
 }
 function renderRunControls(){
   const running=!!state.selected&&isRunning(state.selected.id); $('stop').hidden=!running; $('deliveryControls').hidden=!running
+  $('chatStatus').hidden=!running
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.classList.toggle('active',b.dataset.delivery===state.deliveryMode))
   $('input').placeholder=running?(state.deliveryMode==='queue'?'Сообщение будет отправлено после завершения…':'Steer: скорректировать текущую работу…'):'Сообщение…'
 }
 
 function clipped(value,limit=16000){if(value===undefined||value===null)return'';let text;try{text=typeof value==='string'?value:JSON.stringify(value,null,2)}catch{text=String(value)}return text.length>limit?`${text.slice(0,limit)}\n…обрезано…`:text}
-function toolName(part){return part.name||part.tool||part.id||'tool'}
-function toolStatus(part){return part.state?.status||part.status||'completed'}
-function toolInput(part){return part.state?.input??part.input??part.args}
-function toolOutput(part){const value=part.state?.content??part.output??part.result;if(Array.isArray(value))return value.map((v)=>v?.type==='text'?v.text:v?.text||v?.name||clipped(v,4000)).join('\n');return value}
-function renderTool(part){
-  const name=toolName(part), low=name.toLowerCase(), status=toolStatus(part), input=toolInput(part), rawContent=part.state?.content??part.content, output=toolOutput(part), error=part.state?.error||part.error
-  let special=''
-  const images=Array.isArray(rawContent)?rawContent.map(imagePart).filter(Boolean):[]
-  if(/shell|bash|command/.test(low)&&input){const cmd=typeof input==='string'?input:input.command||input.cmd; if(cmd)special=`<div class="tool-section"><div class="tool-label">Команда</div><pre>$ ${escapeHtml(cmd)}</pre></div>`}
-  if(/read|write|edit|file/.test(low)&&input&&typeof input==='object'){const path=input.path||input.file||input.filename;if(path)special+=`<div class="tool-section"><div class="tool-label">Файл</div><pre>${escapeHtml(path)}</pre></div>`}
-  const genericIn=special?'':clipped(input), genericOut=clipped(output), genericErr=clipped(error?.message||error)
-  let renderedOut=''
-  if(genericOut&&/diff|patch/.test(low)){const diffHtml=escapeHtml(genericOut).split('\n').map((line)=>`<span class="${line.startsWith('+')&&!line.startsWith('+++')?'diff-add':line.startsWith('-')&&!line.startsWith('---')?'diff-del':''}">${line}</span>`).join('\n');renderedOut=`<div class="tool-section"><div class="tool-label">Diff</div><pre>${diffHtml}</pre></div>`}
-  else if(genericOut)renderedOut=`<div class="tool-section"><div class="tool-label">Результат</div><pre>${escapeHtml(genericOut)}</pre></div>`
-  const imageHtml=images.map((src)=>`<img class="image-preview" src="${escapeHtml(src)}" alt="tool image">`).join('')
-  return `<details class="tool ${escapeHtml(status)}"><summary><span class="tool-summary-line"><span>${escapeHtml(name)}</span>${/running|streaming/.test(status)?'<span class="run-dot"></span>':''}<span class="tool-status">${escapeHtml(status)}</span></span></summary>${special}${genericIn?`<div class="tool-section"><div class="tool-label">Вход</div><pre>${escapeHtml(genericIn)}</pre></div>`:''}${renderedOut}${imageHtml}${genericErr?`<div class="tool-section"><div class="tool-label">Ошибка</div><pre>${escapeHtml(genericErr)}</pre></div>`:''}</details>`
-}
 function imagePart(part){const mime=part.mime||part.mimeType||part.type==='image'&&'image/*';const uri=part.uri||part.url||part.data;return mime?.startsWith?.('image/')||String(uri||'').startsWith('data:image/')?uri:null}
 function assistantBody(message){
-  const parts=message.content||message.parts||[]; const reasoning=[],tools=[],texts=[],images=[]
-  for(const part of parts){if(part.type==='reasoning'&&part.text)reasoning.push(part.text);else if(part.type==='tool')tools.push(part);else if(part.type==='text'&&part.text)texts.push(part.text);else{const img=imagePart(part);if(img)images.push(img)}}
-  if(!parts.length&&message.text)texts.push(message.text)
-  const trace=(reasoning.length||tools.length)?`<details class="trace"><summary>Ход выполнения${tools.length?` · инструментов ${tools.length}`:''}</summary><div class="trace-content">${reasoning.map((r)=>`<div class="reasoning">${escapeHtml(r)}</div>`).join('')}${tools.map(renderTool).join('')}</div></details>`:''
-  return `${trace}${texts.map((text)=>`<div class="markdown">${renderMarkdown(text)}</div>`).join('')}${images.map((src)=>`<img class="image-preview" src="${escapeHtml(src)}" alt="image">`).join('')}${message.error?`<div class="markdown">${renderMarkdown(`**Ошибка:** ${message.error.message||message.error}`)}</div>`:''}`
+  const parts=message.content||message.parts||[],texts=[],images=[]
+  for(const part of parts){if(part.type==='text'&&part.text)texts.push(part.text);else{const img=imagePart(part);if(img)images.push(img)}}
+  if(!texts.length&&message.text)texts.push(message.text)
+  return `${texts.map((text)=>`<div class="markdown">${renderMarkdown(text)}</div>`).join('')}${images.map((src)=>`<img class="image-preview" src="${escapeHtml(src)}" alt="image">`).join('')}${message.error?`<div class="markdown">${renderMarkdown(`**Ошибка:** ${message.error.message||message.error}`)}</div>`:''}`
 }
 function userBody(message){const files=(message.files||[]).map((f)=>`<span class="file-chip">${escapeHtml(f.name||f.mime||'файл')}</span>`).join('');return `<div class="markdown">${renderMarkdown(message.text||'')}</div>${files?`<div>${files}</div>`:''}`}
 function messagePlainText(message){
@@ -585,9 +568,10 @@ function messagePresentation(message,type) {
   return{origin:'model-response',avatar:'AI',role:model?`Модель · ${model}`:'OpenCode'}
 }
 function renderMessages({anchor=null,bottom=false}={}){
-  const inner=$('messagesInner'), view=$('messages'); if(!state.selected){inner.innerHTML='<div class="welcome">Выбери сессию или задай быстрый вопрос.</div>';updateScrollToBottomButton();return} if(!state.context.length){inner.innerHTML='<div class="welcome">Пока нет сообщений.</div>';updateScrollToBottomButton();return}
+  const inner=$('messagesInner'), view=$('messages'); if(!state.selected){inner.innerHTML='<div class="welcome">Выбери сессию или задай быстрый вопрос.</div>';updateScrollToBottomButton();return} if(!state.context.length&&!isRunning(state.selected.id)){inner.innerHTML='<div class="welcome">Пока нет сообщений.</div>';updateScrollToBottomButton();return}
   const stick=view.scrollHeight-view.scrollTop-view.clientHeight<100; const prev=view.scrollTop
-  inner.innerHTML=state.context.map((message,index)=>{const type=message.type||message.role;const id=message.id||message.messageID||`idx-${index}`;const body=type==='user'?userBody(message):assistantBody(message);const actor=messagePresentation(message,type),family=type==='user'?'user':'assistant';return `<article class="message ${family} ${actor.origin}" data-message-index="${index}" data-origin="${escapeHtml(actor.origin)}"><div class="avatar">${escapeHtml(actor.avatar)}</div><div class="message-body"><div class="message-head"><span class="message-role">${escapeHtml(actor.role)}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`}).join('')
+  const rows=state.context.map((message,index)=>{const type=message.type||message.role;return{message,index,type,body:type==='user'?userBody(message):assistantBody(message)}}).filter(({type,body})=>type==='user'||body)
+  inner.innerHTML=rows.map(({message,index,type,body})=>{const id=message.id||message.messageID||`idx-${index}`;const actor=messagePresentation(message,type),family=type==='user'?'user':'assistant';return `<article class="message ${family} ${actor.origin}" data-message-index="${index}" data-origin="${escapeHtml(actor.origin)}"><div class="avatar">${escapeHtml(actor.avatar)}</div><div class="message-body"><div class="message-head"><span class="message-role">${escapeHtml(actor.role)}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`}).join('')
   if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height
   else if(bottom){
     const sessionID=state.selected?.id,stabilize=initialMessageScrollSession===sessionID

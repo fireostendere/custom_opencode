@@ -65,7 +65,6 @@ function fmtTime(value) {
 }
 function currentProfile() { return document.documentElement.dataset.modelProfile || 'direct' }
 function currentMode() { return document.documentElement.dataset.executionMode || 'build' }
-function workflowSurfaceEnabled() { return currentProfile() === 'orchestrated' || currentMode() === 'plan' }
 function running() { return Boolean($('stop') && !$('stop').hidden) }
 function toast(text, ms = 2800) {
   const el = $('toast')
@@ -147,8 +146,7 @@ function ensureSurfaces() {
         <div class="modal-head"><div><h3>Настройки проекта</h3><div id="projectSettingsPath" class="choice-meta"></div></div><button class="icon" type="button" data-workflow-close="projectSettingsDialog">×</button></div>
         <div class="workflow-section"><label class="workflow-label" for="projectInstructions">Постоянные инструкции проекта</label><textarea class="workflow-textarea" id="projectInstructions" placeholder="Например: перед завершением запускай pytest; не меняй public API без необходимости"></textarea><div class="workflow-note">Передаются OpenCode как system context, поэтому не засоряют текст пользовательского сообщения.</div></div>
         <div class="workflow-section"><div class="workflow-grid">
-          <label><span class="workflow-label">Режим по умолчанию</span><select class="workflow-select" id="projectDefaultMode"><option value="inherit">Не менять</option><option value="build">Build</option><option value="plan">Plan</option></select></label>
-           <label><span class="workflow-label">Модель/profile по умолчанию</span><select class="workflow-select" id="projectDefaultModel"><option value="inherit">Не менять</option></select></label>
+          <label><span class="workflow-label">Модель/profile по умолчанию</span><select class="workflow-select" id="projectDefaultModel"><option value="inherit">Не менять</option></select></label>
           <label><span class="workflow-label">RAG</span><select class="workflow-select" id="projectRag"><option value="auto">Auto</option><option value="on">Всегда подключать</option><option value="off">Не запускать автоматически</option></select></label>
         </div></div>
         <div class="workflow-section"><div class="modal-head"><div><strong>Permission policy</strong><div class="workflow-note">Первое совпавшее правило: allow / deny. Ask оставляет стандартную карточку.</div></div><button type="button" id="addPermissionRule">+ правило</button></div><div id="projectPermissionRules" class="workflow-rules"></div></div>
@@ -235,7 +233,7 @@ async function saveProjectSettings(event) {
   }))
   const settings = {
     instructions: $('projectInstructions').value,
-    defaultMode: $('projectDefaultMode').value,
+    defaultMode: state.settings?.defaultMode || 'inherit',
     defaultModel: $('projectDefaultModel').value,
     rag: $('projectRag').value,
     permissionRules: rules,
@@ -282,7 +280,6 @@ function openProjectSettings() {
   const settings = state.settings || DEFAULT_SETTINGS
   $('projectSettingsPath').textContent = state.directory
   $('projectInstructions').value = settings.instructions || ''
-  $('projectDefaultMode').value = settings.defaultMode || 'inherit'
   $('projectDefaultModel').value = settings.defaultModel || 'inherit'
   $('projectRag').value = settings.rag || 'auto'
   $('projectPermissionRules').innerHTML = ''
@@ -302,9 +299,6 @@ async function applyProjectDefaultsOnce(sessionID = state.sessionID) {
   } catch {}
   if (state.sessionID !== sessionID) return
   const settings = state.settings
-  if (settings.defaultMode === 'build' || settings.defaultMode === 'plan') {
-    document.querySelector(`#agentControls [data-agent="${settings.defaultMode}"]`)?.click()
-  }
   if (settings.defaultModel === 'orchestrated' || settings.defaultModel === 'sol-orchestrated') window.CustomOpenCodeUX?.setProfile?.(settings.defaultModel)
   else if (typeof settings.defaultModel === 'string' && settings.defaultModel.includes('/')) {
     await chooseConcreteModel(settings.defaultModel)
@@ -403,6 +397,7 @@ async function interceptSubmit(event) {
     await request('/client-send.json', { method:'POST', body:JSON.stringify({ sessionID, text, files, profile }) })
     if (state.sessionID !== sessionID || state.orchestrationRevision !== revision) return
     clearComposer()
+    window.CustomOpenCodeControls?.startRun?.(sessionID, 'managed-send')
     if ($('stop')) $('stop').hidden = false
     if (!state.runStartedAt) state.runStartedAt = Date.now()
     renderStatus()
@@ -971,7 +966,7 @@ function activityDescriptor(payload) {
   return null
 }
 function updateActivityFromEvent(payload) {
-  if (!workflowSurfaceEnabled() || !state.sessionID || !activityBelongsToSession(payload)) return
+  if (!state.sessionID || !activityBelongsToSession(payload)) return
   const type = String(payload?.type || '')
   const data = activityEventData(payload)
   const descriptor = activityDescriptor(payload)
@@ -1042,14 +1037,6 @@ async function refreshOrchestration() {
   const refreshSeq = ++state.orchestrationRefreshSeq
   const sameSession = () => state.sessionID === sessionID && state.orchestrationRevision === revision
   const current = () => sameSession() && state.orchestrationRefreshSeq === refreshSeq
-  if (!workflowSurfaceEnabled()) {
-    if (!current()) return
-    state.children = []
-    state.orchestrationStatuses = {}
-    state.childDetails.clear()
-    renderOrchestration()
-    return
-  }
   let children = []
   if (state.childrenTransport !== 'unsupported') {
     try {
@@ -1123,10 +1110,8 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   const planScroll = captureScrollState(host.querySelector('.plan-panel-body'))
   const nodesScroll = captureScrollState(host.querySelector('.orchestration-nodes'))
   const children = state.children || []
-  const workflowVisible = workflowSurfaceEnabled()
-  const visible = workflowVisible || Boolean(state.plan)
-  host.hidden = !state.sessionID || !visible
-  if (host.hidden) { host.innerHTML = ''; return }
+  host.hidden = !state.sessionID
+  if (host.hidden) { host.innerHTML = ''; host._orchestrationMarkup = ''; return }
   const rootModel = $('modelButton')?.textContent || state.session?.model?.id || 'Primary'
   const rootStatus = running() ? 'running' : 'done'
   const childStates = children.map((child) => childStatus(statuses?.[child?.id]))
@@ -1173,9 +1158,12 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   const liveStatusLabel = liveStatus === 'running' ? 'Выполняется' : liveStatus === 'error' ? 'Ошибка' : currentActivity ? 'Последний вывод' : panelStatusLabel
   const liveSummary = currentActivity ? `${activityKindLabel(currentActivity.kind)} · ${currentActivity.title}` : children.length ? `${children.length} подзадач · ожидание активности` : 'Инструменты и модели появятся здесь'
   const history = state.activityItems.filter((item) => item.id !== currentActivity?.id).slice(-6).reverse().map((item) => renderActivityItem(item)).join('')
-  const planPanelMarkup = `<details class="orchestration-panel plan-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${panelStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>План</strong><span>${escapeHtml(currentStage)} · ${escapeHtml(panelMeta)}</span></span><span class="orchestration-summary-status ${panelStatus}">${panelStatusLabel}</span></summary><div class="activity-panel-body plan-panel-body">${planMarkup}</div></details>`
-  const livePanelMarkup = workflowVisible ? `<details class="orchestration-panel live-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${liveStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>Инструменты и агенты</strong><span>${escapeHtml(liveSummary)}</span></span><span class="orchestration-summary-status ${liveStatus}">${liveStatusLabel}</span></summary><div class="orchestration-nodes activity-panel-body">${currentActivity ? `<div class="activity-current-label">Сейчас</div>${renderActivityItem(currentActivity, true)}` : '<div class="activity-empty">Сейчас инструмент не выполняется.</div>'}<div class="activity-agents-label">Участники оркестрации</div>${nodes.join('')}${history ? `<div class="activity-history-label">Последние события</div>${history}` : ''}</div></details>` : ''
-  host.innerHTML = `<div class="orchestration-panels">${planPanelMarkup}${livePanelMarkup}</div>`
+  const planPanelMarkup = plan ? `<details class="orchestration-panel plan-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${panelStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>План</strong><span>${escapeHtml(currentStage)} · ${escapeHtml(panelMeta)}</span></span><span class="orchestration-summary-status ${panelStatus}">${panelStatusLabel}</span></summary><div class="activity-panel-body plan-panel-body">${planMarkup}</div></details>` : ''
+  const livePanelMarkup = `<details class="orchestration-panel live-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${liveStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>Инструменты и агенты</strong><span>${escapeHtml(liveSummary)}</span></span><span class="orchestration-summary-status ${liveStatus}">${liveStatusLabel}</span></summary><div class="orchestration-nodes activity-panel-body">${currentActivity ? `<div class="activity-current-label">Сейчас</div>${renderActivityItem(currentActivity, true)}` : '<div class="activity-empty">Сейчас инструмент не выполняется.</div>'}<div class="activity-agents-label">Участники оркестрации</div>${nodes.join('')}${history ? `<div class="activity-history-label">Последние события</div>${history}` : ''}</div></details>`
+  const markup = `<div class="orchestration-panels">${planPanelMarkup}${livePanelMarkup}</div>`
+  if (host._orchestrationMarkup === markup) return
+  host._orchestrationMarkup = markup
+  host.innerHTML = markup
   const details = [...host.querySelectorAll('details')]
   details.forEach((detail) => {
     const rememberConversation = () => { detail._conversationScroll = captureScrollState($('messages')) }
@@ -1422,7 +1410,7 @@ function init() {
   refreshSelectedSession()
   setInterval(tickFast, 1100)
   setInterval(tickMedium, 3200)
-  setInterval(() => { if (state.sessionID) { renderStatus(); renderOrchestration() } }, 1000)
+  setInterval(() => { if (state.sessionID) renderStatus() }, 1000)
 }
 
 if (typeof document !== 'undefined') init()

@@ -194,12 +194,16 @@ feature_markers = {
     "git UI": "openGitDialog",
     "usage/context": "usageSummary",
     "notifications": "notifyUser",
-    "tool renderers": "renderTool",
+    "compact execution status": "$('chatStatus').hidden=!running",
     "draft autosave": "scheduleDraftSave",
 }
 for feature, marker in feature_markers.items():
     if marker not in app_js:
         bad.append(f"web feature marker missing: {feature}")
+if "function renderTool(" in app_js or 'class="trace"' in app_js:
+    bad.append("web chat must leave tool and reasoning details to the activity panel")
+if ".filter(({type,body})=>type==='user'||body)" not in app_js:
+    bad.append("web chat must suppress assistant messages without visible output")
 if "highlightCode" not in markdown_js or "copy-code" not in markdown_js:
     bad.append("markdown module must keep fenced-code highlighting/copy UI")
 for endpoint in ("/session/active", "/session/${encodeURIComponent(sessionID)}/fork", "/session/${encodeURIComponent(sessionID)}/diff", "/vcs/status", "/vcs"):
@@ -468,5 +472,5 @@ if not any(rule.get("action") == "kb_knowledge_ingest" and rule.get("effect") ==
 
 if bad:
     raise SystemExit("\n".join(bad))
-print(f"Verification passed; native Build/Plan + dedicated Qwen/SOL orchestration + runtime-v2/checkpoint resume + bounded RAG lifecycle + Alibaba Personal models: {len(expected)} current + {len(special_ids) + len(openai_special_ids)} orchestrated aliases + {len(compat_ids)} compatibility ID")
+print(f"Verification passed; Build-only web + native TUI Plan + dedicated Qwen/SOL orchestration + runtime-v2/checkpoint resume + bounded RAG lifecycle + Alibaba Personal models: {len(expected)} current + {len(special_ids) + len(openai_special_ids)} orchestrated aliases + {len(compat_ids)} compatibility ID")
 PY

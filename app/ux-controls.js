@@ -3,7 +3,6 @@ import {
   ORCHESTRATED_MODELS,
   agentFor,
   composerActionState,
-  modeFromAgent,
   permissionSummary,
   profileFromAgent,
 } from './ux-state.js'
@@ -47,7 +46,7 @@ function rawActiveAgent() {
   return active.find((button) => !['build', 'plan'].includes(button.dataset.agent))?.dataset.agent || active[0]?.dataset.agent || 'build'
 }
 function currentMode() {
-  return modeFromAgent(rawActiveAgent())
+  return 'build'
 }
 function currentProfile() {
   if (desiredProfile) return desiredProfile
