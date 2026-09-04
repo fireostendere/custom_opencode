@@ -36,13 +36,13 @@ function warn(context, message) {
 export default Plugin.define({
   id: "custom.panel-slash",
   setup(context) {
-    function row(id, slashName, title, target) {
+    function row(id, slashName, title, target, exposeSlash = false) {
       return {
         id,
         title,
         group: "Панели",
         palette: true,
-        slash: { name: slashName },
+        ...(exposeSlash ? { slash: { name: slashName } } : {}),
         run: () => context.keymap.dispatch(target),
       }
     }
