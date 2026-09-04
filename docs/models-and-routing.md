@@ -2,14 +2,14 @@
 
 ## Пользовательская модель выполнения
 
-Web UI фиксирован в `Build`. Модель или server profile выбирается в model picker.
+Web UI поддерживает `Build` и `Plan`. Модель или server profile выбирается в model picker, а режим выполнения переключается отдельно.
 
 Есть два принципиально разных пути:
 
 1. обычная конкретная модель — direct/manual selection;
 2. server profile Runtime V2/V3 — role-based orchestration policy.
 
-`plan`/`plan-direct` остаются внутренними upstream compatibility IDs. Они не являются отдельной модельной маршрутизацией.
+`plan`/`plan-direct` остаются native upstream agent IDs. Для обычной модели UI предпочитает `build-direct`/`plan-direct`, если compatibility agents доступны, и иначе использует native `build`/`plan`; для orchestration alias используются native `build`/`plan`. Provider/model/variant при смене режима сохраняются.
 
 ## Direct/manual model
 
@@ -181,7 +181,7 @@ Picker может показывать обычные provider models и server 
 используются только как trigger для orchestration prompt/plugin и указывают на
 реальные модели провайдеров. Обычные Qwen/SOL/Terra/Luna остаются direct.
 
-Orchestration не является отдельным execution mode.
+Orchestration выбирается моделью/profile, а `Build` или `Plan` определяет primary execution mode независимо от него.
 
 ## Queue и task model state
 

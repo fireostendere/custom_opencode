@@ -1,5 +1,6 @@
 import * as api from './api.js'
 import { escapeHtml, renderMarkdown } from './markdown.js'
+import { modeFromAgent, ORCHESTRATED_MODELS } from './ux-state.js'
 
 const $ = (id) => document.getElementById(id)
 const QUICK_PROJECT_ID = '__custom_opencode_quick__'
@@ -426,7 +427,8 @@ function modelVariants(model){
 }
 function renderControls(){
   const agentID=state.selected?.agent||(!state.selected&&state.draftAgent)||state.agents.find((a)=>a.id==='build')?.id||state.agents[0]?.id
-  $('agentControls').innerHTML=state.agents.map((agent)=>`<button type="button" class="${agent.id===agentID?'active':''}" data-agent="${escapeHtml(agent.id)}">${escapeHtml(agent.name||agent.id)}</button>`).join('')
+  const mode=modeFromAgent(agentID)
+  $('agentControls').innerHTML=state.agents.map((agent)=>`<button type="button" class="${agent.id===agentID||(['build','plan'].includes(agent.id)&&agent.id===mode)?'active':''}" data-agent="${escapeHtml(agent.id)}">${escapeHtml(agent.name||agent.id)}</button>`).join('')
   document.querySelectorAll('[data-agent]').forEach((b)=>b.addEventListener('click',()=>changeAgent(b.dataset.agent)))
   const ref=activeModelRef(), model=activeModel(), selectedVariant=ref?.variant||''; $('modelButton').disabled=!state.models.length; $('modelButton').textContent=model?.name||ref?.id||'Модель'
   const variants=modelVariants(model)
@@ -436,7 +438,12 @@ function renderControls(){
 }
 async function changeAgent(agent){const sessionID=state.selected?.id||null,previous=state.selected?.agent||state.draftAgent;if(!state.selected){state.draftAgent=agent;renderControls();window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:true}}));return true}state.selected.agent=agent;renderControls();try{await api.switchAgent(sessionID,agent);if(state.selected?.id!==sessionID){window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:false,error:'session changed'}}));return false}window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:true}}));return true}catch(e){if(state.selected?.id===sessionID&&state.selected.agent===agent){state.selected.agent=previous;renderControls()}toast(`Режим: ${e.message}`);window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:false,error:String(e?.message||e)}}));return false}}
 async function changeModel(model){const sessionID=state.selected?.id||null,previousModel=activeModelRef()?{...activeModelRef()}:null;if(!state.selected){state.draftModel={...model};saveLastModel(model);renderControls();window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok:true}}));return true}try{await api.switchModel(sessionID,model);if(state.selected?.id!==sessionID){window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok:false,error:'session changed'}}));return false}state.selected.model={...model};saveLastModel(model);renderControls();renderUsage();window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok:true}}));return true}catch(e){toast(`Модель: ${e.message}`);window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok:false,error:String(e?.message||e)}}));return false}}
-window.CustomOpenCodeControls={changeModel,changeAgent}
+function directModelRef(){
+  const current=activeModelRef()
+  if(current&&!ORCHESTRATED_MODELS.some((model)=>model.id===current.id&&model.providerID===current.providerID))return {...current}
+  return state.defaultModel?{...state.defaultModel}:null
+}
+window.CustomOpenCodeControls={changeModel,changeAgent,directModel:directModelRef}
 
 function renderModelChoices(){
   const query=$('modelSearch').value.trim().toLowerCase(), current=activeModelRef()
@@ -584,7 +591,7 @@ function renderMessages({anchor=null,bottom=false}={}){
   if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height
   else if(bottom){
     const sessionID=state.selected?.id,stabilize=initialMessageScrollSession===sessionID
-    view.scrollTop=view.scrollHeight
+    view.scrollTo({top:view.scrollHeight,behavior:'instant'})
     if(stabilize){
       initialMessageScrollObserver?.disconnect()
       initialMessageScrollObserver=null
@@ -594,7 +601,7 @@ function renderMessages({anchor=null,bottom=false}={}){
         if(initialMessageScrollSession===sessionID)initialMessageScrollSession=null
         if(initialMessageScrollObserver===observer){observer?.disconnect();initialMessageScrollObserver=null}
       }
-      const settleBottom=()=>{if(!settling||state.selected?.id!==sessionID||initialMessageScrollSession!==sessionID)return;view.scrollTop=view.scrollHeight;updateScrollToBottomButton()}
+      const settleBottom=()=>{if(!settling||state.selected?.id!==sessionID||initialMessageScrollSession!==sessionID)return;view.scrollTo({top:view.scrollHeight,behavior:'instant'});updateScrollToBottomButton()}
       if('ResizeObserver' in window){
         observer=new ResizeObserver(settleBottom)
         initialMessageScrollObserver=observer
@@ -614,7 +621,7 @@ function renderMessages({anchor=null,bottom=false}={}){
 
 function messagesAtBottom(view=$('messages')){return !view||view.scrollHeight-view.clientHeight-view.scrollTop<=100}
 function updateScrollToBottomButton(){const button=$('scrollToBottom'),view=$('messages');if(button)button.hidden=!state.selected||messagesAtBottom(view)}
-function scrollMessagesToBottom(){const view=$('messages');if(!view)return;view.scrollTo({top:view.scrollHeight,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});requestAnimationFrame(updateScrollToBottomButton)}
+function scrollMessagesToBottom(){const view=$('messages');if(!view)return;view.scrollTo({top:view.scrollHeight,behavior:'instant'});updateScrollToBottomButton()}
 
 function usageForMessage(message){
   const source=message.usage||message.tokens||message.info?.usage||message.info?.tokens||{}
@@ -659,7 +666,20 @@ function readFile(file){return new Promise((resolve,reject)=>{const r=new FileRe
 async function addFiles(files){try{state.attachments.push(...await Promise.all([...files].map(readFile)));renderAttachments()}catch(e){toast(`Файл: ${e.message}`)}}
 
 async function ensureQuickSession(){if(state.selected)return state.selected;const session=await createAt(state.clientConfig.scratchDirectory);return session}
-async function createAt(dir,title){const session=await api.createSession({directory:dir,title,agent:state.draftAgent,model:state.draftModel});state.sessions=[session,...state.sessions.filter((s)=>s.id!==session.id)];await selectSession(session.id);return session}
+async function createAt(dir,title){
+  if(!dir)throw new Error('Не выбрана папка для новой сессии')
+  const source=state.selected
+  const session=await api.createSession({directory:dir,title,agent:source?.agent||state.draftAgent,model:source?.model||state.draftModel})
+  if(!session?.id)throw new Error('OpenCode не вернул id новой сессии')
+  state.sessions=[session,...state.sessions.filter((s)=>s.id!==session.id)]
+  await selectSession(session.id)
+  return session
+}
+async function createNewSession(){
+  const dir=state.clientConfig?.scratchDirectory
+  try{await createAt(dir,'Новая сессия')}
+  catch(error){toast(`Создание: ${error.message}`)}
+}
 async function sendMessage(event){
   event?.preventDefault();const input=$('input'),text=input.value.trim();if(!text&&!state.attachments.length)return
   const claimedAttachments=state.attachments,files=claimedAttachments.map(({uri,name,mime})=>({uri,name,mime}))

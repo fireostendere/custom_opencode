@@ -15,7 +15,7 @@
 - short reduced-motion-aware microanimations;
 - native slash commands и control-команда `/rag-start`;
 - isolated quick-session workspaces и безопасный browser локальных project roots;
-- Build-only пользовательский execution surface;
+- Build/Plan пользовательский execution surface с сохранением выбранного профиля;
 - web- и TUI-model picker с зеркальной секцией favorites, collapsible providers, free-model group, ordinary models и server profiles;
 - model, effort и Build/Plan берутся из активной сессии, а не из предыдущего открытого диалога;
 - сессию можно скопировать с контекстом либо перенести через handoff в другой проект; UI предупреждает об ограничении в 40 текстовых сообщений / 24 000 символов и удаляет источник только после успешного handoff;
@@ -25,14 +25,14 @@
 - Changes/Review, file/hunk revert, orchestration trace и workflow/runtime status;
 - Markdown/code/tool/reasoning, images/files, Git/VCS, drafts, notifications.
 
-## Build-only UX и routing
+## Build/Plan UX и routing
 
-Visible `Build / Plan` switch удалён. `plan`/`plan-direct` остаются internal OpenCode compatibility IDs, но при попадании в пользовательский surface frontend возвращает session в соответствующий Build profile.
+Visible `Build / Plan` switch управляет native primary agent. Для direct-профиля используются `build-direct` и `plan-direct`, если compatibility agents есть в каталоге, иначе native `build` и `plan`; для orchestrated-профиля используются native `build` и `plan`. Selected provider/model/variant при смене режима сохраняется.
 
 Обычная модель из model picker остаётся direct/manual selection:
 
 ```text
-ordinary selected model → build-direct → selected model preserved
+ordinary selected model → build-direct/native build → selected model preserved
 ```
 
 Runtime V2/V3 дополнительно предлагает server profiles:
@@ -135,7 +135,7 @@ OpenCode V2 остаётся native model/tool/session/MCP execution engine.
 - `mobile-ui.js`, `sidebar-mobile.css` — mobile drawer lifecycle;
 - `enhancements.*`, `ui-enhancements.*`, `ux-controls.*`, `advanced-features.*` — UI/features compatibility layers;
 - `runtime-dashboard.*`, `runtime-v3-dashboard.*` — Task Center/Runtime V3 controls;
-- `access-fix.*` — Build-only/permissions/mobile dialog corrections;
+- `access-fix.*` — Build/Plan/permissions/mobile dialog corrections;
 - `design-system.css`, `sidebar-resize.js` — единая геометрия/chevrons, адаптивные dialog scroll surfaces и desktop resize sidebar;
 - `rag-control.js`, `control-plane.*` — RAG/risk surfaces;
 - `api.js`, `markdown.js`, `app.js` — OpenCode adapter/render/store core;

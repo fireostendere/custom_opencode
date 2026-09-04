@@ -14,7 +14,18 @@ Web client работает через user systemd service:
 systemctl --user status opencode-web-client.service --no-pager
 ```
 
-Unit запускает `app/server_rag.py` и автоматически рестартуется при падении.
+Unit запускает `app/server_workflow.py` и автоматически рестартуется при падении.
+
+В TUI команда `/webserver` открывает wizard управления этим же unit:
+
+- при первом запуске подтверждает deploy через штатный `scripts/install.sh`;
+- позволяет отдельно выбрать состояние сейчас и автозапуск по умолчанию;
+- повторный запуск меняет `start/stop` и `systemctl enable/disable` без удаления deploy;
+- `/webserver status` показывает состояние и адрес.
+
+Настройка host/port и авторизации остаётся в `.env`. Небезопасные credentials в
+state wizard не записываются; состояние хранится в
+`~/.config/opencode/webserver.json` с правами `0600`.
 
 ## Обновление
 
@@ -85,6 +96,7 @@ custom_opencode/.env
 ~/.config/opencode/prompts/
 ~/.config/opencode/plugins/
 ~/.local/share/opencode/auth.json
+~/.config/opencode/webserver.json
 ~/.config/systemd/user/opencode-web-client.service
 ```
 

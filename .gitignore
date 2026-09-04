@@ -4,3 +4,7 @@
 *.local
 __pycache__/
 *.pyc
+.fake_dev_null
+.fake_null.so
+.tmp_fake_null.c
+.tmp_verify/

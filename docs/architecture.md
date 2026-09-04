@@ -20,7 +20,7 @@ OpenCode остаётся execution/model backend; `custom_opencode` управ�
 - isolated quick workspaces;
 - parallel running states;
 - automatic send / cancel / persistent queue;
-- Build-only пользовательский execution surface;
+- Build/Plan пользовательский execution surface;
 - direct/orchestrated model profiles;
 - native question cards с single/multi-select и custom answer;
 - project memory/defaults/permission policy;
@@ -97,22 +97,24 @@ Project browser и workflow endpoints используют canonicalized path и
 
 Git revert дополнительно проверяет целевой relative path и для hunk принимает только patch, заголовки которого относятся к выбранному файлу.
 
-## Build-only UI и model profiles
+## Build/Plan UI и model profiles
 
-Пользовательский execution mode в текущем UI всегда Build. Visible `Build / Plan` переключатель удалён.
+Пользовательский execution mode в UI выбирается через visible `Build / Plan` переключатель.
 
-Внутри compatibility layer могут существовать `plan`/`plan-direct`, но `access-fix.js`:
+Compatibility layer сохраняет `plan`/`plan-direct`, а `access-fix.js`:
 
-- скрывает agent mode control;
-- переводит активный `plan` обратно в соответствующий Build agent;
-- скрывает project default mode selector и фиксирует его в `build`.
+- показывает Build/Plan proxy и скрывает только внутренние agent IDs;
+- переводит выбранный режим в соответствующий native agent;
+- оставляет project default mode selector доступным.
 
 Model picker отдельно выбирает profile:
 
 ```text
-обычная модель                    → build-direct
+обычная модель                    → build-direct (или native build)
 Qwen 3.8 Max · Оркестрированная   → build
 ```
+
+Для режима `Plan` те же профили используют `plan-direct` (или native `plan`) и native `plan` соответственно.
 
 Локальный provider остаётся ordinary direct model choice только при реальном ручном выборе пользователя. Project defaults, persistent queue и workflow worker не имеют automatic `ollama/*` route.
 

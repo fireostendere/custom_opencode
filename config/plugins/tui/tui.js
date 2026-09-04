@@ -1,6 +1,7 @@
 import { Plugin } from "@opencode-ai/plugin/tui"
 import effortIndicator from "./effort-indicator.jsx"
 import addWizard from "./add-wizard.js"
+import webserverWizard from "./webserver-wizard.js"
 import modelSelector from "./model-selector.jsx"
 import panelSlash from "./panel-slash.jsx"
 import promptHistory from "./prompt-history.jsx"
@@ -11,6 +12,7 @@ import wslClipboard from "./wsl-clipboard.jsx"
 const plugins = [
   effortIndicator,
   addWizard,
+  webserverWizard,
   modelSelector,
   panelSlash,
   promptHistory,

@@ -89,6 +89,14 @@ for marker in (
     assert marker in workspace_js, marker
 assert "arguments:JSON.stringify(input)" not in workspace_js
 
+for marker in (
+    "function workflowSurfaceEnabled() { return currentProfile() === 'orchestrated' || currentMode() === 'plan' }",
+    "const workflowVisible = workflowSurfaceEnabled()",
+    "const visible = workflowVisible || Boolean(state.plan)",
+    "if (!workflowSurfaceEnabled())",
+):
+    assert marker in advanced_features_js, marker
+
 wizard_action = workspace_js[workspace_js.index("function runAction"):workspace_js.index("function filteredActions")]
 assert "prefillCommand(action.command)" in wizard_action
 assert "if(id==='mcp.add'){openConfigWizard('mcp');return}" in wizard_action

@@ -79,7 +79,7 @@ def run() -> dict[str, Any]:
             "composerActionState",
             "action.kind === 'queue'",
             "action.kind === 'stop'",
-            "function currentMode() {\n  return 'build'",
+            "function currentMode() {\n  return modeFromAgent(rawActiveAgent())",
             "dataset.modelProfile",
         ),
         errors,
@@ -151,12 +151,14 @@ def run() -> dict[str, Any]:
 
     frontend = contract.get("frontend") if isinstance(contract.get("frontend"), dict) else {}
     modes = [str(item) for item in (frontend.get("modes") or [])]
-    if modes != ["build"]:
-        errors.append("integration contract frontend modes must be Build-only")
-    if frontend.get("modeSelectorVisible") is not False:
-        errors.append("integration contract must keep the execution mode selector hidden")
+    if modes != ["build", "plan"]:
+        errors.append("integration contract frontend modes must expose Build and Plan")
+    if frontend.get("modeSelectorVisible") is not True:
+        errors.append("integration contract must expose the execution mode selector")
     if frontend.get("legacyPlanCompatibility") is not True:
-        errors.append("integration contract must preserve hidden plan compatibility")
+        errors.append("integration contract must preserve native plan compatibility")
+    if frontend.get("planVisibleDuringBuild") is not True:
+        errors.append("integration contract must expose native plans during Build")
     if frontend.get("orchestrationLivesInModelProfile") is not True:
         errors.append("integration contract must keep orchestration in the model profile")
     if frontend.get("modelProfiles") != ["direct", "qwen3.8-orchestrated", "gpt-5.6-sol-orchestrated"]:

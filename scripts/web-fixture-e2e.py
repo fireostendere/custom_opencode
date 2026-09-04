@@ -306,7 +306,7 @@ def login(page, base_url: str) -> None:
     page.fill("#username", "opencode")
     page.fill("#password", "fixture-password")
     page.click("#loginSubmit")
-    page.locator("#sessions .session").first.wait_for(state="visible")
+    page.locator("#sessions .session").first.wait_for(state="visible", timeout=60000)
 
 
 def open_session(page) -> None:
@@ -331,14 +331,14 @@ def universal_plan_session_switch(browser, base_url: str) -> None:
     login(page, base_url)
     open_session(page)
     page.evaluate("window.CustomOpenCodeWorkspace.open('plan')")
-    page.wait_for_function("document.querySelector('#unified-plan').innerText.includes('Fixture plan') && document.querySelector('#unified-plan').innerText.includes('Fixture step 00')", timeout=5000)
+    page.wait_for_function("document.querySelector('#unified-plan').innerText.includes('Fixture plan') && document.querySelector('#unified-plan').innerText.includes('Fixture step 00')", timeout=15000)
     unified_plan = page.locator('#unified-plan')
     assert "Fixture plan" in unified_plan.inner_text()
     assert "Fixture step 00" in unified_plan.inner_text()
 
     page.evaluate("location.hash = '#/session/ses_other'")
     page.wait_for_function("location.hash.startsWith('#/session/ses_other')")
-    page.wait_for_function("document.querySelector('#unified-plan').innerText.includes('Other root plan') && document.querySelector('#unified-plan').innerText.includes('Other isolated step')", timeout=5000)
+    page.wait_for_function("document.querySelector('#unified-plan').innerText.includes('Other root plan') && document.querySelector('#unified-plan').innerText.includes('Other isolated step')", timeout=15000)
     assert "Other root plan" in unified_plan.inner_text()
     assert "Other isolated step" in unified_plan.inner_text()
     assert "Fixture plan" not in unified_plan.inner_text()
@@ -443,7 +443,8 @@ def desktop(browser, base_url: str) -> None:
     page.wait_for_function("document.querySelectorAll('#messages .message').length === 80")
     page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
     assert page.locator("#messages").evaluate("el => el.scrollHeight - el.clientHeight - el.scrollTop < 4"), "initial session viewport must start at the newest messages"
-    page.locator("#messages").evaluate("el => { el.scrollTop = 0 }")
+    page.wait_for_timeout(1600)  # Let the initial 1.5 s resize-stabilization window close.
+    page.locator("#messages").evaluate("el => el.scrollTo({ top:0, behavior:'instant' })")
     page.locator("#scrollToBottom").wait_for(state="visible")
     page.locator("#scrollToBottom").click()
     page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")

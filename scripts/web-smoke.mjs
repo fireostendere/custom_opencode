@@ -83,12 +83,20 @@ if (rag.parseRagStart('/rag-start nope') !== null) throw new Error('RAG parser a
 const ui = await loadSource('app/ui-enhancements.js')
 const uiProjectSource = readFileSync(resolve(root, 'app/ui-enhancements.js'), 'utf8')
 const appProjectSource = readFileSync(resolve(root, 'app/app.js'), 'utf8')
+const uxControlsSource = readFileSync(resolve(root, 'app/ux-controls.js'), 'utf8')
+const advancedFeaturesSource = readFileSync(resolve(root, 'app/advanced-features.js'), 'utf8')
 if (uiProjectSource.includes("request('/api/session'")) throw new Error('Directory browser must delegate session creation to app bridge')
 for (const marker of ['CustomOpenCodeProjects', "request('/client-directories.json'", 'data-create-directory']) {
   if (!uiProjectSource.includes(marker)) throw new Error(`Directory creation flow marker missing: ${marker}`)
 }
 if (!appProjectSource.includes("$('newSession').addEventListener('click',()=>openProjectDialog('create'))")) throw new Error('New session must open the project dialog')
 if (appProjectSource.includes("$('newSession').addEventListener('click',async()=>{clearSelection()")) throw new Error('New session must not clear the current selection')
+if (!appProjectSource.includes("source?.agent||state.draftAgent") || !appProjectSource.includes("source?.model||state.draftModel")) throw new Error('New session must preserve active controls')
+if (!uxControlsSource.includes('return modeFromAgent(rawActiveAgent())')) throw new Error('Build/Plan mode must follow the native agent')
+if (!uxControlsSource.includes('function targetAgent(mode, profile)')) throw new Error('Build/Plan must fall back when compatibility agents are unavailable')
+if (!uxControlsSource.includes("!['build', 'plan'].includes(id)")) throw new Error('Internal agents must stay hidden while Build/Plan remain visible')
+if (!advancedFeaturesSource.includes("function workflowSurfaceEnabled() { return currentProfile() === 'orchestrated' || currentMode() === 'plan' }")) throw new Error('Plan mode must enable native plan/activity surfaces')
+if (!advancedFeaturesSource.includes('const visible = workflowVisible || Boolean(state.plan)')) throw new Error('Native plans must remain visible during Build')
 const zeroCost = [{ input:0, output:0, cache:{ read:0, write:0 } }]
 const paidCost = [{ input:0.1, output:0, cache:{ read:0, write:0 } }]
 if (!ui.isFreeModel({ id:'dynamic-free', cost:zeroCost })) throw new Error('Zero-cost model was not grouped as free')
@@ -194,7 +202,9 @@ const runtimeDashboard = readFileSync(resolve(root, 'app/runtime-dashboard.js'),
 const runtimeCss = readFileSync(resolve(root, 'app/runtime-dashboard.css'), 'utf8')
 const runtimeV3Dashboard = readFileSync(resolve(root, 'app/runtime-v3-dashboard.js'), 'utf8')
 
-if (!uxControls.includes("const mode = 'build'")) throw new Error('Build must remain the web compatibility mode')
+if (!uxControls.includes('const mode = currentMode()')) throw new Error('Build/Plan must remain synchronized with the native agent')
+if (!uxControls.includes('clickNativeAgent(target, true)')) throw new Error('Direct Build/Plan must work without exposed compatibility agents')
+if (!appSource.includes('function directModelRef()')) throw new Error('Direct profile must restore a concrete model instead of an orchestration alias')
 if (uxControls.includes("button.textContent = 'Direct'")) throw new Error('Direct must not be exposed as a user-facing mode label')
 if (!uxControls.includes("event.target.closest('[data-orchestrated-model]')")) throw new Error('Orchestrated model click proxy missing')
 if (!uxControls.includes('ORCHESTRATED_MODELS') || !uxControls.includes('nativeOrchestratedChoice')) throw new Error('Web orchestrated choice must target the dedicated model aliases')
@@ -229,7 +239,8 @@ for (const marker of [
   if (!advanced.includes(marker)) throw new Error(`Advanced workflow marker missing: ${marker}`)
 }
 if (!advanced.includes('syncProjectModelOptions')) throw new Error('Project settings must use the current model catalog')
-if (!advanced.includes("if (currentProfile() !== 'orchestrated')")) throw new Error('Direct sessions must not load orchestration trace or native plan')
+if (!advanced.includes('if (!workflowSurfaceEnabled())')) throw new Error('Workflow surfaces must follow the selected profile or Plan mode')
+if (!advanced.includes('const livePanelMarkup = workflowVisible ?')) throw new Error('Direct Build must not render an orchestration activity panel without orchestration')
 if (!advanced.includes("const panelOpen={plan:host.querySelector('.plan-panel')?.open===true")) throw new Error('Orchestration panel must preserve its open state while refreshing')
 if (!advanced.includes('captureScrollState(host.querySelector(\'.plan-panel-body\'))') || !advanced.includes('captureScrollState(host.querySelector(\'.orchestration-nodes\'))') || !advanced.includes('requestAnimationFrame(() =>')) throw new Error('Orchestration panel must preserve both scroll positions after layout while refreshing')
 if (!advanced.includes('orchestrationRevision') || !advanced.includes('orchestrationRenderRevision') || !advanced.includes('state.sessionID !== sessionID')) throw new Error('Orchestration refresh and deferred scroll restoration must reject stale sessions/renders')
@@ -295,7 +306,7 @@ for (const marker of ['sidebarResizer', 'localStorage', 'pointerdown', 'ArrowLef
 }
 
 if (!accessFix.includes('resolvedPermissions')) throw new Error('Permission suppression fix missing')
-if (!accessFixCss.includes('#agentControls{\n  display:none!important') || !uxControls.includes("const mode = 'build'")) throw new Error('Web composer must remain Build-only while normalizing legacy Plan agents')
+if (!accessFixCss.includes('#agentControls{\n  display:flex!important') || !uxControls.includes('const mode = currentMode()')) throw new Error('Web composer must expose the native Build/Plan mode')
 if (!accessFixCss.includes('max-height:calc(100dvh')) throw new Error('Mobile dialogs must use the dynamic viewport')
 
 for (const marker of ['opencode:web:appearance-v1', "theme:'system'", '--accent-contrast', 'prefers-color-scheme']) {

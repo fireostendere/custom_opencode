@@ -88,6 +88,7 @@ CLI_CONFIG="$HOME_DIR/.config/opencode/cli.json"
 SERVICE="$HOME_DIR/.config/systemd/user/opencode-web-client.service"
 WRAPPER="$HOME_DIR/.local/bin/custom-opencode"
 UPDATER="$HOME_DIR/.local/bin/custom-opencode-update"
+WEBSERVER_WRAPPER="$HOME_DIR/.local/bin/custom-opencode-webserver"
 RUNTIME_GUARD="$HOME_DIR/.config/opencode/plugins/server-runtime-guard.js"
 TUI_DIR="$HOME_DIR/.config/opencode/plugins/tui"
 [[ -f "$CONFIG" ]] || { echo "fresh install did not render config" >&2; exit 1; }
@@ -95,8 +96,10 @@ grep -Fq '"app.exit": "ctrl+shift+q"' "$CLI_CONFIG"
 [[ -f "$SERVICE" ]] || { echo "fresh install did not render systemd unit" >&2; exit 1; }
 [[ -x "$WRAPPER" ]] || { echo "fresh install did not create executable wrapper" >&2; exit 1; }
 [[ -L "$UPDATER" ]] || { echo "fresh install did not create updater symlink" >&2; exit 1; }
+[[ -x "$WEBSERVER_WRAPPER" ]] || { echo "fresh install did not create webserver controller" >&2; exit 1; }
 [[ -f "$RUNTIME_GUARD" ]] || { echo "fresh install did not install runtime guard plugin" >&2; exit 1; }
 grep -Fq 'unset WAYLAND_DISPLAY WAYLAND_SOCKET' "$WRAPPER"
+grep -Fq 'webserver-control.py' "$WEBSERVER_WRAPPER"
 if grep -Fq 'pin-orchestrated-recent.py' "$WRAPPER"; then
   echo "custom-opencode must preserve the last-used model order" >&2
   exit 1
@@ -212,11 +215,17 @@ EOF
 chmod +x "$FAKE_BIN/git"
 
 : >"$LOG"
+# An update must not silently undo the persisted webserver state. The installer
+# still starts the service temporarily for its self-test, then restores it.
+mkdir -p "$XDG_CONFIG_HOME/opencode"
+printf '%s\n' '{"version":1,"running":false,"defaultEnabled":false}' >"$XDG_CONFIG_HOME/opencode/webserver.json"
 CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
   bash "$COPY/scripts/update.sh" >"$TMP/update.out"
 grep -Fxq 'git fetch --prune origin main' "$LOG"
 grep -Fxq 'git merge --ff-only FETCH_HEAD' "$LOG"
 grep -Fq 'systemctl --user restart opencode-web-client.service' "$LOG"
+grep -Fq 'systemctl --user disable opencode-web-client.service' "$LOG"
+grep -Fq 'systemctl --user stop opencode-web-client.service' "$LOG"
 grep -Fq 'Updated from origin/main' "$TMP/update.out"
 
 # The update must preserve the V3 render and exact TUI installation path.

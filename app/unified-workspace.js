@@ -101,6 +101,7 @@ async function refreshAll(force=false){
   const refreshSeq=++state.refreshSeq
   $('unifiedPanelContext').textContent=session?session.slice(0,10):'no session'
   if(!session){state.snapshot=null;state.activity=[];renderCurrent();return}
+  if(force||state.tab==='plan') loadPlan().catch(()=>{});
   try{
     const [snapshot,activity]=await Promise.all([
       req(qs('/client-unified.json')),
@@ -118,7 +119,6 @@ async function refreshAll(force=false){
       state.lastEventID=Math.max(state.lastEventID,...fresh.map(item=>Number(item.id)||0))
       if(!state.followActivity)state.unseen+=fresh.length
     }
-    if(force||state.tab==='plan')loadPlan().catch(()=>{})
     renderCurrent()
   }catch(error){console.debug('unified workspace refresh',error)}
 }

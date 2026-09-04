@@ -65,6 +65,7 @@ function fmtTime(value) {
 }
 function currentProfile() { return document.documentElement.dataset.modelProfile || 'direct' }
 function currentMode() { return document.documentElement.dataset.executionMode || 'build' }
+function workflowSurfaceEnabled() { return currentProfile() === 'orchestrated' || currentMode() === 'plan' }
 function running() { return Boolean($('stop') && !$('stop').hidden) }
 function toast(text, ms = 2800) {
   const el = $('toast')
@@ -970,7 +971,7 @@ function activityDescriptor(payload) {
   return null
 }
 function updateActivityFromEvent(payload) {
-  if (currentProfile() !== 'orchestrated' || !state.sessionID || !activityBelongsToSession(payload)) return
+  if (!workflowSurfaceEnabled() || !state.sessionID || !activityBelongsToSession(payload)) return
   const type = String(payload?.type || '')
   const data = activityEventData(payload)
   const descriptor = activityDescriptor(payload)
@@ -1041,7 +1042,7 @@ async function refreshOrchestration() {
   const refreshSeq = ++state.orchestrationRefreshSeq
   const sameSession = () => state.sessionID === sessionID && state.orchestrationRevision === revision
   const current = () => sameSession() && state.orchestrationRefreshSeq === refreshSeq
-  if (currentProfile() !== 'orchestrated') {
+  if (!workflowSurfaceEnabled()) {
     if (!current()) return
     state.children = []
     state.orchestrationStatuses = {}
@@ -1106,12 +1107,6 @@ async function refreshPlan() {
   const revision = state.orchestrationRevision
   const refreshSeq = ++state.planRefreshSeq
   const current = () => state.sessionID === sessionID && state.orchestrationRevision === revision && state.planRefreshSeq === refreshSeq
-  if (currentProfile() !== 'orchestrated') {
-    if (!current()) return
-    state.plan = null
-    renderOrchestration()
-    return
-  }
   try {
     const value = await request(`/client-plan.json?sessionID=${encodeURIComponent(sessionID)}`)
     if (!current()) return
@@ -1128,7 +1123,8 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   const planScroll = captureScrollState(host.querySelector('.plan-panel-body'))
   const nodesScroll = captureScrollState(host.querySelector('.orchestration-nodes'))
   const children = state.children || []
-  const visible = currentProfile() === 'orchestrated'
+  const workflowVisible = workflowSurfaceEnabled()
+  const visible = workflowVisible || Boolean(state.plan)
   host.hidden = !state.sessionID || !visible
   if (host.hidden) { host.innerHTML = ''; return }
   const rootModel = $('modelButton')?.textContent || state.session?.model?.id || 'Primary'
@@ -1177,7 +1173,9 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   const liveStatusLabel = liveStatus === 'running' ? 'Выполняется' : liveStatus === 'error' ? 'Ошибка' : currentActivity ? 'Последний вывод' : panelStatusLabel
   const liveSummary = currentActivity ? `${activityKindLabel(currentActivity.kind)} · ${currentActivity.title}` : children.length ? `${children.length} подзадач · ожидание активности` : 'Инструменты и модели появятся здесь'
   const history = state.activityItems.filter((item) => item.id !== currentActivity?.id).slice(-6).reverse().map((item) => renderActivityItem(item)).join('')
-  host.innerHTML = `<div class="orchestration-panels"><details class="orchestration-panel plan-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${panelStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>План</strong><span>${escapeHtml(currentStage)} · ${escapeHtml(panelMeta)}</span></span><span class="orchestration-summary-status ${panelStatus}">${panelStatusLabel}</span></summary><div class="activity-panel-body plan-panel-body">${planMarkup}</div></details><details class="orchestration-panel live-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${liveStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>Инструменты и агенты</strong><span>${escapeHtml(liveSummary)}</span></span><span class="orchestration-summary-status ${liveStatus}">${liveStatusLabel}</span></summary><div class="orchestration-nodes activity-panel-body">${currentActivity ? `<div class="activity-current-label">Сейчас</div>${renderActivityItem(currentActivity, true)}` : '<div class="activity-empty">Сейчас инструмент не выполняется.</div>'}<div class="activity-agents-label">Участники оркестрации</div>${nodes.join('')}${history ? `<div class="activity-history-label">Последние события</div>${history}` : ''}</div></details></div>`
+  const planPanelMarkup = `<details class="orchestration-panel plan-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${panelStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>План</strong><span>${escapeHtml(currentStage)} · ${escapeHtml(panelMeta)}</span></span><span class="orchestration-summary-status ${panelStatus}">${panelStatusLabel}</span></summary><div class="activity-panel-body plan-panel-body">${planMarkup}</div></details>`
+  const livePanelMarkup = workflowVisible ? `<details class="orchestration-panel live-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${liveStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>Инструменты и агенты</strong><span>${escapeHtml(liveSummary)}</span></span><span class="orchestration-summary-status ${liveStatus}">${liveStatusLabel}</span></summary><div class="orchestration-nodes activity-panel-body">${currentActivity ? `<div class="activity-current-label">Сейчас</div>${renderActivityItem(currentActivity, true)}` : '<div class="activity-empty">Сейчас инструмент не выполняется.</div>'}<div class="activity-agents-label">Участники оркестрации</div>${nodes.join('')}${history ? `<div class="activity-history-label">Последние события</div>${history}` : ''}</div></details>` : ''
+  host.innerHTML = `<div class="orchestration-panels">${planPanelMarkup}${livePanelMarkup}</div>`
   const details = [...host.querySelectorAll('details')]
   details.forEach((detail) => {
     const rememberConversation = () => { detail._conversationScroll = captureScrollState($('messages')) }
@@ -1374,6 +1372,12 @@ function observeRuntime() {
 function bindEvents() {
   window.addEventListener('hashchange', refreshSelectedSession)
   window.addEventListener('custom-opencode:session-selected', () => refreshSelectedSession())
+  window.addEventListener('custom-opencode:agent-changed', () => {
+    setTimeout(() => {
+      refreshOrchestration()
+      refreshPlan()
+    }, 0)
+  })
   window.addEventListener('custom-opencode:event', (event) => { handleQuestionEvent(event.detail); renderActivityFromEvent(event.detail) })
   $('form')?.addEventListener('submit', interceptSubmit, true)
   $('fileInput')?.addEventListener('change', (event) => captureFiles(event.target.files), true)

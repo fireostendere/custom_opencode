@@ -10,8 +10,8 @@ export const SOL_ORCHESTRATED_MODEL = {
 }
 export const ORCHESTRATED_MODELS = [ORCHESTRATED_MODEL, SOL_ORCHESTRATED_MODEL]
 
-// The web surface is Build-only. Legacy Plan identifiers remain compatible
-// with native clients and are normalized to the matching Build agent by UI sync.
+// The web surface exposes Build/Plan while keeping direct agent IDs internal.
+// Native clients can still use the same plan identifiers without translation.
 export function modeFromAgent(agentID = '') {
   return String(agentID).startsWith('plan') ? 'plan' : 'build'
 }

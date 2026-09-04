@@ -157,6 +157,50 @@ Path(target).write_text(text, encoding="utf-8")
 PY
 chmod 0644 "$UNIT_DIR/opencode-web-client.service"
 
+# The installer needs the web service running for its HTTP self-test, but a
+# previous /webserver choice must survive update/install. Restore that choice
+# on every exit after the temporary installer lifecycle has completed.
+WEBSERVER_STATE_FILE=${OPENCODE_WEBSERVER_STATE:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode/webserver.json}
+WEBSERVER_STATE_SNAPSHOT=""
+if [[ -f "$WEBSERVER_STATE_FILE" && ! -L "$WEBSERVER_STATE_FILE" ]]; then
+  WEBSERVER_STATE_SNAPSHOT=$(
+    "$PYTHON3" - "$WEBSERVER_STATE_FILE" <<'PY'
+import json
+import sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        value = json.load(handle)
+except (OSError, ValueError):
+    raise SystemExit(1)
+if not isinstance(value, dict):
+    raise SystemExit(1)
+print("1" if value.get("running") is True else "0", "1" if value.get("defaultEnabled") is True else "0")
+PY
+  ) || WEBSERVER_STATE_SNAPSHOT=""
+fi
+WEBSERVER_STATE_PRESENT=0
+WEBSERVER_STATE_RUNNING=0
+WEBSERVER_STATE_DEFAULT=0
+if [[ "$WEBSERVER_STATE_SNAPSHOT" =~ ^(0|1)[[:space:]]+(0|1)$ ]]; then
+  read -r WEBSERVER_STATE_RUNNING WEBSERVER_STATE_DEFAULT <<<"$WEBSERVER_STATE_SNAPSHOT"
+  WEBSERVER_STATE_PRESENT=1
+fi
+restore_webserver_state() {
+  if [[ "$WEBSERVER_STATE_PRESENT" != 1 ]]; then return 0; fi
+  if ! systemctl --user daemon-reload >/dev/null 2>&1; then return 0; fi
+  if [[ "$WEBSERVER_STATE_DEFAULT" == 1 ]]; then
+    systemctl --user enable opencode-web-client.service >/dev/null 2>&1 || true
+  else
+    systemctl --user disable opencode-web-client.service >/dev/null 2>&1 || true
+  fi
+  if [[ "$WEBSERVER_STATE_RUNNING" == 1 ]]; then
+    systemctl --user start opencode-web-client.service >/dev/null 2>&1 || true
+  else
+    systemctl --user stop opencode-web-client.service >/dev/null 2>&1 || true
+  fi
+}
+trap restore_webserver_state EXIT
+
 if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   install -d "$CONFIG_DIR/plugins" "$CONFIG_DIR/plugins/tui" "$CONFIG_DIR/prompts" "$CONFIG_DIR/themes"
   if [[ -f "$CONFIG_DIR/opencode.json" ]]; then
@@ -243,6 +287,7 @@ cat >"$BIN_DIR/custom-opencode" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 export PATH="$BIN_DIR:\$PATH"
+export CUSTOM_OPENCODE_ROOT="$ROOT"
 set -a
 source "$ROOT/.env"
 set +a
@@ -296,6 +341,17 @@ EOF
 chmod 0755 "$BIN_DIR/custom-opencode"
 
 ln -sfn "$ROOT/scripts/update.sh" "$BIN_DIR/custom-opencode-update"
+
+cat >"$BIN_DIR/custom-opencode-webserver" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+export CUSTOM_OPENCODE_ROOT="$ROOT"
+set -a
+source "$ROOT/.env"
+set +a
+exec "$PYTHON3" "$ROOT/scripts/webserver-control.py" "\$@"
+EOF
+chmod 0755 "$BIN_DIR/custom-opencode-webserver"
 
 systemctl --user daemon-reload
 systemctl --user enable --now opencode-web-client.service

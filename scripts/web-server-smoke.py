@@ -68,7 +68,7 @@ with tempfile.TemporaryDirectory() as temp:
     os.environ["OPENCODE_REPO_EMBEDDINGS"] = "hash"
     plan_dir.mkdir(parents=True)
     (plan_dir / "ses_web_plan-plan.md").write_text(
-        "# Web V2 plan\n\n- [x] Expose the plan\n- [>] Render checklist\n- [ ] Keep Build-only UI\n",
+        "# Web V2 plan\n\n- [x] Expose the plan\n- [>] Render checklist\n- [ ] Keep Build/Plan UI\n",
         encoding="utf-8",
     )
     second_plan = plan_dir / "ses_web_plan_two-plan.md"

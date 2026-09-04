@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -31,6 +32,8 @@ with tempfile.TemporaryDirectory() as temp:
     import server_workflow
 
     base = server_workflow.rag.plus.ext.base
+    with patch.object(base.time, "time", return_value=2_000_000_000):
+        assert base.issue_session_token(300) != base.issue_session_token(300)
     server = base.ThreadingHTTPServer(("127.0.0.1", 0), server_workflow.Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -116,6 +119,20 @@ with tempfile.TemporaryDirectory() as temp:
             server_workflow._revoked_tokens.clear()
         status, _, _ = request("GET", "/auth/session", headers=authed_headers)
         assert status == 401, status
+
+        # A new login in the same second must issue a distinct token rather than
+        # inheriting the prior logout's revocation.
+        status, response_headers, _ = request(
+            "POST",
+            "/auth/login",
+            body={"username": "opencode", "password": "test-password", "remember": True},
+            headers=remote_headers,
+        )
+        assert status == 204, status
+        fresh_cookie = response_headers.get("Set-Cookie", "").split(";", 1)[0]
+        assert fresh_cookie != cookie
+        status, _, _ = request("GET", "/auth/session", headers={**remote_headers, "Cookie": fresh_cookie})
+        assert status == 200, status
 
         # Eight failures in a minute are bounded; the next attempt is 429.
         brute_headers = {

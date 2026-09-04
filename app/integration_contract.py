@@ -25,9 +25,10 @@ def contract() -> dict[str, Any]:
         "apiVersion": INTEGRATION_API_VERSION,
         "runtimeVersion": RUNTIME_VERSION,
         "frontend": {
-            "modes": ["build"],
-            "modeSelectorVisible": False,
+            "modes": ["build", "plan"],
+            "modeSelectorVisible": True,
             "legacyPlanCompatibility": True,
+            "planVisibleDuringBuild": True,
             "modelProfiles": [
                 "direct",
                 "qwen3.8-orchestrated",

@@ -159,8 +159,14 @@ class RuntimeStore:
             try:
                 db.execute("PRAGMA journal_mode=WAL")
             except sqlite3.OperationalError:
-                db.execute("PRAGMA journal_mode=TRUNCATE")
-            db.execute("PRAGMA synchronous=NORMAL")
+                try:
+                    db.execute("PRAGMA journal_mode=TRUNCATE")
+                except sqlite3.OperationalError:
+                    pass
+            try:
+                db.execute("PRAGMA synchronous=NORMAL")
+            except sqlite3.OperationalError:
+                pass
             db.execute("PRAGMA foreign_keys=OFF")
             yield db
         finally:

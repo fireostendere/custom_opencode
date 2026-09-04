@@ -9,7 +9,7 @@
 - custom login page вместо browser-native Basic Auth prompt;
 - signed `HttpOnly; SameSite=Strict` web sessions, `Запомнить вход`, logout и возврат в исходный `#/session/...` после re-auth;
 - root sessions в sidebar и isolated quick-session workspaces;
-- Build-only пользовательский execution surface;
+- Build/Plan пользовательский execution surface с сохранением выбранного профиля;
 - web- и TUI-model picker с зеркальной секцией favorites: модель остаётся и в исходной группе;
 - session-scoped model, effort и Build/Plan controls без переноса выбора между диалогами;
 - копирование диалога с контекстом и подтверждаемый перенос через handoff между проектами;

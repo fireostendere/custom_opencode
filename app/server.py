@@ -230,7 +230,7 @@ HOP_BY_HOP = {
 
 def issue_session_token(ttl_seconds: int) -> str:
     payload = json.dumps(
-        {"u": CLIENT_USER, "exp": int(time.time()) + ttl_seconds, "v": 1},
+        {"u": CLIENT_USER, "exp": int(time.time()) + ttl_seconds, "v": 1, "nonce": secrets.token_urlsafe(16)},
         separators=(",", ":"),
         ensure_ascii=False,
     ).encode("utf-8")

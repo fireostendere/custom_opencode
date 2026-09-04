@@ -77,7 +77,7 @@ Installer:
 8. делает backup существующего `opencode.json`;
 9. устанавливает `AGENTS.md`, prompts и plugins;
 10. аккуратно дополняет auth storage только реально заданными credential fields;
-11. создаёт `~/.local/bin/custom-opencode` и `custom-opencode-update`;
+11. создаёт `~/.local/bin/custom-opencode`, `custom-opencode-update` и контроллер `custom-opencode-webserver` для TUI wizard;
 12. перезапускает web/OpenCode V2 services;
 13. выполняет post-install zero-LLM-token self-test.
 

@@ -1,6 +1,8 @@
 /* Branch-local visual cleanup for the compact composer. */
 #agentControls{
-  display:none!important;
+  display:flex!important;
+  align-items:center;
+  gap:3px;
   min-width:0;
   height:44px;
   padding:3px;
@@ -19,7 +21,7 @@
 .controls{
   flex:0 1 540px;
   display:grid;
-  grid-template-columns:minmax(0,1.4fr) minmax(128px,.8fr);
+  grid-template-columns:minmax(0,1.4fr) minmax(128px,.8fr) minmax(128px,auto);
   gap:8px;
   overflow:visible;
 }
@@ -51,6 +53,14 @@
 .permission-actions button{
   min-width:108px;
   min-height:44px;
+}
+
+@media(max-width:900px){
+  #unifiedPanelToggle{
+    display:inline-flex!important;
+    align-items:center;
+    justify-content:center;
+  }
 }
 
 .permission-banner[hidden]{
@@ -149,6 +159,11 @@ dialog .workflow-modal.large{
     max-width:none;
     grid-template-columns:minmax(0,1.3fr) minmax(116px,.9fr);
     gap:8px;
+  }
+
+  #agentControls{
+    grid-column:1 / -1;
+    width:100%;
   }
 
   #modelButton,

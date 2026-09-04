@@ -42,6 +42,7 @@ globalThis.__smoke = {
     name,
     (...args) => handlers[name]?.(...args),
   ])),
+  ux: await import(`data:text/javascript;base64,${Buffer.from(readFileSync(resolve(root, 'app/ux-state.js'), 'utf8')).toString('base64')}`),
 }
 
 // ── Load app.js as a module: swap imports/boot for stubs, expose internals ─
@@ -52,8 +53,10 @@ source = source
     "import { escapeHtml, renderMarkdown } from './markdown.js'",
     'const escapeHtml = (value) => String(value ?? ""); const renderMarkdown = (value) => String(value ?? "")',
   )
+  .replace("import { modeFromAgent, ORCHESTRATED_MODELS } from './ux-state.js'", 'const { modeFromAgent, ORCHESTRATED_MODELS } = globalThis.__smoke.ux')
 assert.ok(!source.includes("from './api.js'"), 'api import replacement failed')
 assert.ok(!source.includes("from './markdown.js'"), 'markdown import replacement failed')
+assert.ok(!source.includes("from './ux-state.js'"), 'ux-state import replacement failed')
 const bootIndex = source.lastIndexOf('initialize().catch')
 assert.ok(bootIndex > 0, 'app.js boot call not found')
 source = source.slice(0, bootIndex)

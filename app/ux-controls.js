@@ -43,10 +43,11 @@ function agentButtons() {
   return [...document.querySelectorAll('#agentControls [data-agent]')]
 }
 function rawActiveAgent() {
-  return agentButtons().find((button) => button.classList.contains('active'))?.dataset.agent || 'build'
+  const active = agentButtons().filter((button) => button.classList.contains('active'))
+  return active.find((button) => !['build', 'plan'].includes(button.dataset.agent))?.dataset.agent || active[0]?.dataset.agent || 'build'
 }
 function currentMode() {
-  return 'build'
+  return modeFromAgent(rawActiveAgent())
 }
 function currentProfile() {
   if (desiredProfile) return desiredProfile
@@ -55,9 +56,31 @@ function currentProfile() {
 function nativeAgentButton(agentID) {
   return agentButtons().find((button) => button.dataset.agent === agentID) || null
 }
-function clickNativeAgent(agentID) {
+function targetAgent(mode, profile) {
+  const preferred = agentFor(mode, profile)
+  return nativeAgentButton(preferred) ? preferred : mode
+}
+function clickNativeAgent(agentID, allowVirtual = false) {
   const button = nativeAgentButton(agentID)
-  if (!button) return false
+  if (!button) {
+    if (!allowVirtual || pendingAgentTarget === agentID) return false
+    const changeAgent = window.CustomOpenCodeControls?.changeAgent
+    if (typeof changeAgent !== 'function') return false
+    pendingAgentTarget = agentID
+    failedAgentTarget = ''
+    Promise.resolve(changeAgent(agentID)).then((ok) => {
+      if (pendingAgentTarget !== agentID) return
+      pendingAgentTarget = ''
+      if (!ok) failedAgentTarget = agentID
+      syncAgentSurface()
+    }).catch(() => {
+      if (pendingAgentTarget !== agentID) return
+      pendingAgentTarget = ''
+      failedAgentTarget = agentID
+      syncAgentSurface()
+    })
+    return true
+  }
   if (rawActiveAgent() === agentID) {
     pendingAgentTarget = ''
     failedAgentTarget = ''
@@ -91,15 +114,16 @@ function syncAgentSurface() {
     pendingAgentTarget = ''
     failedAgentTarget = ''
   }
-  const mode = 'build'
+  const mode = currentMode()
   const profile = currentProfile()
-  const expectedAgent = agentFor(mode, profile)
+  const expectedAgent = targetAgent(mode, profile)
   if (expectedAgent !== activeAgent && expectedAgent !== failedAgentTarget) clickNativeAgent(expectedAgent)
   document.documentElement.dataset.modelProfile = profile
   document.documentElement.dataset.executionMode = mode
   for (const button of agentButtons()) {
     const id = button.dataset.agent || ''
-    button.classList.toggle('ux-hidden-agent', true)
+    button.classList.toggle('ux-hidden-agent', !['build', 'plan'].includes(id))
+    button.classList.toggle('active', id === mode || id === activeAgent && ['build', 'plan'].includes(id))
   }
 }
 
@@ -215,7 +239,7 @@ async function chooseModel(profile, model) {
   const changed = await window.CustomOpenCodeControls.changeModel(model)
   if (!valid()) { setTransitionControls(false); return }
   if (!changed) { endModelTransition(pending, pending.previousProfile); return }
-  pending.agent = agentFor(currentMode(), profile)
+  pending.agent = targetAgent(currentMode(), profile)
   const agentChanged = await window.CustomOpenCodeControls.changeAgent(pending.agent)
   if (!valid()) { setTransitionControls(false); return }
   if (agentChanged) {
@@ -239,7 +263,15 @@ function finishAgentTransition(detail) {
   if (detail?.sessionID !== (pending.sessionID === '__new__' ? null : pending.sessionID)) return
 }
 function chooseOrchestrated(model = ORCHESTRATED_MODEL) { chooseModel('orchestrated', model) }
-function chooseDirect() { chooseModel('direct', ORCHESTRATED_MODEL) }
+function chooseDirect() {
+  const model = window.CustomOpenCodeControls?.directModel?.()
+  if (model) return chooseModel('direct', model)
+  desiredProfile = 'direct'
+  persistProfile('direct')
+  syncAgentSurface()
+  syncModelSurface()
+  return Promise.resolve(false)
+}
 
 function installAgentModeProxy() {
   const root = $('agentControls')
@@ -251,11 +283,11 @@ function installAgentModeProxy() {
     if (requested !== 'build' && requested !== 'plan') return
     const requestedMode = requested === 'plan' ? 'plan' : 'build'
     failedAgentTarget = ''
-    const target = agentFor(requestedMode, currentProfile())
+    const target = targetAgent(requestedMode, currentProfile())
     if (target === requested) return
     event.preventDefault()
     event.stopImmediatePropagation()
-    clickNativeAgent(target)
+    clickNativeAgent(target, true)
   }, true)
 
   const observer = new MutationObserver(() => {
