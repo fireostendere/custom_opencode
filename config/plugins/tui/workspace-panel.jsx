@@ -297,8 +297,8 @@ export default Plugin.define({
           position="absolute"
           zIndex={1}
           {...(vertical
-            ? { [atStart ? "left" : "right"]: 0, top: 1, width: HANDLE, height: 1 }
-            : { [atStart ? "top" : "bottom"]: 0, left: 1, height: HANDLE, width: 1 })}
+            ? { [atStart ? "left" : "right"]: 0, top: 0, width: HANDLE, height: "100%" }
+            : { [atStart ? "top" : "bottom"]: 0, left: 0, height: HANDLE, width: "100%" })}
           justifyContent="center"
           alignItems="center"
           onMouseDown={(event) => { event?.stopPropagation?.(); setCollapsed(props.side, true) }}
@@ -377,6 +377,8 @@ export default Plugin.define({
                 flexGrow={1}
                 minHeight={0}
                 width="100%"
+                marginRight={props.side === "left" ? HANDLE : 0}
+                marginLeft={props.side === "right" ? HANDLE : 0}
                 scrollY={true}
                 stickyScroll={true}
                 stickyStart="bottom"
@@ -391,7 +393,7 @@ export default Plugin.define({
                   <PanelContent view={item().active} sessionID={sessionID()} />
                 </box>
               </scrollbox>
-              <box flexDirection="row" justifyContent="flex-end" paddingX={1} flexShrink={0}>
+              <box flexDirection="row" justifyContent="flex-end" paddingX={1} marginRight={props.side === "left" ? HANDLE : 0} flexShrink={0}>
                 <box onMouseDown={() => jumpToEnd(props.side)}><text fg={theme.text.action.secondary.default}><span>↓ конец</span></text></box>
               </box>
               <ExpandedHandle side={props.side} />
