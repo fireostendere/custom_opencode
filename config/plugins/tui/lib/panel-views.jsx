@@ -195,7 +195,13 @@ export function createPanelViews(context) {
   const unsubscribeLimits = onLimitsChange(() => setLimits(getLimitsSync()))
   getLimits().then(setLimits).catch(() => {})
   const [tick, setTick] = createSignal(0)
-  const ticker = setInterval(() => setTick((value) => value + 1), 60_000)
+  const ticker = setInterval(() => {
+    setTick((value) => value + 1)
+    const current = getLimitsSync()
+    if (current.gemini?.rateLimited) {
+      setLimits(current)
+    }
+  }, 1000)
   ticker.unref?.()
 
   const [version, setVersion] = createSignal(0)
@@ -251,10 +257,17 @@ export function createPanelViews(context) {
     )
   }
   function LimitsView() {
+    tick()
     const data = () => limits() ?? {}
     const codex = () => data().codex ?? { available: false }
     const qwen = () => data().qwen ?? { available: false }
-    const gemini = () => data().gemini ?? { available: false }
+    const gemini = () => {
+      const g = data().gemini
+      if (g?.rateLimited) {
+        return getLimitsSync().gemini ?? g
+      }
+      return g ?? { available: false }
+    }
     return (
       <box flexDirection="column" gap={1} flexShrink={0}>
         <Show when={codex().available} fallback={<text fg={theme.text.subdued}><span>ChatGPT: нет данных</span></text>}>
@@ -266,11 +279,13 @@ export function createPanelViews(context) {
           <WindowRows label="Alibaba · 7д" win={qwen().sevenDay} />
         </Show>
         <Show when={gemini().available} fallback={<text fg={theme.text.subdued}><span>Gemini: не настроен</span></text>}>
+          <Show when={gemini().rateLimited}>
+            <text fg={theme.text.feedback.warning.default}><span>Лимит Gemini (429): повтор через {gemini().seconds}с…</span></text>
+          </Show>
           <WindowRows label="Gemini · 1м (TPM)" win={gemini().minuteTokens} />
           <WindowRows label="Gemini · 1м (RPM)" win={gemini().minuteRequests} />
         </Show>
         {(() => {
-          tick()
           const promo = getNightPromoStatus()
           return <text fg={promo.active ? theme.text.feedback.success.default : theme.text.subdued}><span>{promo.active ? `🌙 −50% · ещё ${fmtDur(promo.minutesToToggle)}` : `☀ −50% · через ${fmtDur(promo.minutesToToggle)}`}</span></text>
         })()}

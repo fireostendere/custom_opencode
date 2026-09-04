@@ -383,7 +383,7 @@ for name in "${SERVICE_ENV[@]}"; do
     timeout 15s "${SERVICE_OPENCODE[@]}" service set env "$name" "$value" >/dev/null
   fi
 done
-timeout 45s "${SERVICE_OPENCODE[@]}" service start >/dev/null
+timeout 45s "${SERVICE_OPENCODE[@]}" service restart >/dev/null || timeout 45s "${SERVICE_OPENCODE[@]}" service start >/dev/null
 systemctl --user restart opencode-web-client.service
 
 if [[ "$SELFTEST" != 0 ]]; then

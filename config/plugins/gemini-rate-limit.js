@@ -169,23 +169,182 @@ export function createRetryFetch(origFetch) {
   }
 }
 
+const rawFetch = globalThis.fetch
+
 export default Plugin.define({
   id: "gemini-rate-limit",
-  setup(ctx) {
+  setup: async (ctx) => {
     writeRateLimitState({ active: false, seconds: 0 })
+
+    const pendingRequests = new Map()
+
+    if (ctx.session?.hook) {
+      await ctx.session.hook(
+        "http.request",
+        async (event) => {
+          const url = event.request?.url || ""
+          const isGoogle =
+            event.model?.providerID === "google" ||
+            url.includes("generativelanguage.googleapis.com") ||
+            url.includes("aiplatform.googleapis.com")
+          if (!isGoogle) return
+
+          const key = `${event.sessionID || ""}:${url}`
+          let bodyBuffer = null
+          try {
+            const cloned = event.request.clone()
+            bodyBuffer = await cloned.arrayBuffer()
+          } catch {}
+
+          const headers = Object.fromEntries(event.request.headers.entries())
+          delete headers.host
+
+          const reqInfo = {
+            url,
+            method: event.request.method,
+            headers,
+            body: bodyBuffer,
+          }
+          pendingRequests.set(key, reqInfo)
+          if (event.request) {
+            try {
+              event.request.__savedReqInfo = reqInfo
+            } catch {}
+          }
+        },
+        { providerID: "google" }
+      )
+
+      await ctx.session.hook(
+        "http.response",
+        async (event) => {
+          const url = event.request?.url || ""
+          const isGoogle =
+            event.model?.providerID === "google" ||
+            url.includes("generativelanguage.googleapis.com") ||
+            url.includes("aiplatform.googleapis.com")
+          if (!isGoogle) return
+
+          const key = `${event.sessionID || ""}:${url}`
+          const saved = event.request?.__savedReqInfo || pendingRequests.get(key)
+
+          if (event.response.status !== 429) {
+            if (event.response.status === 200) {
+              const size = saved?.body?.byteLength || 500
+              const estimatedTokens = Math.max(50, Math.ceil(size / 4))
+              requestHistory.push({ time: Date.now(), tokens: estimatedTokens })
+              dailyRequests += 1
+              dailyTokens += estimatedTokens
+              writeRateLimitState({ active: false, seconds: 0 })
+            }
+            pendingRequests.delete(key)
+            return
+          }
+
+          // HTTP 429 Quota Exceeded!
+          let retrySeconds = 60
+          let metric = "generativelanguage.googleapis.com/generate_content_paid_tier_input_token_count"
+          let limit = 2000000
+          try {
+            const cloned = event.response.clone()
+            const text = await cloned.text()
+            retrySeconds = parseRetrySeconds(text, event.response.headers)
+            const metricMatch = /metric:\s*([^\s,]+)/i.exec(text)
+            if (metricMatch) metric = metricMatch[1]
+            const limitMatch = /limit:\s*([0-9]+)/i.exec(text)
+            if (limitMatch) limit = parseInt(limitMatch[1], 10)
+          } catch {
+            retrySeconds = parseRetrySeconds("", event.response.headers)
+          }
+
+          // Add 1s safety margin
+          retrySeconds += 1
+
+          console.warn(`[gemini-rate-limit] 429 Quota Exceeded for ${metric}. Waiting ${retrySeconds}s before retrying...`)
+
+          const until = Date.now() + retrySeconds * 1000
+
+          for (let rem = retrySeconds; rem > 0; rem--) {
+            writeRateLimitState({
+              active: true,
+              provider: "google",
+              seconds: rem,
+              total: retrySeconds,
+              until,
+              metric,
+              limit,
+              message: `Лимит Gemini (429): повтор через ${rem}с…`,
+            })
+            await sleep(1000)
+          }
+
+          writeRateLimitState({ active: false, seconds: 0 })
+
+          // Retry request up to 5 times
+          if (saved) {
+            for (let attempt = 1; attempt <= 5; attempt++) {
+              try {
+                console.warn(`[gemini-rate-limit] Retrying Gemini request (attempt ${attempt})...`)
+                const retryHeaders = { ...saved.headers }
+                delete retryHeaders.host
+                const retryReq = new Request(saved.url, {
+                  method: saved.method,
+                  headers: retryHeaders,
+                  body: saved.body,
+                })
+                const newResponse = await rawFetch(retryReq)
+                if (newResponse.status === 429) {
+                  let moreSec = 30
+                  try {
+                    const t = await newResponse.clone().text()
+                    moreSec = parseRetrySeconds(t, newResponse.headers) + 1
+                  } catch {}
+                  const nextUntil = Date.now() + moreSec * 1000
+                  for (let rem = moreSec; rem > 0; rem--) {
+                    writeRateLimitState({
+                      active: true,
+                      provider: "google",
+                      seconds: rem,
+                      total: moreSec,
+                      until: nextUntil,
+                      metric,
+                      limit,
+                      message: `Лимит Gemini (429): повтор через ${rem}с…`,
+                    })
+                    await sleep(1000)
+                  }
+                  writeRateLimitState({ active: false, seconds: 0 })
+                  continue
+                }
+
+                // SUCCESS: Replace response in-place for OpenCode SessionRunner
+                event.response = newResponse
+                console.warn(`[gemini-rate-limit] Retry succeeded with HTTP ${newResponse.status}! Continuing generation.`)
+                if (newResponse.status === 200) {
+                  const size = saved?.body?.byteLength || 500
+                  const estimatedTokens = Math.max(50, Math.ceil(size / 4))
+                  requestHistory.push({ time: Date.now(), tokens: estimatedTokens })
+                  dailyRequests += 1
+                  dailyTokens += estimatedTokens
+                  writeRateLimitState({ active: false, seconds: 0 })
+                }
+                pendingRequests.delete(key)
+                return
+              } catch (err) {
+                console.error(`[gemini-rate-limit] Retry attempt ${attempt} failed:`, err)
+                await sleep(1500)
+              }
+            }
+          }
+          pendingRequests.delete(key)
+        },
+        { providerID: "google" }
+      )
+    }
 
     if (typeof globalThis.fetch === "function") {
       const original = globalThis.fetch
       globalThis.fetch = createRetryFetch(original)
-    }
-
-    if (ctx.aisdk?.hook) {
-      ctx.aisdk.hook("sdk", async (hook) => {
-        if (hook?.options) {
-          const orig = hook.options.fetch || globalThis.fetch
-          hook.options.fetch = createRetryFetch(orig)
-        }
-      })
     }
 
     return () => {
