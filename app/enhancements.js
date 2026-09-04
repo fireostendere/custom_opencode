@@ -152,10 +152,14 @@ function renderGeminiQuota(value) {
 async function refreshLimits() {
   const panel = $('providerLimits')
   if (!panel) return
-  panel.classList.add('loading-limits')
+  if (!panel._lastMarkup) panel.classList.add('loading-limits')
   try {
     const value = await request('/client-limits.json')
-    panel.innerHTML = `${renderQwenQuota(value?.qwen)}${renderOpenAIQuota(value?.openai)}${renderGeminiQuota(value?.gemini)}`
+    const markup = `${renderQwenQuota(value?.qwen)}${renderOpenAIQuota(value?.openai)}${renderGeminiQuota(value?.gemini)}`
+    if (panel._lastMarkup !== markup) {
+      panel._lastMarkup = markup
+      panel.innerHTML = markup
+    }
   } catch (error) {
     panel.innerHTML = `<div class="quota-note">Не удалось обновить: ${escapeHtml(error.message)}</div>`
   } finally {

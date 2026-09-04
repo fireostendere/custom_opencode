@@ -1135,7 +1135,8 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   if (children.some((child) => state.childDetails.get(child.id)?.rag)) panelMetaParts.push('RAG ✓')
   const panelMeta = panelMetaParts.join(' · ')
   const planMarkup = planTotal ? `<section class="orchestration-plan" aria-label="План"><div class="orchestration-plan-head"><div class="orchestration-plan-copy"><strong>${escapeHtml(plan.title || 'План')}</strong><span>Текущий этап: ${escapeHtml(currentStage)}</span></div><span class="orchestration-plan-count">${planDone}/${planTotal}</span></div><div class="orchestration-plan-meter" role="progressbar" aria-valuemin="0" aria-valuemax="${planTotal}" aria-valuenow="${planDone}"><span style="width:${planPercent}%"></span></div><ul class="orchestration-plan-list">${todos.map((todo) => { const status = ['completed', 'in_progress'].includes(todo?.status) ? todo.status : 'pending'; const mark = status === 'completed' ? '✓' : status === 'in_progress' ? '•' : ''; return `<li class="${status}"><span class="orchestration-plan-mark" aria-hidden="true">${mark}</span><span>${escapeHtml(todo?.content || '')}</span></li>` }).join('')}${plan.truncated ? `<li class="truncated"><span class="orchestration-plan-mark" aria-hidden="true">…</span><span>Показаны первые ${todos.length} из ${planTotal} пунктов</span></li>` : ''}</ul></section>` : '<div class="activity-empty">План появится после начала оркестрации.</div>'
-  const nodes = [`<div class="orchestration-node primary-node ${rootStatus}"><span class="node-icon"></span><div class="node-main"><div class="node-title">${escapeHtml(rootModel)}</div><div class="node-meta">${escapeHtml(currentMode())} · primary</div><div class="node-purpose">Основная модель: ведёт диалог и собирает итог</div></div><span class="node-time">${state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''}</span></div>`]
+  const primaryTime = state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''
+  const nodes = [`<div class="orchestration-node primary-node ${rootStatus}"><span class="node-icon"></span><div class="node-main"><div class="node-title">${escapeHtml(rootModel)}</div><div class="node-meta">${escapeHtml(currentMode())} · primary</div><div class="node-purpose">Основная модель: ведёт диалог и собирает итог</div></div><span class="node-time">${primaryTime}</span></div>`]
   const childActivities = []
   for (const child of children) {
     const id = child?.id || ''
@@ -1161,7 +1162,13 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   const planPanelMarkup = plan ? `<details class="orchestration-panel plan-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${panelStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>План</strong><span>${escapeHtml(currentStage)} · ${escapeHtml(panelMeta)}</span></span><span class="orchestration-summary-status ${panelStatus}">${panelStatusLabel}</span></summary><div class="activity-panel-body plan-panel-body">${planMarkup}</div></details>` : ''
   const livePanelMarkup = `<details class="orchestration-panel live-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${liveStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>Инструменты и агенты</strong><span>${escapeHtml(liveSummary)}</span></span><span class="orchestration-summary-status ${liveStatus}">${liveStatusLabel}</span></summary><div class="orchestration-nodes activity-panel-body">${currentActivity ? `<div class="activity-current-label">Сейчас</div>${renderActivityItem(currentActivity, true)}` : '<div class="activity-empty">Сейчас инструмент не выполняется.</div>'}<div class="activity-agents-label">Участники оркестрации</div>${nodes.join('')}${history ? `<div class="activity-history-label">Последние события</div>${history}` : ''}</div></details>`
   const markup = `<div class="orchestration-panels">${planPanelMarkup}${livePanelMarkup}</div>`
-  if (host._orchestrationMarkup === markup) return
+  const structureMarkup = primaryTime ? markup.replace(primaryTime, '__TIME__') : markup
+  if (host._structureMarkup === structureMarkup) {
+    const timeEl = host.querySelector('.primary-node .node-time')
+    if (timeEl && timeEl.textContent !== primaryTime) timeEl.textContent = primaryTime
+    return
+  }
+  host._structureMarkup = structureMarkup
   host._orchestrationMarkup = markup
   host.innerHTML = markup
   const details = [...host.querySelectorAll('details')]
@@ -1206,14 +1213,21 @@ function renderStatus() {
   const host = $('workflowStatus')
   if (!host) return
   host.hidden = !state.sessionID
-  if (host.hidden) { host.innerHTML = ''; return }
+  if (host.hidden) {
+    if (host.innerHTML !== '') host.innerHTML = ''
+    host._lastMarkup = ''
+    return
+  }
   const model = $('modelButton')?.textContent?.trim() || 'Модель'
   const context = $('usageButton')?.textContent?.trim() || ''
   const cost = usageCost()
   const elapsed = running() && state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''
   const queue = Number(state.queue?.count || 0)
   const rag = state.children.some((child) => state.childDetails.get(child.id)?.rag) || state.settings?.rag === 'on'
-  host.innerHTML = `<span class="wf-pill strong">${escapeHtml(model)}</span>${context ? `<span class="wf-pill">${escapeHtml(context)}</span>` : ''}${cost ? `<span class="wf-pill">${escapeHtml(cost)}</span>` : ''}${elapsed ? `<span class="wf-pill"><span class="wf-dot ${running() ? 'busy' : ''}"></span>${escapeHtml(elapsed)}</span>` : ''}${rag ? '<span class="wf-pill">RAG ✓</span>' : ''}<button type="button" class="wf-pill clickable" id="queueStatusButton">Очередь ${queue}</button>`
+  const markup = `<span class="wf-pill strong">${escapeHtml(model)}</span>${context ? `<span class="wf-pill">${escapeHtml(context)}</span>` : ''}${cost ? `<span class="wf-pill">${escapeHtml(cost)}</span>` : ''}${elapsed ? `<span class="wf-pill"><span class="wf-dot ${running() ? 'busy' : ''}"></span>${escapeHtml(elapsed)}</span>` : ''}${rag ? '<span class="wf-pill">RAG ✓</span>' : ''}<button type="button" class="wf-pill clickable" id="queueStatusButton">Очередь ${queue}</button>`
+  if (host._lastMarkup === markup) return
+  host._lastMarkup = markup
+  host.innerHTML = markup
   $('queueStatusButton')?.addEventListener('click', openQueueDialog)
 }
 function renderAll() {
@@ -1408,9 +1422,9 @@ function init() {
   bindEvents()
   observeRuntime()
   refreshSelectedSession()
-  setInterval(tickFast, 1100)
-  setInterval(tickMedium, 3200)
-  setInterval(() => { if (state.sessionID) renderStatus() }, 1000)
+  setInterval(tickFast, 2500)
+  setInterval(tickMedium, 5000)
+  setInterval(() => { if (state.sessionID) renderStatus() }, 2000)
 }
 
 if (typeof document !== 'undefined') init()
