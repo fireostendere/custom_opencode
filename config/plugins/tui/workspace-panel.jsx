@@ -423,53 +423,109 @@ export default Plugin.define({
       else if (String(value).startsWith("view:")) setZoneView(side, String(value).slice(5))
     }
 
-    function configureZone(side) {
+    async function showSelectDialog(title, placeholder, options) {
+      const dialog = context.ui?.dialog
+      if (typeof dialog?.["select"] === "function") {
+        const result = await dialog["select"]({
+          title,
+          placeholder,
+          options: options.map((opt) => ({
+            title: opt.title,
+            value: opt.value,
+            description: opt.description,
+          })),
+        })
+        return result?.value ?? result ?? null
+      }
       const DialogSelect = context.ui.DialogSelect
-      const item = zone(side)
-      context.ui.dialog.replace(() => (
-        <DialogSelect
-          title={`${SIDE_LABEL[side]} panel`}
-          placeholder="Настроить зону…"
-          options={[
-            { title: item.enabled ? "Показать / развернуть" : "Включить", value: "show", description: `Сейчас: ${item.enabled ? panelTitle(item.active) : "выключена"}` },
-            ...PANEL_DEFS.map((view) => ({ title: `View: ${view.title}`, value: `view:${view.id}`, description: view.id === item.active ? "Текущий вид" : undefined })),
-            { title: item.pinned ? "Unpin → overlay" : "Pin → dock", value: item.pinned ? "unpin" : "pin" },
-            { title: item.collapsed ? "Развернуть" : "Свернуть", value: item.collapsed ? "expand" : "collapse" },
-            { title: isVertical(side) ? "Шире +4" : "Выше +2", value: "grow" },
-            { title: isVertical(side) ? "Уже −4" : "Ниже −2", value: "shrink" },
-            { title: "Перейти в конец", value: "end" },
-            { title: "Выключить зону", value: "disable" },
-          ]}
-          onSelect={(option) => {
-            context.ui.dialog.clear()
-            applyZoneAction(side, option)
-          }}
-        />
-      ))
+      if (typeof dialog?.replace === "function" && DialogSelect) {
+        return new Promise((resolve) => {
+          dialog.replace(() => (
+            <DialogSelect
+              title={title}
+              placeholder={placeholder}
+              options={options}
+              onSelect={(option) => {
+                dialog.clear?.()
+                resolve(option?.value ?? option)
+              }}
+            />
+          ))
+        })
+      }
+      return null
     }
 
-    function configurePanels() {
-      const DialogSelect = context.ui.DialogSelect
-      context.ui.dialog.replace(() => (
-        <DialogSelect
-          title="Panels"
-          placeholder="Выбрать dock-зону…"
-          options={PANEL_SIDES.map((side) => {
-            const item = zone(side)
-            return {
-              title: SIDE_LABEL[side],
-              value: side,
-              description: item.enabled
-                ? `${panelTitle(item.active)} · ${item.pinned ? "pinned" : "overlay"}${item.collapsed ? " · collapsed" : ""} · ${extent(side)}`
-                : "disabled",
-            }
-          })}
-          onSelect={(option) => {
-            context.ui.dialog.clear()
-            configureZone(option.value)
-          }}
-        />
-      ))
+    async function configureZone(side) {
+      if (!side) return
+      const item = zone(side)
+      const options = [
+        {
+          title: item.enabled ? "Показать / развернуть" : "Включить",
+          value: "show",
+          description: `Сейчас: ${item.enabled ? panelTitle(item.active) : "выключена"}`,
+        },
+        ...PANEL_DEFS.map((view) => ({
+          title: `Вид: ${view.title}`,
+          value: `view:${view.id}`,
+          description: view.id === item.active ? "Текущий вид (активен)" : view.short,
+        })),
+        {
+          title: item.pinned ? "Сделать плавающей (overlay)" : "Закрепить в доке (pin)",
+          value: item.pinned ? "unpin" : "pin",
+          description: item.pinned ? "Не сдвигает основной редактор" : "Сдвигает основной редактор",
+        },
+        {
+          title: item.collapsed ? "Развернуть" : "Свернуть",
+          value: item.collapsed ? "expand" : "collapse",
+        },
+        {
+          title: isVertical(side) ? "Сделать шире (+4)" : "Сделать выше (+2)",
+          value: "grow",
+        },
+        {
+          title: isVertical(side) ? "Сделать уже (−4)" : "Сделать ниже (−2)",
+          value: "shrink",
+        },
+        {
+          title: "Перейти в конец (↓ конец)",
+          value: "end",
+        },
+        {
+          title: "Выключить зону",
+          value: "disable",
+          description: "Полностью скрыть панель",
+        },
+      ]
+      const chosen = await showSelectDialog(`${SIDE_LABEL[side]} панель`, "Что настроить в панели…", options)
+      if (chosen != null) applyZoneAction(side, chosen)
+    }
+
+    async function configurePanels() {
+      const options = [
+        ...PANEL_SIDES.map((side) => {
+          const item = zone(side)
+          return {
+            title: `${SIDE_LABEL[side]} панель`,
+            value: side,
+            description: item.enabled
+              ? `${panelTitle(item.active)} · ${item.pinned ? "pinned" : "overlay"}${item.collapsed ? " · collapsed" : ""} · ${extent(side)}`
+              : "выключена",
+          }
+        }),
+        {
+          title: "Сбросить раскладку панелей",
+          value: "reset",
+          description: "Восстановить исходные настройки всех док-зон",
+        },
+      ]
+      const chosen = await showSelectDialog("Панели (Workspace Dock)", "Выбрать dock-зону…", options)
+      if (!chosen) return
+      if (chosen === "reset") {
+        resetZones()
+        return
+      }
+      await configureZone(chosen)
     }
 
     function runZoneAction(side, action, view) {
