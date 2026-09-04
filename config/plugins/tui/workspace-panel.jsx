@@ -372,28 +372,33 @@ export default Plugin.define({
                   <For each={PANEL_DEFS}>{(panel) => <Tab side={props.side} view={panel.id} label={panel.short} />}</For>
                 </box>
               </box>
-              <scrollbox
-                ref={(node) => { scroll = node; scrollRefs.set(props.side, node) }}
-                flexGrow={1}
-                minHeight={0}
-                width="100%"
-                marginRight={props.side === "left" ? HANDLE : 0}
-                marginLeft={props.side === "right" ? HANDLE : 0}
-                scrollY={true}
-                stickyScroll={true}
-                stickyStart="bottom"
-                viewportOptions={{ paddingRight: 1 }}
-                verticalScrollbarOptions={{
-                  visible: true,
-                  paddingLeft: 1,
-                  trackOptions: { backgroundColor: theme.background.surface.offset, foregroundColor: theme.scrollbar.default },
-                }}
-              >
-                <box flexDirection="column" paddingX={1} paddingTop={1} paddingBottom={1} gap={1} flexShrink={0}>
-                  <PanelContent view={item().active} sessionID={sessionID()} />
-                </box>
-              </scrollbox>
-              <box flexDirection="row" justifyContent="flex-end" paddingX={1} marginRight={props.side === "left" ? HANDLE : 0} flexShrink={0}>
+              <box flexDirection="row" flexGrow={1} width="100%" minHeight={0}>
+                <Show when={props.side === "right"}>
+                  <box width={HANDLE} flexShrink={0} />
+                </Show>
+                <scrollbox
+                  ref={(node) => { scroll = node; scrollRefs.set(props.side, node) }}
+                  flexGrow={1}
+                  minHeight={0}
+                  scrollY={true}
+                  stickyScroll={true}
+                  stickyStart="bottom"
+                  viewportOptions={{ paddingRight: 1 }}
+                  verticalScrollbarOptions={{
+                    visible: true,
+                    paddingLeft: 1,
+                    trackOptions: { backgroundColor: theme.background.surface.offset, foregroundColor: theme.scrollbar.default },
+                  }}
+                >
+                  <box flexDirection="column" paddingX={1} paddingTop={1} paddingBottom={1} gap={1} flexShrink={0}>
+                    <PanelContent view={item().active} sessionID={sessionID()} />
+                  </box>
+                </scrollbox>
+                <Show when={props.side === "left"}>
+                  <box width={HANDLE} flexShrink={0} />
+                </Show>
+              </box>
+              <box flexDirection="row" justifyContent="flex-end" paddingX={1} paddingRight={props.side === "left" ? HANDLE + 1 : 1} flexShrink={0}>
                 <box onMouseDown={() => jumpToEnd(props.side)}><text fg={theme.text.action.secondary.default}><span>↓ конец</span></text></box>
               </box>
               <ExpandedHandle side={props.side} />
