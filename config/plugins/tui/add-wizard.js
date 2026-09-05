@@ -299,7 +299,6 @@ function commandRows(context) {
         description: `Wizard or native JSON command for ${kind}`,
         group: "Configuration",
         palette: true,
-        slash: { name: command, arguments: true },
         run: (input) => processParsed(context, parseAddCommand(slashInput(command, input))),
       }
     }),

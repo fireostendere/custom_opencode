@@ -12,6 +12,7 @@ const promptHistory = await readFile(new URL('config/plugins/tui/prompt-history.
 const panelSlash = await readFile(new URL('config/plugins/tui/panel-slash.jsx', root), 'utf8')
 const workspacePanel = await readFile(new URL('config/plugins/tui/workspace-panel.jsx', root), 'utf8')
 const panelViews = await readFile(new URL('config/plugins/tui/lib/panel-views.jsx', root), 'utf8')
+assert.ok(panelViews.includes('current.gemini?.rateLimited || limits()?.gemini?.rateLimited'), 'Countdown must refresh when the rate limit ends')
 const retiredPanel = await readFile(new URL('config/plugins/tui/limits-panels.jsx', root), 'utf8')
 const tuiPackage = JSON.parse(await readFile(new URL('config/plugins/tui/package.json', root), 'utf8'))
 const tuiServerEntry = await readFile(new URL('config/plugins/tui/index.js', root), 'utf8')

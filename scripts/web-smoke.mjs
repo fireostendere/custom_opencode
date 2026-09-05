@@ -65,6 +65,7 @@ if (controls.agents.some((agent) => agent.id === 'role-builder')) throw new Erro
 
 const enhancements = await loadSource('app/enhancements.js')
 const enhancementsSource = readFileSync(resolve(root, 'app/enhancements.js'), 'utf8')
+if (!enhancementsSource.includes("panel._lastMarkup = ''")) throw new Error('Failed quota refresh must invalidate cached markup')
 if (enhancements.parseSlash('/status')?.command !== 'status') throw new Error('Slash parser failed')
 if (enhancements.parseSlash('/review foo bar')?.arguments !== 'foo bar') throw new Error('Slash arguments parser failed')
 if (enhancements.parseSlash('ordinary text') !== null) throw new Error('Slash parser accepted normal text')
@@ -240,7 +241,8 @@ for (const marker of [
 if (!advanced.includes('syncProjectModelOptions')) throw new Error('Project settings must use the current model catalog')
 if (advanced.includes('workflowSurfaceEnabled')) throw new Error('Activity must not depend on profile or Plan mode')
 if (!advanced.includes('const livePanelMarkup = `<details class="orchestration-panel live-panel">')) throw new Error('Build must always render the tool and agent activity panel')
-if (!advanced.includes('if (host._orchestrationMarkup === markup) return')) throw new Error('Unchanged activity markup must not churn the DOM')
+if (!advanced.includes('if (host._structureMarkup === structureMarkup)')) throw new Error('Unchanged activity structure must not churn the DOM')
+if (!appSource.includes('inner._lastHtml===fullHtml&&!anchor&&!bottom')) throw new Error('DOM cache must not suppress requested scroll restoration')
 if (advanced.includes('id="projectDefaultMode"')) throw new Error('Web project settings must not expose Plan mode')
 if (!advanced.includes("const panelOpen={plan:host.querySelector('.plan-panel')?.open===true")) throw new Error('Orchestration panel must preserve its open state while refreshing')
 if (!advanced.includes('captureScrollState(host.querySelector(\'.plan-panel-body\'))') || !advanced.includes('captureScrollState(host.querySelector(\'.orchestration-nodes\'))') || !advanced.includes('requestAnimationFrame(() =>')) throw new Error('Orchestration panel must preserve both scroll positions after layout while refreshing')

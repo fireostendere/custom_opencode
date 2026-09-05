@@ -6,6 +6,7 @@ import { join } from "node:path"
 const STATE_DIR = process.env.CUSTOM_OPENCODE_STATE_DIR || join(homedir(), ".local", "state", "custom-opencode")
 const STATE_FILE = join(STATE_DIR, "rate-limit.json")
 const WRAPPED_FETCH = Symbol.for("custom-opencode.gemini-rate-limit.fetch")
+const handledResponses = new WeakSet()
 const DEFAULT_LIMITS = { tpm: 2000000, rpm: 1000, rpd: 4000000 }
 const requestHistory = []
 let dailyTokens = 0
@@ -107,13 +108,14 @@ export function createRetryFetch(origFetch, { sleepFn = sleep } = {}) {
   let cooldownUntil = 0
   let nextRetryAt = 0
 
-  async function wrappedFetch(input, init, attempt = 0) {
+  async function wrappedFetch(input, init, attempt = 0, initialResponse) {
     const signal = requestSignal(input, init)
     abortError(signal)
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input?.url || ""
     const isGoogle = url.includes("generativelanguage.googleapis.com") || url.includes("aiplatform.googleapis.com")
     const retryInput = typeof Request !== "undefined" && input instanceof Request ? input.clone() : input
-    const response = await origFetch(input, init)
+    const response = initialResponse || await origFetch(input, init)
+    handledResponses.add(response)
 
     if (!isGoogle || response.status !== 429) {
       if (isGoogle && response.ok) {
@@ -183,7 +185,7 @@ export function createRetryFetch(origFetch, { sleepFn = sleep } = {}) {
 
 export default Plugin.define({
   id: "gemini-rate-limit",
-  setup(ctx) {
+  setup: async (ctx) => {
     writeRateLimitState({ active: false, seconds: 0 })
     const originalGlobalFetch = globalThis.fetch
     const wrappedGlobalFetch = typeof originalGlobalFetch === "function" ? createRetryFetch(originalGlobalFetch) : null
@@ -194,10 +196,24 @@ export default Plugin.define({
         if (hook?.options) hook.options.fetch = createRetryFetch(hook.options.fetch || globalThis.fetch)
       })
     }
+    const requests = new WeakMap()
+    const disposers = []
+    if (ctx.session?.hook && wrappedGlobalFetch) {
+      disposers.push(await ctx.session.hook("http.request", async (event) => {
+        requests.set(event.request, event.request.clone())
+      }, { providerID: "google" }))
+      disposers.push(await ctx.session.hook("http.response", async (event) => {
+        const request = requests.get(event.request)
+        requests.delete(event.request)
+        if (!request || handledResponses.has(event.response)) return
+        event.response = await wrappedGlobalFetch(request, undefined, 0, event.response)
+      }, { providerID: "google" }))
+    }
 
-    return () => {
+    return async () => {
       if (wrappedGlobalFetch && globalThis.fetch === wrappedGlobalFetch) globalThis.fetch = originalGlobalFetch
       writeRateLimitState({ active: false, seconds: 0 })
+      await Promise.allSettled(disposers.map((registration) => registration.dispose()))
     }
   },
 })

@@ -186,7 +186,7 @@ function clearBanner() {
   const banner = $('permissionBanner')
   if (!banner) return
   const key = `${banner.dataset.permissionSession||''}:${banner.dataset.permissionId||''}`
-  banner.hidden = true
+  if (!banner.hidden) banner.hidden = true
   delete banner.dataset.permissionSession
   delete banner.dataset.permissionId
   if (key !== ':') {
@@ -367,7 +367,7 @@ function installPermissionScope() {
     if (!document.hidden) {
       refreshPermission()
     }
-  }, 700)
+  }, 2500)
   refreshPermission()
 }
 

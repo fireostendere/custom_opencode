@@ -282,7 +282,7 @@ function checkAuthFileForGoogle() {
   return false
 }
 
-function queryGemini() {
+export function queryGemini() {
   const hasKey = Boolean(
     process.env.GEMINI_API_KEY ||
     process.env.GOOGLE_API_KEY ||
@@ -382,7 +382,7 @@ async function refresh() {
 }
 
 function requestRefresh(force = false) {
-  if (!force && Date.now() - cache.at < CACHE_TTL) return Promise.resolve(cache.data)
+  if (!force && Date.now() - cache.at < CACHE_TTL) return Promise.resolve({ ...cache.data, gemini: queryGemini() })
   if (refreshPending) return refreshPending
   refreshPending = refresh().finally(() => { refreshPending = null })
   return refreshPending
@@ -393,7 +393,7 @@ export async function getLimits() {
 }
 
 export function getLimitsSync() {
-  return cache.data
+  return { ...cache.data, gemini: queryGemini() }
 }
 
 export function onLimitsChange(fn) {

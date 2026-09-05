@@ -58,8 +58,46 @@ try {
   const hook = { options: {} }
   await sdkHook(hook)
   assert.equal(hook.options.fetch, installed, 'SDK hook must reuse the global wrapper')
-  cleanup()
+  await cleanup()
   assert.equal(globalThis.fetch, original, 'plugin cleanup must restore global fetch')
+  const hooks = {}
+  let disposed = 0
+  let nativeCalls = 0
+  const realTimeout = globalThis.setTimeout
+  Date.now = () => now
+  globalThis.setTimeout = (callback, ms) => { now += ms; queueMicrotask(callback) }
+  globalThis.fetch = async (request) => {
+    nativeCalls += 1
+    assert.equal(await request.text(), 'native payload')
+    return new Response('native success')
+  }
+  let nativeCleanup
+  try {
+    nativeCleanup = await mod.default.setup({ session: { hook: async (name, callback) => {
+      hooks[name] = callback
+      return { dispose: () => { disposed += 1 } }
+    } } })
+    const request = new Request('https://generativelanguage.googleapis.com/v1/test', { method: 'POST', body: 'native payload' })
+    await hooks['http.request']({ request })
+    await request.text()
+    const event = { request, response: new Response('Please retry in 1s.', { status: 429 }) }
+    await hooks['http.response'](event)
+    assert.equal(await event.response.text(), 'native success')
+    assert.equal(nativeCalls, 1, 'native hook must retry using the saved body')
+
+    const wrappedRequest = new Request(request.url, { method: 'POST', body: 'native payload' })
+    await hooks['http.request']({ request: wrappedRequest })
+    const wrappedResponse = await globalThis.fetch(wrappedRequest)
+    const count = mod.getUsageSnapshot().requestsToday
+    await hooks['http.response']({ request: wrappedRequest, response: wrappedResponse })
+    assert.equal(mod.getUsageSnapshot().requestsToday, count, 'native hooks must not process wrapped responses twice')
+  } finally {
+    await nativeCleanup?.()
+    globalThis.fetch = original
+    globalThis.setTimeout = realTimeout
+    Date.now = realNow
+  }
+  assert.equal(disposed, 2)
   assert.equal(statSync(join(state, 'rate-limit.json')).mode & 0o777, 0o600)
   console.log('Gemini rate-limit regression OK: single wrapper, bounded retry, abort, cleanup, private atomic state')
 } finally {

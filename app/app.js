@@ -239,8 +239,8 @@ function normalizeRunStatus(value) {
 }
 function runningStatus(value) { const s=normalizeRunStatus(value); return /running|busy|retry|working|pending/.test(s) }
 
-async function loadSessions({ selectHash = false } = {}) {
-  state.loading = true; renderSessions()
+async function loadSessions({ selectHash = false, background = false } = {}) {
+  if (!background && !state.sessions.length) { state.loading = true; renderSessions() }
   try {
     const [projects, sessions, statuses] = await Promise.all([api.listProjects(), api.listSessions(), api.sessionStatuses()])
     state.projects = projects
@@ -258,7 +258,9 @@ async function loadSessions({ selectHash = false } = {}) {
     }
   } catch (error) {
     state.loading = false
-    $('sessions').innerHTML = `<div class="empty">Не удалось загрузить сессии.<br>${escapeHtml(error.message)}</div>`
+    if (!state.sessions.length) {
+      $('sessions').innerHTML = `<div class="empty">Не удалось загрузить сессии.<br>${escapeHtml(error.message)}</div>`
+    }
     toast('Ошибка загрузки сессий')
   }
 }
@@ -294,16 +296,27 @@ function renderSessionNode(session,children,expanded,query='',depth=0) {
   </div>${childBody}</div>`
 }
 function renderSessions() {
-  if (state.loading) { $('sessions').innerHTML='<div class="loading">Загрузка сессий…</div>'; return }
+  const container = $('sessions')
+  if (!container) return
+  if (state.loading && !state.sessions.length) { container.innerHTML='<div class="loading">Загрузка сессий…</div>'; container._lastHtml=''; return }
   const query=$('search').value.trim().toLowerCase(),tree=sessionTree(),roots=tree.roots.filter((session)=>subtreeMatches(session,tree.children,query))
-  if (!roots.length) { $('sessions').innerHTML='<div class="empty">Сессий не найдено.</div>'; return }
+  if (!roots.length) {
+    if (container._lastHtml !== 'empty') {
+      container.innerHTML='<div class="empty">Сессий не найдено.</div>'
+      container._lastHtml = 'empty'
+    }
+    return
+  }
   const groups=new Map()
   for(const session of roots){const info=projectInfo(session);if(!groups.has(info.key))groups.set(info.key,{info,items:[]});groups.get(info.key).items.push(session)}
   for(const group of groups.values())group.items.sort(compareSessions)
   const savedProjectOrder=projectOrder()
   const orderedGroups=[...groups.values()].sort((a,b)=>orderIndex(savedProjectOrder,a.info.key)-orderIndex(savedProjectOrder,b.info.key)||sessionTime(b.items[0])-sessionTime(a.items[0])||a.info.label.localeCompare(b.info.label,'ru',{sensitivity:'base',numeric:true}))
   const collapsedProjects=new Set(loadJson(PROJECT_COLLAPSE_KEY, [])),expanded=sessionTreeExpanded()
-  $('sessions').innerHTML=orderedGroups.map(({info,items})=>`<details class="project-group" data-project="${escapeHtml(info.key)}"${collapsedProjects.has(info.key)?'':' open'}><summary class="project" draggable="true" title="${escapeHtml(info.directory)}"><span>${escapeHtml(info.label)}</span><span class="count">${items.length}</span></summary><div class="project-sessions">${items.map((session)=>renderSessionNode(session,tree.children,expanded,query)).join('')}</div></details>`).join('')
+  const html=orderedGroups.map(({info,items})=>`<details class="project-group" data-project="${escapeHtml(info.key)}"${collapsedProjects.has(info.key)?'':' open'}><summary class="project" draggable="true" title="${escapeHtml(info.directory)}"><span>${escapeHtml(info.label)}</span><span class="count">${items.length}</span></summary><div class="project-sessions">${items.map((session)=>renderSessionNode(session,tree.children,expanded,query)).join('')}</div></details>`).join('')
+  if (container._lastHtml === html) return
+  container._lastHtml = html
+  container.innerHTML=html
   document.querySelectorAll('[data-project]').forEach((group)=>group.addEventListener('toggle',()=>{const values=new Set(loadJson(PROJECT_COLLAPSE_KEY, []));group.open?values.delete(group.dataset.project):values.add(group.dataset.project);saveJson(PROJECT_COLLAPSE_KEY,[...values])}))
   document.querySelectorAll('[data-agent-folder]').forEach((folder)=>folder.addEventListener('toggle',()=>{const values=sessionTreeExpanded(),id=folder.dataset.agentFolder;folder.open?values.add(id):values.delete(id);saveJson(SESSION_TREE_KEY,[...values])}))
   document.querySelectorAll('[data-session]').forEach((button)=>button.addEventListener('click',()=>selectSession(button.dataset.session)))
@@ -599,10 +612,48 @@ function messagePresentation(message,type) {
   return{origin:'model-response',avatar:'AI',role:model?`Модель · ${model}`:'OpenCode'}
 }
 function renderMessages({anchor=null,bottom=false}={}){
-  const inner=$('messagesInner'), view=$('messages'); if(!state.selected){inner.innerHTML='<div class="welcome">Выбери сессию или задай быстрый вопрос.</div>';updateScrollToBottomButton();return} if(!state.context.length&&!isRunning(state.selected.id)){inner.innerHTML='<div class="welcome">Пока нет сообщений.</div>';updateScrollToBottomButton();return}
+  const inner=$('messagesInner'), view=$('messages');
+  if(!state.selected){
+    if(inner._lastHtml!=='welcome1'){inner.innerHTML='<div class="welcome">Выбери сессию или задай быстрый вопрос.</div>';inner._lastHtml='welcome1'}
+    updateScrollToBottomButton();return
+  }
+  if(!state.context.length&&!isRunning(state.selected.id)){
+    if(inner._lastHtml!=='welcome2'){inner.innerHTML='<div class="welcome">Пока нет сообщений.</div>';inner._lastHtml='welcome2'}
+    updateScrollToBottomButton();return
+  }
   const stick=view.scrollHeight-view.scrollTop-view.clientHeight<100; const prev=view.scrollTop
   const rows=state.context.map((message,index)=>{const type=message.type||message.role;return{message,index,type,body:type==='user'?userBody(message):assistantBody(message)}}).filter(({type,body})=>type==='user'||body)
-  inner.innerHTML=rows.map(({message,index,type,body})=>{const id=message.id||message.messageID||`idx-${index}`;const actor=messagePresentation(message,type),family=type==='user'?'user':'assistant';return `<article class="message ${family} ${actor.origin}" data-message-index="${index}" data-origin="${escapeHtml(actor.origin)}"><div class="avatar">${escapeHtml(actor.avatar)}</div><div class="message-body"><div class="message-head"><span class="message-role">${escapeHtml(actor.role)}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`}).join('')
+  const articleHtmls=rows.map(({message,index,type,body})=>{const id=message.id||message.messageID||`idx-${index}`;const actor=messagePresentation(message,type),family=type==='user'?'user':'assistant';return `<article class="message ${family} ${actor.origin}" data-message-index="${index}" data-origin="${escapeHtml(actor.origin)}"><div class="avatar">${escapeHtml(actor.avatar)}</div><div class="message-body"><div class="message-head"><span class="message-role">${escapeHtml(actor.role)}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`})
+  const fullHtml=articleHtmls.join('')
+
+  if(inner._lastHtml===fullHtml&&!anchor&&!bottom){
+    updateScrollToBottomButton()
+    return
+  }
+
+  const existingArticles=inner.querySelectorAll(':scope > article.message')
+  if(existingArticles.length===articleHtmls.length&&!inner.querySelector('.welcome')){
+    for(let i=0;i<articleHtmls.length;i++){
+      const art=existingArticles[i]
+      if(art._articleHtml!==articleHtmls[i]){
+        art._articleHtml=articleHtmls[i]
+        const temp=document.createElement('div')
+        temp.innerHTML=articleHtmls[i]
+        const newEl=temp.firstElementChild
+        if(newEl){
+          newEl._articleHtml=articleHtmls[i]
+          inner.replaceChild(newEl,art)
+        }
+      }
+    }
+  }else{
+    inner.innerHTML=fullHtml
+    const children=inner.querySelectorAll(':scope > article.message')
+    for(let i=0;i<children.length;i++){
+      children[i]._articleHtml=articleHtmls[i]
+    }
+  }
+  inner._lastHtml=fullHtml
   if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height
   else if(bottom){
     const sessionID=state.selected?.id,stabilize=initialMessageScrollSession===sessionID
@@ -943,10 +994,10 @@ function bindEvents(){
   $('scrollToBottom').addEventListener('click',scrollMessagesToBottom)
   $('messagesInner').addEventListener('click',(e)=>{const copyCode=e.target.closest('.copy-code');if(copyCode){navigator.clipboard.writeText(copyCode.closest('.code-block').querySelector('code')?.textContent||'');copyCode.textContent='Скопировано';setTimeout(()=>copyCode.textContent='Копировать',900);return}const copy=e.target.closest('[data-copy-message]');if(copy){navigator.clipboard.writeText(messagePlainText(state.context[Number(copy.dataset.copyMessage)])||'');toast('Сообщение скопировано');return}const fork=e.target.closest('[data-fork-message]');if(fork){forkAtMessage(fork.dataset.forkMessage)}})
   window.addEventListener('hashchange',()=>{const id=sessionIdFromHash();if(id&&state.selected?.id!==id)selectSession(id,{push:false});else if(!id&&state.selected)clearSelection()});window.addEventListener('beforeunload',saveDraftNow)
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden){pollStatuses();if(state.selected){loadContext({force:true})}}})
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){pollStatuses();if(state.selected&&!isRunning(state.selected.id)){loadContext({force:false})}}})
 }
 
 async function initialize(){
-  state.clientConfig=await api.getClientConfig();bindEvents();attachDragHandlers();setupPullRefresh();await initNotifications();connectEventStream();await loadSessions({selectHash:true});if(!state.selected){restoreDraft();await loadDraftControls()}statusTimer=setInterval(pollStatuses,5000);setInterval(pollRateLimit,1000);setInterval(()=>{if(!state.loading)loadSessions()},30000);autosizeInput();renderHeader()
+  state.clientConfig=await api.getClientConfig();bindEvents();attachDragHandlers();setupPullRefresh();await initNotifications();connectEventStream();await loadSessions({selectHash:true});if(!state.selected){restoreDraft();await loadDraftControls()}statusTimer=setInterval(pollStatuses,5000);setInterval(pollRateLimit,2500);setInterval(()=>{if(!state.loading)loadSessions({background:true})},30000);autosizeInput();renderHeader()
 }
 initialize().catch((error)=>{console.error(error);toast(`Ошибка запуска: ${error.message}`,7000)})
