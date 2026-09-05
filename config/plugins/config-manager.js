@@ -1,15 +1,17 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { appendFile } from "node:fs/promises"
 import { Plugin } from "@opencode-ai/plugin"
+import { filterMcpTools, resolveMcpProfile, mcpNamespace } from "./tui/lib/mcp-profiles.js"
 
-const STORAGE_KEY = "registry-v1"
+const STORAGE_KEY = "registry-v2"
 const CONFIG_DIR = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", "opencode")
 const ID_RE = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/
 const ENV_REF_RE = /^\{env:[A-Z_][A-Z0-9_]*\}$/
 const SENSITIVE_NAME_RE = /(?:^|[-_])(?:api[-_]?key|key|token|access[-_]?token|secret|password|passphrase|authorization|auth|credential)(?:$|[-_])/i
 
 function emptyRegistry() {
-  return { version: 1, providers: {}, models: {}, mcp: {}, skills: {}, orchestrations: {} }
+  return { version: 2, providers: {}, models: {}, mcp: {}, skills: {}, orchestrations: {}, mcpProfiles: {}, mcpSettings: { mode: "auto", sessions: {} } }
 }
 
 function asObject(value) {
@@ -19,12 +21,15 @@ function asObject(value) {
 function normalizeRegistry(value) {
   const raw = asObject(value)
   return {
-    version: 1,
+    ...raw,
+    version: 2,
     providers: asObject(raw.providers),
     models: asObject(raw.models),
     mcp: asObject(raw.mcp),
     skills: asObject(raw.skills),
     orchestrations: asObject(raw.orchestrations),
+    mcpProfiles: asObject(raw.mcpProfiles),
+    mcpSettings: { mode: "auto", ...asObject(raw.mcpSettings), sessions: asObject(raw.mcpSettings?.sessions) },
   }
 }
 
@@ -112,6 +117,9 @@ function modelDefinition(input) {
 function mcpDefinition(input) {
   const name = assertID(input.name, "MCP name")
   const config = structuredClone(asObject(input.config))
+  for (const flag of ["disabled", "codemode"]) {
+    if (config[flag] !== undefined && typeof config[flag] !== "boolean") throw new Error(`MCP ${flag} must be a boolean`)
+  }
   if (!config.type || !["local", "remote"].includes(String(config.type))) throw new Error("MCP config.type must be local or remote")
   if (config.type === "remote") {
     const url = String(config.url || "")
@@ -169,6 +177,20 @@ function skillDefinition(input) {
   }
 }
 
+function mcpProfileDefinition(input) {
+  const id = assertID(input.id, "profile id")
+  if (["auto", "all"].includes(id.toLowerCase())) throw new Error("Auto and All are reserved system modes")
+  if (!Array.isArray(input.mcp)) throw new Error("profile mcp must be an array")
+  const risk = input.risk || "normal"
+  if (!["normal", "elevated"].includes(risk)) throw new Error("profile risk must be normal or elevated")
+  const list = (value, label) => {
+    if (value === undefined) return []
+    if (!Array.isArray(value) || value.some((x) => typeof x !== "string" || !x.trim() || x.length > 120)) throw new Error(`${label} must be an array of non-empty strings`)
+    return [...new Set(value.map((x) => x.trim()))]
+  }
+  return { id, name: String(input.name || id).slice(0, 120), mcp: [...new Set(input.mcp.map((x) => assertID(x, "MCP name")))], risk, keywords: list(input.keywords, "keywords"), agents: list(input.agents, "agents") }
+}
+
 function orchestrationDefinition(input) {
   const providerID = assertID(input.providerID, "providerID")
   const id = assertModelID(input.id, "orchestration id")
@@ -195,6 +217,7 @@ function publicSummary(registry) {
     mcp: Object.keys(registry.mcp).sort(),
     skills: Object.keys(registry.skills).sort(),
     orchestrations: Object.keys(registry.orchestrations).sort(),
+    mcpProfiles: Object.keys(registry.mcpProfiles).sort(),
   }
 }
 
@@ -209,7 +232,28 @@ function usage(name, example) {
 export default Plugin.define({
   id: "custom.config-manager",
   async setup(ctx) {
-    let registry = normalizeRegistry(await ctx.storage.get(STORAGE_KEY))
+    const saved = await ctx.storage.get(STORAGE_KEY)
+    const legacy = saved === undefined ? await ctx.storage.get("registry-v1") : undefined
+    if (saved?.version > 2) throw new Error("Managed registry is newer than this plugin; refusing to overwrite it")
+    let registry = normalizeRegistry(saved ?? legacy)
+    if (legacy !== undefined) await ctx.storage.set(STORAGE_KEY, registry)
+    let installed = {}
+    const exposure = new Map() // Observations only, per session; never used as activation state.
+    const modeFor = async (sessionID, agent) => {
+      const settings = registry.mcpSettings
+      let current = sessionID
+      const visited = new Set()
+      while (current && !visited.has(current)) {
+        visited.add(current)
+        if (agent && settings.sessions[`${current}/${agent}`]) return settings.sessions[`${current}/${agent}`]
+        if (settings.sessions[current]) return settings.sessions[current]
+        current = (await ctx.session.get?.({ sessionID: current }))?.parentID
+      }
+      return settings.mode
+    }
+    const receipt = async (sessionID, input, data) => {
+      if (typeof input?.requestID === "string") await synthetic(ctx, sessionID, `custom.config.receipt:${input.requestID}\n${JSON.stringify(data)}`)
+    }
 
     const save = async () => { await ctx.storage.set(STORAGE_KEY, registry) }
     const reloadAll = async () => {
@@ -261,13 +305,37 @@ export default Plugin.define({
 
     await ctx.mcp.transform((draft) => {
       for (const [name, config] of Object.entries(registry.mcp)) draft.set(name, structuredClone(config))
+      installed = Object.fromEntries(draft.list?.() || Object.entries(registry.mcp))
+      if (Object.keys(registry.mcpProfiles).length) {
+        // Native code-mode snapshots are global. Direct definitions allow request-local filtering.
+        for (const [name, config] of Object.entries(installed)) draft.set(name, { ...config, codemode: false })
+      }
     })
 
     await ctx.skill.transform((draft) => {
       for (const definition of Object.values(registry.skills)) draft.add(structuredClone(definition))
     })
 
-    await ctx.session.hook("context", (event) => {
+    await ctx.session.hook("context", async (event) => {
+      if (event.tools) {
+        await ctx.mcp.list?.()
+        const text = (event.messages || []).filter((m) => m.role === "user").at(-1)?.content
+        const selection = resolveMcpProfile(registry, {
+          mode: await modeFor(event.sessionID, event.agent), agent: event.agent,
+          text: typeof text === "string" ? text : (text || []).map((p) => p.text || "").join(" "),
+        })
+        const report = filterMcpTools(event.tools, installed, registry.mcpProfiles, selection)
+        exposure.set(event.sessionID, { ...report, agent: event.agent, observedAt: new Date().toISOString() })
+        // Bound diagnostics to recent sessions; deleting observations never changes policy.
+        if (exposure.size > 200) exposure.delete(exposure.keys().next().value)
+        const active = new Set(report.active)
+        const clean = (text) => String(text).replace(/\s*<server name="([^"]+)">[\s\S]*?<\/server>/g, (block, name) => active.has(name) ? block : "")
+        for (const part of event.system || []) if (part.text) part.text = clean(part.text)
+        for (const message of event.messages || []) {
+          if (Array.isArray(message.content)) message.content = message.content.filter((part) => !part.text?.startsWith("custom.config.receipt:")).map((part) => part.text ? { ...part, text: clean(part.text) } : part)
+        }
+        if (event.messages) event.messages = event.messages.filter((message) => !Array.isArray(message.content) || message.content.length > 0)
+      }
       const providerID = String(event?.model?.providerID || "")
       const id = String(event?.model?.id || "")
       const item = registry.orchestrations[`${providerID}/${id}`]
@@ -277,22 +345,31 @@ export default Plugin.define({
       event.system.push({ type: "text", text: `${marker}:\n${item.prompt}` })
     })
 
+    if (process.env.OPENCODE_MCP_PROFILE_EVIDENCE) await ctx.session.hook("http.request", async (event) => {
+      const body = await event.request.clone().json().catch(() => ({}))
+      const tools = (body.tools || []).flatMap((tool) => tool.function?.name || tool.name || [])
+      await appendFile(process.env.OPENCODE_MCP_PROFILE_EVIDENCE, `${JSON.stringify({ time: new Date().toISOString(), sessionID: event.sessionID, agent: event.agent, profile: exposure.get(event.sessionID)?.id, tools })}\n`, { mode: 0o600 })
+    })
+
     await ctx.command.transform((commands) => {
       const add = (name, description, handler, help) => commands.add({
         name,
         description,
         execute: ({ sessionID, prompt }) => enqueueMutation(async () => {
           const previous = registry
+          let input
           try {
-            const input = extractJson(prompt)
-            await handler(input)
+            input = extractJson(prompt)
+            await handler(input, sessionID)
             await save()
             await reloadAll()
           } catch (error) {
             const failure = mutationError(error, registry === previous ? [] : await rollback(previous))
+            await receipt(sessionID, input, { error: failure.message })
             try { await synthetic(ctx, sessionID, `${name}: ${failure.message}\n\n${help}`) } catch {}
             throw failure
           }
+          await receipt(sessionID, input, { saved: true })
           try { await synthetic(ctx, sessionID, `${name}: saved\n${JSON.stringify(publicSummary(registry), null, 2)}`) } catch {}
         }),
       })
@@ -309,8 +386,31 @@ export default Plugin.define({
 
       add("addmcp", "Add or update a durable managed MCP server", async (input) => {
         const { name, config } = mcpDefinition(input)
-        registry = { ...registry, mcp: { ...registry.mcp, [name]: config } }
+        const collision = Object.keys(installed).find((id) => id !== name && mcpNamespace(id) === mcpNamespace(name))
+        if (collision) throw new Error(`MCP name conflicts with '${collision}' after native normalization`)
+        const profiles = { ...registry.mcpProfiles }
+        if (input.profiles !== undefined) {
+          if (!Array.isArray(input.profiles) || input.profiles.some((id) => !Object.hasOwn(profiles, id))) throw new Error("profiles must contain existing profile IDs")
+          for (const [id, profile] of Object.entries(profiles)) profiles[id] = { ...profile, mcp: [...profile.mcp.filter((item) => item !== name), ...(input.profiles.includes(id) ? [name] : [])] }
+        }
+        registry = { ...registry, mcp: { ...registry.mcp, [name]: config }, mcpProfiles: profiles }
       }, usage("addmcp", '/addmcp {"name":"docs","config":{"type":"remote","url":"https://mcp.example.com"}}'))
+
+      add("addmcpprofile", "Add or update a durable MCP profile", async (input) => {
+        const profile = mcpProfileDefinition(input)
+        registry = { ...registry, mcpProfiles: { ...registry.mcpProfiles, [profile.id]: profile } }
+      }, usage("addmcpprofile", '/addmcpprofile {"id":"core","name":"Core","mcp":["docs"]}'))
+
+      add("mcp-profile", "Select MCP profile: Auto, All or a registered profile", async (input, sessionID) => {
+        const mode = String(input.mode || "auto")
+        if (!["auto", "all"].includes(mode) && !Object.hasOwn(registry.mcpProfiles, mode)) throw new Error(`Unknown MCP profile: ${mode}`)
+        const settings = registry.mcpSettings
+        if (input.scope === "fallback") {
+          if (mode === "auto" || registry.mcpProfiles[mode]?.risk === "elevated") throw new Error("Auto fallback must be All or a normal profile")
+          registry = { ...registry, mcpSettings: { ...settings, fallback: mode } }
+        } else if (input.scope === "default") registry = { ...registry, mcpSettings: { ...settings, mode } }
+        else registry = { ...registry, mcpSettings: { ...settings, sessions: { ...settings.sessions, [input.agent ? `${sessionID}/${assertID(input.agent, "agent")}` : sessionID]: mode } } }
+      }, usage("mcp-profile", '/mcp-profile {"mode":"frontend"}'))
 
       add("addskill", "Add or update a durable managed skill", async (input) => {
         const { id, definition } = skillDefinition(input)
@@ -334,7 +434,12 @@ export default Plugin.define({
       commands.add({
         name: "managed",
         description: "List managed providers, models, MCP servers, skills and orchestrations",
-        execute: async ({ sessionID }) => synthetic(ctx, sessionID, `Managed configuration:\n${JSON.stringify(publicSummary(registry), null, 2)}`),
+        execute: ({ sessionID, prompt }) => enqueueMutation(async () => {
+          const input = prompt?.text?.includes("{") ? extractJson(prompt) : {}
+          await ctx.mcp.list?.()
+          if (input.requestID) return receipt(sessionID, input, { registry, installed, mode: await modeFor(sessionID), exposure: exposure.get(sessionID) || null })
+          await synthetic(ctx, sessionID, `Managed configuration:\n${JSON.stringify(publicSummary(registry), null, 2)}\nMCP exposure (last model request):\n${JSON.stringify(exposure.get(sessionID) || "No model request observed", null, 2)}`)
+        }),
       })
 
       commands.add({
@@ -346,7 +451,7 @@ export default Plugin.define({
             const input = extractJson(prompt)
             const type = String(input.type || "")
             const id = String(input.id || "")
-            if (!Object.prototype.hasOwnProperty.call(registry, type) || type === "version") throw new Error("type must be providers, models, mcp, skills or orchestrations")
+            if (!["providers", "models", "mcp", "skills", "orchestrations", "mcpProfiles"].includes(type)) throw new Error("type must be providers, models, mcp, skills, orchestrations or mcpProfiles")
             if (!Object.prototype.hasOwnProperty.call(registry[type], id)) throw new Error("managed item not found")
             const next = { ...registry[type] }
             delete next[id]

@@ -17,7 +17,7 @@ const root = new URL('../', import.meta.url)
 const fixture = JSON.parse(await readFile(new URL('docs/artifacts/tui-add-wizard-cases.json', root), 'utf8'))
 const addCommand = await import(new URL('config/plugins/tui/lib/add-command.js', root).href)
 
-const expectedKinds = ['provider', 'model', 'mcp', 'skill', 'orchestration']
+const expectedKinds = ['provider', 'model', 'mcp', 'mcp-profile', 'skill', 'orchestration']
 assert.deepEqual(addCommand.ADD_KINDS, expectedKinds)
 for (const kind of expectedKinds) {
   assert.deepEqual(addCommand.parseAddCommand(`/add ${kind}`), {
@@ -50,7 +50,7 @@ assert.equal(configManager.default.id, 'custom.config-manager')
 const registryPath = join(configRoot, 'registry.json')
 const store = {
   async get(key) {
-    if (key !== 'registry-v1') return undefined
+    if (key !== 'registry-v2') return undefined
     try {
       return JSON.parse(await readFile(registryPath, 'utf8'))
     } catch (error) {
@@ -59,7 +59,7 @@ const store = {
     }
   },
   async set(key, value) {
-    assert.equal(key, 'registry-v1')
+    assert.equal(key, 'registry-v2')
     writeFileSync(registryPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
   },
 }
@@ -151,6 +151,7 @@ let dialogPrompts = []
 let dialogSelects = []
 
 const dialog = {
+  async confirm() { return confirmSave },
   async prompt(input) {
     prompts.push(input.title)
     if (!dialogPrompts.length) throw new Error(`Unexpected prompt: ${input.title}`)
@@ -165,6 +166,7 @@ const dialog = {
     alerts.push(input.message)
   },
 }
+let confirmSave = true
 
 const context = {
   renderer: {
@@ -195,8 +197,10 @@ const context = {
   },
   client: {
     session: {
+      context: async () => synthetic.map((text) => ({ type: 'synthetic', text })),
       command: async ({ sessionID, command, text: argumentsText }) => {
         assert.equal(typeof argumentsText, 'string', 'V2 session.command requires text')
+        if (command === 'managed') return serverCommands.get(command).execute({ sessionID, prompt: { text: argumentsText } })
         commandCalls.push({ sessionID, command, arguments: argumentsText })
         const call = commandCalls.at(-1)
         const definition = serverCommands.get(command)
@@ -400,10 +404,29 @@ assert.equal(toasts.filter((item) => item.variant === 'success').length, command
 assert.ok(prompts.length >= 20)
 assert.ok(selects.length >= 6)
 
+await runButton('mcp-profile', ['core', 'Core', '', ''], ['docs', '__done', 'normal'])
+assert.deepEqual(JSON.parse(await readFile(registryPath, 'utf8')).mcpProfiles.core.mcp, ['docs'])
+await runButton('mcp-profile', ['Core updated', 'docs', 'reviewer'], ['core', 'filesystem', '__done', 'normal'])
+assert.deepEqual(JSON.parse(await readFile(registryPath, 'utf8')).mcpProfiles.core.mcp, ['docs', 'filesystem'])
+await runButton('mcp', ['docs', 'https://mcp.example.com/updated'], ['remote', true, false, 'core', '__done'])
+assert.ok(!JSON.parse(await readFile(registryPath, 'utf8')).mcpProfiles.core.mcp.includes('docs'))
+const beforeProfileCancel = await readFile(registryPath, 'utf8')
+confirmSave = false
+configureDialog(['Cancelled name', '', ''], ['core', '__done', 'normal'])
+rows.find((row) => row.id === 'custom.add-wizard.mcp-profile').run('')
+await new Promise((resolve) => setImmediate(resolve))
+await new Promise((resolve) => setImmediate(resolve))
+assert.equal(await readFile(registryPath, 'utf8'), beforeProfileCancel, 'Cancel on final review leaves registry byte-identical')
+confirmSave = true
+configureDialog([], [null])
+rows.find((row) => row.id === 'custom.add-wizard.mcp-profile').run('')
+await new Promise((resolve) => setImmediate(resolve))
+assert.equal(await readFile(registryPath, 'utf8'), beforeProfileCancel, 'Cancel in profile selector leaves registry unchanged')
+
 const report = {
   schema: 1,
   status: 'passed',
-  runtime: 'OpenCode V2 TUI command layer + real config-manager handlers',
+  runtime: 'Mock native dialogs/client + real wizard/config-manager logic; not live TUI acceptance',
   buttons: rows.filter((row) => row.id.startsWith('custom.add-wizard.')).map((row) => row.id),
   routes: fixture.additionalRoutes,
   nativeCommands: commandCalls.map((call) => call.command),
@@ -422,4 +445,4 @@ if (reportArgument) await writeFile(reportArgument.slice('--report='.length), `$
 
 cleanup?.()
 await rm(configRoot, { recursive: true, force: true })
-console.log(`TUI add wizard regression passed: ${commandCalls.length} real mutations, ${rows.length} buttons, ${alerts.length} validation alerts`)
+console.log(`TUI add wizard regression passed (mock native dialogs): ${commandCalls.length} manager mutations, ${rows.length} buttons, ${alerts.length} validation alerts`)

@@ -23,11 +23,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const source = readFileSync(resolve(root, 'config/plugins/config-manager.js'), 'utf8')
 // Imported through a data: URL so the module is always treated as ESM — the same
 // technique web-smoke.mjs uses for browser modules.
-const pluginModule = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
+const pluginModule = await import('../config/plugins/config-manager.js')
 const plugin = pluginModule.default
 assert.equal(plugin.id, 'custom.config-manager')
 
-const STORAGE_KEY = 'registry-v1'
+const STORAGE_KEY = 'registry-v2'
 const store = new Map()
 let saveFailures = 0
 let reloadFailures = 0

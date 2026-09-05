@@ -6,8 +6,12 @@
 - `/add provider` и `/addprovider`;
 - `/add model` и `/addmodel`;
 - `/add mcp` и `/addmcp`;
+- `/add mcp-profile` и `/addmcpprofile`;
 - `/add skill` и `/addskill`;
 - `/add orchestration` и `/addorchestration`.
+
+`/add` открывает выбор типа, `/configure` — управление и диагностику. Подробности:
+[MCP profiles](mcp-profiles.md). Каждый wizard требует финального подтверждения.
 
 Пустой canonical command или alias открывает wizard. JSON после команды сохраняет
 native path через `session.command`, поэтому существующий server-side
@@ -66,8 +70,9 @@ node scripts/tui-accounts-regression.mjs
 node scripts/tui-add-wizard-regression.mjs
 ```
 
-Regression реально вызывает зарегистрированные TUI command rows и официальные
-`dialog.prompt`/`dialog.select`-пути. Сгенерированный JSON проходит через настоящий
+Regression вызывает зарегистрированные TUI command rows через mock-реализации
+`dialog.prompt`/`dialog.select`/`dialog.confirm`. Это не live TUI acceptance.
+Сгенерированный JSON проходит через настоящий
 `config/plugins/config-manager.js`; registry сохраняется в изолированный временный
 файл. Проверяются:
 

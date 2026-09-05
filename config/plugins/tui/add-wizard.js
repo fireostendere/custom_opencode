@@ -1,6 +1,7 @@
 import { Plugin } from "@opencode-ai/plugin/tui"
 import { installPanelSubmitRouter } from "./lib/panel-submit-router.js"
 import { ADD_KINDS, nativeAddCommand, parseAddCommand } from "./lib/add-command.js"
+import { profileTemplates } from "./lib/mcp-profiles.js"
 
 const ID_RE = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/
 const MODEL_ID_RE = /^(?!.*#).{1,200}$/
@@ -13,6 +14,7 @@ const TITLES = {
   provider: "Добавить provider",
   model: "Добавить model",
   mcp: "Добавить MCP",
+  "mcp-profile": "MCP profile: создать / изменить",
   skill: "Добавить skill",
   orchestration: "Добавить orchestration",
 }
@@ -60,9 +62,9 @@ async function alert(context, message) {
   await context.ui.dialog.alert({ title: "Add configuration", message })
 }
 
-async function ask(context, title, placeholder, validate, optional = false) {
+async function ask(context, title, placeholder, validate, optional = false, initial) {
   while (true) {
-    const answer = await context.ui.dialog.prompt({ title, placeholder })
+    const answer = await context.ui.dialog.prompt({ title, placeholder, ...(initial !== undefined ? { value: String(initial) } : {}) })
     if (answer == null) return null
     const value = String(answer).trim()
     if (optional && !value) return ""
@@ -74,7 +76,111 @@ async function ask(context, title, placeholder, validate, optional = false) {
 
 async function choose(context, title, options) {
   const result = await context.ui.dialog.select({ title, options })
-  return result?.value ?? result ?? null
+  return result && typeof result === "object" && Object.hasOwn(result, "value") ? result.value : result ?? null
+}
+
+// Read via the native command/receipt API; no TUI copy of the durable registry.
+async function managed(context) {
+  const current = sessionID(context)
+  const requestID = globalThis.crypto.randomUUID()
+  await context.client.session.command({ sessionID: current, command: "managed", text: JSON.stringify({ requestID }) })
+  const messages = await context.client.session.context({ sessionID: current })
+  const message = messages.find((item) => item.text?.startsWith(`custom.config.receipt:${requestID}\n`))
+  if (!message) throw new Error("Configuration response missing; check config-manager plugin status.")
+  return JSON.parse(message.text.slice(message.text.indexOf("\n") + 1))
+}
+
+async function multiple(context, title, options, initial = []) {
+  const selected = new Set(initial)
+  while (true) {
+    const choice = await choose(context, `${title} · ${selected.size} selected`, [
+      { title: "Done — continue", value: "__done" },
+      ...options.map((option) => ({ ...option, title: `[${selected.has(option.value) ? "x" : " "}] ${option.title}` })),
+    ])
+    if (choice == null) return null
+    if (choice === "__done") return [...selected]
+    if (selected.has(choice)) selected.delete(choice)
+    else selected.add(choice)
+  }
+}
+
+async function profileInput(context) {
+  const { registry, installed } = await managed(context)
+  const profiles = registry.mcpProfiles
+  const existing = Object.keys(profiles).length ? await choose(context, "MCP profile", [
+    { title: "Create profile", value: "__new" },
+    ...Object.values(profiles).map((p) => ({ title: `${p.name} (${p.id})`, value: p.id, description: `${p.mcp.length} MCP · ${p.risk}` })),
+  ]) : "__new"
+  if (existing == null) return null
+  const id = existing !== "__new" ? existing : await ask(context, "Profile ID", "core / frontend / custom", (value) => requiredID(value, "Profile ID") || (["auto", "all"].includes(value.toLowerCase()) ? "Auto and All are reserved." : ""))
+  if (id == null) return null
+  const previous = profiles[id] || profileTemplates[id] || {}
+  const name = await ask(context, "Profile display name", id, null, true, previous.name)
+  if (name == null) return null
+  const names = [...new Set([...Object.keys(installed), ...(previous.mcp || [])])].sort()
+  const mcp = await multiple(context, "MCP servers", names.map((id) => ({ title: id, value: id, description: !installed[id] ? "Missing — retained until unchecked" : installed[id].disabled ? "Disabled" : installed[id].type })), previous.mcp)
+  if (mcp == null) return null
+  const risk = await choose(context, "Profile risk", [
+    { title: `${previous.risk === "elevated" ? "Elevated" : "Normal"} (current)`, value: previous.risk || "normal" },
+    { title: previous.risk === "elevated" ? "Normal" : "Elevated — hardware / debugger", value: previous.risk === "elevated" ? "normal" : "elevated" },
+  ])
+  if (risk == null) return null
+  const keywords = await ask(context, "Auto: task keywords (comma separated)", "frontend, css", null, true, previous.keywords?.join(", ") || "")
+  if (keywords == null) return null
+  const agents = await ask(context, "Auto: worker IDs (comma separated)", "frontend-builder", null, true, previous.agents?.join(", ") || "")
+  if (agents == null) return null
+  const split = (value) => value.split(",").map((s) => s.trim()).filter(Boolean)
+  return { id, name: name || id, mcp, risk, keywords: split(keywords), agents: split(agents) }
+}
+
+async function selectProfile(context) {
+  const state = await managed(context)
+  const mode = await choose(context, `MCP profile: ${state.mode}`, [
+    { title: "Auto", value: "auto", description: "Worker assignment → task keywords → core fallback" },
+    ...Object.values(state.registry.mcpProfiles).map((p) => ({ title: `${p.name} (${p.id})`, value: p.id, description: `${p.mcp.join(", ") || "Empty"} · ${p.risk}` })),
+    { title: "All", value: "all", description: "All enabled MCP tools" },
+  ])
+  if (mode == null) return
+  const scope = await choose(context, "Apply MCP profile", [
+    { title: "This session and its workers", value: "session" },
+    { title: "Default for new sessions", value: "default" },
+    ...(mode !== "auto" && state.registry.mcpProfiles[mode]?.risk !== "elevated" ? [{ title: "Auto fallback for ambiguous tasks", value: "fallback" }] : []),
+  ])
+  if (scope == null) return
+  await context.client.session.command({ sessionID: sessionID(context), command: "mcp-profile", text: JSON.stringify({ mode, scope }) })
+  toast(context, `MCP profile: ${mode} · ${scope}`, "success")
+}
+
+async function configure(context) {
+  if (!sessionID(context)) return toast(context, "Open a session first.")
+  const action = await choose(context, "Configuration", [
+    { title: "Add / update configuration", value: "add" },
+    { title: "MCP profile: select", value: "profile" },
+    { title: "MCP tool exposure / status", value: "status" },
+    { title: "Remove managed item", value: "remove" },
+  ])
+  if (action === "add") return openWizard(context)
+  if (action === "profile") return selectProfile(context)
+  if (action === "status") {
+    const state = await managed(context)
+    const report = state.exposure
+    const connections = await context.client.mcp.list({ location: context.location })
+    return context.ui.dialog.alert({ title: `MCP profile: ${state.mode}`, message: [
+      `Installed MCP: ${Object.keys(state.installed).length}`,
+      ...(report ? [`Last request: ${report.id} · ${report.agent}`, `Active MCP: ${report.active.length} (${report.active.join(", ")})`, `Exposed MCP tools: ${report.exposed.length}`, `Inactive tools excluded: ${report.excluded.length}`, ...report.warnings] : ["No model request observed yet. Send a prompt to measure exposure."]),
+      ...connections.map((server) => `${server.name}: ${server.status.status}`),
+      "Profiles use native tool definitions; stored Code Mode resumes when no profiles exist.",
+    ].join("\n") })
+  }
+  if (action === "remove") {
+    const { registry } = await managed(context)
+    const options = ["providers", "models", "mcp", "mcpProfiles", "skills", "orchestrations"].flatMap((type) => Object.keys(registry[type]).map((id) => ({ title: `${type}: ${id}`, value: JSON.stringify({ type, id }) })))
+    const item = await choose(context, "Remove managed item", options)
+    if (item && await context.ui.dialog.confirm({ title: "Remove configuration?", message: item })) {
+      await context.client.session.command({ sessionID: sessionID(context), command: "remove-managed", text: item })
+      toast(context, "Configuration removed", "success")
+    }
+  }
 }
 
 function requiredID(value, label) {
@@ -137,13 +243,15 @@ async function modelInput(context) {
 async function mcpInput(context) {
   const name = await ask(context, "MCP name", "docs", (value) => requiredID(value, "MCP name"))
   if (name == null) return null
+  const state = await managed(context)
+  const previous = state.registry.mcp[name] || {}
   const type = await choose(context, "MCP transport", [
     { title: "Remote URL", value: "remote", description: "Connect to an HTTP(S) MCP server." },
     { title: "Local command", value: "local", description: "Run an MCP server command." },
   ])
   if (type == null) return null
 
-  let config = { type }
+  let config = previous.type === type ? { ...previous, type } : { type }
   if (type === "remote") {
     const url = await ask(context, "Remote MCP URL", "https://mcp.example.com", (value) => {
       let parsed
@@ -152,7 +260,7 @@ async function mcpInput(context) {
       if (parsed.username || parsed.password) return "Remote MCP URL must not include credentials."
       for (const [key, item] of parsed.searchParams) if (isSensitiveName(key) && !credentialReference(item)) return `${key} must use {env:VAR}.`
       return ""
-    })
+    }, false, previous.url)
     if (url == null) return null
     config.url = url
   } else {
@@ -172,7 +280,7 @@ async function mcpInput(context) {
         if (sensitive && isSensitiveName(sensitive[0]) && !credentialReference(sensitive[1])) return `${sensitive[0]} must use {env:VAR}.`
       }
       return ""
-    })
+    }, false, previous.command ? JSON.stringify(previous.command) : undefined)
     if (command == null) return null
     config.command = JSON.parse(command)
   }
@@ -186,7 +294,10 @@ async function mcpInput(context) {
     { title: "Yes", value: true },
   ])
   if (disabled == null) return null
-  return { name, config: { ...config, codemode, disabled } }
+  const profiles = Object.values(state.registry.mcpProfiles)
+  const selected = profiles.length ? await multiple(context, "Profiles", profiles.map((p) => ({ title: `${p.name} (${p.id})`, value: p.id })), profiles.filter((p) => p.mcp.includes(name)).map((p) => p.id)) : []
+  if (selected == null) return null
+  return { name, config: { ...config, codemode, disabled }, profiles: selected }
 }
 
 async function skillInput(context) {
@@ -224,6 +335,7 @@ async function inputFor(context, kind) {
   if (kind === "provider") return providerInput(context)
   if (kind === "model") return modelInput(context)
   if (kind === "mcp") return mcpInput(context)
+  if (kind === "mcp-profile") return profileInput(context)
   if (kind === "skill") return skillInput(context)
   if (kind === "orchestration") return orchestrationInput(context)
   return null
@@ -243,22 +355,19 @@ async function saveNative(context, parsed) {
   }
 }
 
-let wizardOpen = false
 async function openWizard(context, kind) {
-  if (wizardOpen) return
   const current = sessionID(context)
   if (!current) {
     toast(context, "Select an active session before adding configuration.")
     return
   }
-  wizardOpen = true
   try {
+    if (!kind) kind = await choose(context, "Add / update configuration", ADD_KINDS.map((value) => ({ title: TITLES[value], value })))
+    if (!kind) return
     const input = await inputFor(context, kind)
-    if (input) await saveNative(context, { kind, command: nativeAddCommand(kind), arguments: JSON.stringify(input) })
+    if (input && await context.ui.dialog.confirm({ title: "Save configuration?", message: JSON.stringify(input, null, 2) })) await saveNative(context, { kind, command: nativeAddCommand(kind), arguments: JSON.stringify(input) })
   } catch (error) {
     toast(context, `Wizard failed: ${error.message}`)
-  } finally {
-    wizardOpen = false
   }
 }
 
@@ -290,7 +399,7 @@ function openAccounts(context) {
   context.keymap.dispatch(connect.id)
 }
 
-function commandRows(context) {
+function commandRows(context, process) {
   return [
     {
       id: "custom.models.refresh",
@@ -314,12 +423,12 @@ function commandRows(context) {
     {
       id: "custom.add-wizard.add",
       title: "Добавить configuration",
-      description: "Wizard: provider, model, MCP, skill or orchestration",
+      description: "Create or update providers, models, MCP, profiles, skills and orchestration",
       group: "Configuration",
       palette: true,
       suggested: true,
       slash: { name: "add", arguments: true },
-      run: (input) => processParsed(context, parseAddCommand(slashInput("add", input))),
+      run: (input) => process(parseAddCommand(slashInput("add", input))),
     },
     ...ADD_KINDS.map((kind) => {
       const command = nativeAddCommand(kind)
@@ -329,15 +438,25 @@ function commandRows(context) {
         description: `Wizard or native JSON command for ${kind}`,
         group: "Configuration",
         palette: true,
-        run: (input) => processParsed(context, parseAddCommand(slashInput(command, input))),
+        run: (input) => process(parseAddCommand(slashInput(command, input))),
       }
     }),
+    { id: "custom.add-wizard.configure", title: "Configuration: manage", group: "Configuration", palette: true, slash: { name: "configure" }, run: () => { void configure(context).catch((error) => toast(context, error.message)); return true } },
+    { id: "custom.add-wizard.profile", title: "MCP profile: select", group: "Configuration", palette: true, run: () => { void selectProfile(context).catch((error) => toast(context, error.message)); return true } },
   ]
 }
 
 export default Plugin.define({
   id: "custom.add-wizard",
   setup(context) {
+    let busy = false
+    const run = (parsed) => {
+      if (busy) return true
+      if (parsed?.type !== "wizard") return processParsed(context, parsed)
+      busy = true
+      void openWizard(context, parsed.kind).finally(() => { busy = false })
+      return true
+    }
     const submitRouter = installPanelSubmitRouter(context, () => {
       const editor = context.renderer?.currentFocusedEditor ?? context.renderer?.currentFocusedRenderable
       if (!isOpenCodePrompt(editor)) return false
@@ -348,16 +467,21 @@ export default Plugin.define({
         else toast(context, "Используйте /accounts без аргументов; данные аккаунта вводятся в визарде.")
         return true
       }
+      if (text.trim() === "/mcp-profile") {
+        clearPromptEditor(editor)
+        void selectProfile(context).catch((error) => toast(context, error.message))
+        return true
+      }
       const parsed = parseAddCommand(text)
       if (!parsed) return false
       clearPromptEditor(editor)
-      return processParsed(context, parsed)
+      return run(parsed)
     })
 
     const unslot = context.ui.slot({
       append: "app",
       render: () => {
-        context.keymap.layer(() => ({ mode: "global", priority: 950, commands: commandRows(context) }))
+        context.keymap.layer(() => ({ mode: "global", priority: 950, commands: commandRows(context, run) }))
         return null
       },
     })

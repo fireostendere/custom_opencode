@@ -71,6 +71,7 @@ done
 "$NODE" "$ROOT/scripts/visible-plan-regression.mjs"
 "$NODE" "$ROOT/scripts/gemini-rate-limit-regression.mjs"
 "$NODE" "$ROOT/scripts/server-runtime-guard-regression.mjs"
+"$NODE" "$ROOT/scripts/mcp-profiles-regression.mjs"
 "$NODE" "$ROOT/scripts/tui-add-wizard-regression.mjs"
 "$NODE" "$ROOT/scripts/tui-accounts-regression.mjs"
 "$NODE" "$ROOT/scripts/tui-webserver-wizard-regression.mjs"

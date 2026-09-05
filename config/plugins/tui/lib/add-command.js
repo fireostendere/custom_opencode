@@ -2,6 +2,7 @@ const ADD_TYPES = Object.freeze({
   provider: "addprovider",
   model: "addmodel",
   mcp: "addmcp",
+  "mcp-profile": "addmcpprofile",
   skill: "addskill",
   orchestration: "addorchestration",
 })
@@ -35,10 +36,10 @@ export function parseAddCommand(value) {
   const argumentsText = match[2] ?? ""
   if (token === "add") {
     const addArguments = argumentsText.trim()
-    if (!addArguments) return { type: "error", message: "Use /add provider|model|mcp|skill|orchestration" }
+    if (!addArguments) return { type: "wizard", kind: null }
     const typeMatch = /^(\S+)(?:\s+([\s\S]*))?$/.exec(addArguments)
     const kind = ALIASES.get(typeMatch?.[1]?.toLowerCase())
-    if (!kind) return { type: "error", message: "Unknown add type: provider, model, mcp, skill or orchestration" }
+    if (!kind) return { type: "error", message: "Unknown add type: provider, model, mcp, mcp-profile, skill or orchestration" }
     return parsed(kind, typeMatch[2] ?? "")
   }
 
