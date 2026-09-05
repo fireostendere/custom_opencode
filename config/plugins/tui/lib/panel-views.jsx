@@ -2,7 +2,7 @@
 import { createEffect, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js"
 import { readdir, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import {
   getLimits,
   getLimitsSync,
@@ -24,7 +24,7 @@ export const PANEL_DEFS = [
 export const PANEL_IDS = PANEL_DEFS.map((item) => item.id)
 
 const BAR_WIDTH = 8
-const V2_PLAN_DIRECTORY = join(homedir(), ".opencode", "plan")
+const V2_PLAN_DIRECTORY = process.env.OPENCODE_PLAN_DIRECTORY ? resolve(process.env.OPENCODE_PLAN_DIRECTORY.replace(/^~(?=\/)/, homedir())) : join(homedir(), ".opencode", "plan")
 const V2_PLAN_MAX_BYTES = 1_000_000
 const MONTHS_RU = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 
@@ -268,6 +268,7 @@ export function createPanelViews(context) {
         <Show when={gemini().available} fallback={<text fg={theme.text.subdued}><span>Gemini: не настроен</span></text>}>
           <WindowRows label="Gemini · 1м (TPM)" win={gemini().minuteTokens} />
           <WindowRows label="Gemini · 1м (RPM)" win={gemini().minuteRequests} />
+          <WindowRows label="Gemini · сутки (RPD)" win={gemini().dailyRequests} />
         </Show>
         {(() => {
           tick()

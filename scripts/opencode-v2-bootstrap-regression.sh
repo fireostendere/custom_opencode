@@ -38,7 +38,7 @@ cat >"$FAKE_BIN/npm" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'npm %s\n' "$*" >>"${CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG:?}"
-if [[ "$*" != "install --global --prefix $HOME/.local @opencode-ai/cli@beta" ]]; then
+if [[ "$*" != "install --global --prefix $HOME/.local @opencode-ai/cli@0.0.0-beta-18743" ]]; then
   echo "unexpected npm invocation: $*" >&2
   exit 2
 fi
@@ -46,6 +46,7 @@ mkdir -p "$HOME/.local/bin"
 cat >"$HOME/.local/bin/opencode2" <<'INNER'
 #!/usr/bin/env bash
 printf 'opencode2 %s\n' "$*" >>"${CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG:?}"
+if [[ "${1:-}" == "--version" ]]; then printf 'opencode2 v0.0.0-beta-18743\n'; fi
 exit 0
 INNER
 chmod +x "$HOME/.local/bin/opencode2"
@@ -64,7 +65,7 @@ chmod +x "$FAKE_BIN/opencode"
 env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:/usr/bin:/bin" \
   bash "$COPY/scripts/install.sh" >"$TMP/install.out"
 
-grep -Fxq "npm install --global --prefix $HOME_DIR/.local @opencode-ai/cli@beta" "$LOG"
+grep -Fxq "npm install --global --prefix $HOME_DIR/.local @opencode-ai/cli@0.0.0-beta-18743" "$LOG"
 [[ -x "$HOME_DIR/.local/bin/opencode2" ]] || {
   echo "clean install did not bootstrap opencode2" >&2
   exit 1

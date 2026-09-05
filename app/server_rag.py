@@ -289,6 +289,7 @@ class Handler(plus.Handler):
         parsed = urlsplit(self.path)
         if parsed.path == "/client-rag-start.json":
             if not self.authenticated():
+                self.unauthorized()
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))

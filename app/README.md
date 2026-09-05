@@ -30,6 +30,8 @@
 
 В web переключатель режима скрыт: direct-профиль всегда использует `build-direct` (или native `build`), orchestrated-профиль — native `build`. Native `plan`/`plan-direct` остаются доступны в TUI и CLI. Selected provider/model/variant сохраняется.
 
+Закреплённый `plan_update` принуждает Build публиковать session-scoped чек-лист до изменяющих tools, а Plan — до итогового ответа. Этот документ одновременно отображается в плашке `План` над чатом и во вкладке `Plan` боковой workspace-панели; скрытый reasoning не раскрывается.
+
 Обычная модель из model picker остаётся direct/manual selection:
 
 ```text

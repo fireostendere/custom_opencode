@@ -3,10 +3,16 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ENV_FILE="$ROOT/.env"
-if [[ ! -f "$ENV_FILE" ]]; then
+if [[ -L "$ENV_FILE" || ! -f "$ENV_FILE" ]]; then
   echo "Create .env from .env.example first" >&2
   exit 1
 fi
+if [[ $(stat -c %u "$ROOT") != $(id -u) || $(stat -c %u "$ENV_FILE") != $(id -u) ]]; then
+  echo "Repository and .env must be owned by the current user" >&2
+  exit 1
+fi
+chmod 0700 "$ROOT"
+chmod 0600 "$ENV_FILE"
 
 PYTHON3=$(command -v python3 || true)
 if [[ -z "$PYTHON3" ]]; then
@@ -26,22 +32,29 @@ SCRATCH_DIR=${OPENCODE_SCRATCH_DIRECTORY:-"$HOME/opencode-scratch"}
 AUTH_FILE=${OPENCODE_AUTH_FILE:-"$HOME/.local/share/opencode/auth.json"}
 SELFTEST=${CUSTOM_OPENCODE_INSTALL_SELFTEST:-1}
 
-# custom_opencode targets OpenCode V2 only. Bootstrap the current official beta
-# into the same user-local prefix as our wrapper so a clean install needs no
-# pre-existing OpenCode binary and uses only the opencode2 runtime.
+# custom_opencode targets one reviewed OpenCode V2 build. An explicit .env
+# override can advance the pin after the regression suite is run against it.
 export PATH="$BIN_DIR:$PATH"
-if ! command -v opencode2 >/dev/null 2>&1; then
+OPENCODE_CLI_PACKAGE=${OPENCODE_CLI_PACKAGE:-@opencode-ai/cli@0.0.0-beta-18743}
+OPENCODE_CLI_VERSION=${OPENCODE_CLI_PACKAGE##*@}
+CURRENT_OPENCODE_VERSION=$(opencode2 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//' || true)
+if [[ "$CURRENT_OPENCODE_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
   NPM=$(command -v npm || true)
   if [[ -z "$NPM" ]]; then
     echo "npm is required to install OpenCode V2 automatically" >&2
     exit 1
   fi
-  echo "==> Installing OpenCode V2 (@opencode-ai/cli@beta)"
-  "$NPM" install --global --prefix "$HOME/.local" @opencode-ai/cli@beta
+  echo "==> Installing OpenCode V2 ($OPENCODE_CLI_PACKAGE)"
+  "$NPM" install --global --prefix "$HOME/.local" "$OPENCODE_CLI_PACKAGE"
   hash -r
 fi
 if ! command -v opencode2 >/dev/null 2>&1; then
   echo "OpenCode V2 installation completed without an opencode2 executable" >&2
+  exit 1
+fi
+CURRENT_OPENCODE_VERSION=$(opencode2 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//' || true)
+if [[ "$CURRENT_OPENCODE_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
+  echo "OpenCode V2 version mismatch: expected $OPENCODE_CLI_VERSION, got ${CURRENT_OPENCODE_VERSION:-unknown}" >&2
   exit 1
 fi
 
@@ -203,9 +216,6 @@ trap restore_webserver_state EXIT
 
 if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   install -d "$CONFIG_DIR/plugins" "$CONFIG_DIR/plugins/tui" "$CONFIG_DIR/prompts" "$CONFIG_DIR/themes"
-  if [[ -f "$CONFIG_DIR/opencode.json" ]]; then
-    cp -p "$CONFIG_DIR/opencode.json" "$CONFIG_DIR/opencode.json.backup.$(date +%Y%m%d%H%M%S)"
-  fi
   install -m 0644 "$ROOT/config/AGENTS.md" "$CONFIG_DIR/AGENTS.md"
   install -m 0644 "$ROOT/config/cli.json" "$CONFIG_DIR/cli.json"
   install -m 0644 "$ROOT/config/events.js" "$CONFIG_DIR/events.js"
@@ -228,7 +238,8 @@ if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   fi
   install -m 0644 "$ROOT"/config/themes/*.json "$CONFIG_DIR/themes/"
   "$PYTHON3" - "$ROOT/config/opencode.json.template" "$CONFIG_DIR/opencode.json" "$CONFIG_DIR" "$ROOT" "$RAG_DISABLED" "$PONYTAIL_PLUGIN_PATH" <<'PY'
-import json, sys
+import json, os, shutil, sys
+from pathlib import Path
 source, target, config_dir, root, rag_disabled, ponytail_plugin = sys.argv[1:]
 text = open(source, encoding="utf-8").read()
 def json_string_value(value):
@@ -247,14 +258,28 @@ config["tool_output"] = {"max_lines": 1600, "max_bytes": 48000}
 kb = (((config.get("mcp") or {}).get("servers") or {}).get("kb"))
 if isinstance(kb, dict):
     kb["codemode"] = True
-with open(target, "w", encoding="utf-8") as handle:
+target = Path(target)
+if target.is_symlink():
+    raise SystemExit(f"refusing symlink config target: {target}")
+if target.is_file():
+    backup = target.with_name(target.name + ".backup")
+    temporary_backup = backup.with_name(f".{backup.name}.{os.getpid()}.tmp")
+    shutil.copy2(target, temporary_backup)
+    os.replace(temporary_backup, backup)
+temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+with temporary.open("x", encoding="utf-8") as handle:
     json.dump(config, handle, ensure_ascii=False, indent=2)
     handle.write("\n")
+os.chmod(temporary, 0o600)
+os.replace(temporary, target)
 PY
 fi
 "$PYTHON3" - "$AUTH_FILE" <<'PY'
 import json, os, sys
-target = sys.argv[1]
+from pathlib import Path
+target = Path(sys.argv[1])
+if target.is_symlink():
+    raise SystemExit(f"refusing symlink auth target: {target}")
 mapping = {
     "openai": {"type": "oauth", "access": "OPENCODE_OPENAI_ACCESS", "refresh": "OPENCODE_OPENAI_REFRESH", "expires": "OPENCODE_OPENAI_EXPIRES", "accountId": "OPENCODE_OPENAI_ACCOUNT_ID"},
     "opencode": {"type": "api", "key": "OPENCODE_ZEN_KEY"},
@@ -264,8 +289,12 @@ mapping = {
 try:
     with open(target, encoding="utf-8") as handle:
         auth = json.load(handle)
-except (FileNotFoundError, json.JSONDecodeError):
+except FileNotFoundError:
     auth = {}
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"invalid auth file: {exc}") from exc
+if not isinstance(auth, dict):
+    raise SystemExit("auth file must be a JSON object")
 for provider, fields in mapping.items():
     values = {}
     for key, env in fields.items():
@@ -282,10 +311,12 @@ for provider, fields in mapping.items():
     if len(values) > 1:
         auth[provider] = values
 if auth:
-    with open(target, "w", encoding="utf-8") as handle:
+    temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    with temporary.open("x", encoding="utf-8") as handle:
         json.dump(auth, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
-    os.chmod(target, 0o600)
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, target)
 PY
 
 cat >"$BIN_DIR/custom-opencode" <<EOF
@@ -363,7 +394,6 @@ systemctl --user enable --now opencode-web-client.service
 # The shared V2 service is long-lived and does not inherit variables from a
 # later custom-opencode client. Persist only variables needed by providers and
 # server-runtime plugins; arbitrary agent shells are scrubbed by the guard.
-SERVICE_OPENCODE=(env -u OPENCODE_CONFIG_DIR opencode2)
 SERVICE_ENV=(
   OPENCODE_CONFIG_DIR TOKEN_PLAN_API_KEY TOKEN_PLAN_ANTHROPIC_BASE_URL
   TOKEN_PLAN_OPENAI_BASE_URL TOKEN_PLAN_PROBE_MODEL OLLAMA_BASE_URL
@@ -374,16 +404,41 @@ SERVICE_ENV=(
   OPENCODE_READER_MODEL OPENCODE_REVIEW_MODEL OPENCODE_LONG_HORIZON_MODEL
   OPENCODE_ORCHESTRATED_MODEL OPENCODE_SOL_ORCHESTRATED_MODEL
   OPENCODE_SOL_BUILDER_MODEL OPENCODE_SOL_READER_MODEL OPENCODE_SOL_REVIEW_MODEL
-  PONYTAIL_DEFAULT_MODE GEMINI_API_KEY GOOGLE_API_KEY
+  PONYTAIL_DEFAULT_MODE GEMINI_API_KEY GOOGLE_API_KEY OPENCODE_PLAN_DIRECTORY
 )
-for name in "${SERVICE_ENV[@]}"; do
-  value=${!name:-}
-  if [[ "$name" == OPENCODE_CONFIG_DIR ]]; then value=$CONFIG_DIR; fi
-  if [[ -n "$value" ]]; then
-    timeout 15s "${SERVICE_OPENCODE[@]}" service set env "$name" "$value" >/dev/null
-  fi
-done
-timeout 45s "${SERVICE_OPENCODE[@]}" service start >/dev/null
+install -d -m 0700 "$CONFIG_DIR"
+"$PYTHON3" - "$CONFIG_DIR/service.json" "$CONFIG_DIR" "${SERVICE_ENV[@]}" <<'PY'
+import json, os, sys
+from pathlib import Path
+
+target = Path(sys.argv[1])
+config_dir = sys.argv[2]
+names = sys.argv[3:]
+if target.is_symlink():
+    raise SystemExit(f"refusing symlink service config: {target}")
+try:
+    config = json.loads(target.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    config = {}
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"invalid service config: {exc}") from exc
+if not isinstance(config, dict):
+    raise SystemExit("service config must be a JSON object")
+service_env = config.get("env") if isinstance(config.get("env"), dict) else {}
+for name in names:
+    value = config_dir if name == "OPENCODE_CONFIG_DIR" else os.environ.get(name, "")
+    if value and value != "CHANGE_ME":
+        service_env[name] = value
+config["env"] = service_env
+temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+with temporary.open("x", encoding="utf-8") as handle:
+    json.dump(config, handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
+os.chmod(temporary, 0o600)
+os.replace(temporary, target)
+PY
+timeout 15s env -u OPENCODE_CONFIG_DIR opencode2 service stop >/dev/null 2>&1 || true
+timeout 45s env -u OPENCODE_CONFIG_DIR opencode2 service start >/dev/null
 systemctl --user restart opencode-web-client.service
 
 if [[ "$SELFTEST" != 0 ]]; then

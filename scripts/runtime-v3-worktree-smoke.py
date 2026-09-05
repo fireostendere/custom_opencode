@@ -25,13 +25,15 @@ with tempfile.TemporaryDirectory() as temp:
 
     worktree=tmp/"wt1"; subprocess.run(["git","-C",str(root),"worktree","add","--detach",str(worktree),"HEAD"],stdout=subprocess.DEVNULL,check=True)
     (worktree/"tracked.txt").write_text("merged\n",encoding="utf-8"); (worktree/"new.txt").write_text("new\n",encoding="utf-8")
+    (worktree/"nested").mkdir(); (worktree/"nested"/"child.txt").write_text("nested\n",encoding="utf-8")
     store=RuntimeStore(tmp/"runtime.sqlite3"); store.initialize()
     task=store.create_task(task_id="wt-task",session_id="s1",project_dir=str(worktree),text="isolated",metadata={"ownershipRoot":str(root),"worktree":str(worktree),"sandbox":"repo-write"},baseline={"head":head})
     runtime=SimpleNamespace(STORE=store)
     merged=runtime_v3_ext._worktree_merge(runtime,task,False)
-    assert merged["ok"] and set(merged["changed"])=={"tracked.txt","new.txt"}
+    assert merged["ok"] and set(merged["changed"])=={"tracked.txt","new.txt","nested/child.txt"}
     assert (root/"tracked.txt").read_text(encoding="utf-8")=="merged\n"
     assert (root/"new.txt").read_text(encoding="utf-8")=="new\n"
+    assert (root/"nested"/"child.txt").read_text(encoding="utf-8")=="nested\n"
 
     # A second isolated branch may not overwrite an already dirty target path.
     worktree2=tmp/"wt2"; subprocess.run(["git","-C",str(root),"worktree","add","--detach",str(worktree2),head],stdout=subprocess.DEVNULL,check=True)
@@ -41,4 +43,11 @@ with tempfile.TemporaryDirectory() as temp:
     except RuntimeError as exc: assert "uncommitted changes" in str(exc) or "ownership conflict" in str(exc)
     else: raise AssertionError("worktree merge overwrote dirty target")
 
-print("Runtime V3 worktree smoke passed: tracked/untracked merge + dirty-target fail-closed")
+    worktree3=tmp/"wt3"; subprocess.run(["git","-C",str(root),"worktree","add","--detach",str(worktree3),head],stdout=subprocess.DEVNULL,check=True)
+    (worktree3/"linked.txt").symlink_to("tracked.txt")
+    task3=store.create_task(task_id="wt-task-3",session_id="s3",project_dir=str(worktree3),text="isolated 3",metadata={"ownershipRoot":str(root),"worktree":str(worktree3),"sandbox":"repo-write"},baseline={"head":head})
+    try: runtime_v3_ext._worktree_merge(runtime,task3,False)
+    except RuntimeError as exc: assert "symlink" in str(exc)
+    else: raise AssertionError("worktree merge followed an untracked symlink")
+
+print("Runtime V3 worktree smoke passed: tracked/untracked merge + dirty-target/symlink fail-closed")

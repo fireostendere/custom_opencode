@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
@@ -42,10 +43,16 @@ with tempfile.TemporaryDirectory() as temp:
     subprocess.run(["git", "-C", str(project), "config", "user.name", "Runtime Smoke"], check=True)
     (project / "package.json").write_text(json.dumps({"scripts": {"lint": "echo lint", "test": "echo test"}}), encoding="utf-8")
     (project / "src.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
+    (project / "rename-me.txt").write_text("rename\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(project), "add", "."], check=True)
     subprocess.run(["git", "-C", str(project), "commit", "-qm", "base"], check=True)
 
     baseline = git_snapshot(str(project))
+    subprocess.run(["git", "-C", str(project), "mv", "rename-me.txt", "renamed.txt"], check=True)
+    renamed = git_snapshot(str(project))
+    assert {"rename-me.txt", "renamed.txt"}.issubset(renamed["changed"])
+    assert len(renamed["status"]) == 1
+    subprocess.run(["git", "-C", str(project), "mv", "renamed.txt", "rename-me.txt"], check=True)
     first = store.create_task(
         session_id="ses_first",
         project_dir=str(project),
@@ -66,6 +73,18 @@ with tempfile.TemporaryDirectory() as temp:
     store.transition(first["id"], "completed")
     ready = store.next_ready(session_id="ses_second")
     assert ready and ready["id"] == second["id"] and ready["state"] == "queued"
+
+    claimed = []
+    gate = threading.Barrier(3)
+    def claim_once() -> None:
+        gate.wait()
+        claimed.append(store.claim_dispatch(second["id"]))
+    threads = [threading.Thread(target=claim_once) for _ in range(2)]
+    for thread in threads: thread.start()
+    gate.wait()
+    for thread in threads: thread.join()
+    assert sum(item is not None for item in claimed) == 1
+    assert store.get_task(second["id"])["dispatch_attempts"] == 1
 
     checkpoint = store.checkpoint(second["id"], "planning", summary="plan persisted", data={"step": 1})
     assert checkpoint["stage"] == "planning"
@@ -156,6 +175,9 @@ with tempfile.TemporaryDirectory() as temp:
     (project / "src.py").write_text("def alpha():\n    return 2\n\ndef beta():\n    return 3\n", encoding="utf-8")
     diff = semantic_diff(str(project), baseline)
     assert "src.py" in diff["changedFiles"]
+    subprocess.run(["git", "-C", str(project), "add", "src.py"], check=True)
+    assert "src.py" in semantic_diff(str(project), baseline)["changedFiles"]
+    subprocess.run(["git", "-C", str(project), "reset", "-q", "HEAD", "--", "src.py"], check=True)
 
     artifacts = ArtifactStore(store)
     artifact = artifacts.put(
@@ -166,6 +188,9 @@ with tempfile.TemporaryDirectory() as temp:
     assert ranged and len(ranged["content"]) <= 100
     searched = artifacts.get(artifact["id"], query="needle")
     assert searched and searched["content"] and searched["content"][0]["context"].endswith("needle")
+    binary = artifacts.put(task_id=first["id"], project_dir=str(project), kind="binary", title="binary", content=b"\xff\x00", mime="application/octet-stream")
+    binary_value = artifacts.get(binary["id"])
+    assert binary_value and binary_value["encoding"] == "base64" and binary_value["content"] == "/wA="
 
     context = ContextService(store, indexer).envelope(
         project_dir=str(project), task=store.get_task(second["id"]),
@@ -178,8 +203,8 @@ with tempfile.TemporaryDirectory() as temp:
     pipeline = VerificationPipeline(artifacts)
     discovered = {item["name"] for item in pipeline.discover(str(project))}
     assert {"lint", "test"}.issubset(discovered)
-    assert classify_failure("temporary failure in name resolution", 1) == "network"
-    assert classify_failure("permission denied", 1) == "environment"
+    assert classify_failure("assertion: expected no such file or directory", 1) == "code"
+    assert classify_failure("assertion: operation timed out", 1) == "code"
     assert classify_failure("assert 1 == 2", 1) == "code"
 
     broker = SecretBroker()
@@ -336,5 +361,24 @@ with tempfile.TemporaryDirectory() as temp:
     gateway = server_runtime.mcp_gateway(fake, str(project), "kb")
     assert gateway["lazyCatalog"] is True
     assert gateway["detail"]["tools"] == ["kb_knowledge_get", "kb_knowledge_search"]
+
+    old = store.create_task(task_id="t_prune_old", session_id="ses_old", project_dir=str(project), text="old")
+    store.transition(old["id"], "completed")
+    old_artifact = artifacts.put(task_id=old["id"], project_dir=str(project), kind="log", title="old", content="x" * 30000)
+    with store.transaction() as database:
+        stale = server_runtime.now_ms() - 2 * 86_400_000
+        database.execute("UPDATE tasks SET updated_at=?,finished_at=? WHERE id=?", (stale, stale, old["id"]))
+        database.execute("UPDATE cache SET expires_at=?", (stale,))
+    pruned = store.prune(retention_days=1)
+    assert pruned["tasks"] == 1 and store.get_task(old["id"]) is None
+    assert not (store.paths.artifacts / old["id"] / old_artifact["id"]).exists()
+    failed_dependency = store.create_task(session_id="ses_retained", project_dir=str(project), text="failed prerequisite")
+    store.transition(failed_dependency["id"], "failed")
+    dependent = store.create_task(session_id="ses_dependent", project_dir=str(project), text="blocked", dependencies=[failed_dependency["id"]])
+    with store.transaction() as database:
+        database.execute("UPDATE tasks SET finished_at=? WHERE id=?", (stale, failed_dependency["id"]))
+    store.prune(retention_days=1)
+    assert store.get_task(failed_dependency["id"]) is not None
+    assert not store.dependency_state(dependent["id"])[0]
 
 print("Server runtime v2 smoke passed: durable tasks + provider-pinned profiles + repo/context/artifacts + worktrees/speculation/MCP metadata")

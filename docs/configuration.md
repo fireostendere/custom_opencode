@@ -167,11 +167,11 @@ PONYTAIL_DEFAULT_MODE=full
 
 ## Планирование задач
 
-Установленный `AGENTS.md` и orchestrator prompt используют условную policy планирования. `todowrite` относится к V1 и отсутствует в OpenCode V2; его отсутствие в текущем V2 runtime не является поломкой конфигурации.
+Установленный `AGENTS.md` и plugin `visible-plan.js` требуют явный план для любой работы primary-agent с инструментами. `todowrite` относится к V1 и отсутствует в OpenCode V2; вместо него Build и Plan используют закреплённый tool `plan_update`.
 
-Для одной очевидной правки, короткого ответа, чтения или простой настройки формальный план не создаётся. Для plan-worthy задачи сначала изучается контекст, затем до первого изменения файла фиксируется план из 2-7 проверяемых результатов. В существующей native V2 session переключается только primary-agent: `plan` для orchestrated и `plan-direct` для direct/manual, поэтому точный provider/model/variant сохраняется. Изолированный CLI plan — запасной путь: обязательно передавайте точный непустой `--model provider/model[#variant]` (`bailian-cli/qwen3.8-orchestrated` для Qwen alias, `openai/gpt-5.6-sol-orchestrated` для SOL alias и exact selected ref для direct). Wrapper отклоняет isolated plan без model или с некорректным ref, поскольку global default не восстанавливает родительскую session. Такой V2 plan document не имеет безопасной parent-session mapping. После согласования реализации нужен `build` agent.
+Для чисто разговорного одношагового ответа без инструментов формальный план не создаётся. Во всех остальных случаях модель может сначала изучить контекст read-only инструментами, затем обязана вызвать `plan_update` до первой изменяющей операции. Tool атомарно записывает 1-7 пунктов в `~/.opencode/plan/<sessionID>-plan.md`; повторные вызовы обновляют статусы. Harness отклоняет shell/edit/write/patch/subagent и неизвестные потенциально изменяющие tools, пока план текущего пользовательского хода не опубликован.
 
-Web UI всегда отправляет session через `build` или `build-direct`; переключатель режима и project default mode в браузере скрыты. Native `plan`/`plan-direct` остаются доступны в TUI/CLI, а созданный там session-scoped V2 plan document виден и в web. При работе через custom Runtime V2/V3 дополнительно используются durable task queue, checkpoints и typed handoff.
+Web UI всегда отправляет session через `build` или `build-direct`; `plan_update` сохраняет provider/model/variant и сразу публикует план в верхнюю плашку и боковую workspace-панель. Native `plan`/`plan-direct` в TUI/CLI публикуют итоговый чек-лист туда же перед ответом. При работе через custom Runtime V2/V3 дополнительно используются durable task queue, checkpoints и typed handoff.
 
 TUI-панель плана поддерживает native V2 Markdown-документы из `~/.opencode/plan` и сохраняет чтение legacy `todowrite` сообщений для старых сессий.
 
@@ -199,6 +199,7 @@ OPENCODE_LOOP_LIMIT=3
 OPENCODE_VERIFY_PIPELINE=auto
 OPENCODE_VERIFY_TIMEOUT=120
 OPENCODE_VERIFY_AUTOFIX=1
+OPENCODE_RUNTIME_RETENTION_DAYS=30
 OPENCODE_AUTO_REVIEW=smart
 OPENCODE_STUCK_PROGRESS_POLLS=100
 OPENCODE_STUCK_ACTION=warn
@@ -218,6 +219,7 @@ Secret values не сериализуются в browser/runtime snapshots.
 
 ```text
 OPENCODE_ALLOW_FULL_MACHINE=0
+OPENCODE_ALLOW_UNSANDBOXED=0
 OPENCODE_SANDBOX_DOCKER_IMAGE=python:3.12-slim
 OPENCODE_DOCKER_NETWORK=0
 OPENCODE_DOCKER_READONLY=0
@@ -240,6 +242,7 @@ OPENCODE_LEGACY_AUTH_FILE=
 ## Installer
 
 ```text
+OPENCODE_CLI_PACKAGE=@opencode-ai/cli@0.0.0-beta-18743
 OPENCODE_CONFIG_DIR=
 OPENCODE_AUTH_FILE=
 OPENCODE_CONFIG_BACKUP_DIR=
@@ -248,7 +251,7 @@ INSTALL_OPENCODE_CONFIG=1
 CUSTOM_OPENCODE_INSTALL_SELFTEST=1
 ```
 
-Для shared OpenCode V2 `OPENCODE_CONFIG_DIR` обычно остаётся пустым, чтобы использовать canonical global config.
+Для shared OpenCode V2 `OPENCODE_CONFIG_DIR` обычно остаётся пустым, чтобы использовать canonical global config. Меняйте `OPENCODE_CLI_PACKAGE` только вместе с прогоном полного regression suite.
 
 ## Optional OpenCode auth backup
 

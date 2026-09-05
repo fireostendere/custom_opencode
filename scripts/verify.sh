@@ -68,6 +68,9 @@ done
 "$NODE" "$ROOT/scripts/web-smoke.mjs"
 "$NODE" "$ROOT/scripts/wizard-validation-smoke.mjs"
 "$NODE" "$ROOT/scripts/config-manager-regression.mjs"
+"$NODE" "$ROOT/scripts/visible-plan-regression.mjs"
+"$NODE" "$ROOT/scripts/gemini-rate-limit-regression.mjs"
+"$NODE" "$ROOT/scripts/server-runtime-guard-regression.mjs"
 "$NODE" "$ROOT/scripts/tui-add-wizard-regression.mjs"
 "$NODE" "$ROOT/scripts/tui-webserver-wizard-regression.mjs"
 "$PYTHON3" "$ROOT/scripts/webserver-control-smoke.py"
@@ -95,8 +98,8 @@ if ! declare -f ponytail_provision >/dev/null; then
   echo "ponytail provisioning script does not export ponytail_provision()" >&2
   exit 1
 fi
-if ! grep -q 'service set env' "$ROOT/scripts/install.sh"; then
-  echo "installer must persist the active V2 service environment" >&2
+if ! grep -q 'CONFIG_DIR/service.json' "$ROOT/scripts/install.sh"; then
+  echo "installer must atomically persist the active V2 service environment" >&2
   exit 1
 fi
 if ! grep -q 'env -u OPENCODE_CONFIG_DIR opencode2' "$ROOT/scripts/install.sh"; then
@@ -238,10 +241,10 @@ for token in ("Planning policy", "conditional, not a ritual", "primary `plan` ag
     if token not in orchestrator:
         bad.append(f"orchestrator must keep conditional V2 planning: {token}")
 for name, policy, producer_token in (("orchestrator", orchestrator, "TUI panels populate automatically from session/provider state and natural plan/tool/subagent events"), ("SOL orchestrator", sol_orchestrator, "TUI panels populate automatically from session/provider state and natural plan/tool/subagent events"), ("global AGENTS", agents_policy, "Вкладки `Сессия`, `Activity`, `История`, `Оркестрация`, `Лимиты` заполняются автоматически из состояния session/provider и реальных tool/subagent событий")):
-    for token in ("2-7", "- [ ]", "- [>]", "- [x]", producer_token):
+    for token in ("plan_update", "1-7", "chain-of-thought", producer_token):
         if token not in policy:
             bad.append(f"{name} must keep visible plan status/UI producer policy: {token}")
-for token in ("Планирование задач", "OpenCode V2", "primary-agent `plan`", "2-7", "до первого изменения файла", "не создавай искусственный план"):
+for token in ("Планирование задач", "OpenCode V2", "primary-agent `plan`", "plan_update", "1-7", "До первой shell/edit/write/patch", "не создавай инструменты или подагентов только ради UI"):
     if token not in agents_policy:
         bad.append(f"global agent policy must keep conditional V2 planning: {token}")
 for marker in ('Plugin.define({', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'gpt-5.6-sol-orchestrated', 'isOrchestratedSol', 'orchestrator-sol.md', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy'):

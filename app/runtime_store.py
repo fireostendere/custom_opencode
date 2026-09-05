@@ -184,7 +184,7 @@ class RuntimeStore:
                 db.execute("ROLLBACK")
                 raise
 
-    def _row_task(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+    def _row_task(self, row: sqlite3.Row | None, dependencies: list[str] | None = None) -> dict[str, Any] | None:
         if row is None:
             return None
         value = dict(row)
@@ -193,7 +193,7 @@ class RuntimeStore:
         value["baseline"] = _loads(value.pop("baseline_json", None), {})
         value["route"] = _loads(value.pop("route_json", None), {})
         value["verification"] = _loads(value.pop("verification_json", None), {})
-        value["dependencies"] = self.dependencies(value["id"])
+        value["dependencies"] = self.dependencies(value["id"]) if dependencies is None else dependencies
         return value
 
     def create_task(self, *, session_id: str, project_dir: str, text: str = "", files: list[Any] | None = None,
@@ -234,7 +234,10 @@ class RuntimeStore:
         args.append(max(1,min(1000,int(limit))))
         with self.connect() as db:
             rows = db.execute(f"SELECT * FROM tasks{where} ORDER BY CASE WHEN state IN ('running','submitted','verifying','waiting_permission') THEN 0 ELSE 1 END,priority DESC,created_at ASC LIMIT ?", args).fetchall()
-        return [self._row_task(row) or {} for row in rows]
+            ids=[str(row["id"]) for row in rows]; dependencies:dict[str,list[str]]={task_id:[] for task_id in ids}
+            if ids:
+                for dependency in db.execute("SELECT task_id,depends_on FROM task_dependencies WHERE task_id IN (%s) ORDER BY depends_on" % ",".join("?" for _ in ids),ids).fetchall(): dependencies[str(dependency["task_id"])].append(str(dependency["depends_on"]))
+        return [self._row_task(row,dependencies[str(row["id"])]) or {} for row in rows]
 
     def dependencies(self, task_id: str) -> list[str]:
         self.initialize()
@@ -263,6 +266,47 @@ class RuntimeStore:
             if task["state"] != "blocked": self.transition(task["id"],"blocked",event="task.blocked",data={"waitingFor":waiting})
         return None
 
+    def claim_dispatch(self, task_id: str) -> dict[str, Any] | None:
+        """Atomically move one dependency-ready queued task to submitted."""
+        timestamp = now_ms()
+        with self.transaction() as db:
+            current = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if current is None or str(current["state"]) not in {"queued", "blocked"}:
+                return None
+            dependencies = db.execute(
+                """SELECT dependency.depends_on,task.state
+                   FROM task_dependencies dependency
+                   LEFT JOIN tasks task ON task.id=dependency.depends_on
+                   WHERE dependency.task_id=?""",
+                (task_id,),
+            ).fetchall()
+            waiting = [str(row["depends_on"]) for row in dependencies if row["state"] != "completed"]
+            if waiting:
+                if str(current["state"]) != "blocked":
+                    db.execute(
+                        "UPDATE tasks SET state='blocked',updated_at=?,last_progress_at=? WHERE id=?",
+                        (timestamp, timestamp, task_id),
+                    )
+                    self._event_db(
+                        db, task_id, str(current["session_id"]), str(current["project_dir"]),
+                        "task.blocked", {"waitingFor": waiting}, timestamp,
+                    )
+                return None
+            claimed = db.execute(
+                """UPDATE tasks
+                   SET state='submitted',updated_at=?,last_progress_at=?,
+                       started_at=COALESCE(started_at,?),dispatch_attempts=dispatch_attempts+1
+                   WHERE id=? AND state IN ('queued','blocked')""",
+                (timestamp, timestamp, timestamp, task_id),
+            )
+            if claimed.rowcount != 1:
+                return None
+            self._event_db(
+                db, task_id, str(current["session_id"]), str(current["project_dir"]),
+                "task.claimed", {}, timestamp,
+            )
+        return self.get_task(task_id)
+
     def transition(self, task_id: str, state: str, *, event: str | None = None,
                    data: dict[str, Any] | None = None, error: str | None = None) -> dict[str, Any]:
         if state not in TASK_STATES: raise ValueError(f"invalid task state: {state}")
@@ -275,6 +319,8 @@ class RuntimeStore:
             if state in TERMINAL_STATES or state == "needs_attention": updates.append("finished_at=?"); args.append(timestamp)
             if error is not None: updates.append("last_error=?"); args.append(str(error)[:4000])
             args.append(task_id); db.execute(f"UPDATE tasks SET {','.join(updates)} WHERE id=?", args)
+            if state in TERMINAL_STATES:
+                db.execute("DELETE FROM patch_ownership WHERE task_id=?", (task_id,))
             self._event_db(db,task_id,str(current["session_id"]),str(current["project_dir"]),event or f"task.{state}",data or {},timestamp)
         return self.get_task(task_id) or {}
 
@@ -351,6 +397,29 @@ class RuntimeStore:
             return None
         return _loads(row["value_json"],None)
 
+    def prune(self, retention_days: int | None = None) -> dict[str, int]:
+        """Drop expired cache entries and old terminal task data."""
+        self.initialize(); timestamp=now_ms(); days=max(1,int(retention_days if retention_days is not None else os.environ.get("OPENCODE_RUNTIME_RETENTION_DAYS","30"))); cutoff=timestamp-days*86_400_000
+        with self.transaction() as db:
+            db.execute("CREATE TEMP TABLE prune_tasks AS SELECT id FROM tasks WHERE state IN ('completed','failed','cancelled') AND COALESCE(finished_at,updated_at)<? AND id NOT IN (SELECT depends_on FROM task_dependencies)",(cutoff,))
+            old_tasks="SELECT id FROM prune_tasks"
+            files=[str(row[0]) for row in db.execute(f"SELECT file_path FROM artifacts WHERE file_path IS NOT NULL AND (task_id IN ({old_tasks}) OR (task_id IS NULL AND created_at<?))",(cutoff,)).fetchall()]
+            expired=db.execute("DELETE FROM cache WHERE expires_at IS NOT NULL AND expires_at<?",(timestamp,)).rowcount
+            artifacts=db.execute(f"DELETE FROM artifacts WHERE task_id IN ({old_tasks}) OR (task_id IS NULL AND created_at<?)",(cutoff,)).rowcount
+            db.execute(f"DELETE FROM checkpoints WHERE task_id IN ({old_tasks})")
+            db.execute(f"DELETE FROM usage WHERE task_id IN ({old_tasks}) OR (task_id IS NULL AND created_at<?)",(cutoff,))
+            db.execute(f"DELETE FROM events WHERE task_id IN ({old_tasks}) OR (task_id IS NULL AND created_at<?)",(cutoff,))
+            db.execute(f"DELETE FROM mailbox WHERE from_task IN ({old_tasks}) OR to_task IN ({old_tasks}) OR (consumed=1 AND created_at<?)",(cutoff,))
+            db.execute(f"DELETE FROM patch_ownership WHERE task_id IN ({old_tasks})")
+            db.execute(f"DELETE FROM task_dependencies WHERE task_id IN ({old_tasks}) OR depends_on IN ({old_tasks})")
+            tasks=db.execute(f"DELETE FROM tasks WHERE id IN ({old_tasks})").rowcount
+        artifact_root=self.paths.artifacts.resolve(strict=False); removed=0
+        for raw in files:
+            try:
+                path=Path(raw).resolve(strict=False); path.relative_to(artifact_root); path.unlink(missing_ok=True); removed+=1
+            except (OSError,RuntimeError,ValueError): pass
+        return {"expiredCache":expired,"tasks":tasks,"artifacts":artifacts,"files":removed}
+
     def add_usage(self, *, task_id: str | None, model_ref: str | None, stage: str, input_tokens: int = 0,
                   output_tokens: int = 0, cache_read_tokens: int = 0, cache_write_tokens: int = 0,
                   cost: float = 0.0, latency_ms: int = 0, success: bool | None = None) -> None:
@@ -402,11 +471,30 @@ class RuntimeStore:
         return [{"id":r["id"],"fromTask":r["from_task"],"toTask":r["to_task"],"type":r["message_type"],"payload":_loads(r["payload_json"],{}),"createdAt":r["created_at"]} for r in rows]
 
     def ownership_replace(self, project_dir: str, task_id: str, paths: Iterable[str]) -> list[dict[str, Any]]:
-        self.initialize(); timestamp=now_ms(); normalized=sorted({str(path)[:2000] for path in paths if path})
+        self.initialize(); timestamp=now_ms(); root=Path(project_dir).expanduser().resolve(strict=False); normalized=[]
+        for raw in paths:
+            if not raw: continue
+            target=Path(str(raw)).expanduser(); target=target if target.is_absolute() else root/target
+            try: relative=target.resolve(strict=False).relative_to(root).as_posix()
+            except (OSError,RuntimeError,ValueError) as exc: raise ValueError(f"ownership path outside project: {raw}") from exc
+            if relative and relative!=".": normalized.append(relative[:2000])
+        normalized=sorted(set(normalized))
         with self.transaction() as db:
-            db.execute("DELETE FROM patch_ownership WHERE project_dir=? AND task_id=?",(project_dir,task_id))
-            for path in normalized: db.execute("INSERT INTO patch_ownership(project_dir,path,task_id,symbol,updated_at) VALUES(?,?,?,?,?)",(project_dir,path,task_id,"",timestamp))
-            rows=db.execute("SELECT path,task_id FROM patch_ownership WHERE project_dir=? AND task_id<>? AND path IN (%s)" % (",".join("?" for _ in normalized) if normalized else "''"),[project_dir,task_id,*normalized]).fetchall() if normalized else []
+            project=str(root)
+            if not normalized:
+                db.execute("DELETE FROM patch_ownership WHERE project_dir=? AND task_id=?",(project,task_id))
+                return []
+            for path in normalized:
+                db.execute("INSERT OR REPLACE INTO patch_ownership(project_dir,path,task_id,symbol,updated_at) VALUES(?,?,?,?,?)",(project,path,task_id,"",timestamp))
+            rows=db.execute(
+                """SELECT ownership.path,ownership.task_id
+                   FROM patch_ownership ownership
+                   JOIN tasks task ON task.id=ownership.task_id
+                   WHERE ownership.project_dir=? AND ownership.task_id<>?
+                     AND task.state NOT IN ('completed','failed','cancelled')
+                     AND ownership.path IN (%s)""" % ",".join("?" for _ in normalized),
+                [project,task_id,*normalized],
+            ).fetchall()
         return [{"path":r["path"],"taskID":r["task_id"]} for r in rows]
 
     def recover_inflight(self) -> int:

@@ -388,11 +388,11 @@ for (const [name, policy, producerMarker] of [
   ['Qwen orchestrator policy', orchestratorPolicy, 'TUI panels populate automatically from session/provider state and natural plan/tool/subagent events'],
   ['SOL orchestrator policy', solOrchestratorPolicy, 'TUI panels populate automatically from session/provider state and natural plan/tool/subagent events'],
 ]) {
-  for (const marker of ['2-7', '- [ ]', '- [>]', '- [x]', producerMarker]) {
+  for (const marker of ['plan_update', '1-7', 'chain-of-thought', producerMarker]) {
     assert.ok(policy.includes(marker), `${name} must define visible plan status/UI event contract: ${marker}`)
   }
   assert.ok(policy.includes(name === 'global AGENTS policy' ? 'статус' : 'status'), `${name} must require plan status updates`)
-  assert.ok(policy.includes(name === 'global AGENTS policy' ? 'не создавай инструменты или подагентов ради UI' : 'never make artificial tool calls merely to populate UI panels'), `${name} must prohibit synthetic UI-producing calls`)
+  assert.ok(policy.includes(name === 'global AGENTS policy' ? 'не создавай инструменты или подагентов только ради UI' : 'never make artificial tool calls merely to populate UI panels'), `${name} must prohibit synthetic UI-producing calls`)
 }
 assert.ok(retiredPanel.includes('id: "custom.limits-panels-retired"'), 'Old universal panel filename must be an inert migration tombstone')
 assert.ok(!retiredPanel.includes('custom.universal-panel'), 'Old universal host must not remain active')
@@ -457,6 +457,7 @@ assert.equal(limits.qwen.fiveHour.remainingCredits, 7500)
 assert.equal(limits.qwen.sevenDay.remainingCredits, 11200)
 assert.ok(limits.gemini)
 assert.equal(limits.gemini.minuteTokens.limit, 2000000)
+assert.equal(limits.gemini.dailyRequests.limit, 4000000)
 
 helper.startAutoRefresh()
 helper.startAutoRefresh()

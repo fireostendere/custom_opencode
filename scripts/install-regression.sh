@@ -61,6 +61,7 @@ cat >"$FAKE_BIN/opencode2" <<'EOF'
 #!/usr/bin/env bash
 printf 'opencode2 %s\n' "$*" >>"${CUSTOM_OPENCODE_REGRESSION_LOG:?}"
 if [[ "${1:-}" == "--version" ]]; then
+  printf 'opencode2 v0.0.0-beta-18743\n'
   printf 'runtime-env WSL_DISTRO_NAME=%s DISPLAY=%s WAYLAND_DISPLAY=%s WAYLAND_SOCKET=%s\n' \
     "${WSL_DISTRO_NAME-}" "${DISPLAY-}" "${WAYLAND_DISPLAY-}" "${WAYLAND_SOCKET-}" \
     >>"${CUSTOM_OPENCODE_REGRESSION_LOG:?}"
@@ -86,10 +87,12 @@ CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
 CONFIG="$HOME_DIR/.config/opencode/opencode.json"
 CLI_CONFIG="$HOME_DIR/.config/opencode/cli.json"
 SERVICE="$HOME_DIR/.config/systemd/user/opencode-web-client.service"
+SERVICE_CONFIG="$HOME_DIR/.config/opencode/service.json"
 WRAPPER="$HOME_DIR/.local/bin/custom-opencode"
 UPDATER="$HOME_DIR/.local/bin/custom-opencode-update"
 WEBSERVER_WRAPPER="$HOME_DIR/.local/bin/custom-opencode-webserver"
 RUNTIME_GUARD="$HOME_DIR/.config/opencode/plugins/server-runtime-guard.js"
+VISIBLE_PLAN="$HOME_DIR/.config/opencode/plugins/visible-plan.js"
 TUI_DIR="$HOME_DIR/.config/opencode/plugins/tui"
 [[ -f "$CONFIG" ]] || { echo "fresh install did not render config" >&2; exit 1; }
 grep -Fq '"app.exit": "ctrl+shift+q"' "$CLI_CONFIG"
@@ -98,6 +101,7 @@ grep -Fq '"app.exit": "ctrl+shift+q"' "$CLI_CONFIG"
 [[ -L "$UPDATER" ]] || { echo "fresh install did not create updater symlink" >&2; exit 1; }
 [[ -x "$WEBSERVER_WRAPPER" ]] || { echo "fresh install did not create webserver controller" >&2; exit 1; }
 [[ -f "$RUNTIME_GUARD" ]] || { echo "fresh install did not install runtime guard plugin" >&2; exit 1; }
+[[ -f "$VISIBLE_PLAN" ]] || { echo "fresh install did not install visible plan plugin" >&2; exit 1; }
 grep -Fq 'unset WAYLAND_DISPLAY WAYLAND_SOCKET' "$WRAPPER"
 grep -Fq 'webserver-control.py' "$WEBSERVER_WRAPPER"
 if grep -Fq 'pin-orchestrated-recent.py' "$WRAPPER"; then
@@ -107,6 +111,21 @@ fi
 grep -Fq "$COPY/app/server_workflow.py" "$SERVICE"
 grep -Fq 'systemctl --user enable --now opencode-web-client.service' "$LOG"
 grep -Fq 'systemctl --user restart opencode-web-client.service' "$LOG"
+[[ $(stat -c %a "$SERVICE_CONFIG") == 600 ]] || { echo "service config permissions are not private" >&2; exit 1; }
+if grep -Fq 'service set env' "$LOG"; then
+  echo "installer exposed service environment through command arguments" >&2
+  exit 1
+fi
+
+AUTH="$HOME_DIR/.local/share/opencode/auth.json"
+printf '%s\n' '{broken' >"$AUTH"
+if CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" bash "$COPY/scripts/install.sh" >"$TMP/broken-auth.out" 2>&1; then
+  echo "installer replaced malformed auth state" >&2
+  exit 1
+fi
+grep -Fq 'invalid auth file' "$TMP/broken-auth.out"
+grep -Fxq '{broken' "$AUTH"
+rm -f "$AUTH"
 
 # Isolated plan runs cannot infer their parent session model.  The wrapper must
 # reject the bare form while preserving every explicit reference byte-for-byte.

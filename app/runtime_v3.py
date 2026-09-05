@@ -12,6 +12,7 @@ import ast
 import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
+from functools import lru_cache
 import hashlib
 import json
 import math
@@ -70,13 +71,18 @@ def _cosine(a:list[float],b:list[float])->float:
     return sum(x*y for x,y in zip(a,b)) if a and b and len(a)==len(b) else 0.
 
 
+@lru_cache(maxsize=2)
+def _embedding_model(name:str):
+    from sentence_transformers import SentenceTransformer  # type: ignore
+    return SentenceTransformer(name)
+
+
 def _embedding(texts:list[str])->tuple[str,list[list[float]]]:
     mode=os.environ.get("OPENCODE_REPO_EMBEDDINGS","auto").strip().lower()
     if mode not in {"off","hash","hashed"}:
         try:
-            from sentence_transformers import SentenceTransformer  # type: ignore
             model_name=os.environ.get("OPENCODE_REPO_EMBED_MODEL","sentence-transformers/all-MiniLM-L6-v2")
-            model=SentenceTransformer(model_name)
+            model=_embedding_model(model_name)
             rows=model.encode(texts,normalize_embeddings=True,show_progress_bar=False)
             return model_name,[[round(float(v),6) for v in row] for row in rows]
         except Exception:
@@ -101,7 +107,7 @@ class SemanticRepoIndexer:
     def __init__(self,store:RuntimeStore): self.store=store
     def _key(self,project_dir:str)->str: return hashlib.sha256(project_dir.encode()).hexdigest()
     def _files(self,root:Path)->list[str]:
-        proc=_run(root,["git","ls-files","-z"],15.)
+        proc=_run(root,["git","ls-files","--cached","--others","--exclude-standard","-z"],15.)
         if proc.returncode==0: return [item for item in proc.stdout.split("\0") if item][:12000]
         out=[]
         for path in root.rglob("*"):
@@ -185,8 +191,7 @@ class SemanticRepoIndexer:
         hits.sort(key=lambda item:(-item[0],str(item[1].get("path")),str(item[1].get("qualified",""))))
         return {"query":q,"hits":[{**item,"score":round(score,4)} for score,item in hits[:max(1,min(200,int(limit)))]],"index":{k:index.get(k) for k in ("files","generatedAt","fingerprint","embeddingBackend")}}
     def semantic_diff(self,project_dir:str,baseline:dict[str,Any]|None=None)->dict[str,Any]:
-        root=Path(project_dir).resolve(strict=False); baseline=baseline or {}; current=git_snapshot(str(root)); base_head=baseline.get("head"); args=["git","diff","--unified=0"]
-        if base_head and current.get("head") and base_head!=current.get("head"): args.append(str(base_head))
+        root=Path(project_dir).resolve(strict=False); baseline=baseline or {}; current=git_snapshot(str(root)); base_head=baseline.get("head"); args=["git","diff","--unified=0",str(base_head or "HEAD"),"--"]
         proc=_run(root,args,12.); changed_lines=defaultdict(list); current_file=None
         if proc.returncode==0:
             for line in proc.stdout.splitlines():
@@ -195,6 +200,8 @@ class SemanticRepoIndexer:
                     m=re.search(r"\+(\d+)(?:,(\d+))?",line)
                     if m:
                         start=int(m.group(1)); length=max(1,int(m.group(2) or 1)); changed_lines[current_file].append((start,start+length-1))
+        for relative in current.get("changed") or []:
+            if relative not in changed_lines: changed_lines[relative].append((1,2**31-1))
         index=self.refresh(str(root)); impacted=[]
         for symbol in index.get("symbols") or []:
             ranges=changed_lines.get(str(symbol.get("path"))) or []; s=int(symbol.get("line") or 0); e=int(symbol.get("endLine") or s)
@@ -203,7 +210,7 @@ class SemanticRepoIndexer:
 
 
 class ScopedSecretBroker:
-    def __init__(self): self.prefixes=tuple(x for x in os.environ.get("OPENCODE_SECRET_PREFIXES","TOKEN_PLAN_;OPENAI_;GITHUB_;MCP_;QDRANT_;HF_").split(";") if x); self.rules=self._rules(); self._leases={}; self._lock=threading.Lock()
+    def __init__(self): self.prefixes=tuple(x for x in os.environ.get("OPENCODE_SECRET_PREFIXES","TOKEN_PLAN_;OPENAI_;GITHUB_;MCP_;QDRANT_;HF_;GEMINI_;GOOGLE_").split(";") if x); self.rules=self._rules(); self._leases={}; self._lock=threading.Lock()
     def _rules(self):
         rules=defaultdict(set)
         for entry in os.environ.get("OPENCODE_SECRET_SCOPES","").split(";"):
@@ -246,8 +253,20 @@ class SandboxManager:
         if profile=="full-machine":
             if os.environ.get("OPENCODE_ALLOW_FULL_MACHINE","0").lower() not in {"1","true","yes"}: raise PermissionError("full-machine sandbox requires explicit opt-in")
             return {"command":command,"cwd":root,"shell":"/bin/sh"}
-        if profile in {"safe","repo-write"} and shutil.which("bwrap"):
-            bind="--ro-bind" if profile=="safe" else "--bind"; network="--unshare-net " if profile=="safe" else ""; wrapped=f"bwrap --die-with-parent --new-session {network}--proc /proc --dev /dev --tmpfs /tmp --ro-bind / / {bind} {shlex.quote(root)} {shlex.quote(root)} --chdir {shlex.quote(root)} /bin/sh -lc {shlex.quote(command)}"; return {"command":wrapped,"cwd":root,"shell":"/bin/sh"}
+        if profile in {"safe","repo-write"}:
+            bwrap=shutil.which("bwrap")
+            if not bwrap:
+                if os.environ.get("OPENCODE_ALLOW_UNSANDBOXED","0").lower() in {"1","true","yes"}: return {"command":command,"cwd":root,"shell":"/bin/sh"}
+                raise RuntimeError("bwrap is required for safe/repo-write shell execution")
+            home=Path.home().resolve(strict=False); hidden=home.parent if home.parent!=Path("/") else home; root_path=Path(root)
+            if _inside(home,root_path): raise PermissionError("sandbox root cannot expose the complete home tree")
+            args=[bwrap,"--die-with-parent","--new-session","--unshare-net","--unshare-pid","--ro-bind","/","/","--proc","/proc","--dev","/dev","--tmpfs","/tmp","--tmpfs",str(hidden)]
+            if _inside(root_path,hidden):
+                relative=root_path.relative_to(hidden); current=hidden
+                for part in relative.parts:
+                    current=current/part; args.extend(["--dir",str(current)])
+            args.extend(["--dir","/tmp/opencode-home","--setenv","HOME","/tmp/opencode-home","--ro-bind" if profile=="safe" else "--bind",root,root,"--chdir",root,"/bin/sh","-c",command])
+            return {"command":shlex.join(args),"cwd":root,"shell":"/bin/sh"}
         if profile=="docker":
             if not shutil.which("docker"): raise RuntimeError("docker sandbox requested but docker is unavailable")
             mount=f"{root}:/workspace"+(":ro" if os.environ.get("OPENCODE_DOCKER_READONLY","0")=="1" else ""); network="--network none " if os.environ.get("OPENCODE_DOCKER_NETWORK","0")!="1" else ""; wrapped=f"docker run --rm {network}-v {shlex.quote(mount)} -w /workspace {shlex.quote(self.docker_image)} /bin/sh -lc {shlex.quote(command)}"; return {"command":wrapped,"cwd":root,"shell":"/bin/sh"}
@@ -407,12 +426,12 @@ class ToolGateway:
     def after(self,payload:dict[str,Any])->dict[str,Any]:
         tool=str(payload.get("tool") or ""); sid=str(payload.get("sessionID") or "") or None; cwd=str(payload.get("cwd") or "") or None; task=self._task(sid,cwd); result=payload.get("result"); serialized=json.dumps(result,ensure_ascii=False,default=str) if not isinstance(result,str) else result
         if not task: return {"replace":False}
-        task_id=str(task["id"]); root=str(task.get("project_dir") or cwd or ""); digest=hashlib.sha256(serialized.encode()).hexdigest(); cache_key=f"{tool}:{digest}"; duplicate=self.store.cache_get("tool-result-dedupe",cache_key)
-        if duplicate: return {"replace":True,"result":{"summary":f"Duplicate {tool} result; reused server artifact {duplicate.get('artifactID')}","artifactID":duplicate.get("artifactID"),"deduplicated":True}}
+        task_id=str(task["id"]); root=str(task.get("project_dir") or cwd or ""); digest=hashlib.sha256(serialized.encode()).hexdigest(); cache_key=f"{task_id}:{tool}:{digest}"; duplicate=self.store.cache_get("tool-result-dedupe",cache_key)
+        if isinstance(duplicate,dict) and duplicate.get("artifactID"): return {"replace":True,"result":{"summary":f"Duplicate {tool} result; reused server artifact {duplicate['artifactID']}","artifactID":duplicate["artifactID"],"deduplicated":True}}
         threshold=int(os.environ.get("OPENCODE_TOOL_ARTIFACT_THRESHOLD","24000"))
         if len(serialized.encode())>threshold:
             artifact=self.artifacts.put(task_id=task_id,project_dir=root,kind="tool-output",title=f"{tool} output",content=serialized,summary=f"Large {tool} result ({len(serialized)} chars)"); self.store.cache_set("tool-result-dedupe",cache_key,{"artifactID":artifact["id"]},ttl_seconds=1800); preview=serialized[:4000]+("\n[…stored as artifact…]" if len(serialized)>4000 else ""); return {"replace":True,"result":{"summary":artifact["summary"],"artifactID":artifact["id"],"preview":preview,"size":artifact["size"]}}
-        self.store.cache_set("tool-result-dedupe",cache_key,{"artifactID":None},ttl_seconds=300); return {"replace":False}
+        return {"replace":False}
     def shell(self,payload:dict[str,Any])->dict[str,Any]:
         cwd=str(payload.get("cwd") or ""); command=str(payload.get("command") or ""); task=self._task(str(payload.get("sessionID") or "") or None,cwd)
         if not task: return {"command":command,"cwd":cwd,"shell":str(payload.get("shell") or "/bin/sh"),"env":{}}

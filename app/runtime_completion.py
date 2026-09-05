@@ -2,12 +2,11 @@
 """Final control-plane completion layer for Runtime V3.
 
 Keeps small cross-cutting policies out of the core runtime modules: semantic
-permission previews, shared pre-execution read cache, wasted-retry accounting,
-branch-state handoff, and compact remote approve/cancel APIs.
+permission previews, wasted-retry accounting, branch-state handoff, and compact
+remote approve/cancel APIs.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,7 +14,6 @@ import shlex
 from typing import Any
 from urllib.parse import parse_qs
 
-from repo_services import git_snapshot
 from runtime_store import now_ms
 
 _INSTALLED=False
@@ -172,23 +170,7 @@ def _wrap_branch_merge(runtime: Any, v3mod: Any) -> None:
 def install(runtime: Any, v3mod: Any, control: Any, features: Any) -> None:
     global _INSTALLED
     if _INSTALLED: return
-    _wrap_permission_decision(control); _wrap_usage_stage(runtime); _wrap_branch_merge(runtime,v3mod); runtime.STORE.event(kind="runtime.completion_installed",data={"features":["semantic-permission-preview","shared-tool-cache","wasted-retry-accounting","branch-state-handoff","remote-actions"]}); _INSTALLED=True
-
-
-def _cacheable(tool: str, inp: Any) -> bool:
-    if tool in {"read","glob","grep","list","lsp"}: return True
-    if tool in {"shell","bash"} and isinstance(inp,dict):
-        command=str(inp.get("command") or "").strip().lower(); allowed=("git status","git diff","git log","git show","git rev-parse","git ls-files","tree","ls","pwd")
-        return any(command==prefix or command.startswith(prefix+" ") for prefix in allowed) and not any(token in command for token in (";","&&","||",">","<","`","$("))
-    return tool.endswith(("_knowledge_search","_knowledge_get","_knowledge_sources","_knowledge_status"))
-
-
-def _tool_cache_key(tool: str, inp: Any, cwd: str) -> str:
-    snap=git_snapshot(cwd) if cwd and Path(cwd).is_dir() else {"head":None,"statusHash":None}; raw=json.dumps([tool,inp,snap.get("head"),snap.get("statusHash")],ensure_ascii=False,sort_keys=True,default=str); return hashlib.sha256(raw.encode()).hexdigest()
-
-
-def _internal_auth(handler: Any) -> bool:
-    expected=os.environ.get("OPENCODE_RUNTIME_PLUGIN_TOKEN") or os.environ.get("OPENCODE_SERVER_PASSWORD") or ""; supplied=handler.headers.get("X-OpenCode-Runtime",""); return bool(expected and supplied and hashlib.sha256(expected.encode()).digest()==hashlib.sha256(supplied.encode()).digest())
+    _wrap_permission_decision(control); _wrap_usage_stage(runtime); _wrap_branch_merge(runtime,v3mod); runtime.STORE.event(kind="runtime.completion_installed",data={"features":["semantic-permission-preview","wasted-retry-accounting","branch-state-handoff","remote-actions"]}); _INSTALLED=True
 
 
 def _json_body(handler: Any, limit: int=2_000_000) -> dict[str,Any]:
@@ -218,37 +200,22 @@ def handle_get(handler: Any, parsed: Any, runtime: Any, control: Any, features: 
 
 
 def handle_post(handler: Any, parsed: Any, runtime: Any, control: Any, features: Any) -> bool:
-    if parsed.path not in {"/internal/runtime/tool-cache","/client-remote-action.json"}: return False
-    if parsed.path=="/internal/runtime/tool-cache":
-        if not _internal_auth(handler): handler.json_response({"ok":False,"error":"forbidden"},status=403); return True
-    elif not handler.authenticated(): handler.unauthorized(); return True
+    if parsed.path!="/client-remote-action.json": return False
+    if not handler.authenticated(): handler.unauthorized(); return True
     try:
         payload=_json_body(handler)
-        if parsed.path=="/internal/runtime/tool-cache":
-            op=str(payload.get("op") or "get"); tool=str(payload.get("tool") or ""); inp=payload.get("input"); cwd=str(payload.get("cwd") or "")
-            if not _cacheable(tool,inp) or not cwd: result={"ok":True,"cacheable":False,"hit":False}
-            else:
-                key=_tool_cache_key(tool,inp,cwd); namespace="tool-input-v3"
-                if op=="get":
-                    cached=runtime.STORE.cache_get(namespace,key); result={"ok":True,"cacheable":True,"hit":cached is not None,"result":cached}
-                elif op=="put":
-                    value=payload.get("result"); encoded=json.dumps(value,ensure_ascii=False,default=str)
-                    if len(encoded.encode())<=512000: runtime.STORE.cache_set(namespace,key,value,ttl_seconds=float(os.environ.get("OPENCODE_TOOL_CACHE_TTL","30")))
-                    result={"ok":True,"cacheable":True,"stored":len(encoded.encode())<=512000}
-                else: raise ValueError("invalid cache operation")
-        else:
-            kind=str(payload.get("kind") or "task"); action=str(payload.get("action") or "")
-            if kind=="task":
-                if action not in {"cancel","pause","resume"}: raise ValueError("invalid task action")
-                result=runtime.task_control(features,{"taskID":str(payload.get("taskID") or ""),"action":action})
-            elif kind=="permission":
-                if action not in {"once","reject"}: raise ValueError("invalid permission action")
-                sid=str(payload.get("sessionID") or ""); pid=str(payload.get("permissionID") or ""); directory=features._session_directory(sid); pending=None
-                for request in features._permission_requests(directory):
-                    if str(request.get("sessionID") or "")==sid and str(request.get("requestID") or request.get("id") or "")==pid: pending=request; break
-                if pending is None: raise KeyError(pid)
-                features._permission_reply(pending,action); runtime.STORE.event(kind="remote.permission_reply",session_id=sid,project_dir=directory,data={"permissionID":pid,"reply":action,"at":now_ms()}); result={"ok":True,"permissionID":pid,"reply":action}
-            else: raise ValueError("invalid remote action kind")
+        kind=str(payload.get("kind") or "task"); action=str(payload.get("action") or "")
+        if kind=="task":
+            if action not in {"cancel","pause","resume"}: raise ValueError("invalid task action")
+            result=runtime.task_control(features,{"taskID":str(payload.get("taskID") or ""),"action":action})
+        elif kind=="permission":
+            if action not in {"once","reject"}: raise ValueError("invalid permission action")
+            sid=str(payload.get("sessionID") or ""); pid=str(payload.get("permissionID") or ""); directory=features._session_directory(sid); pending=None
+            for request in features._permission_requests(directory):
+                if str(request.get("sessionID") or "")==sid and str(request.get("requestID") or request.get("id") or "")==pid: pending=request; break
+            if pending is None: raise KeyError(pid)
+            features._permission_reply(pending,action); runtime.STORE.event(kind="remote.permission_reply",session_id=sid,project_dir=directory,data={"permissionID":pid,"reply":action,"at":now_ms()}); result={"ok":True,"permissionID":pid,"reply":action}
+        else: raise ValueError("invalid remote action kind")
         handler.json_response(result)
     except Exception as exc: handler._feature_error(exc)
     return True

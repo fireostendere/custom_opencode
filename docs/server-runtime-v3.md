@@ -88,17 +88,16 @@ When `sentence-transformers` is available it can be used for embeddings. Otherwi
 
 ## MCP gateway and lazy loading
 
-OpenCode remains the central MCP host rather than duplicating a second protocol daemon. Installation enables OpenCode V2 MCP Code Mode for the knowledge server, so MCP schemas are not all injected into the provider tool list up front. Runtime V3 adds central policy, health/catalog metadata, read-result caching, rate limiting and secret handling around execution.
+OpenCode remains the central MCP host rather than duplicating a second protocol daemon. Installation enables OpenCode V2 MCP Code Mode for the knowledge server, so MCP schemas are not all injected into the provider tool list up front. Runtime V3 adds central policy, health/catalog metadata, rate limiting and secret handling around execution.
 
 The OpenCode V2 runtime guard applies:
 
 1. `session.context`: bounded server context for every managed client path before model dispatch.
 2. `tool.execute.before`: sandbox, ownership, loop and rate-limit policy.
-3. `tool.transform`: wraps cacheable read executors so a cache hit prevents the underlying tool call entirely.
-4. `tool.execute.after`: externalizes large results and deduplicates repeated outputs.
-5. `shell.create.before`: strips server secrets and wraps commands in the selected sandbox.
+3. `tool.execute.after`: externalizes large results and deduplicates repeated task-scoped artifacts.
+4. `shell.create.before`: strips server secrets and wraps commands in the selected sandbox.
 
-The pre-execution cache is restricted to deterministic/bounded reads. Cache keys include tool input plus Git HEAD and working-tree status, so repository changes invalidate cached repository reads automatically.
+Pre-execution tool-result caching is deliberately disabled: filesystem reads can change without a Git status transition. Repository indexes use a Git/content fingerprint instead.
 
 ## Permission previews
 
@@ -119,6 +118,8 @@ Supported profiles are:
 - `docker`: shell execution runs in a configured Docker image; network is disabled unless explicitly enabled.
 - `wsl`: shell execution runs through WSL when available.
 - `full-machine`: requires explicit `OPENCODE_ALLOW_FULL_MACHINE=1`.
+
+`safe` and `repo-write` require `bwrap`, hide the user's home tree except for the selected repository, and disable network access. The explicit `OPENCODE_ALLOW_UNSANDBOXED=1` escape hatch is intended only for hosts where that weaker boundary has been consciously accepted.
 
 Path containment is also enforced for file-mutation tools.
 

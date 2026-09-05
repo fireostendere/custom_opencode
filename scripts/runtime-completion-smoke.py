@@ -25,11 +25,6 @@ with tempfile.TemporaryDirectory() as temp:
     assert "build/" in preview,preview
     write_preview=runtime_completion.permission_preview({"action":"write","resources":["build/a","build/b"]},str(project))
     assert "2 файла" in write_preview and "build/" in write_preview,write_preview
-    assert runtime_completion._cacheable("read",{"path":"README.md"})
-    assert runtime_completion._cacheable("shell",{"command":"git status --short"})
-    assert not runtime_completion._cacheable("shell",{"command":"git status; rm -rf build"})
-    assert not runtime_completion._cacheable("shell",{"command":"lsof"})
-
     store=RuntimeStore(root/"runtime.sqlite3"); store.initialize()
     runtime=SimpleNamespace(STORE=store,_usage_stage=lambda task:"implementation")
     control=SimpleNamespace(decision_for=lambda request,directory:{"risk":"R3","reason":"test"})
@@ -59,4 +54,4 @@ with tempfile.TemporaryDirectory() as temp:
     assert inbox and inbox[0]["type"]=="handoff"
     assert store.checkpoints(target["id"])[0]["stage"]=="branch-state-merged"
 
-print("Runtime completion smoke passed: semantic permission preview + precise pre-exec cache + wasted retries + branch-state handoff")
+print("Runtime completion smoke passed: semantic permission preview + wasted retries + branch-state handoff")

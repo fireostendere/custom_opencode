@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Repository index, context cache, artifacts and verification helpers."""
 from __future__ import annotations
+import base64
 
 import hashlib
 import json
@@ -45,14 +46,27 @@ def safe_repo_file(root:Path,relative:str)->Path|None:
 def git_snapshot(project_dir:str)->dict[str,Any]:
     root=Path(project_dir).resolve(strict=False); probe=_run(root,["git","rev-parse","--is-inside-work-tree"],timeout=3.)
     if probe.returncode!=0: return {"git":False,"head":None,"status":[],"changed":[]}
-    head=_run(root,["git","rev-parse","HEAD"],timeout=4.); status=_run(root,["git","status","--porcelain=v1","-z"],timeout=6.); rows=[]
-    if status.returncode==0: rows=[item for item in status.stdout.split("\0") if item][:1000]
-    changed=[]
-    for row in rows:
-        path=row[3:] if len(row)>3 else row
-        if " -> " in path: path=path.split(" -> ",1)[1]
-        changed.append(path)
-    return {"git":True,"head":head.stdout.strip() if head.returncode==0 else None,"status":rows,"changed":sorted(dict.fromkeys(changed)),"statusHash":hashlib.sha256("\n".join(rows).encode()).hexdigest()[:16],"capturedAt":now_ms()}
+    head=_run(root,["git","rev-parse","HEAD"],timeout=4.); status=_run(root,["git","status","--porcelain=v1","-z","--untracked-files=all"],timeout=6.); rows=[]; changed=[]
+    if status.returncode==0:
+        records=status.stdout.split("\0"); index=0
+        while index<len(records) and len(rows)<1000:
+            row=records[index]; index+=1
+            if not row: continue
+            code=row[:2]; path=row[3:] if len(row)>3 else row
+            if ("R" in code or "C" in code) and index<len(records):
+                old=records[index]; index+=1; rows.append(f"{code} {old} -> {path}"); changed.extend((old,path))
+            else: rows.append(row); changed.append(path)
+    changed=sorted(dict.fromkeys(path for path in changed if path))
+    digest=hashlib.sha256(status.stdout.encode() if status.returncode==0 else b"")
+    for relative in changed:
+        digest.update(relative.encode("utf-8",errors="surrogateescape")); path=safe_repo_file(root,relative)
+        if path is None:
+            digest.update(b"\0missing"); continue
+        try:
+            details=path.stat(); digest.update(f"\0{details.st_size}:{details.st_mtime_ns}".encode())
+            if details.st_size<=4_000_000: digest.update(path.read_bytes())
+        except OSError: digest.update(b"\0unreadable")
+    return {"git":True,"head":head.stdout.strip() if head.returncode==0 else None,"status":rows,"changed":changed,"statusHash":digest.hexdigest()[:16],"capturedAt":now_ms()}
 
 
 def semantic_diff(project_dir:str,baseline:dict[str,Any]|None=None)->dict[str,Any]:
@@ -65,7 +79,7 @@ def semantic_diff(project_dir:str,baseline:dict[str,Any]|None=None)->dict[str,An
                 if len(bits)>=2: files.append(bits[-1])
     stats={"files":0,"insertions":0,"deletions":0}
     if current.get("git"):
-        proc=_run(root,["git","diff","--numstat"],timeout=8.)
+        proc=_run(root,["git","diff","--numstat",str(base_head or "HEAD"),"--"],timeout=8.)
         if proc.returncode==0:
             for line in proc.stdout.splitlines():
                 bits=line.split("\t")
@@ -85,7 +99,7 @@ class RepoIndexer:
         if not force and isinstance(cached,dict) and cached.get("fingerprint")==fingerprint: cached["cacheHit"]=True; return cached
         files=[]
         if snapshot.get("git"):
-            proc=_run(root,["git","ls-files","-z"],timeout=12.)
+            proc=_run(root,["git","ls-files","--cached","--others","--exclude-standard","-z"],timeout=12.)
             if proc.returncode==0: files=[item for item in proc.stdout.split("\0") if item][:6000]
         if not files:
             for path in root.rglob("*"):
@@ -148,12 +162,17 @@ class ArtifactStore:
         self.store.initialize()
         with self.store.connect() as db: row=db.execute("SELECT * FROM artifacts WHERE id=?",(artifact_id,)).fetchone()
         if not row: return None
+        offset=max(0,int(offset)); limit=max(1,min(500000,int(limit)))
+        textual=str(row["mime"]).startswith("text/") or str(row["mime"]) in {"application/json","application/javascript","application/xml","application/yaml"}
+        if not textual:
+            try: data=Path(str(row["file_path"])).read_bytes() if row["file_path"] else b""
+            except OSError: data=b""
+            return {"id":row["id"],"taskID":row["task_id"],"kind":row["kind"],"title":row["title"],"summary":row["summary"],"mime":row["mime"],"size":row["size_bytes"],"sha256":row["sha256"],"offset":offset,"encoding":"base64","content":base64.b64encode(data[offset:offset+limit]).decode("ascii")}
         if row["inline_text"] is not None: text=str(row["inline_text"])
         elif row["file_path"]:
             try: text=Path(str(row["file_path"])).read_text(encoding="utf-8",errors="replace")
             except OSError: text=""
         else: text=""
-        offset=max(0,int(offset)); limit=max(1,min(500000,int(limit)))
         if query:
             q=query.casefold(); lines=text.splitlines(); matched=[]
             for index,line in enumerate(lines):
@@ -210,16 +229,8 @@ class ContextService:
         text="\n\n".join(output); return {"text":text,"budgetChars":budget_chars,"usedChars":len(text),"omittedSections":omitted,"semanticDiff":diff}
 
 
-NETWORK_RE=re.compile(r"(?i)(temporary failure in name resolution|could not resolve|connection (?:reset|refused)|network is unreachable|timed? out|tls handshake)")
-ENV_RE=re.compile(r"(?i)(command not found|no module named|module not found|cannot find module|permission denied|no such file or directory|toolchain.*not installed)")
-FLAKY_RE=re.compile(r"(?i)(flaky|race condition|timing-dependent|retrying|intermittent)")
-
 def classify_failure(output:str,returncode:int)->str:
-    if returncode==0: return "pass"
-    if NETWORK_RE.search(output): return "network"
-    if ENV_RE.search(output): return "environment"
-    if FLAKY_RE.search(output): return "flaky"
-    return "code"
+    return "pass" if returncode==0 else "code"
 
 
 class VerificationPipeline:
@@ -246,10 +257,10 @@ class VerificationPipeline:
             try:
                 proc=_run(Path(task["project_dir"]),command["argv"],timeout=float(timeout_seconds)); output=((proc.stdout or "")+("\n" if proc.stdout and proc.stderr else "")+(proc.stderr or "")).strip(); classification=classify_failure(output,proc.returncode); elapsed=int((time.monotonic()-started)*1000)
             except subprocess.TimeoutExpired as exc:
-                output=f"verification timeout after {timeout_seconds}s: {exc}"; classification="environment"; elapsed=int((time.monotonic()-started)*1000); proc=None
+                output=f"verification timeout after {timeout_seconds}s: {exc}"; classification="code"; elapsed=int((time.monotonic()-started)*1000); proc=None
             artifact=self.artifacts.put(task_id=task["id"],project_dir=task["project_dir"],kind="verification-log",title=f"Verification: {command['name']}",content=output,summary=f"{classification}: {command['name']}")
             results.append({"name":command["name"],"argv":command["argv"],"returncode":proc.returncode if proc else None,"classification":classification,"elapsedMs":elapsed,"artifactID":artifact["id"],"failureSummary":"\n".join(output.splitlines()[-30:])[-6000:] if classification!="pass" else ""})
-        return {"enabled":True,"results":results,"ok":all(item["classification"]=="pass" for item in results),"actionableFailures":[item for item in results if item["classification"]=="code"],"environmentFailures":[item for item in results if item["classification"] in {"network","environment","flaky"}]}
+        return {"enabled":True,"results":results,"ok":all(item["classification"]=="pass" for item in results),"actionableFailures":[item for item in results if item["classification"]!="pass"],"environmentFailures":[]}
 
 
 def review_decision(project_dir:str,baseline:dict[str,Any]|None=None)->dict[str,Any]:
@@ -259,7 +270,7 @@ def review_decision(project_dir:str,baseline:dict[str,Any]|None=None)->dict[str,
 
 class SecretBroker:
     """In-process scoped secret lookup. Values are never serialized by snapshot()."""
-    def __init__(self): self.allowed_prefixes=tuple(item for item in os.environ.get("OPENCODE_SECRET_PREFIXES","TOKEN_PLAN_;OPENAI_;GITHUB_;MCP_").split(";") if item)
+    def __init__(self): self.allowed_prefixes=tuple(item for item in os.environ.get("OPENCODE_SECRET_PREFIXES","TOKEN_PLAN_;OPENAI_;GITHUB_;MCP_;GEMINI_;GOOGLE_").split(";") if item)
     def resolve(self,name:str,*,scope:str)->str:
         if not any(name.startswith(prefix) for prefix in self.allowed_prefixes): raise PermissionError("secret name outside broker allowlist")
         value=os.environ.get(name)

@@ -48,21 +48,6 @@ SAFE_SIMPLE_COMMANDS = {
 SAFE_GIT_SUBCOMMANDS = {
     "status", "diff", "log", "show", "rev-parse", "ls-files", "grep", "remote",
 }
-WORKSPACE_COMPUTE_PREFIXES = (
-    ("pytest",),
-    ("python", "-m", "pytest"),
-    ("python3", "-m", "pytest"),
-    ("node", "--check"),
-    ("npm", "test"),
-    ("pnpm", "test"),
-    ("bun", "test"),
-    ("cargo", "test"),
-    ("cargo", "check"),
-    ("go", "test"),
-)
-WORKSPACE_NPM_SCRIPTS = {"test", "lint", "typecheck", "check", "build"}
-
-
 def policy_preset(value: str | None = None) -> str:
     raw = (value or os.environ.get("OPENCODE_PERMISSION_POLICY") or DEFAULT_POLICY).strip().lower()
     return raw if raw in POLICY_PRESETS else DEFAULT_POLICY
@@ -188,13 +173,6 @@ def _shell_risk(command: str, preset: str, workspace: str | None) -> tuple[str, 
 
     if executable in {"python", "python3", "node", "npm", "pnpm", "bun", "git"} and len(argv) == 2 and argv[1] in {"--version", "-V"}:
         return "R0", True, "version probe"
-
-    if preset in {"workspace", "autonomous"}:
-        tuple_argv = tuple(argv)
-        if any(tuple_argv[:len(prefix)] == prefix for prefix in WORKSPACE_COMPUTE_PREFIXES):
-            return "R1", True, "bounded workspace test/check command"
-        if executable in {"npm", "pnpm", "bun"} and len(argv) >= 3 and argv[1] == "run" and argv[2] in WORKSPACE_NPM_SCRIPTS:
-            return "R1", True, f"workspace {executable} run {argv[2]}"
 
     return "R3", False, "command can mutate state or produce external side effects"
 

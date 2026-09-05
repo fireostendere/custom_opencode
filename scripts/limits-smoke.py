@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("OPENCODE_SERVER_PASSWORD", "test")
@@ -78,6 +79,13 @@ with tempfile.TemporaryDirectory() as temp:
     assert gemini["minuteTokens"]["limit"] == 2_000_000
     assert gemini["minuteRequests"]["limit"] == 1_000
     assert gemini["dailyRequests"]["limit"] == 4_000_000
+    state_dir = Path(temp) / ".local/state/custom-opencode"
+    state_dir.mkdir(parents=True)
+    (state_dir / "rate-limit.json").write_text('{"active":true,"seconds":"bad","until":NaN,"limitedBucket":"rpm","limits":{"rpm":17},"usage":{"tokensLastMinute":"bad"}}', encoding="utf-8")
+    with patch.object(server_ext.base.Path, "home", return_value=Path(temp)):
+        malformed = server_ext.query_gemini_status()
+    assert malformed["seconds"] == 0 and malformed["minuteRequests"]["limit"] == 17
+    assert malformed["minuteRequests"]["usedCredits"] == 17
 
     project = Path(temp) / "project"
     project.mkdir()
@@ -133,8 +141,10 @@ with tempfile.TemporaryDirectory() as temp:
     subprocess.run(["git", "-C", str(project), "add", "tracked.txt"], check=True)
     subprocess.run(["git", "-C", str(project), "commit", "-qm", "base"], check=True)
     tracked.write_text("changed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(project), "add", "tracked.txt"], check=True)
     result = server_features.git_revert({"directory": str(project), "path": "tracked.txt", "mode": "file"})
     assert result["ok"] is True and tracked.read_text(encoding="utf-8") == "base\n"
+    assert subprocess.check_output(["git", "-C", str(project), "status", "--porcelain"], text=True) == ""
     try:
         server_features.git_revert({"directory": str(project), "path": "../outside.txt", "mode": "file"})
     except ValueError:

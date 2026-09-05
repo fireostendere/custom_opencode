@@ -96,35 +96,50 @@ def _worktree_merge(runtime:Any,task:dict[str,Any],cleanup:bool=False)->dict[str
     if not worktree or not owner: raise ValueError("task is not an isolated managed worktree")
     if not Path(worktree).is_dir() or not Path(owner).is_dir(): raise ValueError("worktree/root missing")
     base=str((task.get("baseline") or {}).get("head") or "HEAD")
-    changed_proc=_run_git(worktree,["diff","--name-only","-z",base]); status_proc=_run_git(worktree,["status","--porcelain=v1","-z"])
-    if changed_proc.returncode!=0 or status_proc.returncode!=0: raise RuntimeError((changed_proc.stderr or status_proc.stderr).strip() or "worktree status failed")
-    tracked=[item for item in changed_proc.stdout.split("\0") if item]; untracked=[]
-    rows=[item for item in status_proc.stdout.split("\0") if item]
-    for row in rows:
-        if row.startswith("?? "): untracked.append(row[3:])
+    changed_proc=_run_git(worktree,["diff","--name-only","-z",base]); untracked_proc=_run_git(worktree,["ls-files","--others","--exclude-standard","-z"])
+    if changed_proc.returncode!=0 or untracked_proc.returncode!=0: raise RuntimeError((changed_proc.stderr or untracked_proc.stderr).strip() or "worktree status failed")
+    tracked=[item for item in changed_proc.stdout.split("\0") if item]; untracked=[item for item in untracked_proc.stdout.split("\0") if item]
     paths=sorted(dict.fromkeys([*tracked,*untracked]))
     if not paths: return {"ok":True,"taskID":task["id"],"changed":[],"message":"worktree has no changes"}
     for relative in paths:
         dirty=_run_git(owner,["status","--porcelain=v1","--",relative])
         if dirty.returncode!=0: raise RuntimeError(dirty.stderr.strip() or f"cannot inspect {relative}")
         if dirty.stdout.strip(): raise RuntimeError(f"target root already has uncommitted changes in {relative}")
-    conflicts=runtime.STORE.ownership_replace(owner,str(task["id"]),paths)
-    if conflicts: raise RuntimeError("worktree merge ownership conflict: "+", ".join(f"{c['path']} owned by {c['taskID']}" for c in conflicts[:10]))
+    sources=[]
+    for relative in untracked:
+        raw_source=Path(worktree)/relative; raw_target=Path(owner)/relative
+        if raw_source.is_symlink() or raw_target.is_symlink(): raise RuntimeError(f"untracked path is a symlink: {relative}")
+        source=raw_source.resolve(strict=True); target=raw_target.resolve(strict=False)
+        try: source.relative_to(Path(worktree).resolve()); target.relative_to(Path(owner).resolve())
+        except ValueError: raise RuntimeError(f"unsafe untracked path: {relative}")
+        if source.is_symlink() or not source.is_file(): raise RuntimeError(f"untracked path is not a regular file: {relative}")
+        if target.exists(): raise RuntimeError(f"target already exists for untracked file: {relative}")
+        sources.append((relative,source,target))
     patch=_run_git(worktree,["diff","--binary",base,"--"],timeout=60.)
     if patch.returncode!=0: raise RuntimeError(patch.stderr.strip() or "worktree diff failed")
     if patch.stdout:
-        applied=_run_git(owner,["apply","--3way","--whitespace=nowarn","-"],patch.stdout,60.)
-        if applied.returncode!=0:
-            runtime.STORE.event(kind="worktree.merge_conflict",task_id=task["id"],session_id=task.get("session_id"),project_dir=owner,data={"paths":paths,"error":applied.stderr[-2000:]})
-            raise RuntimeError(applied.stderr.strip() or "git apply --3way failed")
-        _run_git(owner,["reset","-q","HEAD","--",*tracked],timeout=20.)
+        checked=_run_git(owner,["apply","--check","--3way","--whitespace=nowarn","-"],patch.stdout,60.)
+        if checked.returncode!=0: raise RuntimeError(checked.stderr.strip() or "git apply --check failed")
+    conflicts=runtime.STORE.ownership_replace(owner,str(task["id"]),paths)
+    if conflicts: raise RuntimeError("worktree merge ownership conflict: "+", ".join(f"{c['path']} owned by {c['taskID']}" for c in conflicts[:10]))
     copied=[]
-    for relative in untracked:
-        source=(Path(worktree)/relative).resolve(strict=True); target=(Path(owner)/relative).resolve(strict=False)
-        try: source.relative_to(Path(worktree).resolve()); target.relative_to(Path(owner).resolve())
-        except ValueError: raise RuntimeError(f"unsafe untracked path: {relative}")
-        if target.exists(): raise RuntimeError(f"target already exists for untracked file: {relative}")
-        target.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(source,target); copied.append(relative)
+    try:
+        for relative,source,target in sources:
+            target.parent.mkdir(parents=True,exist_ok=True)
+            with source.open("rb") as source_handle,target.open("xb") as target_handle:
+                copied.append(relative); shutil.copyfileobj(source_handle,target_handle)
+            shutil.copystat(source,target)
+        if patch.stdout:
+            applied=_run_git(owner,["apply","--3way","--whitespace=nowarn","-"],patch.stdout,60.)
+            if applied.returncode!=0: raise RuntimeError(applied.stderr.strip() or "git apply --3way failed")
+            _run_git(owner,["reset","-q","HEAD","--",*tracked],timeout=20.)
+    except Exception as exc:
+        for relative in copied:
+            try: (Path(owner)/relative).unlink(missing_ok=True)
+            except OSError: pass
+        runtime.STORE.ownership_replace(owner,str(task["id"]),[])
+        runtime.STORE.event(kind="worktree.merge_conflict",task_id=task["id"],session_id=task.get("session_id"),project_dir=owner,data={"paths":paths,"error":str(exc)[-2000:]})
+        raise
     runtime.STORE.checkpoint(task["id"],"worktree-merged",summary=f"Merged {len(paths)} isolated paths into project root",data={"ownershipRoot":owner,"paths":paths})
     runtime.STORE.event(kind="worktree.merged",task_id=task["id"],session_id=task.get("session_id"),project_dir=owner,data={"paths":paths,"copiedUntracked":copied})
     result={"ok":True,"taskID":task["id"],"target":owner,"changed":paths,"copiedUntracked":copied}

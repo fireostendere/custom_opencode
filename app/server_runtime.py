@@ -24,7 +24,7 @@ from repo_services import ArtifactStore, ContextService, RepoIndexer, SecretBrok
 from runtime_store import RuntimeStore, TASK_STATES, now_ms
 
 STORE=RuntimeStore(); INDEXER=RepoIndexer(STORE); ARTIFACTS=ArtifactStore(STORE); CONTEXT=ContextService(STORE,INDEXER); VERIFY=VerificationPipeline(ARTIFACTS); SECRETS=SecretBroker(); SCHEDULER=ResourceScheduler(); REGISTRY=CapabilityRegistry([])
-INSTALL_LOCK=threading.Lock(); INSTALLED=False; VERIFY_LOCK=threading.Lock(); VERIFYING:set[str]=set(); LAST_INDEX_AT:dict[str,float]={}; MIGRATION_DONE=False
+INSTALL_LOCK=threading.Lock(); INSTALLED=False; VERIFY_LOCK=threading.Lock(); VERIFYING:set[str]=set(); LAST_INDEX_AT:dict[str,float]={}; LAST_PRUNE_AT=0.0; MIGRATION_DONE=False
 PLAN_DIRECTORY=Path(os.environ.get("OPENCODE_PLAN_DIRECTORY") or (Path.home()/".opencode"/"plan")).expanduser(); PLAN_MAX_BYTES=1_000_000; PLAN_MAX_ITEMS=500
 ACTIVE_STATES={"submitted","running","waiting_permission","verifying","recovering"}; QUEUE_STATES={"queued","blocked","paused"}
 PROFILE_IDS={"direct","fast","build","architect","sol-orchestrated","sol-review","critical","research","review","long-horizon"}
@@ -168,13 +168,14 @@ def dispatch_immediate(features:Any,*,session_id:str,text:str,files:list[Any],pr
 
 
 def _dispatch_task(features:Any,task:dict[str,Any])->Any:
-    if task.get("state") not in {"queued","blocked"}: return None
-    ready,waiting=STORE.dependency_state(task["id"])
-    if not ready:
-        if task.get("state")!="blocked": STORE.transition(task["id"],"blocked",event="task.blocked",data={"waitingFor":waiting})
-        return None
-    route=_switch_session(features,task); task=STORE.get_task(task["id"]) or task; STORE.transition(task["id"],"submitted",event="task.dispatched",data={"route":route}); STORE.checkpoint(task["id"],"dispatched",summary="Prompt accepted for dispatch",data={"route":route,"repo":git_snapshot(task["project_dir"])}); started=time.monotonic()
-    try: result=features._send_backend_prompt(task["session_id"],str(task.get("text") or ""),list(task.get("files") or []))
+    task=STORE.claim_dispatch(str(task.get("id") or ""))
+    if not task: return None
+    started=time.monotonic()
+    try:
+        route=_switch_session(features,task); task=STORE.get_task(task["id"]) or task
+        STORE.event(kind="task.dispatched",task_id=task["id"],session_id=task["session_id"],project_dir=task["project_dir"],data={"route":route})
+        STORE.checkpoint(task["id"],"dispatched",summary="Prompt accepted for dispatch",data={"route":route,"repo":git_snapshot(task["project_dir"])})
+        result=features._send_backend_prompt(task["session_id"],str(task.get("text") or ""),list(task.get("files") or []))
     except Exception as exc:
         STORE.transition(task["id"],"failed",event="task.dispatch_failed",data={},error=f"{type(exc).__name__}: {exc}"); STORE.add_usage(task_id=task["id"],model_ref=(task.get("route") or {}).get("selectedModel"),stage=_usage_stage(task),latency_ms=int((time.monotonic()-started)*1000),success=False); raise
     STORE.update_task(task["id"],metadata_patch={"dispatchAcceptedAt":now_ms()}); return result
@@ -217,7 +218,7 @@ def _permission_pending(features:Any,task:dict[str,Any])->bool:
 def _monitor_progress(features:Any,task:dict[str,Any])->None:
     current=_usage_totals(features,task["session_id"]); repo=git_snapshot(task["project_dir"]); signature=f"{current.get('signature')}:{repo.get('statusHash')}"; metadata=task.get("metadata") if isinstance(task.get("metadata"),dict) else {}; old=str(metadata.get("progressSignature") or ""); repeats=int(metadata.get("progressRepeats") or 0); repeats=repeats+1 if signature and signature==old else 0
     if signature!=old: STORE.checkpoint(task["id"],"progress",summary="Agent progress changed",data={"messageSignature":current.get("signature"),"repo":repo})
-    tools=_tool_signatures(features,task["session_id"]); loop=len(tools)>=6 and (tools[-3:]==tools[-6:-3] or len(set(tools[-5:]))==1); owner=str(metadata.get("ownershipRoot") or task["project_dir"]); conflicts=STORE.ownership_replace(owner,task["id"],repo.get("changed") or []); STORE.update_task(task["id"],metadata_patch={"progressSignature":signature,"progressRepeats":repeats,"lastTools":tools[-8:],"patchConflicts":conflicts})
+    tools=_tool_signatures(features,task["session_id"]); loop=len(tools)>=6 and (tools[-3:]==tools[-6:-3] or len(set(tools[-5:]))==1); owner=str(metadata.get("ownershipRoot") or task["project_dir"]); baseline=set((task.get("baseline") or {}).get("changed") or []); owned=[path for path in (repo.get("changed") or []) if path not in baseline]; conflicts=STORE.ownership_replace(owner,task["id"],owned); STORE.update_task(task["id"],metadata_patch={"progressSignature":signature,"progressRepeats":repeats,"lastTools":tools[-8:],"patchConflicts":conflicts})
     if loop and not metadata.get("loopReported"): STORE.event(kind="agent.loop_detected",task_id=task["id"],session_id=task["session_id"],project_dir=task["project_dir"],data={"tools":tools[-8:]}); STORE.update_task(task["id"],metadata_patch={"loopReported":True})
     if conflicts and not metadata.get("conflictReported"): STORE.event(kind="patch.conflict",task_id=task["id"],session_id=task["session_id"],project_dir=task["project_dir"],data={"conflicts":conflicts}); STORE.update_task(task["id"],metadata_patch={"conflictReported":True})
     threshold=int(os.environ.get("OPENCODE_STUCK_PROGRESS_POLLS","100"))
@@ -273,11 +274,12 @@ def _monitor_active(features:Any,statuses:dict[str,Any])->None:
         if state=="waiting_permission" and not pending: STORE.transition(task["id"],"running" if busy else "submitted",event="task.permission_resolved",data={}); state="running" if busy else "submitted"
         if busy:
             if state=="submitted": STORE.transition(task["id"],"running",event="task.running",data={})
+            STORE.update_task(task["id"],metadata_patch={"backendObservedBusy":True})
             metadata=task.get("metadata") if isinstance(task.get("metadata"),dict) else {}; last=int(metadata.get("progressCheckedAt") or 0)
             if current-last>7000: STORE.update_task(task["id"],metadata_patch={"progressCheckedAt":current}); _monitor_progress(features,STORE.get_task(task["id"]) or task)
             continue
-        started=int(task.get("started_at") or 0); accepted=int((task.get("metadata") or {}).get("dispatchAcceptedAt") or 0) if isinstance(task.get("metadata"),dict) else 0
-        if state in {"submitted","running"} and current-max(started,accepted)>2500: STORE.transition(task["id"],"verifying",event="task.agent_idle",data={}); _finish_async(features,STORE.get_task(task["id"]) or task)
+        metadata=task.get("metadata") if isinstance(task.get("metadata"),dict) else {}; started=int(task.get("started_at") or 0); accepted=int(metadata.get("dispatchAcceptedAt") or 0); baseline_usage=metadata.get("usageBaseline") if isinstance(metadata.get("usageBaseline"),dict) else {}; progressed=bool(metadata.get("backendObservedBusy")) or _usage_totals(features,task["session_id"]).get("signature")!=baseline_usage.get("signature")
+        if state in {"submitted","running"} and progressed and current-max(started,accepted)>2500: STORE.transition(task["id"],"verifying",event="task.agent_idle",data={}); _finish_async(features,STORE.get_task(task["id"]) or task)
 
 
 def _dispatch_ready(features:Any,statuses:dict[str,Any])->None:
@@ -322,9 +324,11 @@ def _refresh_indexes()->None:
 
 
 def worker(features:Any)->None:
+    global LAST_PRUNE_AT
     while True:
         try:
             _migrate(features); active=STORE.list_tasks(states=ACTIVE_STATES|QUEUE_STATES,limit=1000); statuses=features._status_payload() if active else {}; _monitor_active(features,statuses); _dispatch_ready(features,statuses); features._apply_permission_policies(); _refresh_indexes()
+            if time.monotonic()-LAST_PRUNE_AT>3600: STORE.prune(); LAST_PRUNE_AT=time.monotonic()
         except Exception as exc: STORE.event(kind="runtime.worker_error",data={"error":f"{type(exc).__name__}: {exc}"[:1000]})
         time.sleep(1.5)
 
@@ -333,7 +337,7 @@ def install(features:Any)->None:
     global INSTALLED
     with INSTALL_LOCK:
         if INSTALLED: return
-        STORE.initialize(); recovered=STORE.recover_inflight()
+        STORE.initialize(); STORE.prune(); recovered=STORE.recover_inflight()
         if recovered: STORE.event(kind="runtime.recovery_scan",data={"tasks":recovered})
         features.enqueue_prompt=lambda payload: enqueue_prompt(features,payload); features.queue_snapshot=queue_snapshot; features.delete_queue_item=delete_queue_item; features.reorder_queue=reorder_queue; features._worker=lambda:worker(features); INSTALLED=True
 

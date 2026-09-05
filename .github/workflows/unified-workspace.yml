@@ -40,7 +40,7 @@ jobs:
         run: node scripts/panel-submit-regression.mjs
       - name: Existing verification suite
         run: bash scripts/verify.sh
-      - name: Install real OpenCode V2 beta
-        run: npm install --global @opencode-ai/cli@beta
+      - name: Install reviewed OpenCode V2 build
+        run: npm install --global @opencode-ai/cli@0.0.0-beta-18743
       - name: Packaged TUI loader smoke
         run: bash scripts/tui-package-smoke.sh

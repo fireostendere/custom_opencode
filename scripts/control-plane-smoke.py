@@ -40,7 +40,7 @@ def main() -> None:
         expect({"action":"glob", "resources":["../outside/*"]}, effect="ask", risk="R3", workspace=str(workspace))
         expect({"action":"grep", "resources":[".env"]}, effect="ask", risk="R4", workspace=str(workspace))
         expect({"action":"shell", "resources":["git status --short"]}, effect="allow", risk="R0", workspace=str(workspace))
-        expect({"action":"shell", "metadata":{"command":"pytest -q"}}, effect="allow", risk="R1", workspace=str(workspace))
+        expect({"action":"shell", "metadata":{"command":"pytest -q"}}, effect="ask", risk="R3", workspace=str(workspace))
         expect({"action":"shell", "resources":["rm -rf build"]}, effect="ask", risk="R3", workspace=str(workspace))
         expect({"action":"shell", "resources":["cat README.md && rm -rf build"]}, effect="ask", risk="R3", workspace=str(workspace))
         expect({"action":"edit", "resources":["app/api.js"]}, effect="allow", risk="R2", workspace=str(workspace))
@@ -49,6 +49,10 @@ def main() -> None:
         expect({"action":"edit", "resources":["app/api.js"]}, effect="ask", risk="R2", workspace=str(workspace), preset="safe")
         expect({"action":"webfetch", "resources":["https://example.invalid/"]}, effect="ask", risk="R1", workspace=str(workspace))
         expect({"action":"webfetch", "resources":["https://example.invalid/"]}, effect="allow", risk="R1", workspace=str(workspace), preset="autonomous")
+        assert not server_control.features._rule_matches(
+            {"action":"read", "resource":"src/secret.py"},
+            {"action":"read", "resources":["src/*"]},
+        )
 
         original_settings = server_control.features.project_settings
         original_reply = server_control.features._permission_reply

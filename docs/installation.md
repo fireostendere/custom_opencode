@@ -6,7 +6,7 @@
 
 - Linux/WSL-среда с `systemd --user`;
 - Python 3;
-- Node.js + npm — installer сам bootstrap-ит OpenCode V2 (`opencode2`) и использует Node.js для JS syntax/web smoke;
+- Node.js + npm — installer сам bootstrap-ит закреплённую проверенную сборку OpenCode V2 (`opencode2`) и использует Node.js для JS syntax/web smoke;
 - Git;
 - приватный `.env` с web password и нужными provider credentials.
 
@@ -68,7 +68,7 @@ MCP_RAG_BIN=/absolute/path/to/mcp-rag/.venv/bin/knowledge-mcp
 Installer:
 
 1. загружает `.env`;
-2. если `opencode2` отсутствует, устанавливает актуальный OpenCode V2 beta в `~/.local`;
+2. если версия `opencode2` отличается от `OPENCODE_CLI_PACKAGE`, устанавливает закреплённую сборку в `~/.local`;
 3. обнаруживает RAG;
 4. валидирует и provision-ит pinned Ponytail checkout, если он включён;
 5. при включённом self-test выполняет pre-install verifier до записи конфигов;

@@ -181,14 +181,8 @@ with tempfile.TemporaryDirectory() as temp:
         assert allowed==200
         assert json.loads(body).get("allow") is True
 
-        cache_forbidden,_,_=request("POST","/internal/runtime/tool-cache",{"op":"get","cwd":str(project),"tool":"read","input":{"path":"main.py"}},authenticated=False,internal=False)
-        assert cache_forbidden==403
-        miss,_,body=request("POST","/internal/runtime/tool-cache",{"op":"get","cwd":str(project),"tool":"read","input":{"path":"main.py"}},authenticated=False,internal=True)
-        assert miss==200 and json.loads(body).get("hit") is False
-        stored,_,_=request("POST","/internal/runtime/tool-cache",{"op":"put","cwd":str(project),"tool":"read","input":{"path":"main.py"},"result":{"text":"cached"}},authenticated=False,internal=True)
-        assert stored==200
-        hit,_,body=request("POST","/internal/runtime/tool-cache",{"op":"get","cwd":str(project),"tool":"read","input":{"path":"main.py"}},authenticated=False,internal=True)
-        assert hit==200 and json.loads(body).get("hit") is True and json.loads(body).get("result",{}).get("text")=="cached"
+        retired_cache,_,_=request("POST","/internal/runtime/tool-cache",{"op":"get"},authenticated=False,internal=True)
+        assert retired_cache==401
 
         remote,_,body=request("GET","/client-remote-status.json")
         assert remote==200

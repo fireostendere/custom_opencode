@@ -52,6 +52,8 @@ def step(ok: bool, label: str, detail: str = "") -> bool:
 
 
 def attach_listeners(page, tag: str) -> None:
+    logging_out = False
+
     def expected_http(url: str, status: int) -> bool:
         path = urlsplit(url).path
         if status == 401 and path == "/auth/session":
@@ -67,11 +69,14 @@ def attach_listeners(page, tag: str) -> None:
     def on_request_failed(req):
         failure = req.failure or ""
         path = urlsplit(req.url).path
-        if "ERR_ABORTED" in failure and path in ("/auth/session", "/auth/login", "/auth/logout", "/api/event"):
+        if "ERR_ABORTED" in failure and (path in ("/auth/session", "/auth/login", "/auth/logout", "/api/event") or (req.method == "GET" and logging_out)):
             return  # Navigation intentionally closes these requests.
         PROBLEMS.append(f"{tag} request failed: {req.method} {req.url} ({failure})")
 
     def on_response(resp):
+        nonlocal logging_out
+        if urlsplit(resp.url).path == "/auth/logout" and 200 <= resp.status < 300:
+            logging_out = True
         if resp.status >= 400 and not expected_http(resp.url, resp.status):
             PROBLEMS.append(f"{tag} server error: {resp.status} {resp.url}")
 
@@ -414,7 +419,7 @@ def main() -> int:
     failed = [label for passed, label in RESULTS if not passed]
     passed = len(RESULTS) - len(failed)
     print(f"{passed}/{len(RESULTS)} checks passed")
-    return 0 if (ok_d and ok_m and not failed) else 1
+    return 0 if (ok_d and ok_m and not failed and not PROBLEMS) else 1
 
 
 if __name__ == "__main__":

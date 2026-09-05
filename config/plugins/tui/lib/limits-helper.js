@@ -301,16 +301,25 @@ function queryGemini() {
   } catch {}
 
   const isRateLimited = Boolean(rateLimitState?.active)
-  const seconds = Number(rateLimitState?.seconds || 0)
+  const nonnegative = (value) => Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0
+  const seconds = nonnegative(rateLimitState?.seconds)
+  const until = nonnegative(rateLimitState?.until)
   const resetsAt = isRateLimited
-    ? (rateLimitState?.until ? Math.round(rateLimitState.until / 1000) : Math.round(Date.now() / 1000) + seconds)
+    ? (until ? Math.round(until / 1000) : Math.round(Date.now() / 1000) + seconds)
     : null
 
-  const usedTokens = isRateLimited ? GEMINI_TPM_LIMIT : Number(rateLimitState?.usage?.tokensLastMinute || 0)
-  const usedRequests = Number(rateLimitState?.usage?.requestsLastMinute || 0)
+  const positiveLimit = (value, fallback) => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : fallback
+  const tpmLimit = positiveLimit(rateLimitState?.limits?.tpm, GEMINI_TPM_LIMIT)
+  const rpmLimit = positiveLimit(rateLimitState?.limits?.rpm, GEMINI_RPM_LIMIT)
+  const rpdLimit = positiveLimit(rateLimitState?.limits?.rpd, GEMINI_RPD_LIMIT)
+  const limitedBucket = String(rateLimitState?.limitedBucket || "tpm")
+  const usedTokens = isRateLimited && limitedBucket === "tpm" ? tpmLimit : nonnegative(rateLimitState?.usage?.tokensLastMinute)
+  const usedRequests = isRateLimited && limitedBucket === "rpm" ? rpmLimit : nonnegative(rateLimitState?.usage?.requestsLastMinute)
+  const usedDaily = isRateLimited && limitedBucket === "rpd" ? rpdLimit : nonnegative(rateLimitState?.usage?.requestsToday)
 
-  const usedPercentTokens = isRateLimited ? 100 : Math.min(100, Math.round((usedTokens / GEMINI_TPM_LIMIT) * 1000) / 10)
-  const usedPercentRequests = Math.min(100, Math.round((usedRequests / GEMINI_RPM_LIMIT) * 1000) / 10)
+  const usedPercentTokens = Math.min(100, Math.round((usedTokens / tpmLimit) * 1000) / 10)
+  const usedPercentRequests = Math.min(100, Math.round((usedRequests / rpmLimit) * 1000) / 10)
+  const usedPercentDaily = Math.min(100, Math.round((usedDaily / rpdLimit) * 1000) / 10)
 
   return {
     available: true,
@@ -320,21 +329,30 @@ function queryGemini() {
     seconds: isRateLimited ? seconds : 0,
     resetsAt,
     minuteTokens: {
-      limit: GEMINI_TPM_LIMIT,
+      limit: tpmLimit,
       usedCredits: usedTokens,
-      remainingCredits: Math.max(0, GEMINI_TPM_LIMIT - usedTokens),
+      remainingCredits: Math.max(0, tpmLimit - usedTokens),
       usedPercent: usedPercentTokens,
       remainingPercent: Math.max(0, Math.round((100 - usedPercentTokens) * 10) / 10),
       windowDurationMins: 1,
       resetsAt,
     },
     minuteRequests: {
-      limit: GEMINI_RPM_LIMIT,
+      limit: rpmLimit,
       usedCredits: usedRequests,
-      remainingCredits: Math.max(0, GEMINI_RPM_LIMIT - usedRequests),
+      remainingCredits: Math.max(0, rpmLimit - usedRequests),
       usedPercent: usedPercentRequests,
       remainingPercent: Math.max(0, Math.round((100 - usedPercentRequests) * 10) / 10),
       windowDurationMins: 1,
+      resetsAt,
+    },
+    dailyRequests: {
+      limit: rpdLimit,
+      usedCredits: usedDaily,
+      remainingCredits: Math.max(0, rpdLimit - usedDaily),
+      usedPercent: usedPercentDaily,
+      remainingPercent: Math.max(0, Math.round((100 - usedPercentDaily) * 10) / 10),
+      windowDurationMins: 1440,
       resetsAt,
     },
   }

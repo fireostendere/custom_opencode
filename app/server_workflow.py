@@ -209,7 +209,8 @@ class Handler(rag.Handler, features.Handler):
             self.send_header("Connection", "close")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try: self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError): pass
 
     def local_bypass(self) -> bool:
         """Allow passwordless loopback only for a direct localhost request.

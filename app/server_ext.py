@@ -349,19 +349,30 @@ def query_gemini_status() -> dict[str, object]:
             pass
 
     is_rate_limited = bool(rl_data.get("active"))
-    seconds = int(rl_data.get("seconds") or 0)
+    def nonnegative_int(value: object) -> int:
+        try: return max(0,int(value or 0))
+        except (TypeError,ValueError,OverflowError): return 0
+    seconds = nonnegative_int(rl_data.get("seconds"))
     until = rl_data.get("until")
     now_ts = int(time.time())
-    resets_at = int(float(until) / 1000) if isinstance(until, (int, float)) else (now_ts + seconds if is_rate_limited else None)
+    try: resets_at = int(float(until) / 1000) if isinstance(until, (int, float)) else (now_ts + seconds if is_rate_limited else None)
+    except (ValueError,OverflowError): resets_at = now_ts + seconds if is_rate_limited else None
 
     usage = rl_data.get("usage") if isinstance(rl_data.get("usage"), dict) else {}
-    used_tokens = GEMINI_TPM_LIMIT if is_rate_limited else int(usage.get("tokensLastMinute") or 0)
-    used_requests = int(usage.get("requestsLastMinute") or 0)
-    daily_requests = int(usage.get("requestsToday") or 0)
+    limits = rl_data.get("limits") if isinstance(rl_data.get("limits"), dict) else {}
+    def positive_limit(name: str, fallback: int) -> int:
+        try: value = int(limits.get(name) or fallback)
+        except (TypeError, ValueError, OverflowError): value = fallback
+        return value if value > 0 else fallback
+    tpm_limit=positive_limit("tpm",GEMINI_TPM_LIMIT); rpm_limit=positive_limit("rpm",GEMINI_RPM_LIMIT); rpd_limit=positive_limit("rpd",GEMINI_RPD_LIMIT)
+    limited_bucket = str(rl_data.get("limitedBucket") or "tpm")
+    used_tokens = tpm_limit if is_rate_limited and limited_bucket == "tpm" else nonnegative_int(usage.get("tokensLastMinute"))
+    used_requests = rpm_limit if is_rate_limited and limited_bucket == "rpm" else nonnegative_int(usage.get("requestsLastMinute"))
+    daily_requests = rpd_limit if is_rate_limited and limited_bucket == "rpd" else nonnegative_int(usage.get("requestsToday"))
 
-    used_pct_tokens = 100.0 if is_rate_limited else round(min(100.0, (used_tokens / GEMINI_TPM_LIMIT) * 100.0), 1)
-    used_pct_requests = round(min(100.0, (used_requests / GEMINI_RPM_LIMIT) * 100.0), 1)
-    used_pct_daily = round(min(100.0, (daily_requests / GEMINI_RPD_LIMIT) * 100.0), 1)
+    used_pct_tokens = round(min(100.0, (used_tokens / tpm_limit) * 100.0), 1)
+    used_pct_requests = round(min(100.0, (used_requests / rpm_limit) * 100.0), 1)
+    used_pct_daily = round(min(100.0, (daily_requests / rpd_limit) * 100.0), 1)
 
     return {
         "available": True,
@@ -371,27 +382,27 @@ def query_gemini_status() -> dict[str, object]:
         "seconds": seconds if is_rate_limited else 0,
         "resetAt": resets_at,
         "minuteTokens": {
-            "limit": GEMINI_TPM_LIMIT,
+            "limit": tpm_limit,
             "usedCredits": used_tokens,
-            "remainingCredits": max(0, GEMINI_TPM_LIMIT - used_tokens),
+            "remainingCredits": max(0, tpm_limit - used_tokens),
             "usedPercent": used_pct_tokens,
             "remainingPercent": max(0.0, round(100.0 - used_pct_tokens, 1)),
             "windowDurationMins": 1,
             "resetsAt": resets_at if is_rate_limited else None,
         },
         "minuteRequests": {
-            "limit": GEMINI_RPM_LIMIT,
+            "limit": rpm_limit,
             "usedCredits": used_requests,
-            "remainingCredits": max(0, GEMINI_RPM_LIMIT - used_requests),
+            "remainingCredits": max(0, rpm_limit - used_requests),
             "usedPercent": used_pct_requests,
             "remainingPercent": max(0.0, round(100.0 - used_pct_requests, 1)),
             "windowDurationMins": 1,
             "resetsAt": resets_at if is_rate_limited else None,
         },
         "dailyRequests": {
-            "limit": GEMINI_RPD_LIMIT,
+            "limit": rpd_limit,
             "usedCredits": daily_requests,
-            "remainingCredits": max(0, GEMINI_RPD_LIMIT - daily_requests),
+            "remainingCredits": max(0, rpd_limit - daily_requests),
             "usedPercent": used_pct_daily,
             "remainingPercent": max(0.0, round(100.0 - used_pct_daily, 1)),
             "windowDurationMins": 1440,

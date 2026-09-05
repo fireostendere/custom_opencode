@@ -88,6 +88,15 @@ with tempfile.TemporaryDirectory() as temp:
         status, response_headers, _ = request("POST", "/client-send.json", body={"sessionID": "x", "text": "x"}, headers=remote_headers)
         assert status == 401, status
         assert any(key.lower() == "connection" and value.lower() == "close" for key, value in response_headers.items()), response_headers
+        for method, path, body in (
+            ("GET", "/client-queue.json", None),
+            ("POST", "/client-queue.json", {}),
+            ("PATCH", "/client-queue.json", {}),
+            ("DELETE", "/client-queue.json", None),
+            ("POST", "/client-rag-start.json", {}),
+        ):
+            status, _, _ = request(method, path, body=body, headers=remote_headers)
+            assert status == 401, (method, path, status)
 
         status, response_headers, _ = request(
             "POST",

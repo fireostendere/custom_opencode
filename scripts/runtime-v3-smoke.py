@@ -62,6 +62,12 @@ with tempfile.TemporaryDirectory() as temp:
     diff=indexer.semantic_diff(str(project),baseline)
     assert "src.py" in diff["changedFiles"]
     assert any(item.get("qualified")=="Engine.alpha" for item in diff["changedSymbols"]), diff
+    first_dirty=git_snapshot(str(project))["statusHash"]
+    (project/"src.py").write_text("from .dep import helper\n\nclass Engine:\n    def alpha(self):\n        value = helper()\n        return value + 2\n",encoding="utf-8")
+    assert git_snapshot(str(project))["statusHash"]!=first_dirty
+    (project/"fresh.py").write_text("def untracked_symbol():\n    return 1\n",encoding="utf-8")
+    refreshed=indexer.refresh(str(project))
+    assert not refreshed["cacheHit"] and any(item.get("name")=="untracked_symbol" for item in refreshed["symbols"])
 
     broker=ScopedSecretBroker(); lease=broker.issue("MCP_SMOKE_TOKEN",scope="task:t1:shell",ttl=30)
     assert broker.redeem(lease,scope="task:t1:shell")=="never-serialize-this"
@@ -79,6 +85,13 @@ with tempfile.TemporaryDirectory() as temp:
     try: sandbox.wrap_shell("echo hi",str(project),"full-machine")
     except PermissionError: pass
     else: raise AssertionError("full-machine ran without explicit opt-in")
+    wrapped=sandbox.wrap_shell("printf ok",str(project),"repo-write")["command"]
+    assert "--unshare-net" in wrapped and f"--tmpfs {Path.home().parent}" in wrapped
+    assert "--unshare-pid" in wrapped and wrapped.index("--ro-bind / /")<wrapped.index("--proc /proc")
+    try: sandbox.wrap_shell("printf ok",str(Path.home()),"repo-write")
+    except PermissionError: pass
+    else: raise AssertionError("sandbox exposed the entire home directory")
+    assert f"--bind {project} {project}" in wrapped
 
     artifacts=ArtifactStore(store); gateway=ToolGateway(store,artifacts,sandbox,broker)
     t1=store.create_task(task_id="t1",session_id="s1",project_dir=str(project),text="Engine alpha edit",metadata={"sandbox":"repo-write"},baseline=baseline)
@@ -95,11 +108,17 @@ with tempfile.TemporaryDirectory() as temp:
     assert large["replace"] and large["result"]["artifactID"]
     duplicate=gateway.after({"sessionID":"s1","tool":"grep","result":"x"*2000})
     assert duplicate["replace"] and duplicate["result"].get("deduplicated") is True
+    small=gateway.after({"sessionID":"s1","tool":"read","result":"small"})
+    assert not small["replace"]
+    assert not gateway.after({"sessionID":"s1","tool":"read","result":"small"})["replace"]
     for attempt in range(3):
         try: gateway.before({"sessionID":"s1","tool":"edit","input":{"path":"dep.py","content":"same"}})
         except RuntimeError:
             assert attempt==2; break
     else: raise AssertionError("loop detector did not block repeated mutation")
+    with store.connect() as database:
+        owned={row[0] for row in database.execute("SELECT path FROM patch_ownership WHERE task_id='t1'").fetchall()}
+    assert {"src.py","dep.py"}.issubset(owned), owned
 
     registry=CapabilityRegistry([
         {"providerID":"bailian-cli","id":"qwen3.8-max","name":"Qwen3.8 Max","capabilities":{"tools":True,"input":["text","image"]},"limit":{"context":983616}},
@@ -152,6 +171,8 @@ with tempfile.TemporaryDirectory() as temp:
     assert captured and captured["kind"]=="run-replay"
     replayed=replay.replay("t1")
     assert replayed["modelCalls"]==0 and replayed["recording"]
+    store.transition("t1","completed")
+    with store.connect() as database: assert database.execute("SELECT COUNT(*) FROM patch_ownership WHERE task_id='t1'").fetchone()[0]==0
 
     store.memory_set(str(project),"rule","source memory","policy")
     source=store.create_task(session_id="source-session",project_dir=str(project),text="source")

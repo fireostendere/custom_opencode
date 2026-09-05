@@ -299,7 +299,7 @@ Catalog check не доказывает provider execution.
 - отсутствие automatic Ollama route;
 - upstream session/subagent API после OpenCode upgrade.
 
-В web режим всегда Build. Для создания native plan document откройте session в TUI/CLI и выберите agent `plan` или `plan-direct`; готовый план будет виден и в web.
+В web режим всегда Build. Для tool-backed задачи plugin `visible-plan.js` должен добавить закреплённый `plan_update`; его вызов создаёт session-scoped native plan document и показывает его в обеих web-панелях. Если tool отсутствует, переустановите конфигурацию и проверьте список backend plugins. Agents `plan`/`plan-direct` в TUI/CLI остаются отдельным read-only режимом.
 
 ## На телефоне model picker открывает клавиатуру
 

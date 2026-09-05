@@ -447,7 +447,7 @@ def _rule_matches(rule: dict[str, str], request: dict[str, Any]) -> bool:
         return False
     resources = _permission_resources(request) or ["*"]
     pattern = rule.get("resource") or "*"
-    return any(fnmatch.fnmatchcase(resource, pattern) or fnmatch.fnmatchcase(pattern, resource) for resource in resources)
+    return any(fnmatch.fnmatchcase(resource, pattern) for resource in resources)
 
 
 def _apply_permission_policies() -> None:
@@ -531,7 +531,7 @@ def git_revert(payload: dict[str, Any]) -> dict[str, Any]:
     if mode == "file":
         tracked = _run_git(root, ["ls-files", "--error-unmatch", "--", relative])
         if tracked.returncode == 0:
-            result = _run_git(root, ["restore", "--worktree", "--", relative])
+            result = _run_git(root, ["restore", "--source=HEAD", "--staged", "--worktree", "--", relative])
             if result.returncode != 0:
                 raise RuntimeError(result.stderr.strip() or "git restore failed")
             return {"ok": True, "mode": "file", "path": relative, "action": "restored"}
@@ -591,6 +591,7 @@ class Handler(baseplus.Handler):
         parsed = urlsplit(self.path)
         if parsed.path in {"/client-queue.json", "/client-project-settings.json", "/client-features.json"}:
             if not self.authenticated():
+                self.unauthorized()
                 return
             params = parse_qs(parsed.query)
             try:
@@ -620,6 +621,7 @@ class Handler(baseplus.Handler):
         parsed = urlsplit(self.path)
         if parsed.path in {"/client-queue.json", "/client-project-settings.json", "/client-git-revert.json"}:
             if not self.authenticated():
+                self.unauthorized()
                 return
             try:
                 payload = self._feature_body()
@@ -642,6 +644,7 @@ class Handler(baseplus.Handler):
         parsed = urlsplit(self.path)
         if parsed.path == "/client-queue.json":
             if not self.authenticated():
+                self.unauthorized()
                 return
             try:
                 payload = self._feature_body(256_000)
@@ -659,6 +662,7 @@ class Handler(baseplus.Handler):
         parsed = urlsplit(self.path)
         if parsed.path == "/client-queue.json":
             if not self.authenticated():
+                self.unauthorized()
                 return
             params = parse_qs(parsed.query)
             sid = (params.get("sessionID") or [""])[0]

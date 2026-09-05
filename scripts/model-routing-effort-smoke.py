@@ -194,7 +194,7 @@ for token in ("Planning policy", "conditional, not a ritual", "native", "primary
     assert token.casefold() in prompt.casefold(), token
 
 agents_policy = (ROOT / "config" / "AGENTS.md").read_text(encoding="utf-8")
-for token in ("Планирование задач", "OpenCode V2", "plan", "2-7", "до первого изменения файла", "не создавай искусственный план"):
+for token in ("Планирование задач", "OpenCode V2", "plan", "plan_update", "1-7", "До первой shell/edit/write/patch", "не создавай инструменты или подагентов только ради UI"):
     assert token in agents_policy, token
 
 forbidden = (

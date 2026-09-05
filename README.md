@@ -32,8 +32,8 @@
 - adaptive reasoning effort `auto / minimal / low / medium / high / max`;
 - AST/symbol repository index, embeddings, dependency graph, bounded Git graph и semantic symbol diff;
 - bounded dynamic context + native OpenCode durable compaction;
-- pre-execution read/tool-result cache с Git-aware invalidation;
-- large-output artifact storage с range/search;
+- Git/content-aware repository, model-catalog и RAG caches;
+- task-scoped large-output artifact storage с range/search и deduplication;
 - structured mailbox, typed handoff и bounded speculative research;
 - verification pipeline, failure classifier, independent review gate, loop/stuck/conflict detection;
 - isolated Git worktree tasks, patch ownership и fail-closed merge/cleanup;

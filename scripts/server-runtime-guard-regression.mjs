@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { register } from 'node:module'
+
+register('./opencode-plugin-stub-hooks.mjs', import.meta.url)
+process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN = 'test-token'
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const source = readFileSync(resolve(root, 'config/plugins/server-runtime-guard.js'), 'utf8')
+assert.ok(!source.includes('/internal/runtime/tool-cache'))
+
+const calls = []
+const originalFetch = globalThis.fetch
+globalThis.fetch = async (url, init) => {
+  calls.push({ url: String(url), payload: JSON.parse(init.body) })
+  return new Response(JSON.stringify({ command: 'wrapped', cwd: '/repo', shell: '/bin/sh', env: {} }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
+try {
+  const plugin = (await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)).default
+  const hooks = {}
+  const ctx = {
+    session: { hook: async (name, callback) => { hooks[`session:${name}`] = callback } },
+    tool: { hook: async (name, callback) => { hooks[`tool:${name}`] = callback } },
+    shell: { hook: async (name, callback) => { hooks[`shell:${name}`] = callback } },
+  }
+  await plugin.setup(ctx)
+  const event = {
+    sessionID: 'ses_shell_owner', cwd: '/repo', command: 'printf ok', shell: '/bin/sh',
+    env: { SAFE_VALUE: 'ok', GEMINI_API_KEY: 'secret', GOOGLE_API_KEY: 'secret-too' },
+  }
+  await hooks['shell:create.before'](event)
+  assert.equal(calls[0].payload.sessionID, 'ses_shell_owner')
+  assert.equal(event.env.SAFE_VALUE, 'ok')
+  assert.ok(!Object.hasOwn(event.env, 'GEMINI_API_KEY') && !Object.hasOwn(event.env, 'GOOGLE_API_KEY'))
+  assert.equal(event.command, 'wrapped')
+  console.log('Server runtime guard regression OK: session-scoped shell policy, secret scrub, no stale pre-exec cache')
+} finally {
+  globalThis.fetch = originalFetch
+}
