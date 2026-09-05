@@ -13,7 +13,7 @@ for (const marker of [
   'traits.owner === "opencode"',
   'traits.role === "prompt"',
   'traits.status !== "SHELL"',
-  'context.ui.toast?.(',
+  'context.ui.toast.show(',
   'clearPromptEditor(editor)',
   'context.keymap.dispatch(target)',
 ]) {
@@ -25,7 +25,7 @@ for (const forbidden of [
   'context.keymap.dispatchCommand',
   'bind: "enter"',
   'bind: "return"',
-  'context.ui.toast.show(',
+  'context.ui.toast?.(',
   'context.client',
   'sdk.client',
   'session.prompt(',

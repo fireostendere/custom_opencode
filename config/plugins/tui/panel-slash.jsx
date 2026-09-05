@@ -28,7 +28,7 @@ function clearPromptEditor(editor) {
 }
 
 function warn(context, message) {
-  context.ui.toast?.({ variant: "warning", message })
+  context.ui.toast.show({ variant: "warning", message })
 }
 
 // `slashName` powers autocomplete. Manually typed `/panel ...` is routed locally
@@ -41,7 +41,8 @@ export default Plugin.define({
         id,
         title,
         group: "Панели",
-        palette: true,
+        // Compatibility dispatch IDs stay reachable without duplicating the panel palette.
+        palette: false,
         ...(exposeSlash ? { slash: { name: slashName } } : {}),
         run: () => context.keymap.dispatch(target),
       }
