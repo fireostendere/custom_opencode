@@ -58,6 +58,48 @@ if [[ "$CURRENT_OPENCODE_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
   exit 1
 fi
 
+# Read a package.json "version" field. Must stay compatible with `set -euo pipefail`:
+# a missing file makes sed exit 2, and `head -1` closing the pipe early can make it
+# exit 141 — either one would propagate through pipefail into the assignment and kill
+# the installer. Guard the file and neutralise the pipeline status explicitly.
+read_package_version() {
+  local file=$1
+  [[ -f "$file" ]] || return 0
+  { sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$file" 2>/dev/null | head -1; } || true
+}
+
+# The TUI plugin bundle resolves solid-js and @opentui from $CONFIG_DIR/node_modules,
+# which this installer does not manage. Those packages carry their own copy of the
+# renderer context, so when they drift from the pinned CLI the TUI can fail at render
+# time while headless regressions stay green (they stub @opencode-ai/plugin via
+# scripts/opencode-plugin-stub-hooks.mjs). Warn, never fail: an existing install keeps
+# working and the drift becomes visible instead of silent.
+PLUGIN_SDK_VERSION=$(read_package_version "$CONFIG_DIR/node_modules/@opencode-ai/plugin/package.json")
+if [[ -n "$PLUGIN_SDK_VERSION" && "$PLUGIN_SDK_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
+  echo "warning: TUI plugin SDK is $PLUGIN_SDK_VERSION but the pinned CLI is $OPENCODE_CLI_VERSION" >&2
+  echo "         $CONFIG_DIR/node_modules is not managed by this installer. Reinstall it" >&2
+  echo "         against @opencode-ai/plugin@$OPENCODE_CLI_VERSION if the TUI misbehaves." >&2
+fi
+
+# OpenCode's own updater runs a bare `npm install --global`, which targets npm's
+# global prefix. This installer pins into --prefix "$HOME/.local", so when the two
+# differ the updater maintains a shadow copy that PATH never reaches, and the pinned
+# CLI looks permanently out of date. "update": "disable" in the rendered config stops
+# that; this warning catches installs that predate the setting.
+NPM_BIN=$(command -v npm || true)
+if [[ -n "$NPM_BIN" ]]; then
+  NPM_PREFIX=$("$NPM_BIN" prefix -g 2>/dev/null || true)
+  if [[ -n "$NPM_PREFIX" && "$NPM_PREFIX" != "$HOME/.local" ]]; then
+    SHADOW_CLI_VERSION=$(read_package_version "$NPM_PREFIX/lib/node_modules/@opencode-ai/cli/package.json")
+    if [[ -n "$SHADOW_CLI_VERSION" && "$SHADOW_CLI_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
+      echo "warning: a second OpenCode CLI $SHADOW_CLI_VERSION lives at $NPM_PREFIX" >&2
+      echo "         npm's global prefix is not $HOME/.local, so auto-update writes there" >&2
+      echo "         and never touches the pinned copy. Keep \"update\": \"disable\" in" >&2
+      echo "         $CONFIG_DIR/opencode.json." >&2
+    fi
+  fi
+fi
+
 if [[ "$CONFIG_DIR" != "$SHARED_CONFIG_DIR" ]]; then
   echo "OpenCode V2 shared service loads its global config from $SHARED_CONFIG_DIR" >&2
   echo "Unset OPENCODE_CONFIG_DIR (or set it to that exact path) before installing." >&2
