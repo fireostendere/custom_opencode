@@ -34,8 +34,14 @@ python3 scripts/web-server-smoke.py
 step "Web auth security regression"
 python3 scripts/web-security-smoke.py
 
+step "Multi-user accounts regression"
+python3 scripts/web-users-smoke.py
+
 step "Runtime invariant regression"
 python3 scripts/runtime-invariants-smoke.py
+
+step "TUI server wizard regression"
+node scripts/tui-server-wizard-regression.mjs
 
 step "TUI limits regression"
 node scripts/tui-regression.mjs
