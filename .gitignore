@@ -8,3 +8,8 @@ __pycache__/
 .fake_null.so
 .tmp_fake_null.c
 .tmp_verify/
+.fake_dev_null
+.fake_null.so
+.tmp_fake_null.c
+.tmp_verify/
+node_modules/
