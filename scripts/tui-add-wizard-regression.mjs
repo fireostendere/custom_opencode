@@ -224,12 +224,16 @@ slotRenders[0]()
 assert.equal(keymapLayers.length, 1)
 
 const rows = keymapLayers[0].commands
-assert.equal(rows.length, expectedKinds.length + 3)
+assert.equal(rows.length, expectedKinds.length + 5)
 for (const kind of expectedKinds) {
   assert.ok(rows.some((row) => row.id === `custom.add-wizard.${kind}`), `missing ${kind} button`)
 }
 const genericRow = rows.find((row) => row.id === 'custom.add-wizard.add')
 assert.ok(genericRow, 'missing generic /add button')
+assert.ok(rows.some((row) => row.id === 'custom.models.refresh'), 'missing refresh-models button')
+assert.ok(rows.some((row) => row.id === 'custom.add-wizard.accounts'), 'missing accounts button')
+assert.ok(rows.some((row) => row.id === 'custom.add-wizard.configure'), 'missing configure button')
+assert.ok(rows.some((row) => row.id === 'custom.add-wizard.profile'), 'missing mcp-profile button')
 
 function configureDialog(promptsToReturn, selectsToReturn = []) {
   dialogPrompts = [...promptsToReturn]
