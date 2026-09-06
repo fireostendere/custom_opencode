@@ -52,6 +52,9 @@ node scripts/tui-clipboard-regression.mjs
 step "TUI model selector regression"
 node scripts/model-selector-smoke.mjs
 
+step "TUI JSX pragma regression"
+node scripts/tui-jsx-pragma-regression.mjs
+
 step "Browser regressions"
 if python3 - <<'PY'
 try:

@@ -1,3 +1,4 @@
+/** @jsxImportSource @opentui/solid */
 /**
  * Custom model selector plugin for OpenCode TUI.
  *
