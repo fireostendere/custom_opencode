@@ -89,7 +89,10 @@ const serverContext = {
   },
   session: {
     hook: async (name, callback) => { hooks.set(name, callback) },
-    synthetic: async ({ text }) => { synthetic.push(text) },
+    synthetic: async ({ text, resume }) => {
+      assert.equal(resume, false, 'Wizard receipts must not start model inference')
+      synthetic.push(text)
+    },
   },
   command: {
     transform: async (callback) => {
@@ -217,7 +220,7 @@ slotRenders[0]()
 assert.equal(keymapLayers.length, 1)
 
 const rows = keymapLayers[0].commands
-assert.equal(rows.length, expectedKinds.length + 2)
+assert.equal(rows.length, expectedKinds.length + 3)
 for (const kind of expectedKinds) {
   assert.ok(rows.some((row) => row.id === `custom.add-wizard.${kind}`), `missing ${kind} button`)
 }

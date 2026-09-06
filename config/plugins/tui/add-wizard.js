@@ -9,6 +9,7 @@ const ENV_REF_RE = /^\{env:[A-Z_][A-Z0-9_]*\}$/
 const SENSITIVE_NAME_RE = /(?:^|[-_])(?:api[-_]?key|key|token|access[-_]?token|secret|password|passphrase|authorization|auth|credential)(?:$|[-_])/i
 
 const TITLES = {
+  catalog: "Каталог моделей",
   provider: "Добавить provider",
   model: "Добавить model",
   mcp: "Добавить MCP",
@@ -291,6 +292,15 @@ function openAccounts(context) {
 
 function commandRows(context) {
   return [
+    {
+      id: "custom.models.refresh",
+      title: "Обновить список моделей",
+      description: "Перечитать сохранённые модели и оркестрации",
+      group: "Configuration",
+      palette: true,
+      slash: { name: "refreshmodels" },
+      run: () => saveNative(context, { kind: "catalog", command: "refreshmodels", arguments: "" }),
+    },
     {
       id: "custom.add-wizard.accounts",
       title: "Аккаунты провайдеров",

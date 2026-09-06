@@ -84,7 +84,10 @@ const ctx = {
   },
   session: {
     hook: async (name, callback) => { hooks[name] = callback },
-    synthetic: async ({ text }) => { synthetics.push(text) },
+    synthetic: async ({ text, resume }) => {
+      assert.equal(resume, false, 'Configuration receipts must not start model inference')
+      synthetics.push(text)
+    },
   },
   command: {
     transform: async (callback) => {
@@ -129,6 +132,10 @@ assert.ok(synthetics.at(-1).startsWith('addprovider: saved'), synthetics.at(-1))
 assert.ok(store.get(STORAGE_KEY).providers.acme, 'provider must be persisted')
 
 await exec('addmodel', { providerID: 'acme', id: 'coder', modelID: 'qwen3-coder', name: 'Coder' })
+await assert.rejects(exec('addmodel', { providerID: 'acme', id: 'coder', enabled: 'true' }), /enabled must be a boolean/)
+assert.equal(store.get(STORAGE_KEY).models['acme/coder'].enabled, undefined)
+await exec('addmodel', { providerID: 'acme', id: 'coder', modelID: 'qwen3-coder', enabled: true })
+assert.equal(store.get(STORAGE_KEY).models['acme/coder'].enabled, true)
 await exec('addmcp', { name: 'docs', config: { type: 'remote', url: 'https://mcp.example.com?api_key={env:DOCS_KEY}' } })
 await exec('addmcp', { name: 'fs', config: { type: 'local', command: ['npx', '-y', 'example-mcp'] } })
 await exec('addskill', { id: 'review', name: 'Review', description: 'Review changes', content: 'Review the current changes.' })
@@ -143,6 +150,14 @@ assert.deepEqual(state.skills, ['review'])
 
 await exec('managed')
 assert.ok(synthetics.at(-1).includes('"acme"'), synthetics.at(-1))
+const receiptCount = synthetics.length
+const external = structuredClone(store.get(STORAGE_KEY))
+external.models['acme/from-another-workspace'] = { modelID: 'coder', name: 'External' }
+store.set(STORAGE_KEY, external)
+await exec('refreshmodels')
+assert.ok(snapshot().models.includes('acme/from-another-workspace'))
+assert.equal(synthetics.length, receiptCount, 'Refresh must not enqueue any model input')
+await exec('remove-managed', { type: 'models', id: 'acme/from-another-workspace' })
 
 // 2. Literal secrets are rejected before any write.
 const before = structuredClone(store.get(STORAGE_KEY))

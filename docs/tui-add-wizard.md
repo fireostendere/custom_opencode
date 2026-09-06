@@ -41,6 +41,23 @@ Web/PWA этой командой не затрагивается.
 node scripts/tui-accounts-regression.mjs
 ```
 
+## Обновление каталога и Astra
+
+Для перечитывания сохранённых моделей и оркестраций в уже открытом workspace
+используйте `/refreshmodels` или пункт palette «Обновить список моделей».
+Команда не запускает LLM и не перезапускает сервер. Это перечитывание текущего
+каталога и общего managed registry, а не принудительная загрузка models.dev.
+
+В установленном custom OpenCode через визард добавлены `openai/gpt-6-astra`
+и `openai/gpt-6-astra-orchestrated` («GPT-6 Astra · Orchestrated»).
+Во втором варианте Astra ведёт задачу, существующие `sol-role-builder*` на Terra
+выполняют изменения, а роли `sol-fast-reader`/`sol-role-reviewer*` на Luna — анализ
+и ревью. Эти записи хранятся в managed registry установленного OpenCode;
+они не добавлены в шаблон конфигурации для новых установок.
+Параметры базовой Astra сверены с [официальной карточкой модели](https://developers.openai.com/api/docs/models/gpt-6-astra).
+Для явно включаемой скрытой модели JSON-путь `/addmodel` принимает `enabled: true`.
+Служебные квитанции визарда сохраняются с `resume: false`.
+
 ## Regression
 
 Запуск без LLM-токенов и без сетевых запросов:

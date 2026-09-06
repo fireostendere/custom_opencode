@@ -101,6 +101,10 @@ function modelDefinition(input) {
   for (const key of ["capabilities", "limit", "cost", "settings", "headers", "body", "variants"]) {
     if (input[key] !== undefined) definition[key] = structuredClone(input[key])
   }
+  if (input.enabled !== undefined) {
+    if (typeof input.enabled !== "boolean") throw new Error("enabled must be a boolean")
+    definition.enabled = input.enabled
+  }
   rejectInlineSecrets(definition, "model")
   return { providerID, id, definition }
 }
@@ -195,7 +199,7 @@ function publicSummary(registry) {
 }
 
 async function synthetic(ctx, sessionID, text) {
-  await ctx.session.synthetic({ sessionID, text })
+  await ctx.session.synthetic({ sessionID, text, resume: false })
 }
 
 function usage(name, example) {
@@ -317,6 +321,15 @@ export default Plugin.define({
         const { key, definition } = orchestrationDefinition(input)
         registry = { ...registry, orchestrations: { ...registry.orchestrations, [key]: definition } }
       }, usage("addorchestration", '/addorchestration {"providerID":"acme","id":"coder-orchestrated","baseModelID":"coder","name":"Coder · Orchestrated","prompt":"Plan only when needed, delegate bounded reads, verify before completion."}'))
+
+      commands.add({
+        name: "refreshmodels",
+        description: "Refresh models and managed aliases for this workspace",
+        execute: () => enqueueMutation(async () => {
+          registry = normalizeRegistry(await ctx.storage.get(STORAGE_KEY))
+          await ctx.catalog.reload()
+        }),
+      })
 
       commands.add({
         name: "managed",
