@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import hmac
 import http.client
@@ -22,6 +23,8 @@ import threading
 import time
 from urllib.parse import parse_qs, quote, urlsplit
 from urllib.parse import SplitResult
+
+import server_users
 
 
 ROOT = Path(__file__).resolve().parent
@@ -228,30 +231,82 @@ HOP_BY_HOP = {
 }
 
 
-def issue_session_token(ttl_seconds: int) -> str:
+@functools.cache
+def _auth_key_v2() -> bytes:
+    """Lazy v2 key derivation using server_users.server_secret().
+
+    No file side effects at import time.
+    """
+    secret = server_users.server_secret()
+    return hashlib.sha256(f"custom-opencode-auth-v2\0{secret}".encode("utf-8")).digest()
+
+
+def _env_password_fingerprint() -> str:
+    """Fingerprint of current CLIENT_PASSWORD for env-user token invalidation."""
+    return hashlib.sha256(f"custom-opencode-env-fp\0{CLIENT_PASSWORD}".encode()).hexdigest()
+
+
+def issue_session_token(ttl_seconds: int, username: str | None = None) -> str:
+    """Issue a v2 session token for the given username (defaults to CLIENT_USER)."""
+    if username is None:
+        username = CLIENT_USER
+    payload_dict = {"u": username, "exp": int(time.time()) + ttl_seconds, "v": 2, "nonce": secrets.token_urlsafe(16)}
+    if username == CLIENT_USER:
+        payload_dict["pf"] = _env_password_fingerprint()
     payload = json.dumps(
-        {"u": CLIENT_USER, "exp": int(time.time()) + ttl_seconds, "v": 1, "nonce": secrets.token_urlsafe(16)},
+        payload_dict,
         separators=(",", ":"),
         ensure_ascii=False,
     ).encode("utf-8")
-    signature = hmac.new(AUTH_KEY, payload, hashlib.sha256).digest()
+    signature = hmac.new(_auth_key_v2(), payload, hashlib.sha256).digest()
     return f"{b64url_encode(payload)}.{b64url_encode(signature)}"
 
 
-def valid_session_token(token: str) -> bool:
+def valid_session_token(token: str) -> str | None:
+    """Validate session token and return username (str) or None.
+
+    v==1 tokens use legacy AUTH_KEY (must match CLIENT_USER).
+    v==2 tokens use _auth_key_v2() and check user_exists.
+    """
     try:
         payload_part, signature_part = token.split(".", 1)
         payload = b64url_decode(payload_part)
         supplied_signature = b64url_decode(signature_part)
-        expected_signature = hmac.new(AUTH_KEY, payload, hashlib.sha256).digest()
-        if not hmac.compare_digest(supplied_signature, expected_signature):
-            return False
         data = json.loads(payload.decode("utf-8"))
-        if data.get("v") != 1 or data.get("u") != CLIENT_USER:
-            return False
-        return int(data.get("exp", 0)) >= int(time.time())
+        version = data.get("v")
+        username = data.get("u")
+
+        if not isinstance(version, int) or isinstance(version, bool):
+            return None
+
+        if version == 1:
+            # Legacy v1 token
+            expected_signature = hmac.new(AUTH_KEY, payload, hashlib.sha256).digest()
+            if not hmac.compare_digest(supplied_signature, expected_signature):
+                return None
+            if username != CLIENT_USER:
+                return None
+        elif version == 2:
+            # v2 token
+            expected_signature = hmac.new(_auth_key_v2(), payload, hashlib.sha256).digest()
+            if not hmac.compare_digest(supplied_signature, expected_signature):
+                return None
+            if not isinstance(username, str) or not server_users.user_exists(username):
+                return None
+            if username == CLIENT_USER:
+                pf = data.get("pf")
+                if not isinstance(pf, str):
+                    return None
+                if not hmac.compare_digest(pf, _env_password_fingerprint()):
+                    return None
+        else:
+            return None
+
+        if int(data.get("exp", 0)) < int(time.time()):
+            return None
+        return username
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
+        return None
 
 
 def resolve_directory(value: object) -> Path | None:
@@ -485,12 +540,23 @@ class Handler(BaseHTTPRequestHandler):
     def authenticated(self) -> bool:
         if self.local_bypass():
             return True
-        if valid_session_token(self.cookie_token()):
+        token = self.cookie_token()
+        if token and valid_session_token(token):
             return True
         if ALLOW_BASIC_AUTH:
             supplied = self.headers.get("Authorization", "")
-            if supplied and secrets.compare_digest(supplied, CLIENT_AUTH):
-                return True
+            if not supplied:
+                return False
+            # Parse Basic auth
+            try:
+                scheme, _, encoded = supplied.partition(" ")
+                if scheme.lower() != "basic":
+                    return False
+                decoded = base64.b64decode(encoded).decode("utf-8")
+                username, _, password = decoded.partition(":")
+                return server_users.authenticate(username, password)
+            except (ValueError, UnicodeDecodeError):
+                return False
         return False
 
     def request_is_secure(self) -> bool:
@@ -561,15 +627,13 @@ class Handler(BaseHTTPRequestHandler):
         username = str(payload.get("username", ""))
         password = str(payload.get("password", ""))
         remember = bool(payload.get("remember", False))
-        user_ok = secrets.compare_digest(username, CLIENT_USER)
-        password_ok = secrets.compare_digest(password, CLIENT_PASSWORD)
-        if not (user_ok and password_ok):
+        if not server_users.authenticate(username, password):
             time.sleep(0.35)
             self.json_response({"ok": False, "error": "Неверный логин или пароль"}, status=401)
             return
 
         ttl = AUTH_REMEMBER_SECONDS if remember else AUTH_SESSION_SECONDS
-        token = issue_session_token(ttl)
+        token = issue_session_token(ttl, username)
         self.send_response(204)
         self.send_header("Set-Cookie", self.session_cookie(token, remember=remember))
         self.send_header("Cache-Control", "no-store")
@@ -607,9 +671,16 @@ class Handler(BaseHTTPRequestHandler):
             if not self.authenticated():
                 self.unauthorized()
                 return
+            # Extract username from token or use CLIENT_USER for local/bypass/basic
+            username = CLIENT_USER
+            token = self.cookie_token()
+            if token:
+                token_user = valid_session_token(token)
+                if token_user:
+                    username = token_user
             self.json_response({
                 "ok": True,
-                "user": CLIENT_USER,
+                "user": username,
                 "localBypass": self.local_bypass(),
             })
             return

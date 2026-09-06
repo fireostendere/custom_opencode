@@ -243,8 +243,26 @@ class Handler(rag.Handler, features.Handler):
             return True
         if base.ALLOW_BASIC_AUTH:
             supplied = self.headers.get("Authorization", "")
-            if supplied and secrets.compare_digest(supplied, base.CLIENT_AUTH):
+            if not supplied:
+                return False
+            identity = _request_identity(self)
+            if _login_limited(identity):
+                return False
+            # Parse Basic auth
+            try:
+                import base64
+                scheme, _, encoded = supplied.partition(" ")
+                if scheme.lower() != "basic":
+                    return False
+                decoded = base64.b64decode(encoded).decode("utf-8")
+                username, _, password = decoded.partition(":")
+                if not base.server_users.authenticate(username, password):
+                    _record_login_failure(identity)
+                    return False
+                _clear_login_failures(identity)
                 return True
+            except (ValueError, UnicodeDecodeError):
+                return False
         return False
 
     def login(self) -> None:
@@ -260,9 +278,7 @@ class Handler(rag.Handler, features.Handler):
         username = str(payload.get("username", ""))
         password = str(payload.get("password", ""))
         remember = bool(payload.get("remember", False))
-        user_ok = secrets.compare_digest(username, base.CLIENT_USER)
-        password_ok = secrets.compare_digest(password, base.CLIENT_PASSWORD)
-        if not (user_ok and password_ok):
+        if not base.server_users.authenticate(username, password):
             _record_login_failure(identity)
             time.sleep(0.35)
             self.json_response({"ok": False, "error": "Неверный логин или пароль"}, status=401)
@@ -270,7 +286,7 @@ class Handler(rag.Handler, features.Handler):
 
         _clear_login_failures(identity)
         ttl = base.AUTH_REMEMBER_SECONDS if remember else base.AUTH_SESSION_SECONDS
-        token = base.issue_session_token(ttl)
+        token = base.issue_session_token(ttl, username)
         self.send_response(204)
         self.send_header("Set-Cookie", self.session_cookie(token, remember=remember))
         self.send_header("Cache-Control", "no-store")
