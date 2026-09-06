@@ -12,6 +12,11 @@ source = source.replace(
   'import { Plugin } from "@opencode-ai/plugin/tui"',
   'const Plugin = { define(value) { return value } }',
 )
+source = source.replace(
+  './lib/limits-helper.js',
+  new URL('config/plugins/tui/lib/limits-helper.js', root).href,
+)
+source = source.replace(/<span[^>]*>\{([^}]+)\}<\/span>/g, '$1')
 assert.ok(!source.includes('@opencode-ai/plugin/tui'), 'plugin import replacement failed')
 for (const modelID of ['gpt-5.6-sol-orchestrated', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
   assert.ok(source.includes(`openai/${modelID}`), `SOL orchestration model missing from TUI grouping: ${modelID}`)
@@ -65,11 +70,15 @@ const models = [
   { providerID: 'opencode', id: 'free-model', name: 'Free Model', enabled: true, status: 'active', cost: [{ input: 0 }] },
   { providerID: 'other', id: 'z-model', name: 'Z Model', enabled: true, status: 'active', cost: [{ input: 1 }] },
   { providerID: 'other', id: 'old-model', name: 'Old Model', enabled: false, status: 'deprecated', cost: [{ input: 0.5 }] },
+  { providerID: 'google', id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', enabled: true, status: 'active' },
+  { providerID: 'google', id: 'veo-3.1-generate-preview', name: 'Veo 3.1', enabled: true, status: 'active' },
+  { providerID: 'google', id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', enabled: true, status: 'active' },
 ]
 const providers = [
   { id: 'bailian-cli', name: 'Alibaba Cloud' },
   { id: 'openai', name: 'OpenAI' },
   { id: 'opencode', name: 'OpenCode' },
+  { id: 'google', name: 'Google' },
   { id: 'other', name: 'Other Provider' },
 ]
 
@@ -191,7 +200,23 @@ assert.equal(new Set(keys).size, keys.length, 'model list contains duplicates')
 assert.equal(keys.filter((item) => item === 'bailian-cli/qwen3.8-max').length, 1)
 assert.deepEqual(
   dialogOptions.map((item) => item.category),
-  ['Current', 'Recent', 'Alibaba', 'Orchestrated', 'Free', 'Others'],
+  ['Current', 'Recent', 'Alibaba', 'Orchestrated', 'Google', 'Free', 'Others'],
+)
+assert.deepEqual(
+  dialogOptions
+    .filter((item) => item.category === 'Google')
+    .map((item) => item.value.modelID),
+  ['gemini-3.8-flash'],
+)
+assert.equal(
+  dialogOptions.some((item) => item.value.modelID === 'veo-3.1-generate-preview'),
+  false,
+  'non-text Google model must be filtered out',
+)
+assert.equal(
+  dialogOptions.some((item) => item.value.modelID === 'gemini-2.5-flash'),
+  false,
+  'legacy Google model must be filtered out',
 )
 // Role-routed models land in the dedicated Orchestrated group (after OpenAI),
 // not in the generic Alibaba section.
@@ -207,6 +232,13 @@ assert.deepEqual(
     .map((item) => item.value.modelID),
   ['qwen-flash'],
 )
+
+const qwenMaxOpt = dialogOptions.find((item) => item.value.modelID === 'qwen3.8-max')
+assert.ok(qwenMaxOpt, 'qwen3.8-max option missing')
+assert.match(qwenMaxOpt.footer, /^[🌙☀] −50%$/, 'qwen3.8-max must display night promo footer')
+assert.ok(qwenMaxOpt.footerColor, 'qwen3.8-max must have promo color')
+const qwenFlashOpt = dialogOptions.find((item) => item.value.modelID === 'qwen-flash')
+assert.equal(qwenFlashOpt.footer, undefined, 'qwen-flash must not have night promo footer')
 
 // ── Scenario 2: home screen → create the first session with selected model ──
 route = { type: 'home' }
@@ -271,7 +303,7 @@ assert.deepEqual(favoriteRows.map((item) => item.category), ['Favorites', 'Recen
 assert.ok(favoriteRows.every((item) => item.title.startsWith('★ ')), 'both rows must show a star')
 assert.deepEqual(
   [...new Set(dialogOptions.map((item) => item.category))],
-  ['Current', 'Favorites', 'Recent', 'Alibaba', 'Orchestrated', 'Free', 'Others'],
+  ['Current', 'Favorites', 'Recent', 'Alibaba', 'Orchestrated', 'Google', 'Free', 'Others'],
 )
 
 // ── Scenario 5: toggling the last favorite removes the dedicated section ──

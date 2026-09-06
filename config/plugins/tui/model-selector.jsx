@@ -24,9 +24,21 @@
  * with the selected model and its saved variant.
  */
 import { Plugin } from "@opencode-ai/plugin/tui"
+import { getNightPromoStatus, isNightDiscountModel } from "./lib/limits-helper.js"
 
 const RECENT_LIMIT = 10
 const OPENAI_PROVIDERS = new Set(["openai", "chatgpt"])
+const GOOGLE_UNWANTED_MODEL_RE =
+  /^(?:veo-|lyria-|gemini-(?:embedding|robotics|omni|2\.5|3-flash-preview|3\.1|3\.5-live)|deep-research-)/i
+
+function isRelevantGoogleModel(model) {
+  if (model?.providerID !== "google") return false
+  const id = model.id || ""
+  if (GOOGLE_UNWANTED_MODEL_RE.test(id)) return false
+  if (id.includes("-image") || id.includes("-tts") || id.includes("-live")) return false
+  if (id === "gemini-3.5-flash") return false
+  return true
+}
 
 function modelKey(providerID, modelID) {
   return `${providerID}/${modelID}`
@@ -87,9 +99,25 @@ function key(model) {
   return `${model.providerID}/${model.id}`
 }
 
-function option(model, providerNames, category, favorite = false) {
+function renderTitleView(title, color) {
+  if (!color) return undefined
+  return <span style={{ fg: color }}>{title}</span>
+}
+
+function option(model, providerNames, category, favorite = false, theme = null, promo = null) {
+  const isPromo = isNightDiscountModel(model.id, model.providerID)
+  const promoActive = Boolean(promo?.active)
+  const promoColor = isPromo
+    ? (promoActive
+        ? (theme?.text?.feedback?.success?.default || "green")
+        : (theme?.text?.feedback?.warning?.default || "yellow"))
+    : undefined
+  const title = `${favorite ? "★ " : ""}${model.name}`
   return {
-    title: `${favorite ? "★ " : ""}${model.name}`,
+    title,
+    titleView: renderTitleView(title, promoColor),
+    footer: isPromo ? (promoActive ? "🌙 −50%" : "☀ −50%") : undefined,
+    footerColor: promoColor,
     value: { providerID: model.providerID, modelID: model.id },
     description: providerNames[model.providerID] || model.providerID,
     category,
@@ -101,7 +129,7 @@ function byName(a, b) {
   return a.title.localeCompare(b.title)
 }
 
-function buildOptions(models, providerNames, recentEntries, current, favoriteEntries = []) {
+function buildOptions(models, providerNames, recentEntries, current, favoriteEntries = [], theme = null, promo = null) {
   const options = []
   const seen = new Set()
   const categorized = new Set()
@@ -114,7 +142,7 @@ function buildOptions(models, providerNames, recentEntries, current, favoriteEnt
     const currentModel = models.find((model) => key(model) === currentKey)
     if (currentModel) {
       seen.add(currentKey)
-      options.push(option(currentModel, providerNames, "Current", favoriteKeys.has(currentKey)))
+      options.push(option(currentModel, providerNames, "Current", favoriteKeys.has(currentKey), theme, promo))
     }
   }
 
@@ -123,7 +151,7 @@ function buildOptions(models, providerNames, recentEntries, current, favoriteEnt
   options.push(
     ...models
       .filter((model) => favoriteKeys.has(key(model)))
-      .map((model) => option(model, providerNames, "Favorites", true))
+      .map((model) => option(model, providerNames, "Favorites", true, theme, promo))
       .sort(byName),
   )
 
@@ -135,7 +163,7 @@ function buildOptions(models, providerNames, recentEntries, current, favoriteEnt
     )
     if (!model || !model.enabled || seen.has(key(model))) continue
     seen.add(key(model))
-    options.push(option(model, providerNames, "Recent", favoriteKeys.has(key(model))))
+    options.push(option(model, providerNames, "Recent", favoriteKeys.has(key(model)), theme, promo))
   }
 
   const takeSorted = (category, predicate, sortFn = byName) => {
@@ -150,10 +178,18 @@ function buildOptions(models, providerNames, recentEntries, current, favoriteEnt
       .map((model) => {
         seen.add(key(model))
         categorized.add(key(model))
-        return option(model, providerNames, category, favoriteKeys.has(key(model)))
+        return option(model, providerNames, category, favoriteKeys.has(key(model)), theme, promo)
       })
       .sort(sortFn)
     options.push(...items)
+  }
+
+  // Discard unwanted Google models (non-text, legacy versions) so they never spill into Others
+  for (const model of models) {
+    if (model.providerID === "google" && !isRelevantGoogleModel(model)) {
+      seen.add(key(model))
+      categorized.add(key(model))
+    }
   }
 
   takeSorted(
@@ -164,7 +200,7 @@ function buildOptions(models, providerNames, recentEntries, current, favoriteEnt
   )
   takeSorted("OpenAI", (model) => OPENAI_PROVIDERS.has(model.providerID))
   takeSorted("Orchestrated", (model) => ORCHESTRATED_MODELS.has(key(model)))
-  takeSorted("Google", (model) => model.providerID === "google")
+  takeSorted("Google", (model) => isRelevantGoogleModel(model))
   takeSorted(
     "Free",
     (model) => model.providerID === "opencode" && model.cost?.[0]?.input === 0,
@@ -372,12 +408,16 @@ export default Plugin.define({
           providerNames[provider.id] = provider.name
         }
 
+        const promo = getNightPromoStatus()
+
         let options = buildOptions(
           models,
           providerNames,
           validRecent,
           currentModel,
           favorites.models,
+          context.theme,
+          promo,
         )
 
         jump.map = buildCategoryMap(options)
@@ -406,6 +446,8 @@ export default Plugin.define({
                 [],
                 null,
                 favorites.models,
+                context.theme,
+                promo,
               )
                 // Dedupe mirrored favorite rows instead of dropping the whole
                 // "Favorites" category: a disabled favorite only appears there,
@@ -452,6 +494,8 @@ export default Plugin.define({
                 validRecent,
                 currentModel,
                 favorites.models,
+                context.theme,
+                promo,
               )
               jump.map = buildCategoryMap(options)
               current = selectedFavorite

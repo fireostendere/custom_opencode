@@ -274,7 +274,19 @@ export function createPanelViews(context) {
           <WindowRows label={codex().primary?.windowDurationMins ? `ChatGPT · ${fmtWindow(codex().primary.windowDurationMins)}` : "ChatGPT"} win={codex().primary} />
           <WindowRows label={codex().secondary?.windowDurationMins ? `ChatGPT · ${fmtWindow(codex().secondary.windowDurationMins)}` : "ChatGPT · доп."} win={codex().secondary} />
         </Show>
-        <Show when={qwen().available && qwen().state === "ok"} fallback={<text fg={theme.text.subdued}><span>Alibaba: нет данных</span></text>}>
+        <Show
+          when={qwen().available && qwen().state === "ok"}
+          fallback={
+            qwen().state === "expired" || qwen().reason === "session-expired" ? (
+              <box flexDirection="column" flexShrink={0}>
+                <text fg={theme.text.feedback.warning.default}><span>Alibaba: сессия истекла</span></text>
+                <text fg={theme.text.subdued}><span>bl auth login --console</span></text>
+              </box>
+            ) : (
+              <text fg={theme.text.subdued}><span>Alibaba: нет данных</span></text>
+            )
+          }
+        >
           <WindowRows label="Alibaba · 5ч" win={qwen().fiveHour} />
           <WindowRows label="Alibaba · 7д" win={qwen().sevenDay} />
         </Show>
@@ -288,7 +300,7 @@ export function createPanelViews(context) {
         </Show>
         {(() => {
           const promo = getNightPromoStatus()
-          return <text fg={promo.active ? theme.text.feedback.success.default : theme.text.subdued}><span>{promo.active ? `🌙 −50% · ещё ${fmtDur(promo.minutesToToggle)}` : `☀ −50% · через ${fmtDur(promo.minutesToToggle)}`}</span></text>
+          return <text fg={promo.active ? theme.text.feedback.success.default : theme.text.feedback.warning.default}><span>{promo.active ? `🌙 −50% · ещё ${fmtDur(promo.minutesToToggle)}` : `☀ −50% · через ${fmtDur(promo.minutesToToggle)}`}</span></text>
         })()}
       </box>
     )

@@ -235,7 +235,7 @@ async function saveNative(context, parsed) {
     return
   }
   try {
-    await context.client.session.command({ sessionID: current, command: parsed.command, arguments: parsed.arguments })
+    await context.client.session.command({ sessionID: current, command: parsed.command, text: parsed.arguments })
     toast(context, `${TITLES[parsed.kind]} сохранён`, "success")
   } catch (error) {
     toast(context, `Не удалось сохранить: ${error.message}`)
@@ -279,8 +279,28 @@ function slashInput(name, input) {
   return `/${name}${argumentsText ? ` ${argumentsText}` : ""}`
 }
 
+function openAccounts(context) {
+  // Reuse V2's credential-backed multi-account UI, including OAuth refresh.
+  const connect = context.keymap.commands().find((command) => command.id === "provider.connect")
+  if (!connect) {
+    toast(context, "В этой версии OpenCode недоступен визард подключений. Обновите OpenCode V2.")
+    return
+  }
+  context.keymap.dispatch(connect.id)
+}
+
 function commandRows(context) {
   return [
+    {
+      id: "custom.add-wizard.accounts",
+      title: "Аккаунты провайдеров",
+      description: "Добавить аккаунт, переименовать или переключить активный",
+      group: "Configuration",
+      palette: true,
+      suggested: true,
+      slash: { name: "accounts" },
+      run: () => openAccounts(context),
+    },
     {
       id: "custom.add-wizard.add",
       title: "Добавить configuration",
@@ -311,7 +331,14 @@ export default Plugin.define({
     const submitRouter = installPanelSubmitRouter(context, () => {
       const editor = context.renderer?.currentFocusedEditor ?? context.renderer?.currentFocusedRenderable
       if (!isOpenCodePrompt(editor)) return false
-      const parsed = parseAddCommand(promptText(editor))
+      const text = promptText(editor)
+      if (/^\/accounts(?:\s|$)/i.test(text.trim())) {
+        clearPromptEditor(editor)
+        if (text.trim().toLowerCase() === "/accounts") openAccounts(context)
+        else toast(context, "Используйте /accounts без аргументов; данные аккаунта вводятся в визарде.")
+        return true
+      }
+      const parsed = parseAddCommand(text)
       if (!parsed) return false
       clearPromptEditor(editor)
       return processParsed(context, parsed)

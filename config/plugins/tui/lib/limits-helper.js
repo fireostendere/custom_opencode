@@ -203,6 +203,19 @@ async function queryBailian(binary) {
     child.once("close", (code) => {
       if (settled) return
       if (code !== 0) {
+        try {
+          const payload = JSON.parse(stdout.trim())
+          const err = payload?.error
+          if (err && (err.code === 3 || /expired|not logged in/i.test(err.message || ""))) {
+            finish({
+              available: false,
+              state: "expired",
+              reason: "session-expired",
+              hint: err.hint || "bl auth login --console",
+            })
+            return
+          }
+        } catch {}
         finish({ available: false, reason: "bailian-cli-error" })
         return
       }
@@ -255,6 +268,22 @@ const BEIJING_OFFSET_MS = 8 * 3600 * 1000
 const NIGHT_START_MIN = 22 * 60
 const NIGHT_END_MIN = 8 * 60
 
+export const NIGHT_DISCOUNT_MODELS = [
+  "qwen3.8-max",
+  "qwen3.8-orchestrated",
+  "qwen3.8-max-preview",
+  "deepseek-v4-pro-0813",
+  "deepseek-v4-flash-0731",
+]
+
+const NIGHT_DISCOUNT_MODEL_SET = new Set(NIGHT_DISCOUNT_MODELS)
+
+export function isNightDiscountModel(modelID, providerID) {
+  if (providerID && providerID !== "bailian-cli") return false
+  if (!modelID) return false
+  return NIGHT_DISCOUNT_MODEL_SET.has(modelID)
+}
+
 export function getNightPromoStatus(nowMs = Date.now()) {
   const bj = new Date(nowMs + BEIJING_OFFSET_MS)
   const minOfDay = bj.getUTCHours() * 60 + bj.getUTCMinutes()
@@ -267,7 +296,7 @@ export function getNightPromoStatus(nowMs = Date.now()) {
     discount: 0.5,
     minutesToToggle,
     togglesAtMs: nowMs + minutesToToggle * 60_000,
-    models: ["qwen3.8-max", "deepseek-v4-pro-0813"],
+    models: NIGHT_DISCOUNT_MODELS,
   }
 }
 

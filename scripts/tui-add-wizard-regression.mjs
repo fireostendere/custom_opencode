@@ -192,7 +192,8 @@ const context = {
   },
   client: {
     session: {
-      command: async ({ sessionID, command, arguments: argumentsText }) => {
+      command: async ({ sessionID, command, text: argumentsText }) => {
+        assert.equal(typeof argumentsText, 'string', 'V2 session.command requires text')
         commandCalls.push({ sessionID, command, arguments: argumentsText })
         const call = commandCalls.at(-1)
         const definition = serverCommands.get(command)
@@ -216,7 +217,7 @@ slotRenders[0]()
 assert.equal(keymapLayers.length, 1)
 
 const rows = keymapLayers[0].commands
-assert.equal(rows.length, expectedKinds.length + 1)
+assert.equal(rows.length, expectedKinds.length + 2)
 for (const kind of expectedKinds) {
   assert.ok(rows.some((row) => row.id === `custom.add-wizard.${kind}`), `missing ${kind} button`)
 }

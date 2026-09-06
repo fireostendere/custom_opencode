@@ -74,6 +74,23 @@ with tempfile.TemporaryDirectory() as temp:
     assert qwen["sevenDay"]["remainingCredits"] == 11_200
     assert qwen["sevenDay"]["resetsAt"] == 2_000_100_000
 
+    fake_bl_expired = Path(temp) / "bl-expired"
+    fake_bl_expired.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "print(json.dumps({'error': {'code': 3, 'message': 'Console session is not logged in or has expired.', 'hint': 'Run `bl auth login --console` to sign in or refresh your console session.'}}))\n"
+        "sys.exit(3)\n",
+        encoding="utf-8",
+    )
+    fake_bl_expired.chmod(fake_bl_expired.stat().st_mode | stat.S_IXUSR)
+    os.environ["BAILIAN_CLI_BIN"] = str(fake_bl_expired)
+    server_ext._bailian_cache.update(at=0.0, value=None)
+    qwen_expired = server_ext.query_qwen_status()
+    assert qwen_expired["available"] is False
+    assert qwen_expired["state"] == "expired"
+    assert qwen_expired["reason"] == "session-expired"
+    assert "bl auth login --console" in qwen_expired.get("hint", "")
+
     gemini = server_ext.query_gemini_status()
     assert gemini["available"] is True
     assert gemini["minuteTokens"]["limit"] == 2_000_000

@@ -107,15 +107,21 @@ function renderQwenWindow(window, fallbackLimit, fallbackMinutes) {
 }
 
 function renderQwenQuota(value) {
-  const state = value?.state === 'ok' ? 'OK' : value?.state === 'exhausted' ? 'исчерпан' : 'нет probe'
-  const stateClass = value?.state === 'exhausted' ? 'quota-bad' : value?.state === 'ok' ? 'quota-good' : 'quota-muted'
-  const live = value?.source === 'bailian-cli'
+  const isExpired = value?.state === 'expired' || value?.reason === 'session-expired'
+  const state = value?.state === 'ok' ? 'OK' : value?.state === 'exhausted' ? 'исчерпан' : (isExpired ? 'сессия истекла' : 'нет probe')
+  const stateClass = value?.state === 'exhausted' || isExpired ? 'quota-bad' : value?.state === 'ok' ? 'quota-good' : 'quota-muted'
+  const live = value?.source === 'bailian-cli' && !isExpired
+  const note = live
+    ? 'Реальное использование Token Plan через Bailian CLI.'
+    : (isExpired
+      ? 'Сессия Bailian истекла. Выполните: bl auth login --console'
+      : (value?.reason === 'bailian-cli-not-found' ? 'Bailian CLI не найден; показаны caps + probe.' : 'Token Plan usage недоступен; показаны caps + probe.'))
   return `<section class="quota-provider">
     <div class="quota-provider-head"><strong>Qwen</strong><span class="${stateClass}">${escapeHtml(state)}</span></div>
     ${renderQwenWindow(value?.fiveHour, 12000, 300)}
     ${renderQwenWindow(value?.sevenDay, 40000, 10080)}
     ${!live && value?.resetAt ? `<div class="quota-reset">probe reset ${escapeHtml(value.resetAt)}</div>` : ''}
-    <div class="quota-note">${live ? 'Реальное использование Token Plan через Bailian CLI.' : (value?.reason === 'bailian-cli-not-found' ? 'Bailian CLI не найден; показаны caps + probe.' : 'Token Plan usage недоступен; показаны caps + probe.')}</div>
+    <div class="quota-note">${escapeHtml(note)}</div>
   </section>`
 }
 

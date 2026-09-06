@@ -458,12 +458,35 @@ function directModelRef(){
 }
 window.CustomOpenCodeControls={changeModel,changeAgent,directModel:directModelRef,startRun:markStarted}
 
+const NIGHT_DISCOUNT_MODELS = new Set([
+  'qwen3.8-max',
+  'qwen3.8-orchestrated',
+  'qwen3.8-max-preview',
+  'deepseek-v4-pro-0813',
+  'deepseek-v4-flash-0731',
+])
+function isNightPromoActive(nowMs = Date.now()){
+  const bj = new Date(nowMs + 8 * 3600 * 1000)
+  const min = bj.getUTCHours() * 60 + bj.getUTCMinutes()
+  return min >= 22 * 60 || min < 8 * 60
+}
+function isNightPromoModel(modelID, providerID){
+  if(providerID && providerID !== 'bailian-cli') return false
+  return NIGHT_DISCOUNT_MODELS.has(modelID)
+}
+
 function renderModelChoices(){
   const query=$('modelSearch').value.trim().toLowerCase(), current=activeModelRef()
   const models=state.models.filter((m)=>`${m.name||''} ${m.id} ${m.providerID}`.toLowerCase().includes(query))
   const groups=new Map(); for(const m of models){if(!groups.has(m.providerID))groups.set(m.providerID,[]);groups.get(m.providerID).push(m)}
   const favKey=(m)=>`${m.providerID}/${m.id}`
-  $('modelChoices').innerHTML=[...groups.entries()].sort((a,b)=>providerName(a[0]).localeCompare(providerName(b[0]))).map(([pid,items])=>`<div class="project">${escapeHtml(providerName(pid))}</div>${items.sort((a,b)=>Number(favorites.has(favKey(b)))-Number(favorites.has(favKey(a)))||(a.name||a.id).localeCompare(b.name||b.id)).map((m)=>`<button class="choice" data-model="${escapeHtml(m.id)}" data-provider="${escapeHtml(m.providerID)}"><div class="choice-title">${escapeHtml(m.name||m.id)}${current?.id===m.id&&current?.providerID===m.providerID?' · ✓':''}</div><div class="choice-meta">${escapeHtml(m.id)} · <span data-fav="${escapeHtml(favKey(m))}">${favorites.has(favKey(m))?'★':'☆'}</span></div></button>`).join('')}`).join('')||'<div class="empty">Модели не найдены.</div>'
+  const nightActive=isNightPromoActive()
+  $('modelChoices').innerHTML=[...groups.entries()].sort((a,b)=>providerName(a[0]).localeCompare(providerName(b[0]))).map(([pid,items])=>`<div class="project">${escapeHtml(providerName(pid))}</div>${items.sort((a,b)=>Number(favorites.has(favKey(b)))-Number(favorites.has(favKey(a)))||(a.name||a.id).localeCompare(b.name||b.id)).map((m)=>{
+    const promo=isNightPromoModel(m.id,m.providerID)
+    const promoClass=promo?(nightActive?'night-promo-active':'night-promo-inactive'):''
+    const promoBadge=promo?`<span class="night-promo-badge ${nightActive?'active':'inactive'}">${nightActive?'🌙 −50%':'☀ −50%'}</span>`:''
+    return `<button class="choice ${promoClass}" data-model="${escapeHtml(m.id)}" data-provider="${escapeHtml(m.providerID)}" data-promo="${promo?1:0}"><div class="choice-title">${escapeHtml(m.name||m.id)}${current?.id===m.id&&current?.providerID===m.providerID?' · ✓':''}</div><div class="choice-meta">${promoBadge ? promoBadge + ' · ' : ''}${escapeHtml(m.id)} · <span data-fav="${escapeHtml(favKey(m))}">${favorites.has(favKey(m))?'★':'☆'}</span></div></button>`
+  }).join('')}`).join('')||'<div class="empty">Модели не найдены.</div>'
 }
 
 function renderHeader(){

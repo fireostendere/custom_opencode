@@ -156,7 +156,22 @@ export async function getControls(directory) {
   return {
     // Hidden direct agents are internal routing targets, not user-facing modes.
     agents: [...visibleAgents, ...compatibilityAgents],
-    models: models.filter((model) => model.enabled !== false),
+    models: models.filter((model) => {
+      if (model.enabled === false) return false
+      if (model.providerID === 'google') {
+        const id = (model.id || '').toLowerCase()
+        if (
+          /^(?:veo-|lyria-|gemini-(?:embedding|robotics|omni|2\.5|3-flash-preview|3\.1|3\.5-live)|deep-research-)/i.test(id) ||
+          id.includes('-image') ||
+          id.includes('-tts') ||
+          id.includes('-live') ||
+          id === 'gemini-3.5-flash'
+        ) {
+          return false
+        }
+      }
+      return true
+    }),
     providers,
     fallback,
   }

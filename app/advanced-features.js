@@ -1163,6 +1163,7 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   const livePanelMarkup = `<details class="orchestration-panel live-panel"><summary class="orchestration-summary activity-summary"><span class="orchestration-summary-mark ${liveStatus}" aria-hidden="true"></span><span class="orchestration-summary-copy"><strong>Инструменты и агенты</strong><span>${escapeHtml(liveSummary)}</span></span><span class="orchestration-summary-status ${liveStatus}">${liveStatusLabel}</span></summary><div class="orchestration-nodes activity-panel-body">${currentActivity ? `<div class="activity-current-label">Сейчас</div>${renderActivityItem(currentActivity, true)}` : '<div class="activity-empty">Сейчас инструмент не выполняется.</div>'}<div class="activity-agents-label">Участники оркестрации</div>${nodes.join('')}${history ? `<div class="activity-history-label">Последние события</div>${history}` : ''}</div></details>`
   const markup = `<div class="orchestration-panels">${planPanelMarkup}${livePanelMarkup}</div>`
   const structureMarkup = primaryTime ? markup.replace(primaryTime, '__TIME__') : markup
+  if (host._orchestrationMarkup === markup) return
   if (host._structureMarkup === structureMarkup) {
     const timeEl = host.querySelector('.primary-node .node-time')
     if (timeEl && timeEl.textContent !== primaryTime) timeEl.textContent = primaryTime

@@ -481,6 +481,18 @@ assert.equal(helper.getNightPromoStatus(beforeNight).active, false)
 assert.equal(helper.getNightPromoStatus(beforeNight).minutesToToggle, 1)
 assert.equal(helper.getNightPromoStatus(atNight).active, true)
 assert.equal(helper.getNightPromoStatus(atNight).minutesToToggle, 600)
+const expiredBailian = await executable('bl-expired', `#!/usr/bin/env python3
+import json, sys
+print(json.dumps({'error': {'code': 3, 'message': 'Console session is not logged in or has expired.', 'hint': 'Run \`bl auth login --console\` to sign in or refresh your console session.'}}))
+sys.exit(3)
+`)
+process.env.BAILIAN_CLI_BIN = expiredBailian
+const expiredHelper = await import(`${helperUrl.href}?expired=${Date.now()}`)
+const expiredLimits = await expiredHelper.getLimits()
+assert.equal(expiredLimits.qwen.available, false)
+assert.equal(expiredLimits.qwen.state, 'expired')
+assert.equal(expiredLimits.qwen.reason, 'session-expired')
+assert.equal(expiredLimits.qwen.hint, 'Run `bl auth login --console` to sign in or refresh your console session.')
 
 const slowBailian = await executable('bl-slow', `#!/usr/bin/env python3
 import time

@@ -235,6 +235,24 @@ def query_bailian_token_plan() -> dict[str, object]:
                 check=False,
             )
             if result.returncode != 0:
+                try:
+                    payload = json.loads(result.stdout)
+                    if isinstance(payload, dict):
+                        err = payload.get("error")
+                        if isinstance(err, dict):
+                            code = err.get("code")
+                            msg = str(err.get("message") or "")
+                            if code == 3 or "expired" in msg.lower() or "not logged in" in msg.lower():
+                                value = {
+                                    "available": False,
+                                    "state": "expired",
+                                    "reason": "session-expired",
+                                    "hint": err.get("hint") or "bl auth login --console",
+                                }
+                                _bailian_cache.update(at=now, value=value)
+                                return value
+                except Exception:
+                    pass
                 raise RuntimeError("Bailian Token Plan usage command failed")
             payload = json.loads(result.stdout)
             if not isinstance(payload, dict):
@@ -309,12 +327,14 @@ def query_qwen_status() -> dict[str, object]:
             "resetAt": probe_reset if state == "exhausted" else None,
         }
 
+    is_expired = usage.get("state") == "expired" or usage.get("reason") == "session-expired"
     return {
-        "available": probe_state != "unknown",
-        "source": "probe",
+        "available": False if is_expired else (probe_state != "unknown"),
+        "source": "bailian-cli" if is_expired else "probe",
         "reason": usage.get("reason"),
-        "state": probe_state,
+        "state": "expired" if is_expired else probe_state,
         "resetAt": probe_reset,
+        "hint": usage.get("hint"),
         "fiveHour": {"limit": QWEN_FIVE_HOUR_LIMIT, "windowDurationMins": 300},
         "sevenDay": {"limit": QWEN_SEVEN_DAY_LIMIT, "windowDurationMins": 10_080},
     }

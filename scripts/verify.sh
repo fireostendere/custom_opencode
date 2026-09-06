@@ -72,6 +72,7 @@ done
 "$NODE" "$ROOT/scripts/gemini-rate-limit-regression.mjs"
 "$NODE" "$ROOT/scripts/server-runtime-guard-regression.mjs"
 "$NODE" "$ROOT/scripts/tui-add-wizard-regression.mjs"
+"$NODE" "$ROOT/scripts/tui-accounts-regression.mjs"
 "$NODE" "$ROOT/scripts/tui-webserver-wizard-regression.mjs"
 "$PYTHON3" "$ROOT/scripts/webserver-control-smoke.py"
 "$PYTHON3" "$ROOT/scripts/unified-workspace-regression.py"
