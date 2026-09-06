@@ -235,7 +235,7 @@ assert.deepEqual(
 
 const qwenMaxOpt = dialogOptions.find((item) => item.value.modelID === 'qwen3.8-max')
 assert.ok(qwenMaxOpt, 'qwen3.8-max option missing')
-assert.match(qwenMaxOpt.footer, /^[🌙☀] −50%$/, 'qwen3.8-max must display night promo footer')
+assert.match(qwenMaxOpt.footer, /^[🌙☀] −50%$/u, 'qwen3.8-max must display night promo footer')
 assert.ok(qwenMaxOpt.footerColor, 'qwen3.8-max must have promo color')
 const qwenFlashOpt = dialogOptions.find((item) => item.value.modelID === 'qwen-flash')
 assert.equal(qwenFlashOpt.footer, undefined, 'qwen-flash must not have night promo footer')
