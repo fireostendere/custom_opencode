@@ -20,7 +20,8 @@
 - orchestration trace, runtime/RAG/queue/status surfaces;
 - light / dark / system theme, accent color и reduced-motion-aware микроанимации;
 - mobile drawer, provider limits, Markdown/code, files, clipboard images, Git/VCS UI, drafts, notifications и deep links;
-- постоянно доступная панель `Инструменты и агенты`, куда вынесены tool/reasoning events.
+- постоянно доступная панель `Инструменты и агенты`, куда вынесены tool/reasoning events;
+- `/server` wizard в TUI для управления web server: статус, запуск/остановка, автозапуск, порт/адрес, multi-user management (добавление/удаление пользователей с генерацией или ручным вводом пароля).
 
 ### Server Runtime V2/V3
 

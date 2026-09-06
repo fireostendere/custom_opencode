@@ -20,6 +20,8 @@ Web-клиент больше не использует browser-native Basic Aut
 
 Legacy Basic Auth можно включить только для старых клиентов через `OPENCODE_AUTH_ALLOW_BASIC=1`. Для обычного web UI рекомендуемое значение — `0`.
 
+Web login поддерживает несколько пользователей. Базовый env-user задаётся через `.env` (`OPENCODE_SERVER_PASSWORD`), дополнительные store-users добавляются через `/server` wizard в TUI или CLI (`custom-opencode-webserver user-add`). Сгенерированный пароль показывается один раз и не сохраняется; удалённый пользователь теряет все активные сессии немедленно.
+
 ## Локальный bypass
 
 Default — `OPENCODE_WEB_ALLOW_LOCAL=0`: даже прямой loopback требует login cookie.
@@ -115,3 +117,7 @@ Native `plan`/`plan-direct` остаются доступны в TUI и CLI. О�
 В поле текущего диалога `ArrowUp` и `ArrowDown` перебирают только пользовательские prompt’ы этой session. Текущий draft сохраняется и возвращается при переходе вниз; история других сессий и проектов не используется.
 
 Native V2 plan documents доступны в web UI через authenticated read-only route `/client-plan.json?sessionID=...`. В Build закреплённый tool `plan_update` публикует session-scoped план до первой изменяющей операции и обновляет его по ходу работы. Один и тот же документ показывается в раскрываемой плашке `План` над чатом и во вкладке `Plan` боковой workspace-панели; планы разных диалогов не смешиваются. Скрытый chain-of-thought не выводится — только короткий чек-лист результатов. Панель `Инструменты и агенты` содержит текущий tool/модель/Skill/MCP-вызов, его input/output и участников оркестрации. На телефоне workspace-панель открывается кнопкой `Panel` в header. Fallback для legacy `todowrite` сохраняется в TUI.
+
+## Multi-user web login
+
+Web login поддерживает нескольких пользователей. Пользователи управляются через `/server` wizard в TUI или напрямую через CLI `custom-opencode-webserver user-add --username NAME [--password PASS]` / `user-remove --username NAME`. Env-пользователь (из `.env`) управляется через конфигурацию и не может быть удалён через wizard. Store-пользователи добавляются/удаляются динамически; при удалении все активные сессии пользователя немедленно инвалидируются. Сгенерированный пароль показывается один раз и не сохраняется в логи/toast.
