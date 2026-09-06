@@ -104,7 +104,7 @@ export default Plugin.define({
         name: TOOL,
         description: "Publish or update the concise task plan shown in the web Plan card and workspace sidebar. This is a checklist, never chain-of-thought.",
         input: inputSchema,
-        options: { pinned: true },
+        options: { pinned: true, codemode: false },
         execute: async (input, context) => {
           const filename = writePlan(context.sessionID, input)
           const turn = turns.get(String(context.sessionID)) || {}

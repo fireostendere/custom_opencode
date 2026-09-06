@@ -31,6 +31,7 @@ try {
   const cleanup = await plugin.setup(ctx)
   assert.equal(planTool.name, 'plan_update')
   assert.equal(planTool.options.pinned, true)
+  assert.equal(planTool.options.codemode, false)
 
   const contextHook = hooks['session:context']
   const beforeHook = hooks['tool:execute.before']
