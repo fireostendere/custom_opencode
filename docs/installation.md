@@ -232,7 +232,7 @@ CUSTOM_OPENCODE_INSTALL_SELFTEST=1
 custom-opencode-update
 ```
 
-Команда делает `git pull --ff-only`, затем повторно запускает installer. Поэтому verifier и post-install self-test выполняются и после обычного обновления.
+Команда выполняет `git fetch --prune origin main`, затем `git merge --ff-only FETCH_HEAD` и повторно запускает installer. Поэтому verifier и post-install self-test выполняются и после обычного обновления. Если `.env` уже существует и в нём нет строки, начинающейся точно с `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT=`, updater добавляет `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT=1`; существующее значение не меняется. Строки с `export` или ведущими пробелами ключом не считаются.
 
 `custom-opencode-update` обновляет только `custom_opencode`. Если изменился `mcp-rag`, сначала выполните `git pull --ff-only` внутри RAG checkout.
 

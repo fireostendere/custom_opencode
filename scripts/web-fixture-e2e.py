@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FixtureState:
+    lock = threading.RLock()
     permission_pending = True
     form_pending = True
     form_reply: dict[str, object] | None = None
@@ -42,6 +43,85 @@ class FixtureState:
     queued_prompt_event = threading.Event()
     session_payloads: list[dict[str, object]] = []
     created_sessions: dict[str, dict[str, object]] = {}
+
+    @classmethod
+    def reset(cls) -> None:
+        """Restore every mutable fixture value between browser scenarios."""
+        with cls.lock:
+            cls.permission_pending = True
+            cls.form_pending = True
+            cls.form_reply = None
+            cls.form_cancelled = False
+            cls.form_reply_delay = False
+            cls.question_pending = True
+            cls.question_reply = None
+            cls.question_rejected = False
+            cls.question_event_sent = False
+            cls.session_reads = 0
+            cls.context_reads = 0
+            cls.message_requests = []
+            cls.message_order = "desc"
+            cls.managed_sends = []
+            cls.managed_failures = 0
+            cls.session_running = False
+            cls.queued_prompt_event.clear()
+            cls.session_payloads = []
+            cls.created_sessions = {}
+
+    @classmethod
+    def session_payload_snapshot(cls) -> list[dict[str, object]]:
+        with cls.lock:
+            return list(cls.session_payloads)
+
+    @classmethod
+    def form_reply_snapshot(cls) -> dict[str, object] | None:
+        with cls.lock:
+            return dict(cls.form_reply) if cls.form_reply is not None else None
+
+    @classmethod
+    def form_cancelled_snapshot(cls) -> bool:
+        with cls.lock:
+            return cls.form_cancelled
+
+    @classmethod
+    def set_form_reply_delay(cls, enabled: bool) -> None:
+        with cls.lock:
+            cls.form_reply_delay = enabled
+
+    @classmethod
+    def clear_message_requests(cls) -> None:
+        with cls.lock:
+            cls.message_requests = []
+
+    @classmethod
+    def message_requests_snapshot(cls) -> list[dict[str, list[str]]]:
+        with cls.lock:
+            return list(cls.message_requests)
+
+    @classmethod
+    def session_reads_snapshot(cls) -> int:
+        with cls.lock:
+            return cls.session_reads
+
+    @classmethod
+    def managed_sends_snapshot(cls) -> list[dict[str, object]]:
+        with cls.lock:
+            return list(cls.managed_sends)
+
+    @classmethod
+    def set_managed_failures(cls, count: int) -> None:
+        with cls.lock:
+            cls.managed_failures = count
+
+    @classmethod
+    def set_session_running(cls, running: bool) -> None:
+        with cls.lock:
+            cls.session_running = running
+
+    @classmethod
+    def clear_queued_prompt_event(cls) -> None:
+        with cls.lock:
+            cls.queued_prompt_event.clear()
 
 
 class Backend(BaseHTTPRequestHandler):
@@ -86,26 +166,35 @@ class Backend(BaseHTTPRequestHandler):
         path = parsed.path
         project = os.environ["FIXTURE_PROJECT"]
         session = self.session(project)
+        created_session = None
+        if path.startswith("/api/session/"):
+            with FixtureState.lock:
+                created_session = FixtureState.created_sessions.get(path.split("/")[3])
         if path == "/api/project":
             self.send_json({"data": [{"id": "proj_fixture", "name": "Fixture", "canonical": project}, {"id": "proj_other", "name": "Other", "canonical": os.environ["FIXTURE_OTHER_PROJECT"]}]})
         elif path == "/api/session":
             if "limit=100" in parsed.query:
-                FixtureState.session_reads += 1
+                with FixtureState.lock:
+                    FixtureState.session_reads += 1
             older = {**session, "id":"ses_older", "title":"Older root", "time":{"created":1_999_999_999_000,"updated":1_999_999_999_100}}
             child = {**session, "id":"ses_child_reader", "title":"Reader subagent", "parentID":"ses_fixture", "agent":"explore", "time":{"created":2_000_000_000_100,"updated":2_000_000_000_500}}
             nested = {**session, "id":"ses_child_review", "title":"Reviewer nested", "parentID":"ses_child_reader", "agent":"review", "time":{"created":2_000_000_000_200,"updated":2_000_000_000_600}}
             other = {**session, "id":"ses_other", "title":"Other project chat", "projectID":"proj_other", "location":{"directory":os.environ["FIXTURE_OTHER_PROJECT"]}, "time":{"created":2_000_000_000_050,"updated":2_000_000_000_050}}
             other_child = {**other, "id":"ses_other_agent", "title":"Other agent", "parentID":"ses_other", "agent":"review", "time":{"created":2_000_000_000_110,"updated":2_000_000_000_510}}
-            self.send_json({"data": [*FixtureState.created_sessions.values(), older, child, nested, session, other_child, other]})
+            with FixtureState.lock:
+                created_sessions = list(FixtureState.created_sessions.values())
+            self.send_json({"data": [*created_sessions, older, child, nested, session, other_child, other]})
         elif path == "/api/session/active" or path == "/api/session/status":
-            statuses = {"ses_fixture": {"type": "busy" if FixtureState.session_running else "idle"}}
+            with FixtureState.lock:
+                session_running = FixtureState.session_running
+            statuses = {"ses_fixture": {"type": "busy" if session_running else "idle"}}
             self.send_json({"data": statuses})
         elif path == "/api/session/ses_fixture":
             self.send_json({"data": session})
-        elif path.startswith("/api/session/") and path.endswith("/message") and path.split("/")[3] in FixtureState.created_sessions:
+        elif path.startswith("/api/session/") and path.endswith("/message") and created_session is not None:
             self.send_json({"data": [], "cursor":{"next":None}})
-        elif path.startswith("/api/session/") and path.split("/")[3] in FixtureState.created_sessions:
-            self.send_json({"data": FixtureState.created_sessions[path.split("/")[3]]})
+        elif created_session is not None:
+            self.send_json({"data": created_session})
         elif path == "/api/session/ses_child_reader":
             child = {**session, "id":"ses_child_reader", "title":"Reader subagent", "parentID":"ses_fixture", "agent":"explore", "time":{"created":2_000_000_000_100,"updated":2_000_000_000_500}}
             self.send_json({"data": child})
@@ -123,11 +212,16 @@ class Backend(BaseHTTPRequestHandler):
         elif path == "/api/session/ses_other/message":
             self.send_json({"data": [], "cursor":{"next": None}})
         elif path == "/api/session/ses_fixture/context":
-            FixtureState.context_reads += 1
+            with FixtureState.lock:
+                FixtureState.context_reads += 1
             self.send_json({"error": "context endpoint unavailable"}, status=404)
         elif path == "/api/session/ses_fixture/message":
             query = parse_qs(parsed.query)
-            FixtureState.message_requests.append(query)
+            with FixtureState.lock:
+                FixtureState.message_requests.append(query)
+                if "cursor" not in query:
+                    FixtureState.message_order = query.get("order", ["desc"])[0]
+                message_order = FixtureState.message_order
             history = []
             for index in range(241):
                 role = "user" if index % 2 == 0 else "assistant"
@@ -139,9 +233,7 @@ class Backend(BaseHTTPRequestHandler):
                     },
                     "parts": [{"type": "text", "text": f"History {role} {index:03d}"}],
                 })
-            if "cursor" not in query:
-                FixtureState.message_order = query.get("order", ["desc"])[0]
-            if FixtureState.message_order == "desc":
+            if message_order == "desc":
                 history.reverse()
             start = int(query.get("cursor", ["0"])[0])
             limit = int(query.get("limit", ["200"])[0])
@@ -168,8 +260,10 @@ class Backend(BaseHTTPRequestHandler):
         elif path == "/api/provider":
             self.send_json({"data": [{"id": "bailian-cli", "name": "Alibaba Cloud"}]})
         elif path in ("/api/permission/request", "/api/permission"):
+            with FixtureState.lock:
+                permission_pending = FixtureState.permission_pending
             rows = []
-            if FixtureState.permission_pending:
+            if permission_pending:
                 rows.append({
                     "sessionID": "ses_fixture",
                     "requestID": "perm_fixture",
@@ -179,8 +273,10 @@ class Backend(BaseHTTPRequestHandler):
                 })
             self.send_json({"data": rows})
         elif path == "/api/form/request":
+            with FixtureState.lock:
+                form_pending = FixtureState.form_pending
             rows = []
-            if FixtureState.form_pending:
+            if form_pending:
                 rows.append({
                     "id": "frm_fixture",
                     "sessionID": "ses_fixture",
@@ -197,8 +293,10 @@ class Backend(BaseHTTPRequestHandler):
                 })
             self.send_json({"location": {"directory": project}, "data": rows})
         elif path == "/api/question":
+            with FixtureState.lock:
+                question_pending = FixtureState.question_pending
             rows = []
-            if FixtureState.question_pending:
+            if question_pending:
                 rows.append({
                     "sessionID": "ses_fixture",
                     "requestID": "question_fixture",
@@ -218,8 +316,11 @@ class Backend(BaseHTTPRequestHandler):
                 })
             self.send_json({"data": rows})
         elif path == "/api/event":
-            if not FixtureState.question_event_sent:
-                FixtureState.question_event_sent = True
+            with FixtureState.lock:
+                question_event_sent = FixtureState.question_event_sent
+                if not question_event_sent:
+                    FixtureState.question_event_sent = True
+            if not question_event_sent:
                 event = {
                     "type": "question.asked",
                     "properties": {
@@ -257,10 +358,11 @@ class Backend(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0") or 0)
         payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
         if path == "/api/session":
-            FixtureState.session_payloads.append(payload)
-            session_id = f"ses_created_{len(FixtureState.session_payloads)}"
-            created = self.created_session(session_id, payload)
-            FixtureState.created_sessions[session_id] = created
+            with FixtureState.lock:
+                FixtureState.session_payloads.append(payload)
+                session_id = f"ses_created_{len(FixtureState.session_payloads)}"
+                created = self.created_session(session_id, payload)
+                FixtureState.created_sessions[session_id] = created
             self.send_json({"data": created})
             return
         if path in ("/api/session/ses_fixture/prompt_async", "/api/session/ses_fixture/prompt"):
@@ -269,32 +371,43 @@ class Backend(BaseHTTPRequestHandler):
                 text = str(payload["prompt"].get("text") or "")
             if not text and isinstance(payload.get("parts"), list):
                 text = "\n".join(str(part.get("text") or "") for part in payload["parts"] if isinstance(part, dict) and part.get("type") == "text").strip()
-            FixtureState.managed_sends.append({"text": text})
-            if text == "queue exactly once":
-                FixtureState.queued_prompt_event.set()
-            if FixtureState.managed_failures > 0:
-                FixtureState.managed_failures -= 1
+            with FixtureState.lock:
+                FixtureState.managed_sends.append({"text": text})
+                should_fail = FixtureState.managed_failures > 0
+                if should_fail:
+                    FixtureState.managed_failures -= 1
+            if should_fail:
                 self.send_json({"error": "fixture managed send failure"}, status=500)
                 return
             self.send_json({"data": {"ok": True}})
+            if text == "queue exactly once":
+                FixtureState.queued_prompt_event.set()
             return
         if "/permission/" in path or "/permissions/" in path:
-            FixtureState.permission_pending = False
+            with FixtureState.lock:
+                FixtureState.permission_pending = False
         if path.startswith("/api/session/ses_fixture/form/") and path.endswith("/reply"):
-            if FixtureState.form_reply_delay:
+            with FixtureState.lock:
+                form_reply_delay = FixtureState.form_reply_delay
+                if form_reply_delay:
+                    FixtureState.form_reply_delay = False
+            if form_reply_delay:
                 time.sleep(0.35)
-                FixtureState.form_reply_delay = False
-            FixtureState.form_pending = False
-            FixtureState.form_reply = payload
+            with FixtureState.lock:
+                FixtureState.form_pending = False
+                FixtureState.form_reply = payload
         elif path.startswith("/api/session/ses_fixture/form/") and path.endswith("/cancel"):
-            FixtureState.form_pending = False
-            FixtureState.form_cancelled = True
+            with FixtureState.lock:
+                FixtureState.form_pending = False
+                FixtureState.form_cancelled = True
         elif path == "/api/question/question_fixture/reply":
-            FixtureState.question_pending = False
-            FixtureState.question_reply = payload
+            with FixtureState.lock:
+                FixtureState.question_pending = False
+                FixtureState.question_reply = payload
         elif path.startswith("/api/question/") and path.endswith("/reject"):
-            FixtureState.question_pending = False
-            FixtureState.question_rejected = True
+            with FixtureState.lock:
+                FixtureState.question_pending = False
+                FixtureState.question_rejected = True
         self.send_json({"data": {"ok": True}})
 
     do_PATCH = do_POST
@@ -322,13 +435,17 @@ def open_session(page) -> None:
 def assert_created_session(page, previous_hash: str, payload_count: int, directory: str) -> None:
     page.wait_for_function("document.querySelector('#projectDialog').open === false")
     page.wait_for_function("previousHash => location.hash !== previousHash && location.hash.startsWith('#/session/')", arg=previous_hash)
-    assert len(FixtureState.session_payloads) == payload_count + 1
-    assert FixtureState.session_payloads[payload_count]["location"]["directory"] == directory
+    payloads = FixtureState.session_payload_snapshot()
+    assert len(payloads) == payload_count + 1
+    assert payloads[payload_count]["location"]["directory"] == directory
 
 
 def universal_plan_session_switch(browser, base_url: str) -> None:
     context = browser.new_context(viewport={"width": 1366, "height": 850})
     page = context.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("response", lambda response: errors.append(f"HTTP {response.status} {response.url}") if response.status >= 500 else None)
     login(page, base_url)
     open_session(page)
     page.evaluate("window.CustomOpenCodeWorkspace.open('plan')")
@@ -348,6 +465,7 @@ def universal_plan_session_switch(browser, base_url: str) -> None:
     page.evaluate("window.CustomOpenCodeWorkspace.close()")
     page.click("#logoutButton")
     page.locator("#loginForm").wait_for(state="visible")
+    assert not errors, errors
     context.close()
     print("Universal Plan session-switch scenario passed", flush=True)
 
@@ -365,15 +483,46 @@ def pull_messages(page, cdp, distance: int, hold_ms: int) -> None:
     cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
 
 
-def desktop(browser, base_url: str) -> None:
-    FixtureState.managed_sends = []
-    FixtureState.managed_failures = 0
-    FixtureState.session_running = False
-    FixtureState.queued_prompt_event.clear()
-    FixtureState.message_requests = []
-    FixtureState.message_order = "desc"
-    FixtureState.session_payloads = []
-    FixtureState.created_sessions = {}
+def wait_for_task_state(page, task_id: str, state: str, timeout_ms: int = 5000):
+    deadline = time.monotonic() + timeout_ms / 1000
+    detail = None
+    while time.monotonic() < deadline:
+        result = page.evaluate("""async taskID => {
+            const response = await fetch(`/client-task.json?id=${encodeURIComponent(taskID)}`, {cache: 'no-store'})
+            return {ok: response.ok, detail: await response.json()}
+        }""", task_id)
+        assert result["ok"], result["detail"]
+        detail = result["detail"]
+        if detail.get("task", {}).get("state") == state:
+            return detail
+        page.wait_for_timeout(min(50, max(0, (deadline - time.monotonic()) * 1000)))
+    raise AssertionError(f"task {task_id} did not reach {state}; last detail={detail}")
+
+
+def clear_non_terminal_tasks(server_workflow) -> None:
+    terminal = {"completed", "failed", "cancelled"}
+    tasks = server_workflow.runtime.STORE.list_tasks(session_id="ses_fixture", limit=200)
+    for task in tasks:
+        if task["state"] not in terminal:
+            try:
+                server_workflow.runtime.task_control(
+                    server_workflow.features,
+                    {"taskID": task["id"], "action": "cancel"},
+                )
+            except ValueError:
+                current = server_workflow.runtime.STORE.get_task(task["id"])
+                if current is None or current["state"] not in terminal:
+                    raise
+    remaining = [
+        task
+        for task in server_workflow.runtime.STORE.list_tasks(session_id="ses_fixture", limit=200)
+        if task["state"] not in terminal
+    ]
+    assert not remaining, remaining
+
+
+def desktop(browser, base_url: str, server_workflow) -> None:
+    FixtureState.reset()
     context = browser.new_context(viewport={"width": 1366, "height": 850})
     page = context.new_page()
     errors: list[str] = []
@@ -383,9 +532,9 @@ def desktop(browser, base_url: str) -> None:
     # New session is a target chooser: it must not create a scratch session.
     page.click("#newSession")
     page.locator("#projectDialog[open]").wait_for(state="visible")
-    assert FixtureState.session_payloads == []
+    assert FixtureState.session_payload_snapshot() == []
     previous_hash = page.evaluate("location.hash")
-    payload_count = len(FixtureState.session_payloads)
+    payload_count = len(FixtureState.session_payload_snapshot())
     page.locator('#projectDialog button[data-project="proj_other"]').click()
     assert_created_session(page, previous_hash, payload_count, os.environ["FIXTURE_OTHER_PROJECT"])
 
@@ -394,7 +543,7 @@ def desktop(browser, base_url: str) -> None:
     page.click("#browseProjects")
     page.locator("#projectBrowser .directory-choice").filter(has_text="existing").click()
     previous_hash = page.evaluate("location.hash")
-    payload_count = len(FixtureState.session_payloads)
+    payload_count = len(FixtureState.session_payload_snapshot())
     page.locator("[data-open-directory]").click()
     assert_created_session(page, previous_hash, payload_count, os.environ["FIXTURE_EXISTING_PROJECT"])
     page.click("#chooseProject")
@@ -402,7 +551,7 @@ def desktop(browser, base_url: str) -> None:
     form = page.locator("[data-create-directory]")
     form.locator("input").fill("child-created")
     previous_hash = page.evaluate("location.hash")
-    payload_count = len(FixtureState.session_payloads)
+    payload_count = len(FixtureState.session_payload_snapshot())
     form.locator("button").click()
     child_directory = str(Path(os.environ["FIXTURE_PROJECT"]) / "child-created")
     assert_created_session(page, previous_hash, payload_count, child_directory)
@@ -439,7 +588,7 @@ def desktop(browser, base_url: str) -> None:
     fixture_group.locator(':scope > summary').click()
     assert fixture_group.get_attribute("open") is None and other_group.get_attribute("open") is not None
     fixture_group.locator(':scope > summary').click()
-    FixtureState.message_requests = []
+    FixtureState.clear_message_requests()
     open_session(page)
     page.wait_for_function("document.querySelectorAll('#messages .message').length === 80")
     page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
@@ -450,7 +599,7 @@ def desktop(browser, base_url: str) -> None:
     page.locator("#scrollToBottom").click()
     page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
     assert page.locator("#scrollToBottom").is_hidden()
-    initial_history_requests = [request for request in FixtureState.message_requests if request.get("limit") == ["80"]]
+    initial_history_requests = [request for request in FixtureState.message_requests_snapshot() if request.get("limit") == ["80"]]
     assert initial_history_requests == [{"limit": ["80"], "order": ["desc"]}], "initial layout must not page older history"
     for minimum in (160, 240, 241):
         page.locator("#messages").hover()
@@ -460,7 +609,7 @@ def desktop(browser, base_url: str) -> None:
     user_messages = page.locator("#messages .message.user")
     user_texts = user_messages.evaluate_all("els => els.map(el => el.querySelector('.markdown')?.innerText)")
     assert user_texts == [f"History user {index:03d}" for index in range(0, 241, 2)]
-    history_requests = [request for request in FixtureState.message_requests if request.get("limit") == ["80"]]
+    history_requests = [request for request in FixtureState.message_requests_snapshot() if request.get("limit") == ["80"]]
     assert history_requests == [
         {"limit": ["80"], "order": ["desc"]},
         {"limit": ["80"], "cursor": ["80"]},
@@ -472,7 +621,7 @@ def desktop(browser, base_url: str) -> None:
     page.locator('[data-question-option="0:0"]').click()
     page.click("[data-question-submit]")
     page.wait_for_function("document.querySelector('#questionHost').hidden")
-    assert FixtureState.form_reply == {"answer": {"environment": "fixture"}}
+    assert FixtureState.form_reply_snapshot() == {"answer": {"environment": "fixture"}}
 
     page.evaluate("""() => window.dispatchEvent(new CustomEvent('custom-opencode:event', {detail: {
         type: 'form.asked',
@@ -491,7 +640,7 @@ def desktop(browser, base_url: str) -> None:
     page.locator('[data-question-custom="0"]').fill("2.5")
     page.locator('[data-question-custom="1"]').fill("3")
     page.locator('[data-question-boolean="2"]').select_option("false")
-    FixtureState.form_reply_delay = True
+    FixtureState.set_form_reply_delay(True)
     page.click("[data-question-submit]")
     page.evaluate("""() => window.dispatchEvent(new CustomEvent('custom-opencode:event', {detail: {
         type: 'form.asked',
@@ -553,13 +702,13 @@ def desktop(browser, base_url: str) -> None:
     page.locator("#scrollToBottom").wait_for(state="hidden")
 
     assert not errors, errors
-    FixtureState.managed_failures = 1
+    FixtureState.set_managed_failures(1)
     page.fill("#input", "send exactly once")
     page.click("#composerAction")
     page.wait_for_function("document.querySelector('#input').value === 'send exactly once'")
     page.wait_for_function("document.querySelector('#composerAction').getAttribute('aria-label') === 'Отправить'")
     assert page.locator("#messages .chat-status").is_hidden()
-    assert len(FixtureState.managed_sends) == 1
+    assert len(FixtureState.managed_sends_snapshot()) == 1
     assert errors == [f"HTTP 500 {base_url}/client-send.json"], errors
     errors.clear()
 
@@ -571,11 +720,22 @@ def desktop(browser, base_url: str) -> None:
     assert page.locator("#messages .chat-status").is_visible()
     assert page.locator("#messages .chat-status").inner_text() == "Модель работает…"
     page.wait_for_timeout(200)
-    assert len(FixtureState.managed_sends) == 2, FixtureState.managed_sends
-    assert [payload.get("text") for payload in FixtureState.managed_sends] == ["send exactly once", "send exactly once"]
+    managed_sends = FixtureState.managed_sends_snapshot()
+    assert len(managed_sends) == 2, managed_sends
+    assert [payload.get("text") for payload in managed_sends] == ["send exactly once", "send exactly once"]
 
-    FixtureState.session_running = True
-    page.click("#refresh")
+    task_id = page.evaluate("""async () => {
+        const response = await fetch('/client-tasks.json?sessionID=ses_fixture&limit=20', {cache: 'no-store'})
+        if (!response.ok) throw new Error(`task list failed: ${response.status}`)
+        const payload = await response.json()
+        return (payload.tasks || [])
+            .filter(task => task.text === 'send exactly once' && task.state === 'submitted' && !task.error)
+            .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0]?.id
+    }""")
+    assert task_id
+    FixtureState.clear_queued_prompt_event()
+    FixtureState.set_session_running(True)
+    wait_for_task_state(page, task_id, "running")
     page.wait_for_function("!document.querySelector('#stop').hidden")
     page.fill("#input", "queue exactly once")
     page.wait_for_function("document.querySelector('#composerAction').getAttribute('aria-label') === 'Отправить в очередь'")
@@ -585,28 +745,49 @@ def desktop(browser, base_url: str) -> None:
     }""")
     page.locator('[data-session-drag="ses_fixture"] .queued').wait_for()
     assert page.locator('[data-session-drag="ses_fixture"] .queued').inner_text() == "очередь 1"
-    assert len(FixtureState.managed_sends) == 2
+    assert len(FixtureState.managed_sends_snapshot()) == 2
 
-    FixtureState.session_running = False
-    page.click("#refresh")
+    FixtureState.set_session_running(False)
+    page.evaluate("""() => {
+        Object.defineProperty(document, 'hidden', {configurable: true, value: false})
+        document.dispatchEvent(new Event('visibilitychange'))
+    }""")
     page.wait_for_function("document.querySelector('#composerAction').getAttribute('aria-label') === 'Отправить'")
     page.wait_for_function("document.querySelector('#messages .chat-status').hidden")
-    assert FixtureState.queued_prompt_event.wait(timeout=5), "queued prompt was not dispatched"
-    assert [payload.get("text") for payload in FixtureState.managed_sends] == [
+    completed_task = wait_for_task_state(page, task_id, "completed")
+    assert any(event.get("kind") == "task.completed" for event in completed_task.get("events", [])), completed_task
+    queued_prompt_deadline = time.monotonic() + 5
+    while not FixtureState.queued_prompt_event.is_set() and time.monotonic() < queued_prompt_deadline:
+        page.wait_for_timeout(50)
+    if not FixtureState.queued_prompt_event.is_set():
+        tasks = page.evaluate("""async () => {
+            const response = await fetch('/client-tasks.json?sessionID=ses_fixture&limit=20', {cache: 'no-store'})
+            const payload = await response.json()
+            return Promise.all((payload.tasks || []).map(async ({id, text, state, error}) => {
+                const detail = await fetch(`/client-task.json?id=${encodeURIComponent(id)}`, {cache: 'no-store'})
+                const task = await detail.json()
+                return {
+                    id, text, state, error,
+                    events: (task.events || []).map(({kind, created_at}) => ({kind, created_at})),
+                }
+            }))
+        }""")
+        assert False, f"queued prompt was not dispatched; tasks={tasks}"
+    assert [payload.get("text") for payload in FixtureState.managed_sends_snapshot()] == [
         "send exactly once", "send exactly once", "queue exactly once",
     ]
 
-    sends_before_enter = len(FixtureState.managed_sends)
+    sends_before_enter = len(FixtureState.managed_sends_snapshot())
     page.fill("#input", "desktop enter")
     page.locator("#input").press("Enter")
     page.wait_for_function("document.querySelector('#input').value === ''")
     page.wait_for_function("!document.querySelector('#stop').hidden")
-    assert [payload.get("text") for payload in FixtureState.managed_sends][sends_before_enter:] == ["desktop enter"]
+    assert [payload.get("text") for payload in FixtureState.managed_sends_snapshot()][sends_before_enter:] == ["desktop enter"]
 
     page.fill("#input", "desktop shift")
     page.locator("#input").press("Shift+Enter")
     assert page.locator("#input").input_value() == "desktop shift\n"
-    assert len(FixtureState.managed_sends) == sends_before_enter + 1
+    assert len(FixtureState.managed_sends_snapshot()) == sends_before_enter + 1
     page.fill("#input", "")
 
     page.wait_for_function("document.documentElement.dataset.executionMode === 'build' && document.querySelector('.live-panel')")
@@ -683,6 +864,7 @@ def desktop(browser, base_url: str) -> None:
         return panel?.open === true && trace?.innerText.includes('Other agent') && trace?.innerText.includes('other_tool')
     }""", timeout=5000)
 
+    clear_non_terminal_tasks(server_workflow)
     page.click("#logoutButton")
     page.locator("#loginForm").wait_for(state="visible")
     assert not errors, errors
@@ -690,17 +872,7 @@ def desktop(browser, base_url: str) -> None:
 
 
 def mobile(browser, base_url: str) -> None:
-    FixtureState.managed_sends = []
-    FixtureState.session_running = False
-    FixtureState.permission_pending = True
-    FixtureState.form_pending = True
-    FixtureState.form_reply = None
-    FixtureState.form_cancelled = False
-    FixtureState.form_reply_delay = False
-    FixtureState.question_pending = True
-    FixtureState.question_reply = None
-    FixtureState.question_rejected = False
-    FixtureState.question_event_sent = False
+    FixtureState.reset()
     context = browser.new_context(
         viewport={"width": 412, "height": 915},
         is_mobile=True,
@@ -708,6 +880,9 @@ def mobile(browser, base_url: str) -> None:
         user_agent="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36",
     )
     page = context.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("response", lambda response: errors.append(f"HTTP {response.status} {response.url}") if response.status >= 500 else None)
     login(page, base_url)
     page.click("#menu")
     assert page.locator("#sidebar").evaluate("el => el.classList.contains('open')")
@@ -733,7 +908,7 @@ def mobile(browser, base_url: str) -> None:
 
     page.click("[data-question-reject]")
     page.wait_for_function("document.querySelector('#questionHost').hidden")
-    assert FixtureState.form_cancelled
+    assert FixtureState.form_cancelled_snapshot()
 
     page.locator("#permissionBanner").wait_for(state="visible")
     page.locator("#permissionBanner [data-permission='once']").click()
@@ -744,13 +919,13 @@ def mobile(browser, base_url: str) -> None:
     page.fill("#input", "mobile enter")
     page.locator("#input").press("Enter")
     assert page.locator("#input").input_value() == "mobile enter\n"
-    assert FixtureState.managed_sends == []
+    assert FixtureState.managed_sends_snapshot() == []
     with page.expect_response(lambda response: "/client-send.json" in response.url and response.request.method == "POST") as response_info:
         page.click("#composerAction")
     assert response_info.value.ok, f"mobile send failed: {response_info.value.status} {response_info.value.url}"
     page.wait_for_function("document.querySelector('#input').value === ''")
     page.wait_for_function("!document.querySelector('#stop').hidden")
-    assert [payload.get("text") for payload in FixtureState.managed_sends] == ["mobile enter"]
+    assert [payload.get("text") for payload in FixtureState.managed_sends_snapshot()] == ["mobile enter"]
 
     page.fill("#input", "mobile fixture")
     assert page.locator("#composerAction").is_visible()
@@ -769,10 +944,10 @@ def mobile(browser, base_url: str) -> None:
     messages.evaluate("el => { el.scrollTop = el.scrollHeight }")
     assert page.locator(".pull-refresh").is_hidden(), "pull refresh hint is visible without a gesture"
     def pull_len() -> int:
-        return len([q for q in FixtureState.message_requests if q.get("limit") == ["80"] and "cursor" not in q])
+        return len([q for q in FixtureState.message_requests_snapshot() if q.get("limit") == ["80"] and "cursor" not in q])
     # Snapshot only the pull-specific counter; background session polling
     # (every 30s) would otherwise make the combined (session,context) tuple flaky.
-    reads = (FixtureState.session_reads, pull_len())
+    reads = (FixtureState.session_reads_snapshot(), pull_len())
     pull_messages(page, cdp, 104, 720)
     assert pull_len() == reads[1], "downward pull refreshed session data"
     assert page.locator(".pull-refresh").is_hidden()
@@ -819,9 +994,9 @@ def mobile(browser, base_url: str) -> None:
     page.wait_for_function("document.querySelector('.pull-refresh')?.dataset.state === 'refreshing'")
     assert page.locator(".pull-refresh-icon").evaluate("el => getComputedStyle(el).animationName") == "pull-refresh-spin"
     deadline = time.monotonic() + 2
-    while time.monotonic() < deadline and not (FixtureState.session_reads > reads[0] and pull_len() > reads[1]):
+    while time.monotonic() < deadline and not (FixtureState.session_reads_snapshot() > reads[0] and pull_len() > reads[1]):
         page.wait_for_timeout(20)
-    assert FixtureState.session_reads > reads[0] and pull_len() > reads[1]
+    assert FixtureState.session_reads_snapshot() > reads[0] and pull_len() > reads[1]
     cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
     page.wait_for_timeout(500)
     assert page.locator(".pull-refresh").get_attribute("data-state") == "done"
@@ -839,6 +1014,7 @@ def mobile(browser, base_url: str) -> None:
     assert plan.evaluate('el => el.open') and live.evaluate('el => el.open')
     plan.locator(':scope > summary').click()
     assert not plan.evaluate('el => el.open') and live.evaluate('el => el.open')
+    assert not errors, errors
     context.close()
 
 
@@ -872,28 +1048,36 @@ def main() -> int:
         backend = ThreadingHTTPServer(("127.0.0.1", 0), Backend)
         backend_thread = threading.Thread(target=backend.serve_forever, daemon=True)
         backend_thread.start()
-        backend_host, backend_port = backend.server_address[:2]
-        os.environ["OPENCODE_BACKEND_URL"] = f"http://{backend_host}:{backend_port}"
-        os.environ["OPENCODE_BACKEND_PASSWORD"] = "fixture-backend"
+        try:
+            backend_host, backend_port = backend.server_address[:2]
+            os.environ["OPENCODE_BACKEND_URL"] = f"http://{backend_host}:{backend_port}"
+            os.environ["OPENCODE_BACKEND_PASSWORD"] = "fixture-backend"
 
-        sys.path.insert(0, str(ROOT / "app"))
-        import server_workflow
-        server_workflow.runtime.PLAN_DIRECTORY = root
-        server = ThreadingHTTPServer(("127.0.0.1", 0), server_workflow.Handler)
-        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-        server_thread.start()
-        host, port = server.server_address[:2]
-        base_url = f"http://{host}:{port}"
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
-            universal_plan_session_switch(browser, base_url)
-            desktop(browser, base_url)
-            mobile(browser, base_url)
-            browser.close()
-        server.shutdown()
-        backend.shutdown()
-        server_thread.join(timeout=2)
-        backend_thread.join(timeout=2)
+            sys.path.insert(0, str(ROOT / "app"))
+            import server_workflow
+            server_workflow.runtime.PLAN_DIRECTORY = root
+            server = ThreadingHTTPServer(("127.0.0.1", 0), server_workflow.Handler)
+            server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+            server_thread.start()
+            try:
+                host, port = server.server_address[:2]
+                base_url = f"http://{host}:{port}"
+                with sync_playwright() as pw:
+                    browser = pw.chromium.launch(headless=True)
+                    try:
+                        universal_plan_session_switch(browser, base_url)
+                        desktop(browser, base_url, server_workflow)
+                        mobile(browser, base_url)
+                    finally:
+                        browser.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+                server_thread.join(timeout=2)
+        finally:
+            backend.shutdown()
+            backend.server_close()
+            backend_thread.join(timeout=2)
     return 0
 
 

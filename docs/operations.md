@@ -35,12 +35,15 @@ custom-opencode-update
 
 Последовательность:
 
-1. `git pull --ff-only`;
-2. повторный installer;
-3. pre-install verifier;
-4. config render/install;
-5. restart services;
-6. post-install host self-test.
+1. `git fetch --prune origin main`;
+2. `git merge --ff-only FETCH_HEAD`;
+3. повторный installer;
+4. pre-install verifier;
+5. config render/install;
+6. restart services;
+7. post-install host self-test.
+
+При существующем `.env` updater добавляет `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT=1` только когда нет строки, начинающейся точно с `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT=`. Строки с `export` или ведущими пробелами ключом не считаются; значение канонической строки сохраняется.
 
 Если используется RAG и в нём были изменения, сначала обновите `mcp-rag`:
 
