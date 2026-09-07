@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#171717">
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <script>
     (()=>{try{const p=JSON.parse(localStorage.getItem('opencode:web:appearance-v1')||'null')||{};const m=['system','light','dark'].includes(p.theme)?p.theme:'system';const t=m==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):m;const r=document.documentElement;r.dataset.theme=t;r.dataset.themeMode=m;if(/^#[0-9a-f]{6}$/i.test(p.accent||'')){const a=p.accent.toLowerCase();r.style.setProperty('--accent',a);const c=[1,3,5].map(i=>parseInt(a.slice(i,i+2),16)/255),l=c.map(v=>v<=.03928?v/12.92:((v+.055)/1.055)**2.4),y=.2126*l[0]+.7152*l[1]+.0722*l[2];r.style.setProperty('--accent-contrast',(y+.05)/.05>=1.05/(y+.05)?'#111111':'#ffffff')}}catch{}})()
   </script>

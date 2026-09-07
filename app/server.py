@@ -35,7 +35,16 @@ SCRATCH_PROJECT_NAME = "Быстрые"
 SESSION_DELETE_RE = re.compile(r"^/api/session/[^/]+$")
 SESSION_ANY_RE = re.compile(r"^/api/session/([^/]+)")
 AUTH_COOKIE_NAME = "opencode_session"
-PUBLIC_PATHS = {"/login.html", "/login.css", "/login.js"}
+PUBLIC_PATHS = {
+    "/login.html",
+    "/login.css",
+    "/login.js",
+    "/favicon.ico",
+    "/favicon.svg",
+    "/apple-touch-icon.png",
+    "/icon-192.png",
+    "/icon-512.png",
+}
 
 
 def read_env_file(path: Path) -> dict[str, str]:
