@@ -38,6 +38,7 @@ jobs:
           python -m py_compile app/unified_control.py app/server_workflow.py scripts/local-web-harness.py scripts/browser-smoke.py scripts/web-critical-controls-e2e.py scripts/web-fixture-e2e.py
           node --check app/unified-workspace.js
           node --check app/advanced-features.js
+          bash -n scripts/tui-package-smoke.sh
       - name: Unified contract regression
         run: python scripts/unified-workspace-regression.py
       - name: TUI regression
@@ -52,7 +53,14 @@ jobs:
       - name: Existing verification suite
         run: bash scripts/verify.sh
       - name: Install reviewed OpenCode V2 build
-        run: npm install --global @opencode-ai/cli@0.0.0-beta-18743
+        run: |
+          prefix="$RUNNER_TEMP/opencode-v2"
+          rm -rf "$prefix"
+          npm install --global --prefix "$prefix" @opencode-ai/cli@0.0.0-beta-18743
+          bin="$prefix/bin/opencode2"
+          test -x "$bin"
+          "$bin" --version
+          printf 'OPENCODE2_BIN=%s\n' "$bin" >> "$GITHUB_ENV"
       - name: Packaged TUI loader smoke
         run: bash scripts/tui-package-smoke.sh
       - name: Isolated production browser smoke
