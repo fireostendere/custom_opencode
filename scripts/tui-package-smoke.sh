@@ -59,7 +59,7 @@ for geometry in 80x24 120x30 160x40; do
   capture="$TMP/tui-$geometry.typescript"
   log="$TMP/tui-$geometry.log"
   python3 - "$geometry" "$TMP/project" "$capture" "$log" <<'PY'
-import fcntl, os, pty, struct, subprocess, sys, termios, time
+import fcntl, os, pty, select, struct, subprocess, sys, termios, time
 geometry, project, capture_path, log_path = sys.argv[1:5]
 cols, rows = map(int, geometry.split('x'))
 master, slave = pty.openpty()
@@ -73,24 +73,31 @@ buffer = b''
 selector_requested = False
 selector_rendered = False
 while time.time() - start < 18:
+    ready, _, _ = select.select([master], [], [], 0.10)
+    if not ready:
+        if proc.poll() is not None:
+            break
+        continue
     try:
         chunk = os.read(master, 2048)
-        if chunk:
-            buffer += chunk
-            if not selector_requested and b'Ask anything' in buffer:
-                # Exercise the actual plugin command and OpenTUI renderer. This
-                # specifically catches JSX/renderer regressions in model-selector.jsx
-                # that a loader-only smoke cannot see.
-                os.write(master, b'/models')
-                time.sleep(0.15)
-                os.write(master, b'\r')
-                selector_requested = True
-            if selector_requested and b'Select Model' in buffer:
-                selector_rendered = True
-                break
     except OSError:
         break
-    time.sleep(0.05)
+    if not chunk:
+        if proc.poll() is not None:
+            break
+        continue
+    buffer += chunk
+    if not selector_requested and b'Ask anything' in buffer:
+        # Exercise the actual plugin command and OpenTUI renderer. This
+        # specifically catches JSX/renderer regressions in model-selector.jsx
+        # that a loader-only smoke cannot see.
+        os.write(master, b'/models')
+        time.sleep(0.15)
+        os.write(master, b'\r')
+        selector_requested = True
+    if selector_requested and b'Select Model' in buffer:
+        selector_rendered = True
+        break
 proc.terminate()
 try:
     proc.wait(timeout=2)
