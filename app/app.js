@@ -57,6 +57,7 @@ let applyingPromptHistory = false
 let initialMessageScrollSession = null
 let initialMessageScrollObserver = null
 let historyPaginationIntent = false
+let statusSyncGeneration = 0
 
 function loadJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || '') || fallback } catch { return fallback }
@@ -241,12 +242,13 @@ function runningStatus(value) { const s=normalizeRunStatus(value); return /runni
 
 async function loadSessions({ selectHash = false, background = false } = {}) {
   if (!background && !state.sessions.length) { state.loading = true; renderSessions() }
+  const statusGeneration = ++statusSyncGeneration
   try {
     const [projects, sessions, statuses] = await Promise.all([api.listProjects(), api.listSessions(), api.sessionStatuses()])
     state.projects = projects
     const unique = new Map(sessions.map((s)=>[s.id,s]))
     state.sessions = [...unique.values()].sort(compareSessions)
-    for (const [id,status] of Object.entries(statuses || {})) {
+    if (statusGeneration === statusSyncGeneration) for (const [id,status] of Object.entries(statuses || {})) {
       if (runningStatus(status)) state.running.set(id,{ status:normalizeRunStatus(status), since:Date.now() })
       else if (state.running.has(id)) markFinished(id,'готово')
     }
@@ -902,7 +904,7 @@ function handleEvent(payload){
   }
 }
 function connectEventStream(){eventSource?.close();eventSource=api.connectEvents(handleEvent,()=>{if(state.running.size)toast('Переподключение к event stream…',1200)})}
-async function pollStatuses(){const statuses=await api.sessionStatuses();let changed=false;for(const session of state.sessions){const running=runningStatus(statuses?.[session.id]);if(running&&!isRunning(session.id)){state.running.set(session.id,{status:normalizeRunStatus(statuses[session.id]),since:Date.now()});changed=true}else if(!running&&isRunning(session.id)&&statuses&&session.id in statuses){markFinished(session.id,'готово');changed=true}}if(changed){renderSessions();renderHeader();updateBadge()}}
+async function pollStatuses(){const statusGeneration=++statusSyncGeneration;const statuses=await api.sessionStatuses();if(statusGeneration!==statusSyncGeneration)return;let changed=false;for(const session of state.sessions){const running=runningStatus(statuses?.[session.id]);if(running&&!isRunning(session.id)){state.running.set(session.id,{status:normalizeRunStatus(statuses[session.id]),since:Date.now()});changed=true}else if(!running&&isRunning(session.id)&&statuses&&session.id in statuses){markFinished(session.id,'готово');changed=true}}if(changed){renderSessions();renderHeader();updateBadge()}}
 
 function setupPullRefresh(){
   const el=$('messages')
