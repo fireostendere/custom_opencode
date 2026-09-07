@@ -43,6 +43,44 @@ if isinstance(kb,dict): kb['codemode']=True
 open(target,'w',encoding='utf-8').write(json.dumps(config,ensure_ascii=False,indent=2)+'\n')
 PY
 
+# The GitHub Actions PTY is intentionally a dumb terminal and does not emit
+# OpenTUI selection key events reliably. Inject a test-only driver into the
+# isolated copied bundle and dispatch the production model.list command through
+# OpenCode's native keymap. This still exercises the real command registration,
+# model catalog path, dialog.select renderer and JSX runtime on the pinned V2.
+cat > "$CONFIG/plugins/tui/package-smoke-driver.js" <<'JS'
+import { Plugin } from "@opencode-ai/plugin/tui"
+export default Plugin.define({
+  id: "custom.package-smoke-driver",
+  setup(context) {
+    let attempts = 0
+    const timer = setInterval(() => {
+      attempts += 1
+      try {
+        const handled = context.keymap.dispatch("model.list")
+        if (handled !== false || attempts >= 30) clearInterval(timer)
+      } catch {
+        if (attempts >= 30) clearInterval(timer)
+      }
+    }, 100)
+    return () => clearInterval(timer)
+  },
+})
+JS
+python3 - "$CONFIG/plugins/tui/tui.js" <<'PY'
+from pathlib import Path
+import sys
+path=Path(sys.argv[1])
+text=path.read_text(encoding='utf-8')
+needle='import wslClipboard from "./wsl-clipboard.jsx"\n'
+if needle not in text: raise SystemExit('tui bundle import anchor missing')
+text=text.replace(needle, needle+'import packageSmokeDriver from "./package-smoke-driver.js"\n', 1)
+needle='  wslClipboard,\n]'
+if needle not in text: raise SystemExit('tui bundle plugin anchor missing')
+text=text.replace(needle, '  wslClipboard,\n  packageSmokeDriver,\n]', 1)
+path.write_text(text,encoding='utf-8')
+PY
+
 export HOME="$HOME_DIR"
 export TOKEN_PLAN_API_KEY=test
 export TOKEN_PLAN_ANTHROPIC_BASE_URL=https://token-plan.example.invalid/apps/anthropic/v1
@@ -70,8 +108,6 @@ env['TERM'] = 'xterm-256color'
 proc = subprocess.Popen(['opencode2', '--standalone'], stdin=slave, stdout=slave, stderr=slave, cwd=project, env=env, close_fds=True)
 os.close(slave)
 buffer = b''
-selector_requested = False
-selector_rendered = False
 
 def drain(timeout=0.10):
     global buffer
@@ -87,42 +123,9 @@ def drain(timeout=0.10):
     buffer += chunk
     return True
 
-def wait_for(needle, seconds):
-    end = time.time() + seconds
-    while time.time() < end:
-        drain(0.10)
-        if needle in buffer:
-            return True
-        if proc.poll() is not None:
-            break
-    drain(0)
-    return needle in buffer
-
-def press_enter():
-    # OpenTUI V2 enables its key parser/Kitty compatibility layer. A bare CR
-    # is ignored by the headless PTY used in Actions even though a real
-    # terminal reports Enter correctly. Send canonical CSI-u first and retain
-    # CR as a legacy fallback so the smoke exercises the command, not the PTY.
-    for sequence in (b'\x1b[13u', b'\r'):
-        os.write(master, sequence)
-        if wait_for(b'Select Model', 0.8):
-            return True
-    return b'Select Model' in buffer
-
 while time.time() - start < 18:
     drain(0.10)
-    if not selector_requested and b'Ask anything' in buffer:
-        # Exercise the actual plugin command and OpenTUI renderer. This
-        # specifically catches JSX/renderer regressions in model-selector.jsx
-        # that a loader-only smoke cannot see.
-        os.write(master, b'/models')
-        time.sleep(0.35)
-        selector_requested = True
-        selector_rendered = press_enter()
-        if selector_rendered:
-            break
-    if selector_requested and b'Select Model' in buffer:
-        selector_rendered = True
+    if b'Ask anything' in buffer and b'Select Model' in buffer:
         break
     if proc.poll() is not None:
         break
@@ -141,19 +144,19 @@ with open(capture_path, 'wb') as f:
     f.write(buffer)
 with open(log_path, 'wb') as f:
     f.write(buffer)
-if not selector_requested or not selector_rendered:
+if b'Ask anything' not in buffer or b'Select Model' not in buffer:
     clean = re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', buffer).decode('utf-8', 'replace')
     print(f'--- packaged TUI diagnostic tail ({geometry}) ---', file=sys.stderr)
     print(clean[-8000:], file=sys.stderr)
     print('--- end diagnostic tail ---', file=sys.stderr)
-if not selector_requested:
+if b'Ask anything' not in buffer:
     raise SystemExit('TUI did not reach the prompt')
-if not selector_rendered:
-    raise SystemExit('TUI model selector did not render after /models')
+if b'Select Model' not in buffer:
+    raise SystemExit('TUI model selector did not render through native model.list dispatch')
 PY
-  if grep -Eqi 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|No renderer found|useRenderer|limits-(header|panels).*error|workspace-panel.*error|panel-slash.*error|panel-submit-router.*error|panel-views.*error|panel-command.*error|prompt-history.*error|model-selector.*error|effort-indicator.*error|wsl-clipboard.*error' "$capture" "$log"; then
-    echo "TUI plugin/renderer error at $geometry" >&2
-    grep -Eai 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|No renderer found|useRenderer|limits-|workspace-panel|panel-slash|panel-submit-router|panel-views|panel-command|prompt-history|model-selector|effort-indicator|wsl-clipboard' "$capture" "$log" >&2 || true
+  if grep -Eqi 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|No renderer found|useRenderer|Failed to load model list|No models available|limits-(header|panels).*error|workspace-panel.*error|panel-slash.*error|panel-submit-router.*error|panel-views.*error|panel-command.*error|prompt-history.*error|model-selector.*error|effort-indicator.*error|wsl-clipboard.*error' "$capture" "$log"; then
+    echo "TUI plugin/model-selector/renderer error at $geometry" >&2
+    grep -Eai 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|No renderer found|useRenderer|Failed to load model list|No models available|limits-|workspace-panel|panel-slash|panel-submit-router|panel-views|panel-command|prompt-history|model-selector|effort-indicator|wsl-clipboard' "$capture" "$log" >&2 || true
     exit 1
   fi
   grep -Fq 'Ask anything' "$capture" || {
@@ -161,9 +164,9 @@ PY
     exit 1
   }
   grep -Fq 'Select Model' "$capture" || {
-    echo "TUI /models did not render the model selector at $geometry" >&2
+    echo "TUI native model.list did not render the model selector at $geometry" >&2
     exit 1
   }
 done
 
-echo "Packaged TUI smoke passed: opencode2 loader + real /models renderer + local panel router + four-zone panels at 80x24/120x30/160x40"
+echo "Packaged TUI smoke passed: opencode2 loader + native model.list dispatch + real model selector renderer + local panel router + four-zone panels at 80x24/120x30/160x40"
