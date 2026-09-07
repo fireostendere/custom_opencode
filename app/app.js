@@ -57,6 +57,8 @@ let applyingPromptHistory = false
 let initialMessageScrollSession = null
 let initialMessageScrollObserver = null
 let historyPaginationIntent = false
+let historyPaginationIntentTimer = 0
+let historyPaginationTouch = null
 let statusSyncGeneration = 0
 
 function loadJson(key, fallback) {
@@ -330,7 +332,7 @@ async function selectSession(id,{push=true,saveDraft=true}={}) {
   if(saveDraft)saveDraftNow()
   const cachedContext=state.contextCache.get(id)
   state.selected=session; state.context=cachedContext?.messages||[]; state.attachments=[]; state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
-  initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=id;historyPaginationIntent=false
+  initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=id;historyPaginationIntent=false;clearTimeout(historyPaginationIntentTimer);historyPaginationIntentTimer=0;historyPaginationTouch=null
   resetPromptHistory(id)
   renderAttachments(); renderSessions(); renderHeader(); renderMessages({bottom:true}); restoreDraft(); $('sidebar').classList.remove('open')
   if(push) setSessionHash(id)
@@ -340,7 +342,7 @@ async function selectSession(id,{push=true,saveDraft=true}={}) {
   if(detail&&state.selected?.id===id){const liveAgent=state.selected.agent;state.selected={...state.selected,...detail,...(liveAgent!==initialAgent?{agent:liveAgent}:{})};const index=state.sessions.findIndex((item)=>item.id===id);if(index>=0)state.sessions[index]=state.selected;renderHeader();renderControls()}
 }
 function clearSelection() {
-  saveDraftNow();initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=null;historyPaginationIntent=false; state.selected=null;state.context=[];state.attachments=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
+  saveDraftNow();initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=null;historyPaginationIntent=false;clearTimeout(historyPaginationIntentTimer);historyPaginationIntentTimer=0;historyPaginationTouch=null; state.selected=null;state.context=[];state.attachments=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
   resetPromptHistory(null)
   location.hash=''
   window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:null}}))
@@ -1001,10 +1003,14 @@ function bindEvents(){
   const maybeLoadOlderFromUser=()=>{
     if(!historyPaginationIntent||initialMessageScrollSession===state.selected?.id||messagesView.scrollTop>80)return
     historyPaginationIntent=false
+    clearTimeout(historyPaginationIntentTimer)
+    historyPaginationIntentTimer=0
     void loadOlderContext()
   }
   const armHistoryPagination=()=>{
     historyPaginationIntent=true
+    clearTimeout(historyPaginationIntentTimer)
+    historyPaginationIntentTimer=setTimeout(()=>{historyPaginationIntent=false;historyPaginationIntentTimer=0},1000)
     if(initialMessageScrollSession===state.selected?.id){
       initialMessageScrollSession=null
       initialMessageScrollObserver?.disconnect()
@@ -1012,9 +1018,32 @@ function bindEvents(){
     }
     requestAnimationFrame(maybeLoadOlderFromUser)
   }
-  messagesView.addEventListener('wheel',armHistoryPagination,{passive:true})
-  messagesView.addEventListener('touchstart',armHistoryPagination,{passive:true})
-  messagesView.addEventListener('pointerdown',armHistoryPagination,{passive:true})
+  messagesView.addEventListener('wheel',(event)=>{
+    if(event.deltaY<0)armHistoryPagination()
+  },{passive:true})
+  messagesView.addEventListener('pointerdown',(event)=>{
+    const rect=messagesView.getBoundingClientRect()
+    if(event.pointerType==='mouse'&&event.clientX>=rect.right-20)armHistoryPagination()
+  },{passive:true})
+  messagesView.addEventListener('keydown',(event)=>{
+    if(['ArrowUp','PageUp','Home'].includes(event.key))armHistoryPagination()
+  })
+  messagesView.addEventListener('touchstart',(event)=>{
+    if(event.touches.length!==1){historyPaginationTouch=null;return}
+    const touch=event.touches[0]
+    historyPaginationTouch={identifier:touch.identifier,x:touch.clientX,y:touch.clientY,armed:false}
+  },{passive:true})
+  messagesView.addEventListener('touchmove',(event)=>{
+    const gesture=historyPaginationTouch
+    if(!gesture||gesture.armed||event.touches.length!==1)return
+    const touch=Array.from(event.touches).find((item)=>item.identifier===gesture.identifier)
+    if(!touch){historyPaginationTouch=null;return}
+    const dx=touch.clientX-gesture.x,dy=touch.clientY-gesture.y
+    if(dy>=12&&Math.abs(dx)<=Math.abs(dy)){gesture.armed=true;armHistoryPagination()}
+    else if(Math.abs(dx)>12){historyPaginationTouch=null}
+  },{passive:true})
+  messagesView.addEventListener('touchend',()=>{historyPaginationTouch=null},{passive:true})
+  messagesView.addEventListener('touchcancel',()=>{historyPaginationTouch=null},{passive:true})
   messagesView.addEventListener('scroll',()=>{maybeLoadOlderFromUser();updateScrollToBottomButton()},{passive:true})
   $('scrollToBottom').addEventListener('click',scrollMessagesToBottom)
   $('messagesInner').addEventListener('click',(e)=>{const copyCode=e.target.closest('.copy-code');if(copyCode){navigator.clipboard.writeText(copyCode.closest('.code-block').querySelector('code')?.textContent||'');copyCode.textContent='Скопировано';setTimeout(()=>copyCode.textContent='Копировать',900);return}const copy=e.target.closest('[data-copy-message]');if(copy){navigator.clipboard.writeText(messagePlainText(state.context[Number(copy.dataset.copyMessage)])||'');toast('Сообщение скопировано');return}const fork=e.target.closest('[data-fork-message]');if(fork){forkAtMessage(fork.dataset.forkMessage)}})

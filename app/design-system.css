@@ -175,6 +175,13 @@ dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
   .model-provider-toggle:hover{background:var(--surface-input)}
   .question-option:hover:not(.selected){border-color:var(--border,#393939);background:var(--surface,#272727)}
   #modelButton:hover,#variantSelect:hover:not(:disabled){border-color:var(--line);background:var(--surface-input)}
+  .appearance-button:hover{background:var(--surface-input);color:var(--muted)}
+  .logout-button:hover{background:var(--surface-input);color:var(--muted)}
+  .accent-swatch:hover,.runtime-profile:hover,.runtime-task:hover{transform:none}
+  .unified-actions button:hover,.unified-profile:hover{border-color:color-mix(in srgb,currentColor 16%,transparent)}
+  .unified-command:hover:not(.selected){background:transparent}
+  .scroll-to-bottom:hover{border-color:color-mix(in srgb,var(--accent) 48%,var(--line));background:color-mix(in srgb,var(--surface-strong) 92%,transparent)}
+  .modal-head .icon:hover{border-color:transparent;background:transparent;color:var(--muted)}
 }
 
 /* All modal surfaces share one top-layer treatment and one dismissal contract. */

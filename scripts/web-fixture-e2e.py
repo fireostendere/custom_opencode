@@ -594,14 +594,23 @@ def desktop(browser, base_url: str, server_workflow) -> None:
     page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
     assert page.locator("#messages").evaluate("el => el.scrollHeight - el.clientHeight - el.scrollTop < 4"), "initial session viewport must start at the newest messages"
     page.wait_for_timeout(1600)  # Let the initial 1.5 s resize-stabilization window close.
-    page.locator("#messages").evaluate("el => el.scrollTo({ top:0, behavior:'instant' })")
+    page.locator("#messages").evaluate("el => el.scrollTo({ top:el.scrollHeight-el.clientHeight-150, behavior:'instant' })")
     page.locator("#scrollToBottom").wait_for(state="visible")
+    page.wait_for_timeout(100)
+    assert page.locator("#scrollToBottom").is_visible(), "scroll-to-bottom visibility must have one stable threshold"
     page.locator("#scrollToBottom").click()
     page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
     assert page.locator("#scrollToBottom").is_hidden()
     initial_history_requests = [request for request in FixtureState.message_requests_snapshot() if request.get("limit") == ["80"]]
     assert initial_history_requests == [{"limit": ["80"], "order": ["desc"]}], "initial layout must not page older history"
-    for minimum in (160, 240, 241):
+    page.locator("#messages").hover()
+    page.mouse.wheel(0, 100000)
+    page.wait_for_timeout(150)
+    assert page.locator("#messages .message").count() == 80, "downward wheel must not page older history"
+    page.locator("#messages").evaluate("el => { el.tabIndex = -1; el.focus() }")
+    page.keyboard.press("Home")
+    page.wait_for_function("document.querySelectorAll('#messages .message').length >= 160")
+    for minimum in (240, 241):
         page.locator("#messages").hover()
         page.mouse.wheel(0, -100000)
         page.wait_for_function(f"document.querySelectorAll('#messages .message').length >= {minimum}")
@@ -941,6 +950,29 @@ def mobile(browser, base_url: str) -> None:
 
     cdp = context.new_cdp_session(page)
     messages = page.locator("#messages")
+    messages.evaluate("el => { el.scrollTop = 0 }")
+    box = messages.bounding_box()
+    assert box
+    x = round(box["x"] + box["width"] / 2)
+    start_y = round(box["y"] + box["height"] / 2)
+    point = lambda y: {"x": x, "y": y, "id": 1, "radiusX": 2, "radiusY": 2, "force": 1}
+    initial_messages = messages.locator(".message").count()
+    messages.evaluate("el => { el.scrollTop = el.scrollHeight / 2 }")
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [point(start_y)]})
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [point(start_y + 24)]})
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    page.wait_for_timeout(1100)
+    messages.evaluate("el => { el.scrollTop = 0 }")
+    page.wait_for_timeout(150)
+    assert messages.locator(".message").count() == initial_messages, "completed touch gesture must not leave stale pagination intent"
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [point(start_y)]})
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    page.wait_for_timeout(150)
+    assert messages.locator(".message").count() == initial_messages, "touch tap must not page older history"
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [point(start_y)]})
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [point(start_y + 24)]})
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    page.wait_for_function(f"document.querySelectorAll('#messages .message').length >= {initial_messages + 80}")
     messages.evaluate("el => { el.scrollTop = el.scrollHeight }")
     assert page.locator(".pull-refresh").is_hidden(), "pull refresh hint is visible without a gesture"
     def pull_len() -> int:

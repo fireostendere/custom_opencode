@@ -9,14 +9,12 @@ import {
 
 const $ = (id) => document.getElementById(id)
 const PROFILE_KEY = 'opencode:web:model-profiles-v1'
-const SCROLL_TO_BOTTOM_SCREENS = 3
 let allowingAgentClick = false
 let lastPermissionRaw = ''
 let desiredProfile = null
 let pendingAgentTarget = ''
 let failedAgentTarget = ''
 let modelTransition = null
-let scrollButtonSyncFrame = 0
 
 function loadProfiles() {
   try { return JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}') || {} } catch { return {} }
@@ -371,47 +369,18 @@ function installSessionProfileRestore() {
   window.addEventListener('custom-opencode:session-selected', restoreSessionProfile)
 }
 
-function syncScrollToBottomButton() {
-  const view = $('messages')
-  const button = $('scrollToBottom')
-  if (!view || !button) return
-  const selected = /^#\/session\//.test(location.hash || '')
-  const distanceFromBottom = Math.max(0, view.scrollHeight - view.clientHeight - view.scrollTop)
-  button.hidden = !selected || view.clientHeight <= 0 || distanceFromBottom <= view.clientHeight * SCROLL_TO_BOTTOM_SCREENS
-}
-
-function scheduleScrollToBottomButtonSync() {
-  if (scrollButtonSyncFrame) cancelAnimationFrame(scrollButtonSyncFrame)
-  scrollButtonSyncFrame = requestAnimationFrame(() => {
-    scrollButtonSyncFrame = 0
-    syncScrollToBottomButton()
+function installSelectedChatScrollSettle() {
+  window.addEventListener('custom-opencode:session-selected', () => {
+    const view = $('messages')
+    if (!view || !/^#\/session\//.test(location.hash || '')) return
+    const selectedHash = location.hash
+    const settle = () => {
+      if (location.hash === selectedHash) view.scrollTop = view.scrollHeight
+    }
+    settle()
+    requestAnimationFrame(() => requestAnimationFrame(settle))
+    document.fonts?.ready?.then(settle).catch?.(() => {})
   })
-}
-
-function settleSelectedChatAtBottom() {
-  const view = $('messages')
-  if (!view || !/^#\/session\//.test(location.hash || '')) return
-  const selectedHash = location.hash
-  const settle = () => {
-    if (location.hash !== selectedHash) return
-    view.scrollTop = view.scrollHeight
-    syncScrollToBottomButton()
-  }
-  settle()
-  requestAnimationFrame(() => requestAnimationFrame(settle))
-  document.fonts?.ready?.then(settle).catch?.(() => {})
-}
-
-function installChatScrollUX() {
-  const view = $('messages')
-  const inner = $('messagesInner')
-  if (!view) return
-  view.addEventListener('scroll', scheduleScrollToBottomButtonSync, { passive:true })
-  if (inner) new MutationObserver(scheduleScrollToBottomButtonSync).observe(inner, { childList:true })
-  if ('ResizeObserver' in window) new ResizeObserver(scheduleScrollToBottomButtonSync).observe(view)
-  window.addEventListener('custom-opencode:session-selected', settleSelectedChatAtBottom)
-  window.addEventListener('hashchange', scheduleScrollToBottomButtonSync)
-  scheduleScrollToBottomButtonSync()
 }
 
 function init() {
@@ -423,7 +392,7 @@ function init() {
   installComposerAction()
   installPermissionSummary()
   installSessionProfileRestore()
-  installChatScrollUX()
+  installSelectedChatScrollSettle()
   syncAgentSurface()
   syncModelSurface()
   window.CustomOpenCodeUX = {
