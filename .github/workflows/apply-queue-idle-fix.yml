@@ -1,0 +1,43 @@
+name: Apply queue idle fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-queue-idle-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch idle transition
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('app/app.js')
+          text = path.read_text(encoding='utf-8')
+          old = '''    for (const [id,status] of Object.entries(statuses || {})) {
+                if (runningStatus(status)) state.running.set(id,{ status:normalizeRunStatus(status), since:Date.now() })
+                else state.running.delete(id)
+              }'''
+          new = '''    for (const [id,status] of Object.entries(statuses || {})) {
+                if (runningStatus(status)) state.running.set(id,{ status:normalizeRunStatus(status), since:Date.now() })
+                else if (state.running.has(id)) markFinished(id,'готово')
+              }'''
+          if old not in text:
+              raise SystemExit('target loadSessions status block not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/app.js
+          git commit -m 'fix(web): flush queued prompt on refresh idle transition'
+          git push origin HEAD:main
