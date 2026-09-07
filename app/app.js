@@ -248,7 +248,7 @@ async function loadSessions({ selectHash = false, background = false } = {}) {
     state.sessions = [...unique.values()].sort(compareSessions)
     for (const [id,status] of Object.entries(statuses || {})) {
       if (runningStatus(status)) state.running.set(id,{ status:normalizeRunStatus(status), since:Date.now() })
-      else state.running.delete(id)
+      else if (state.running.has(id)) markFinished(id,'готово')
     }
     if (state.selected) state.selected = state.sessions.find((s)=>s.id===state.selected.id) || state.selected
     state.loading = false; renderSessions(); renderHeader(); if(state.selected&&state.models.length)renderControls(); updateBadge()
