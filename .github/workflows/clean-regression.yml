@@ -35,7 +35,7 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Syntax
         run: |
-          python -m py_compile app/unified_control.py app/server_workflow.py scripts/local-web-harness.py scripts/browser-smoke.py scripts/web-fixture-e2e.py
+          python -m py_compile app/unified_control.py app/server_workflow.py scripts/local-web-harness.py scripts/browser-smoke.py scripts/web-critical-controls-e2e.py scripts/web-fixture-e2e.py
           node --check app/unified-workspace.js
           node --check app/advanced-features.js
       - name: Unified contract regression
@@ -57,5 +57,7 @@ jobs:
         run: bash scripts/tui-package-smoke.sh
       - name: Isolated production browser smoke
         run: python scripts/local-web-harness.py test
+      - name: Critical web controls regression
+        run: python scripts/web-critical-controls-e2e.py
       - name: Full fixture browser regression
         run: python scripts/web-fixture-e2e.py
