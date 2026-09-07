@@ -35,6 +35,8 @@ class FixtureState:
     question_event_sent = False
     session_reads = 0
     context_reads = 0
+    hold_fixture_messages = False
+    fixture_messages_release = threading.Event()
     message_requests: list[dict[str, list[str]]] = []
     message_order = "desc"
     managed_sends: list[dict[str, object]] = []
@@ -59,6 +61,8 @@ class FixtureState:
             cls.question_event_sent = False
             cls.session_reads = 0
             cls.context_reads = 0
+            cls.hold_fixture_messages = False
+            cls.fixture_messages_release.set()
             cls.message_requests = []
             cls.message_order = "desc"
             cls.managed_sends = []
@@ -122,6 +126,15 @@ class FixtureState:
     def clear_queued_prompt_event(cls) -> None:
         with cls.lock:
             cls.queued_prompt_event.clear()
+
+    @classmethod
+    def hold_fixture_message_loading(cls, enabled: bool) -> None:
+        with cls.lock:
+            cls.hold_fixture_messages = enabled
+            if enabled:
+                cls.fixture_messages_release.clear()
+            else:
+                cls.fixture_messages_release.set()
 
 
 class Backend(BaseHTTPRequestHandler):
@@ -216,6 +229,10 @@ class Backend(BaseHTTPRequestHandler):
                 FixtureState.context_reads += 1
             self.send_json({"error": "context endpoint unavailable"}, status=404)
         elif path == "/api/session/ses_fixture/message":
+            with FixtureState.lock:
+                hold_fixture_messages = FixtureState.hold_fixture_messages
+            if hold_fixture_messages:
+                FixtureState.fixture_messages_release.wait(timeout=5)
             query = parse_qs(parsed.query)
             with FixtureState.lock:
                 FixtureState.message_requests.append(query)
@@ -468,6 +485,28 @@ def universal_plan_session_switch(browser, base_url: str) -> None:
     assert not errors, errors
     context.close()
     print("Universal Plan session-switch scenario passed", flush=True)
+
+
+def prompt_history_fresh_context(browser, base_url: str) -> None:
+    """A draft entered before async history loading must retain end-of-history semantics."""
+    FixtureState.reset()
+    FixtureState.hold_fixture_message_loading(True)
+    context = browser.new_context(viewport={"width": 1366, "height": 850})
+    page = context.new_page()
+    try:
+        login(page, base_url)
+        open_session(page)
+        page.fill("#input", "history draft")
+        FixtureState.hold_fixture_message_loading(False)
+        page.wait_for_function("document.querySelectorAll('#messages .message.user').length > 0")
+        page.locator("#input").press("ArrowUp")
+        assert page.locator("#input").input_value() == "History user 240"
+        page.locator("#input").press("ArrowDown")
+        assert page.locator("#input").input_value() == "history draft"
+    finally:
+        FixtureState.hold_fixture_message_loading(False)
+        context.close()
+    print("Prompt history fresh-context scenario passed", flush=True)
 
 
 def pull_messages(page, cdp, distance: int, hold_ms: int) -> None:
@@ -1098,6 +1137,7 @@ def main() -> int:
                     browser = pw.chromium.launch(headless=True)
                     try:
                         universal_plan_session_switch(browser, base_url)
+                        prompt_history_fresh_context(browser, base_url)
                         desktop(browser, base_url, server_workflow)
                         mobile(browser, base_url)
                     finally:

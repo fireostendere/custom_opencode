@@ -561,8 +561,9 @@ function syncPromptHistory(){
   const sessionID=state.selected?.id||null
   if(promptHistory.sessionID!==sessionID){resetPromptHistory(sessionID);return}
   const entries=promptHistoryEntries()
+  const wasAtEnd=promptHistory.cursor===promptHistory.entries.length
   promptHistory.entries=entries
-  if(promptHistory.cursor>entries.length)promptHistory.cursor=entries.length
+  if(wasAtEnd||promptHistory.cursor>entries.length)promptHistory.cursor=entries.length
   if(promptHistory.cursor===entries.length)promptHistory.value=$('input')?.value||promptHistory.value
 }
 function rememberSubmittedPrompt(sessionID,text){
