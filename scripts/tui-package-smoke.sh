@@ -59,7 +59,7 @@ for geometry in 80x24 120x30 160x40; do
   capture="$TMP/tui-$geometry.typescript"
   log="$TMP/tui-$geometry.log"
   python3 - "$geometry" "$TMP/project" "$capture" "$log" <<'PY'
-import fcntl, os, pty, select, struct, subprocess, sys, termios, time
+import os, pty, re, select, struct, subprocess, sys, termios, time, fcntl
 geometry, project, capture_path, log_path = sys.argv[1:5]
 cols, rows = map(int, geometry.split('x'))
 master, slave = pty.openpty()
@@ -72,42 +72,80 @@ os.close(slave)
 buffer = b''
 selector_requested = False
 selector_rendered = False
-while time.time() - start < 18:
-    ready, _, _ = select.select([master], [], [], 0.10)
+
+def drain(timeout=0.10):
+    global buffer
+    ready, _, _ = select.select([master], [], [], timeout)
     if not ready:
-        if proc.poll() is not None:
-            break
-        continue
+        return False
     try:
-        chunk = os.read(master, 2048)
+        chunk = os.read(master, 4096)
     except OSError:
-        break
+        return False
     if not chunk:
+        return False
+    buffer += chunk
+    return True
+
+def wait_for(needle, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        drain(0.10)
+        if needle in buffer:
+            return True
         if proc.poll() is not None:
             break
-        continue
-    buffer += chunk
+    drain(0)
+    return needle in buffer
+
+def press_enter():
+    # OpenTUI V2 enables its key parser/Kitty compatibility layer. A bare CR
+    # is ignored by the headless PTY used in Actions even though a real
+    # terminal reports Enter correctly. Send canonical CSI-u first and retain
+    # CR as a legacy fallback so the smoke exercises the command, not the PTY.
+    for sequence in (b'\x1b[13u', b'\r'):
+        os.write(master, sequence)
+        if wait_for(b'Select Model', 0.8):
+            return True
+    return b'Select Model' in buffer
+
+while time.time() - start < 18:
+    drain(0.10)
     if not selector_requested and b'Ask anything' in buffer:
         # Exercise the actual plugin command and OpenTUI renderer. This
         # specifically catches JSX/renderer regressions in model-selector.jsx
         # that a loader-only smoke cannot see.
         os.write(master, b'/models')
-        time.sleep(0.15)
-        os.write(master, b'\r')
+        time.sleep(0.35)
         selector_requested = True
+        selector_rendered = press_enter()
+        if selector_rendered:
+            break
     if selector_requested and b'Select Model' in buffer:
         selector_rendered = True
+        break
+    if proc.poll() is not None:
         break
 proc.terminate()
 try:
     proc.wait(timeout=2)
 except Exception:
     proc.kill()
+try:
+    while drain(0):
+        pass
+except Exception:
+    pass
 os.close(master)
 with open(capture_path, 'wb') as f:
     f.write(buffer)
 with open(log_path, 'wb') as f:
     f.write(buffer)
+if not selector_requested or not selector_rendered:
+    clean = re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', buffer).decode('utf-8', 'replace')
+    print(f'--- packaged TUI diagnostic tail ({geometry}) ---', file=sys.stderr)
+    print(clean[-8000:], file=sys.stderr)
+    print('--- end diagnostic tail ---', file=sys.stderr)
 if not selector_requested:
     raise SystemExit('TUI did not reach the prompt')
 if not selector_rendered:
