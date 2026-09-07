@@ -1,0 +1,33 @@
+name: Apply queue flush fix
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/apply-queue-flush-fix.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply fix and self-clean
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/app.js')
+          s = p.read_text(encoding='utf-8')
+          old = "if(wasRunning||queueFor(sessionID).length)setTimeout(()=>flushQueue(sessionID),80)"
+          new = "if(wasRunning||queueFor(sessionID).length)void flushQueue(sessionID)"
+          assert s.count(old) == 1, f'expected exactly one queue flush delay, found {s.count(old)}'
+          p.write_text(s.replace(old, new), encoding='utf-8')
+          PY
+          rm .github/workflows/apply-queue-flush-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/app.js .github/workflows/apply-queue-flush-fix.yml
+          git commit -m 'fix(web): flush queued prompt immediately on idle'
+          git push origin HEAD:main
