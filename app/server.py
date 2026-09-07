@@ -238,6 +238,18 @@ HOP_BY_HOP = {
     "transfer-encoding",
     "upgrade",
 }
+# Client bodies are fully buffered in RAM before being proxied to the backend,
+# so a hostile Content-Length must be rejected before any read happens.
+MAX_PROXY_BODY_BYTES = 64 * 1024 * 1024
+# Forwarding headers describe the client<->proxy hop. Passing client-supplied
+# values to the backend would let a remote peer spoof its IP/protocol there.
+FORWARDED_HEADERS = {
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+}
 
 
 @functools.cache
@@ -527,6 +539,9 @@ def transform_json_response(method: str, path: str, body: bytes) -> bytes:
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    # Bound every client-socket read/write so a stalled or slow-loris peer
+    # cannot pin a worker thread indefinitely.
+    timeout = 60
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write(f"{fmt % args}\n")
@@ -544,7 +559,25 @@ class Handler(BaseHTTPRequestHandler):
             return ""
 
     def local_bypass(self) -> bool:
-        return ALLOW_LOCAL and is_loopback(self.client_address[0])
+        """Passwordless loopback only for a direct localhost request.
+
+        A local reverse proxy also connects from 127.0.0.1, so trusting the TCP
+        peer alone would turn every proxied LAN request into localhost.
+        Forwarding headers or a non-loopback Host therefore disable bypass.
+        """
+        if not ALLOW_LOCAL or not is_loopback(self.client_address[0]):
+            return False
+        if any(
+            self.headers.get(name)
+            for name in ("Forwarded", "X-Forwarded-For", "X-Real-IP", "X-Forwarded-Proto")
+        ):
+            return False
+        host_header = str(self.headers.get("Host", "")).strip()
+        try:
+            host = urlsplit(f"//{host_header}").hostname or ""
+        except ValueError:
+            return False
+        return is_loopback(host)
 
     def authenticated(self) -> bool:
         if self.local_bypass():
@@ -572,6 +605,11 @@ class Handler(BaseHTTPRequestHandler):
         if AUTH_COOKIE_SECURE in ("1", "true", "yes"):
             return True
         if AUTH_COOKIE_SECURE in ("0", "false", "no"):
+            return False
+        # Auto mode: only a reverse proxy on the same host may declare the
+        # external scheme; a directly connected remote client could otherwise
+        # forge X-Forwarded-Proto to influence cookie hardening.
+        if not is_loopback(self.client_address[0]):
             return False
         forwarded_proto = self.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip().lower()
         if forwarded_proto == "https":
@@ -826,6 +864,9 @@ class Handler(BaseHTTPRequestHandler):
         if length < 0:
             self.send_error(400, "Invalid Content-Length")
             return
+        if length > MAX_PROXY_BODY_BYTES:
+            self.send_error(413, "Request body too large")
+            return
         body = self.rfile.read(length) if length else None
         allocated_scratch: str | None = None
         cleanup_after_delete: str | None = None
@@ -856,7 +897,9 @@ class Handler(BaseHTTPRequestHandler):
         headers = {
             key: value
             for key, value in self.headers.items()
-            if key.lower() not in HOP_BY_HOP and key.lower() not in ("authorization", "content-length", "cookie")
+            if key.lower() not in HOP_BY_HOP
+            and key.lower() not in ("authorization", "content-length", "cookie")
+            and key.lower() not in FORWARDED_HEADERS
         }
         host, port, auth = current_backend()
         headers["Authorization"] = auth

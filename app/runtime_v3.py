@@ -14,6 +14,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -512,7 +513,7 @@ def _json_body(handler:Any,limit:int=2_000_000)->dict[str,Any]:
 
 def _internal_auth(handler:Any)->bool:
     expected=os.environ.get("OPENCODE_RUNTIME_PLUGIN_TOKEN") or os.environ.get("OPENCODE_SERVER_PASSWORD") or ""; supplied=handler.headers.get("X-OpenCode-Runtime","")
-    return bool(expected and supplied and hashlib.sha256(supplied.encode()).digest()==hashlib.sha256(expected.encode()).digest())
+    return bool(expected and supplied and hmac.compare_digest(hashlib.sha256(supplied.encode()).digest(),hashlib.sha256(expected.encode()).digest()))
 
 
 def runtime_snapshot(runtime:Any,features:Any,directory:str|None=None)->dict[str,Any]:

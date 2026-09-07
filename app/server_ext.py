@@ -446,6 +446,7 @@ class Handler(base.Handler):
         path = urlsplit(self.path).path
         if path == "/client-limits.json":
             if not self.authenticated():
+                self.unauthorized()
                 return
             self.json_response(limits_snapshot())
             return

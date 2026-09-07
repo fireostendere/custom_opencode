@@ -4,7 +4,7 @@ let redirectingToLogin = false
 
 function currentAppTarget() {
   const value = `${location.pathname}${location.search}${location.hash}` || '/'
-  if (!value.startsWith('/') || value.startsWith('//') || value.startsWith('/login')) return '/'
+  if (!value.startsWith('/') || value.startsWith('//') || value.startsWith('/\\') || value.startsWith('/login')) return '/'
   return value
 }
 

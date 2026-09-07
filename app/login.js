@@ -12,7 +12,9 @@ const LEGACY_USER_KEY = 'opencode:web:last-login-user'
 const RESUME_KEY = 'opencode:web:auth-resume-v1'
 
 function validTarget(value) {
-  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/login')
+  // Browsers normalize a leading "/\" into "//" (protocol-relative URL), so
+  // backslash-prefixed targets are rejected too (open redirect: /\evil.com).
+  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\') && !value.startsWith('/login')
 }
 
 function safeNext() {
