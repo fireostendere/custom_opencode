@@ -19,6 +19,8 @@ jobs:
   clean-regression:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
+    env:
+      GEMINI_API_KEY: fixture-gemini-key
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,8 +41,6 @@ jobs:
       - name: Unified contract regression
         run: python scripts/unified-workspace-regression.py
       - name: TUI regression
-        env:
-          GEMINI_API_KEY: fixture-gemini-key
         run: node scripts/tui-regression.mjs
       - name: TUI wizard regression
         run: |
