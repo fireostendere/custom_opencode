@@ -2,7 +2,8 @@ name: Apply runtime queue reconciliation fix
 on:
   push:
     branches: [main]
-    paths: ['.github/workflows/apply-runtime-queue-reconcile.yml']
+    paths:
+      - '.github/workflows/apply-runtime-queue-reconcile.yml'
 permissions:
   contents: write
 jobs:
@@ -18,20 +19,8 @@ jobs:
           from pathlib import Path
           p = Path('app/server_runtime.py')
           s = p.read_text(encoding='utf-8')
-          old = '''        metadata=task.get("metadata") if isinstance(task.get("metadata"),dict) else {}; started=int(task.get("started_at") or 0); accepted=int(metadata.get("dispatchAcceptedAt") or 0); baseline_usage=metadata.get("usageBaseline") if isinstance(metadata.get("usageBaseline"),dict) else {}; progressed=bool(metadata.get("backendObservedBusy")) or _usage_totals(features,task["session_id"]).get("signature")!=baseline_usage.get("signature")
-        if state in {"submitted","running"} and progressed and current-max(started,accepted)>2500: STORE.transition(task["id"],"verifying",event="task.agent_idle",data={}); _finish_async(features,STORE.get_task(task["id"]) or task)
-'''
-          new = '''        metadata=task.get("metadata") if isinstance(task.get("metadata"),dict) else {}; started=int(task.get("started_at") or 0); accepted=int(metadata.get("dispatchAcceptedAt") or 0); baseline_usage=metadata.get("usageBaseline") if isinstance(metadata.get("usageBaseline"),dict) else {}; progressed=bool(metadata.get("backendObservedBusy")) or _usage_totals(features,task["session_id"]).get("signature")!=baseline_usage.get("signature")
-        settled=current-max(started,accepted)>2500
-        queued_successor=state=="submitted" and bool(STORE.list_tasks(session_id=task["session_id"],states=QUEUE_STATES,limit=1))
-        # A short backend run can start and finish entirely between 1.5 s worker polls.
-        # If the dispatch grace has elapsed, the backend is authoritatively idle and a
-        # durable successor is waiting, treat the stale submitted task as finished even
-        # when neither the busy edge nor a usage-signature change was observed.
-        if state in {"submitted","running"} and settled and (progressed or queued_successor):
-            STORE.transition(task["id"],"verifying",event="task.agent_idle",data={"reconciledForQueue":bool(queued_successor and not progressed)})
-            _finish_async(features,STORE.get_task(task["id"]) or task)
-'''
+          old = '        metadata=task.get("metadata") if isinstance(task.get("metadata"),dict) else {}; started=int(task.get("started_at") or 0); accepted=int(metadata.get("dispatchAcceptedAt") or 0); baseline_usage=metadata.get("usageBaseline") if isinstance(metadata.get("usageBaseline"),dict) else {}; progressed=bool(metadata.get("backendObservedBusy")) or _usage_totals(features,task["session_id"]).get("signature")!=baseline_usage.get("signature")\n        if state in {"submitted","running"} and progressed and current-max(started,accepted)>2500: STORE.transition(task["id"],"verifying",event="task.agent_idle",data={}); _finish_async(features,STORE.get_task(task["id"]) or task)\n'
+          new = '        metadata=task.get("metadata") if isinstance(task.get("metadata"),dict) else {}; started=int(task.get("started_at") or 0); accepted=int(metadata.get("dispatchAcceptedAt") or 0); baseline_usage=metadata.get("usageBaseline") if isinstance(metadata.get("usageBaseline"),dict) else {}; progressed=bool(metadata.get("backendObservedBusy")) or _usage_totals(features,task["session_id"]).get("signature")!=baseline_usage.get("signature")\n        settled=current-max(started,accepted)>2500\n        queued_successor=state=="submitted" and bool(STORE.list_tasks(session_id=task["session_id"],states=QUEUE_STATES,limit=1))\n        # A short backend run can start and finish entirely between 1.5 s worker polls.\n        # If the dispatch grace has elapsed, the backend is authoritatively idle and a\n        # durable successor is waiting, treat the stale submitted task as finished even\n        # when neither the busy edge nor a usage-signature change was observed.\n        if state in {"submitted","running"} and settled and (progressed or queued_successor):\n            STORE.transition(task["id"],"verifying",event="task.agent_idle",data={"reconciledForQueue":bool(queued_successor and not progressed)})\n            _finish_async(features,STORE.get_task(task["id"]) or task)\n'
           assert s.count(old) == 1, f'expected one active-monitor block, found {s.count(old)}'
           p.write_text(s.replace(old, new), encoding='utf-8')
           PY
