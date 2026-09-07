@@ -39,11 +39,16 @@ jobs:
       - name: Unified contract regression
         run: python scripts/unified-workspace-regression.py
       - name: TUI regression
+        env:
+          GEMINI_API_KEY: fixture-gemini-key
         run: node scripts/tui-regression.mjs
-      - name: TUI add wizard regression
-        run: node scripts/tui-add-wizard-regression.mjs
-      - name: Panel local-submit regression
-        run: node scripts/panel-submit-regression.mjs
+      - name: TUI wizard regression
+        run: |
+          node scripts/tui-add-wizard-regression.mjs
+          node scripts/tui-server-wizard-regression.mjs
+          node scripts/tui-webserver-wizard-regression.mjs
+          node scripts/wizard-validation-smoke.mjs
+          node scripts/panel-submit-regression.mjs
       - name: Existing verification suite
         run: bash scripts/verify.sh
       - name: Install reviewed OpenCode V2 build
