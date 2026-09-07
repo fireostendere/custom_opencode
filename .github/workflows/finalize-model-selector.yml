@@ -1,0 +1,59 @@
+name: Finalize model selector repair
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/finalize-model-selector.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Remove renderer-only title JSX and gate selector behavior
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          selector = Path('config/plugins/tui/model-selector.jsx')
+          text = selector.read_text(encoding='utf-8')
+          text = text.replace('/** @jsxImportSource @opentui/solid */\n', '', 1)
+          old = '''function renderTitleView(title, color) {
+            if (!color) return undefined
+            return <span style={{ fg: color }}>{title}</span>
+          }
+
+          '''
+          if old not in text:
+              raise SystemExit('renderTitleView block not found')
+          text = text.replace(old, '', 1)
+          marker = '    titleView: renderTitleView(title, promoColor),\n'
+          if marker not in text:
+              raise SystemExit('titleView marker not found')
+          text = text.replace(marker, '', 1)
+          selector.write_text(text, encoding='utf-8')
+
+          verify = Path('scripts/verify.sh')
+          text = verify.read_text(encoding='utf-8')
+          anchor = '"$NODE" "$ROOT/scripts/tui-jsx-pragma-regression.mjs"\n'
+          addition = '"$NODE" "$ROOT/scripts/model-selector-smoke.mjs"\n'
+          if addition not in text:
+              if anchor not in text:
+                  raise SystemExit('verify anchor not found')
+              text = text.replace(anchor, addition + anchor, 1)
+          verify.write_text(text, encoding='utf-8')
+          PY
+      - name: Commit repair and remove one-shot workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/finalize-model-selector.yml
+          git add config/plugins/tui/model-selector.jsx scripts/verify.sh
+          git commit -m 'fix(tui): remove renderer-only JSX and gate model selection'
+          git push origin HEAD:main
