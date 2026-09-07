@@ -13,8 +13,8 @@
     "grouping": "auto"
   },
   "keybinds": {
-    "prompt.history.previous": "none",
-    "prompt.history.next": "none",
+    "prompt.history.previous": "up",
+    "prompt.history.next": "down",
     "app.exit": "ctrl+shift+q"
   },
   "animations": true,

@@ -298,6 +298,7 @@ for (const marker of ['promptHistory', 'promptHistoryEntries', 'navigatePromptHi
   if (!appSource.includes(marker)) throw new Error(`Session prompt history marker missing: ${marker}`)
 }
 if (!appSource.includes("e.key==='ArrowUp'&&navigatePromptHistory(-1,e)") || !appSource.includes("e.key==='ArrowDown'&&navigatePromptHistory(1,e)")) throw new Error('Web prompt history must use ArrowUp/ArrowDown')
+if (!designSystem.includes('@media(hover:none) and (pointer:coarse)') || !designSystem.includes('.session:hover:not(.active)')) throw new Error('Touch UI must clear synthetic sticky hover without clearing selected sessions')
 for (const marker of ['submitPending: false', 'if (state.submitPending) return', 'action.disabled = true', 'state.submitPending = false']) {
   if (!advanced.includes(marker)) throw new Error(`Managed-send duplicate guard missing: ${marker}`)
 }

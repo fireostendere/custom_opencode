@@ -114,9 +114,9 @@ with open(capture_path, 'wb') as f:
 with open(log_path, 'wb') as f:
     f.write(buffer)
 PY
-  if grep -Eqi 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|No renderer found|useRenderer|limits-(header|panels).*error|workspace-panel.*error|panel-slash.*error|panel-submit-router.*error|panel-views.*error|panel-command.*error|prompt-history.*error|model-selector.*error|effort-indicator.*error|wsl-clipboard.*error' "$capture" "$log"; then
+  if grep -Eqi 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|No renderer found|useRenderer|limits-(header|panels).*error|workspace-panel.*error|panel-slash.*error|panel-submit-router.*error|panel-views.*error|panel-command.*error|model-selector.*error|effort-indicator.*error|wsl-clipboard.*error' "$capture" "$log"; then
     echo "TUI plugin/renderer loader error at $geometry" >&2
-    grep -Eai 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|No renderer found|useRenderer|limits-|workspace-panel|panel-slash|panel-submit-router|panel-views|panel-command|prompt-history|model-selector|effort-indicator|wsl-clipboard' "$capture" "$log" >&2 || true
+    grep -Eai 'SyntaxError|Failed to load.*plugin|Plugin failed|Cannot find (module|package)|Unhandled.*Error|No renderer found|useRenderer|limits-|workspace-panel|panel-slash|panel-submit-router|panel-views|panel-command|model-selector|effort-indicator|wsl-clipboard' "$capture" "$log" >&2 || true
     exit 1
   fi
   grep -Fq 'Ask anything' "$capture" || {

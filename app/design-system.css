@@ -166,6 +166,17 @@ dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
   .pull-refresh[data-state="pulling"] .pull-refresh-icon,.pull-refresh[data-state="refreshing"] .pull-refresh-icon{animation:none}
 }
 
+/* Touch browsers can keep :hover latched after a tap. Preserve explicit
+   selected/open states while removing that synthetic feedback. */
+@media(hover:none) and (pointer:coarse){
+  button:hover{filter:none}
+  button:active:not(:disabled),.session:active{transform:none}
+  .session:hover:not(.active),.sessions .project:hover,.choice:hover,.action:hover,.model-provider-body .choice:hover{background:transparent}
+  .model-provider-toggle:hover{background:var(--surface-input)}
+  .question-option:hover:not(.selected){border-color:var(--border,#393939);background:var(--surface,#272727)}
+  #modelButton:hover,#variantSelect:hover:not(:disabled){border-color:var(--line);background:var(--surface-input)}
+}
+
 /* All modal surfaces share one top-layer treatment and one dismissal contract. */
 dialog{
   margin:auto;

@@ -30,6 +30,27 @@ RAG необязателен. Для него дополнительно нуж�
 
 ## Новая установка custom_opencode
 
+Рекомендуемый bootstrap закрепляет ref репозитория и версию OpenCode, сначала
+запускает verifier, сохраняет существующий `.env` и только затем передаёт
+установку штатному `scripts/install.sh`:
+
+```bash
+curl -fsSLo /tmp/custom-opencode-bootstrap.sh \
+  https://raw.githubusercontent.com/fireostendere/custom_opencode/main/scripts/bootstrap.sh
+bash /tmp/custom-opencode-bootstrap.sh \
+  --ref main \
+  --opencode-package @opencode-ai/cli@0.0.0-beta-18743
+```
+
+Для полностью воспроизводимой установки вместо `main` передайте полный commit
+SHA через `--ref`. Перед первым запуском можно указать подготовленный приватный
+файл через `--env-file`; существующий `.env` никогда не заменяется. Полезные
+режимы: `--dry-run`, `--non-interactive`, `--doctor` и `--status`. Bootstrap не
+использует `sudo` без явного `--allow-sudo`; при отсутствии зависимостей без
+этого флага он завершается с ошибкой.
+
+Ручная установка остаётся доступна:
+
 ```bash
 git clone <custom_opencode repo URL>
 cd custom_opencode

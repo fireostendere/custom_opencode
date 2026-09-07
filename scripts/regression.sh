@@ -28,6 +28,9 @@ python3 scripts/model-routing-effort-smoke.py
 step "Fresh install/update regression"
 bash scripts/install-regression.sh
 
+step "Bootstrap regression"
+bash scripts/bootstrap-regression.sh
+
 step "Composed web server regression"
 python3 scripts/web-server-smoke.py
 

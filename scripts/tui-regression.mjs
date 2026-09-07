@@ -8,7 +8,6 @@ const root = new URL('../', import.meta.url)
 const helperUrl = new URL('config/plugins/tui/lib/limits-helper.js', root)
 const panelDataUrl = new URL('config/plugins/tui/lib/panel-data.js', root)
 const panelCommandUrl = new URL('config/plugins/tui/lib/panel-command.js', root)
-const promptHistory = await readFile(new URL('config/plugins/tui/prompt-history.jsx', root), 'utf8')
 const panelSlash = await readFile(new URL('config/plugins/tui/panel-slash.jsx', root), 'utf8')
 const workspacePanel = await readFile(new URL('config/plugins/tui/workspace-panel.jsx', root), 'utf8')
 const panelViews = await readFile(new URL('config/plugins/tui/lib/panel-views.jsx', root), 'utf8')
@@ -74,8 +73,8 @@ for (const entry of await readdir(themesRoot, { withFileTypes: true })) {
   }
 }
 
-assert.equal(cliConfig.keybinds['prompt.history.previous'], 'none')
-assert.equal(cliConfig.keybinds['prompt.history.next'], 'none')
+assert.equal(cliConfig.keybinds['prompt.history.previous'], 'up')
+assert.equal(cliConfig.keybinds['prompt.history.next'], 'down')
 assert.equal(cliConfig.keybinds['app.exit'], 'ctrl+shift+q')
 assert.equal(cliConfig.session.thinking, 'hide', 'TUI reasoning must stay out of the conversation')
 assert.equal(cliConfig.session.grouping, 'auto', 'TUI tool calls must stay grouped as one compact execution status')
@@ -88,7 +87,6 @@ for (const source of [
   'effort-indicator.jsx',
   'model-selector.jsx',
   'panel-slash.jsx',
-  'prompt-history.jsx',
   'limits-panels.jsx',
   'workspace-panel.jsx',
   'wsl-clipboard.jsx',
@@ -140,24 +138,7 @@ assert.ok(
   'Updater must migrate existing .env files to explicit Ctrl+C copy mode',
 )
 
-for (const marker of [
-  'session_prompt',
-  'context.state.session.messages',
-  'custom.prompt-history.previous',
-  'custom.prompt-history.next',
-  'context.ui.Prompt',
-]) {
-  assert.ok(promptHistory.includes(marker), `TUI prompt/history marker missing: ${marker}`)
-}
-for (const retired of [
-  'parsePanelCommand',
-  'panelCommandID',
-  'custom.panels.inline-submit',
-  'bind: "enter"',
-  'currentFocusedEditor',
-]) {
-  assert.ok(!promptHistory.includes(retired), `Prompt history must not intercept /panel through Enter: ${retired}`)
-}
+assert.ok(!tuiEntry.includes('prompt-history'), 'TUI must use supported native prompt history bindings')
 
 for (const marker of [
   'id: "custom.panel-slash"',

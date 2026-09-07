@@ -179,7 +179,7 @@ Edge-панели `План` и `Лимиты` одинаково работаю
 
 ## История prompt
 
-В web UI клавиши `ArrowUp` и `ArrowDown` в поле текущего диалога перебирают только пользовательские сообщения выбранной session. В TUI глобальные `prompt.history.previous/next` отключены в `config/cli.json`, а `custom.prompt-history` делает такую же session-scoped навигацию через native `session_prompt`; сообщения других сессий, проектов и папок в историю не попадают.
+В web UI клавиши `ArrowUp` и `ArrowDown` в поле текущего диалога перебирают только пользовательские сообщения выбранной session. В TUI эти клавиши назначены поддерживаемым native-командам `prompt.history.previous/next`; это сохраняет штатное редактирование prompt и не зависит от внутренних UI slots OpenCode.
 
 ## Repository index
 

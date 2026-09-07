@@ -5,7 +5,6 @@ import webserverWizard from "./webserver-wizard.js"
 import serverWizard from "./server-wizard.js"
 import modelSelector from "./model-selector.jsx"
 import panelSlash from "./panel-slash.jsx"
-import promptHistory from "./prompt-history.jsx"
 import retiredPanel from "./limits-panels.jsx"
 import workspacePanel from "./workspace-panel.jsx"
 import wslClipboard from "./wsl-clipboard.jsx"
@@ -17,7 +16,6 @@ const plugins = [
   serverWizard,
   modelSelector,
   panelSlash,
-  promptHistory,
   retiredPanel,
   workspacePanel,
   wslClipboard,
