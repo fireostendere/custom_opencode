@@ -2,13 +2,18 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-if ! command -v opencode2 >/dev/null 2>&1; then
-  echo "opencode2 is required for packaged TUI smoke" >&2
+OPENCODE2_BIN=${OPENCODE2_BIN:-}
+if [[ -z "$OPENCODE2_BIN" ]]; then
+  OPENCODE2_BIN=$(command -v opencode2 || true)
+fi
+if [[ -z "$OPENCODE2_BIN" || ! -x "$OPENCODE2_BIN" ]]; then
+  echo "opencode2 is required for packaged TUI smoke (set OPENCODE2_BIN or add it to PATH)" >&2
   exit 2
 fi
+OPENCODE2_BIN=$(readlink -f "$OPENCODE2_BIN")
 
 TMP=$(mktemp -d)
-trap 'HOME="$TMP/home" opencode2 service stop >/dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
+trap 'HOME="$TMP/home" "$OPENCODE2_BIN" service stop >/dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
 HOME_DIR="$TMP/home"
 CONFIG="$HOME_DIR/.config/opencode"
 export HOME="$HOME_DIR"
@@ -51,15 +56,15 @@ export BAILIAN_CLI_BIN=/nonexistent/custom-opencode-bl
 for geometry in 80x24 120x30 160x40; do
   capture="$TMP/tui-$geometry.typescript"
   log="$TMP/tui-$geometry.log"
-  python3 - "$geometry" "$TMP/project" "$capture" "$log" <<'PY'
+  python3 - "$geometry" "$TMP/project" "$capture" "$log" "$OPENCODE2_BIN" <<'PY'
 import fcntl, os, pty, select, struct, subprocess, sys, termios, time
-geometry, project, capture_path, log_path = sys.argv[1:5]
+geometry, project, capture_path, log_path, opencode_bin = sys.argv[1:6]
 cols, rows = map(int, geometry.split('x'))
 master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
 env = os.environ.copy()
 env['TERM'] = 'xterm-256color'
-proc = subprocess.Popen(['opencode2', '--standalone'], stdin=slave, stdout=slave, stderr=slave, cwd=project, env=env, close_fds=True)
+proc = subprocess.Popen([opencode_bin, '--standalone'], stdin=slave, stdout=slave, stderr=slave, cwd=project, env=env, close_fds=True)
 os.close(slave)
 buffer = b''
 deadline = time.time() + 18
