@@ -1,4 +1,3 @@
-/** @jsxImportSource @opentui/solid */
 /**
  * Custom model selector plugin for OpenCode TUI.
  *
@@ -100,11 +99,6 @@ function key(model) {
   return `${model.providerID}/${model.id}`
 }
 
-function renderTitleView(title, color) {
-  if (!color) return undefined
-  return <span style={{ fg: color }}>{title}</span>
-}
-
 function option(model, providerNames, category, favorite = false, theme = null, promo = null) {
   const isPromo = isNightDiscountModel(model.id, model.providerID)
   const promoActive = Boolean(promo?.active)
@@ -116,7 +110,6 @@ function option(model, providerNames, category, favorite = false, theme = null, 
   const title = `${favorite ? "★ " : ""}${model.name}`
   return {
     title,
-    titleView: renderTitleView(title, promoColor),
     footer: isPromo ? (promoActive ? "🌙 −50%" : "☀ −50%") : undefined,
     footerColor: promoColor,
     value: { providerID: model.providerID, modelID: model.id },

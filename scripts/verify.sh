@@ -76,6 +76,7 @@ done
 "$NODE" "$ROOT/scripts/tui-accounts-regression.mjs"
 "$NODE" "$ROOT/scripts/tui-webserver-wizard-regression.mjs"
 "$NODE" "$ROOT/scripts/tui-server-wizard-regression.mjs"
+"$NODE" "$ROOT/scripts/model-selector-smoke.mjs"
 "$NODE" "$ROOT/scripts/tui-jsx-pragma-regression.mjs"
 "$PYTHON3" "$ROOT/scripts/webserver-control-smoke.py"
 "$PYTHON3" "$ROOT/scripts/web-users-smoke.py"
