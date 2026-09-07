@@ -279,7 +279,15 @@ def _monitor_active(features:Any,statuses:dict[str,Any])->None:
             if current-last>7000: STORE.update_task(task["id"],metadata_patch={"progressCheckedAt":current}); _monitor_progress(features,STORE.get_task(task["id"]) or task)
             continue
         metadata=task.get("metadata") if isinstance(task.get("metadata"),dict) else {}; started=int(task.get("started_at") or 0); accepted=int(metadata.get("dispatchAcceptedAt") or 0); baseline_usage=metadata.get("usageBaseline") if isinstance(metadata.get("usageBaseline"),dict) else {}; progressed=bool(metadata.get("backendObservedBusy")) or _usage_totals(features,task["session_id"]).get("signature")!=baseline_usage.get("signature")
-        if state in {"submitted","running"} and progressed and current-max(started,accepted)>2500: STORE.transition(task["id"],"verifying",event="task.agent_idle",data={}); _finish_async(features,STORE.get_task(task["id"]) or task)
+        settled=current-max(started,accepted)>2500
+        queued_successor=state=="submitted" and bool(STORE.list_tasks(session_id=task["session_id"],states=QUEUE_STATES,limit=1))
+        # A short backend run can start and finish entirely between 1.5 s worker polls.
+        # If the dispatch grace has elapsed, the backend is authoritatively idle and a
+        # durable successor is waiting, treat the stale submitted task as finished even
+        # when neither the busy edge nor a usage-signature change was observed.
+        if state in {"submitted","running"} and settled and (progressed or queued_successor):
+            STORE.transition(task["id"],"verifying",event="task.agent_idle",data={"reconciledForQueue":bool(queued_successor and not progressed)})
+            _finish_async(features,STORE.get_task(task["id"]) or task)
 
 
 def _dispatch_ready(features:Any,statuses:dict[str,Any])->None:
