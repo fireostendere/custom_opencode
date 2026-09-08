@@ -54,9 +54,11 @@ source = source
     'const escapeHtml = (value) => String(value ?? ""); const renderMarkdown = (value) => String(value ?? "")',
   )
   .replace("import { modeFromAgent, ORCHESTRATED_MODELS } from './ux-state.js'", 'const { modeFromAgent, ORCHESTRATED_MODELS } = globalThis.__smoke.ux')
+  .replace("import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'", 'const createAdaptivePoller = () => ({ start() {}, stop() {}, wake() {}, reschedule() {} }); const createRefreshCoalescer = () => (refresh, force) => refresh(force)')
 assert.ok(!source.includes("from './api.js'"), 'api import replacement failed')
 assert.ok(!source.includes("from './markdown.js'"), 'markdown import replacement failed')
 assert.ok(!source.includes("from './ux-state.js'"), 'ux-state import replacement failed')
+assert.ok(!source.includes("from './refresh-coalescer.js'"), 'refresh-coalescer import replacement failed')
 const bootIndex = source.lastIndexOf('initialize().catch')
 assert.ok(bootIndex > 0, 'app.js boot call not found')
 source = source.slice(0, bootIndex)

@@ -70,6 +70,7 @@ done
 "$NODE" "$ROOT/scripts/config-manager-regression.mjs"
 "$NODE" "$ROOT/scripts/visible-plan-regression.mjs"
 "$NODE" "$ROOT/scripts/gemini-rate-limit-regression.mjs"
+"$NODE" "$ROOT/scripts/refresh-coalescing-regression.mjs"
 "$NODE" "$ROOT/scripts/server-runtime-guard-regression.mjs"
 "$NODE" "$ROOT/scripts/mcp-profiles-regression.mjs"
 "$NODE" "$ROOT/scripts/tui-add-wizard-regression.mjs"

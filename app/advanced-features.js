@@ -1,3 +1,5 @@
+import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'
+
 const $ = (id) => document.getElementById(id)
 
 const state = {
@@ -29,6 +31,7 @@ const state = {
   activityItems: [],
   currentActivityID: '',
   activityHydrated: false,
+  activityHydrating: false,
   orchestrationRevision: 0,
   orchestrationRenderRevision: 0,
   orchestrationRenderFrame: null,
@@ -39,6 +42,13 @@ const state = {
   submitPending: false,
   reviewDiffs: [],
 }
+
+const selectedSessionRefresh = createRefreshCoalescer()
+const queueRefresh = createRefreshCoalescer()
+const questionRefresh = createRefreshCoalescer()
+const permissionRefresh = createRefreshCoalescer()
+const orchestrationRefresh = createRefreshCoalescer()
+const planRefresh = createRefreshCoalescer()
 
 const DEFAULT_SETTINGS = {
   instructions: '',
@@ -164,7 +174,8 @@ function ensureSurfaces() {
   })
 }
 
-async function refreshSelectedSession() {
+function refreshSelectedSession(force = false) { return selectedSessionRefresh(() => refreshSelectedSessionNow(), force) }
+async function refreshSelectedSessionNow() {
   const id = sessionFromHash()
   if (id === state.sessionID && state.session) return
   state.sessionID = id
@@ -194,8 +205,9 @@ async function refreshSelectedSession() {
    state.orchestrationStatuses = {}
    state.plan = null
    state.activityItems = []
-   state.currentActivityID = ''
-   state.activityHydrated = false
+    state.currentActivityID = ''
+    state.activityHydrated = false
+    state.activityHydrating = false
   state.attachments = []
   state.attachmentReads = []
   state.runStartedAt = running() ? Date.now() : null
@@ -207,7 +219,7 @@ async function refreshSelectedSession() {
     state.session = session
     state.directory = session?.location?.directory || ''
     $('projectSettingsButton').hidden = !state.directory
-    await Promise.allSettled([loadProjectSettings(id), refreshQueue(id), refreshQuestions(), refreshOrchestration(), refreshPlan(), refreshPermission(id)])
+    await Promise.allSettled([loadProjectSettings(id), refreshQueue(id, true), refreshQuestions(true), refreshOrchestration(true), refreshPlan(true), refreshPermission(id, true)])
     if (state.sessionID !== id) return
     await applyProjectDefaultsOnce(id)
     if (state.sessionID !== id) return
@@ -391,7 +403,7 @@ async function interceptSubmit(event) {
       await request('/client-queue.json', { method:'POST', body:JSON.stringify({ sessionID, text, files, profile }) })
       if (state.sessionID !== sessionID || state.orchestrationRevision !== revision) return
       clearComposer()
-      await refreshQueue()
+      await refreshQueue(undefined, true)
       toast('Добавлено в серверную очередь')
       return
     }
@@ -403,7 +415,7 @@ async function interceptSubmit(event) {
     if (!state.runStartedAt) state.runStartedAt = Date.now()
     renderStatus()
     toast('Отправлено', 1300)
-    setTimeout(refreshOrchestration, 300)
+    setTimeout(() => refreshOrchestration(true), 300)
   } catch (error) {
     if (state.sessionID === sessionID && state.orchestrationRevision === revision && input) input.value = text
     if (state.sessionID === sessionID && state.orchestrationRevision === revision) toast(`Отправка: ${error.message}`, 6000)
@@ -412,7 +424,8 @@ async function interceptSubmit(event) {
   }
 }
 
-async function refreshQueue(sessionID = state.sessionID) {
+function refreshQueue(sessionID = state.sessionID, force = false) { return queueRefresh(() => refreshQueueNow(state.sessionID || sessionID), force) }
+async function refreshQueueNow(sessionID = state.sessionID) {
   if (!sessionID) return
   const revision = state.orchestrationRevision
   const refreshSeq = ++state.queueRefreshSeq
@@ -469,7 +482,7 @@ async function deleteQueue(id) {
   if (!state.sessionID) return
   try {
     await request(`/client-queue.json?sessionID=${encodeURIComponent(state.sessionID)}&id=${encodeURIComponent(id)}`, { method:'DELETE' })
-    await refreshQueue()
+    await refreshQueue(undefined, true)
   } catch (error) { toast(error.message) }
 }
 async function moveQueue(index, delta) {
@@ -479,7 +492,7 @@ async function moveQueue(index, delta) {
   ;[items[index], items[next]] = [items[next], items[index]]
   try {
     await request('/client-queue.json', { method:'PATCH', body:JSON.stringify({ sessionID:state.sessionID, ids:items.map((item) => item.id) }) })
-    await refreshQueue()
+    await refreshQueue(undefined, true)
   } catch (error) { toast(error.message) }
 }
 function openQueueDialog() { renderQueueDialog(); $('queueDialog')?.showModal() }
@@ -633,7 +646,8 @@ async function questionRequests() {
   }
   return []
 }
-async function refreshQuestions() {
+function refreshQuestions(force = false) { return questionRefresh(() => refreshQuestionsNow(), force) }
+async function refreshQuestionsNow() {
   if (!state.sessionID) {
     if (state.questionKey) { state.question = null; state.questionKey = ''; renderQuestion() }
     return
@@ -823,7 +837,7 @@ function handleQuestionEvent(payload) {
   state.questionRevision += 1
   if (asked) {
     const requestRow = normalizeQuestionRequest(data, sessionID)
-    if (!requestRow?.id) { refreshQuestions(); return }
+    if (!requestRow?.id) { refreshQuestions(true); return }
     const nextKey = `${requestRow.sessionID}:${requestRow.id}`
     if (state.question && state.questionKey && nextKey !== state.questionKey) {
       if (state.questionActionPending) state.questionDeferred = requestRow
@@ -842,10 +856,11 @@ function handleQuestionEvent(payload) {
     state.questionSelection = []
     renderQuestion()
   }
-  refreshQuestions()
+  refreshQuestions(true)
 }
 
-async function refreshPermission(sessionID = state.sessionID) {
+function refreshPermission(sessionID = state.sessionID, force = false) { return permissionRefresh(() => refreshPermissionNow(state.sessionID || sessionID), force) }
+async function refreshPermissionNow(sessionID = state.sessionID) {
   if (!sessionID || !state.directory) { if (state.sessionID === sessionID) { state.pendingPermission = null; syncPermissionProjectButton() }; return }
   const q = workspaceQuery()
   try {
@@ -1039,7 +1054,8 @@ function renderActivityItem(item, current = false) {
 function renderActivityFromEvent(payload) {
   updateActivityFromEvent(payload)
 }
-async function refreshOrchestration() {
+function refreshOrchestration(force = false) { return orchestrationRefresh(() => refreshOrchestrationNow(), force) }
+async function refreshOrchestrationNow() {
   if (!state.sessionID) return
   const sessionID = state.sessionID
   const revision = state.orchestrationRevision
@@ -1069,7 +1085,8 @@ async function refreshOrchestration() {
   let statuses = {}
   try { statuses = dataOf(await request('/api/session/active')) || {}; if (!current()) return } catch {}
   if (!current()) return
-  if (!state.activityHydrated) {
+  if (!state.activityHydrated && !state.activityHydrating) {
+    state.activityHydrating = true
     request(`/api/session/${encodeURIComponent(sessionID)}/message?limit=100`).then((value) => {
       if (!sameSession()) return
       if (!state.activityItems.length) {
@@ -1081,23 +1098,25 @@ async function refreshOrchestration() {
         }
       }
       state.activityHydrated = true
-    }).catch(() => {})
+    }).catch(() => {}).finally(() => { if (sameSession()) state.activityHydrating = false })
   }
   for (const child of children.slice(0, 12)) {
     const id = child?.id
     if (!id || state.childDetails.has(id)) continue
+    state.childDetails.set(id, { loading:true })
     request(`/api/session/${encodeURIComponent(id)}/message?limit=100`).then((value) => {
       if (!sameSession()) return
       const messages = dataOf(value) || []
       const blob = JSON.stringify(messages)
       state.childDetails.set(id, { rag:/kb_knowledge_|knowledge_search|knowledge_get/i.test(blob), error:/"error"/i.test(blob), latest: latestActivityFromMessages(messages, child) })
-      renderOrchestration(statuses)
+      renderOrchestration()
     }).catch(() => { if (sameSession()) state.childDetails.set(id, {}) })
   }
   state.orchestrationStatuses = statuses
   renderOrchestration(statuses)
 }
-async function refreshPlan() {
+function refreshPlan(force = false) { return planRefresh(() => refreshPlanNow(), force) }
+async function refreshPlanNow() {
   if (!state.sessionID) return
   const sessionID = state.sessionID
   const revision = state.orchestrationRevision
@@ -1360,10 +1379,12 @@ function observeRuntime() {
   if (stop) new MutationObserver(() => {
     if (running()) {
       if (!state.runStartedAt) state.runStartedAt = Date.now()
+      fastPolling.wake()
+      mediumPolling.wake()
     } else if (state.runStartedAt) {
       state.lastDurationMs = Date.now() - state.runStartedAt
       state.runStartedAt = null
-      setTimeout(() => { refreshQueue(); refreshOrchestration(); refreshPlan(); loadReview() }, 120)
+      setTimeout(() => { refreshQueue(undefined, true); refreshOrchestration(true); refreshPlan(true); loadReview() }, 120)
     }
     renderStatus()
     renderOrchestration()
@@ -1381,12 +1402,12 @@ function observeRuntime() {
 }
 
 function bindEvents() {
-  window.addEventListener('hashchange', refreshSelectedSession)
-  window.addEventListener('custom-opencode:session-selected', () => refreshSelectedSession())
+  window.addEventListener('hashchange', () => refreshSelectedSession(true))
+  window.addEventListener('custom-opencode:session-selected', () => refreshSelectedSession(true))
   window.addEventListener('custom-opencode:agent-changed', () => {
     setTimeout(() => {
-      refreshOrchestration()
-      refreshPlan()
+      refreshOrchestration(true)
+      refreshPlan(true)
     }, 0)
   })
   window.addEventListener('custom-opencode:event', (event) => { handleQuestionEvent(event.detail); renderActivityFromEvent(event.detail) })
@@ -1409,12 +1430,14 @@ function bindEvents() {
   })
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
-      refreshSelectedSession()
-      refreshQueue()
-      refreshQuestions()
-      refreshOrchestration()
-      refreshPlan()
-      refreshPermission()
+      refreshSelectedSession(true)
+      refreshQueue(undefined, true)
+      refreshQuestions(true)
+      refreshOrchestration(true)
+      refreshPlan(true)
+      refreshPermission(undefined, true)
+      fastPolling.reschedule()
+      mediumPolling.reschedule()
     }
   })
 }
@@ -1426,13 +1449,16 @@ async function tickMedium() {
   if (!document.hidden && state.sessionID) await Promise.allSettled([refreshQueue(), refreshOrchestration(), refreshPlan()])
 }
 
+const fastPolling = createAdaptivePoller({ run:tickFast, isActive:running, activeDelay:2500, idleDelay:15000, isVisible:() => !document.hidden })
+const mediumPolling = createAdaptivePoller({ run:tickMedium, isActive:running, activeDelay:5000, idleDelay:30000, isVisible:() => !document.hidden })
+
 function init() {
   ensureSurfaces()
   bindEvents()
   observeRuntime()
-  refreshSelectedSession()
-  setInterval(tickFast, 2500)
-  setInterval(tickMedium, 5000)
+  refreshSelectedSession(true)
+  fastPolling.start()
+  mediumPolling.start()
   setInterval(() => { if (!document.hidden && state.sessionID) renderStatus() }, 2000)
 }
 

@@ -104,8 +104,12 @@ for marker in (
 assert "workflowSurfaceEnabled" not in advanced_features_js
 assert "setInterval(() => { if (!document.hidden && state.sessionID) renderStatus() }, 2000)" in advanced_features_js
 
-assert "function startPolling(){stopPolling();state.timer=setInterval(()=>{if(state.open&&!document.hidden)refreshAll(false)},2800)}" in workspace_js
-assert "document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.open)refreshAll(true)})" in workspace_js
+assert "const workspacePolling=createAdaptivePoller({run:()=>refreshAll(false),isActive:()=>!$('stop')?.hidden,activeDelay:5000,idleDelay:30000,isVisible:()=>state.open&&!document.hidden})" in workspace_js
+assert "function startPolling(){workspacePolling.start()}" in workspace_js
+assert "function stopPolling(){workspacePolling.stop()}" in workspace_js
+assert "setInterval(()=>{if(state.open&&!document.hidden)refreshAll(false)},2800)" not in workspace_js
+assert "window.addEventListener('custom-opencode:event'" in workspace_js
+assert "document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.open){refreshAll(true);workspacePolling.reschedule()}})" in workspace_js
 
 wizard_action = workspace_js[workspace_js.index("function runAction"):workspace_js.index("function filteredActions")]
 assert "prefillCommand(action.command)" in wizard_action

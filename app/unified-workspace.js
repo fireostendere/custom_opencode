@@ -1,3 +1,5 @@
+import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'
+
 const $=(id)=>document.getElementById(id)
 
 const state={
@@ -10,12 +12,13 @@ const state={
   followActivity:true,
   unseen:0,
   lastEventID:0,
-  timer:null,
   actions:[],
   selectedCommand:0,
   refreshSeq:0,
   planSeq:0,
 }
+
+const refreshAllCoalesced=createRefreshCoalescer()
 
 function esc(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function sid(){const match=/^#\/session\/([^/?]+)/.exec(location.hash||'');return match?decodeURIComponent(match[1]):''}
@@ -93,10 +96,12 @@ function openPanel(tab=state.tab){ensureUI();state.open=true;$('unifiedPanel').c
 function closePanel(){state.open=false;$('unifiedPanel')?.classList.remove('open');if($('unifiedScrim'))$('unifiedScrim').hidden=true;stopPolling()}
 function setTab(tab){state.tab=tab||'activity';document.querySelectorAll('[data-unified-tab]').forEach(button=>button.classList.toggle('active',button.dataset.unifiedTab===state.tab));document.querySelectorAll('[data-unified-view]').forEach(view=>view.hidden=view.dataset.unifiedView!==state.tab);renderCurrent()}
 
-function startPolling(){stopPolling();state.timer=setInterval(()=>{if(state.open&&!document.hidden)refreshAll(false)},2800)}
-function stopPolling(){if(state.timer){clearInterval(state.timer);state.timer=null}}
+const workspacePolling=createAdaptivePoller({run:()=>refreshAll(false),isActive:()=>!$('stop')?.hidden,activeDelay:5000,idleDelay:30000,isVisible:()=>state.open&&!document.hidden})
+function startPolling(){workspacePolling.start()}
+function stopPolling(){workspacePolling.stop()}
 
-async function refreshAll(force=false){
+function refreshAll(force=false){return refreshAllCoalesced(refreshAllNow,force)}
+async function refreshAllNow(force=false){
   const session=sid()
   const refreshSeq=++state.refreshSeq
   $('unifiedPanelContext').textContent=session?session.slice(0,10):'no session'
@@ -226,7 +231,7 @@ function closePalette(){if($('unifiedPalette'))$('unifiedPalette').hidden=true}
 
 function bindKeys(){document.addEventListener('keydown',event=>{const key=event.key.toLowerCase();if((event.ctrlKey&&key==='k')||(event.ctrlKey&&event.shiftKey&&key==='p')){event.preventDefault();openPalette();return}if(event.key==='Escape'){if(!$('unifiedPalette')?.hidden){closePalette();return}if(state.open)closePanel()}if(event.ctrlKey&&event.altKey&&!event.shiftKey){if(key==='a'){event.preventDefault();openPanel('activity')}else if(key==='p'){event.preventDefault();openPanel('plan')}else if(key==='c'){event.preventDefault();openPanel('runtime')}}},true)}
 
-function boot(){ensureUI();bindKeys();window.addEventListener('hashchange',()=>{state.refreshSeq+=1;state.planSeq+=1;state.activity=[];state.plan=null;state.lastEventID=0;state.unseen=0;state.followActivity=true;if(state.open)refreshAll(true)});window.addEventListener('custom-opencode:session-selected',()=>{if(state.open)refreshAll(true)});document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.open)refreshAll(true)});setTimeout(()=>refreshAll(true),500)}
+function boot(){ensureUI();bindKeys();window.addEventListener('hashchange',()=>{state.refreshSeq+=1;state.planSeq+=1;state.activity=[];state.plan=null;state.lastEventID=0;state.unseen=0;state.followActivity=true;if(state.open)refreshAll(true)});window.addEventListener('custom-opencode:session-selected',()=>{if(state.open)refreshAll(true)});window.addEventListener('custom-opencode:event',(event)=>{const payload=event.detail||{},data=payload.data||payload.properties||{},sessionID=data.sessionID||data.session?.id;if(state.open&&(!sessionID||sessionID===sid())&&/^session\.(?:execution\.(?:started|succeeded|failed|interrupted)|status|idle|busy)$/.test(payload.type||''))refreshAll(true)});document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.open){refreshAll(true);workspacePolling.reschedule()}});setTimeout(()=>refreshAll(true),500)}
 
 window.CustomOpenCodeWorkspace={open:openPanel,close:closePanel,tab:setTab,refresh:()=>refreshAll(true),palette:openPalette,action:runAction}
 boot()

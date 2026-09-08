@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const loadSource = async (relative) => {
-  const source = readFileSync(resolve(root, relative), 'utf8')
+  const sourcePath = resolve(root, relative)
+  const source = readFileSync(sourcePath, 'utf8').replace(/(from\s+['"])(\.\.?\/[^'"]+)(['"])/g, (_, start, specifier, end) => `${start}${pathToFileURL(resolve(dirname(sourcePath), specifier)).href}${end}`)
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
 }
 

@@ -1,6 +1,7 @@
 import * as api from './api.js'
 import { escapeHtml, renderMarkdown } from './markdown.js'
 import { modeFromAgent, ORCHESTRATED_MODELS } from './ux-state.js'
+import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'
 
 const $ = (id) => document.getElementById(id)
 const QUICK_PROJECT_ID = '__custom_opencode_quick__'
@@ -47,7 +48,6 @@ let drafts = loadJson(DRAFT_KEY, {})
 let favorites = new Set(loadJson(FAV_KEY, []))
 let contextReloadTimer = null
 let draftSaveTimer = null
-let statusTimer = null
 let gitTimer = null
 let eventSource = null
 let dragPayload = null
@@ -60,6 +60,8 @@ let historyPaginationIntent = false
 let historyPaginationIntentTimer = 0
 let historyPaginationTouch = null
 let statusSyncGeneration = 0
+let sessionSyncGeneration = 0
+let rateLimitSyncGeneration = 0
 let messageRenderFrame = null
 
 function loadJson(key, fallback) {
@@ -242,12 +244,20 @@ function normalizeRunStatus(value) {
   return String(raw).toLowerCase()
 }
 function runningStatus(value) { const s=normalizeRunStatus(value); return /running|busy|retry|working|pending/.test(s) }
+function invalidateRunSync() { statusSyncGeneration+=1; rateLimitSyncGeneration+=1 }
 
-async function loadSessions({ selectHash = false, background = false } = {}) {
+const loadSessionsCoalesced=createRefreshCoalescer()
+function loadSessions(options = {}) {
+  const force = options.selectHash || !options.background
+  return loadSessionsCoalesced(() => loadSessionsNow(options), force)
+}
+async function loadSessionsNow({ selectHash = false, background = false } = {}) {
   if (!background && !state.sessions.length) { state.loading = true; renderSessions() }
+  const sessionGeneration = ++sessionSyncGeneration
   const statusGeneration = ++statusSyncGeneration
   try {
     const [projects, sessions, statuses] = await Promise.all([api.listProjects(), api.listSessions(), api.sessionStatuses()])
+    if (sessionGeneration !== sessionSyncGeneration) return
     state.projects = projects
     const unique = new Map(sessions.map((s)=>[s.id,s]))
     state.sessions = [...unique.values()].sort(compareSessions)
@@ -262,6 +272,7 @@ async function loadSessions({ selectHash = false, background = false } = {}) {
       if (id && state.sessions.some((s)=>s.id===id)) await selectSession(id,{ push:false })
     }
   } catch (error) {
+    if (sessionGeneration !== sessionSyncGeneration) return
     state.loading = false
     if (!state.sessions.length) {
       $('sessions').innerHTML = `<div class="empty">Не удалось загрузить сессии.<br>${escapeHtml(error.message)}</div>`
@@ -500,7 +511,10 @@ function renderHeader(){
   renderRunControls(); renderUsage(); renderGitButton(); renderNotifyButton()
 }
 let rateLimitActiveState=false
-async function pollRateLimit(){
+const pollRateLimitCoalesced=createRefreshCoalescer()
+function pollRateLimit(force=false){if(force)rateLimitSyncGeneration+=1;return pollRateLimitCoalesced(pollRateLimitNow,force)}
+async function pollRateLimitNow(){
+  const generation=++rateLimitSyncGeneration
   if(!state.running.size){
     if(rateLimitActiveState){
       rateLimitActiveState=false
@@ -513,6 +527,7 @@ async function pollRateLimit(){
     const res=await fetch('/client-rate-limit.json')
     if(!res.ok)return
     const data=await res.json()
+    if(generation!==rateLimitSyncGeneration||!state.running.size)return
     const span=$('chatStatus')?.querySelector('span:not(.run-dot)')
     if(data?.active&&data?.seconds>0){
       rateLimitActiveState=true
@@ -795,17 +810,17 @@ async function sendMessage(event){
       queueFor(session.id).push({text,files});rememberSubmittedPrompt(session.id,text);renderSessions();toast('Добавлено в очередь');return
     }
     previousRun=state.running.get(session.id)
-    state.running.set(session.id,{status:running?'steer':'running',since:Date.now()});renderHeader();renderSessions();updateBadge()
+    invalidateRunSync();state.running.set(session.id,{status:running?'steer':'running',since:Date.now()});if(!running){statusPolling.wake();rateLimitPolling.wake()}renderHeader();renderSessions();updateBadge()
     await api.sendPrompt(session,{text,files,delivery:running?'steer':'normal'});rememberSubmittedPrompt(session.id,text);setTimeout(()=>loadContext({force:true}),180)
   } catch(error){
-    if(session){previousRun?state.running.set(session.id,previousRun):state.running.delete(session.id);renderHeader();renderSessions();updateBadge()}
+    if(session){invalidateRunSync();previousRun?state.running.set(session.id,previousRun):state.running.delete(session.id);renderHeader();renderSessions();updateBadge()}
     toast(`Отправка: ${error.message}`)
     if(text&&!input.value)input.value=text
     if(claimedAttachments.length){state.attachments=[...claimedAttachments,...state.attachments];renderAttachments()}
     drafts[draftKey()]=input.value;saveJson(DRAFT_KEY,drafts);autosizeInput()
   }
 }
-async function flushQueue(sessionID){const queue=queueFor(sessionID);if(!queue.length||isRunning(sessionID))return;const session=state.sessions.find((s)=>s.id===sessionID);if(!session)return;const next=queue.shift();state.running.set(sessionID,{status:'queued-start',since:Date.now()});renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();try{await api.sendPrompt(session,{...next,delivery:'normal'})}catch(e){state.running.delete(sessionID);queue.unshift(next);notifyUser('OpenCode: очередь остановлена',e.message,`queue-${sessionID}`)}renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
+async function flushQueue(sessionID){const queue=queueFor(sessionID);if(!queue.length||isRunning(sessionID))return;const session=state.sessions.find((s)=>s.id===sessionID);if(!session)return;const next=queue.shift();invalidateRunSync();state.running.set(sessionID,{status:'queued-start',since:Date.now()});statusPolling.wake();rateLimitPolling.wake();renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();try{await api.sendPrompt(session,{...next,delivery:'normal'})}catch(e){invalidateRunSync();state.running.delete(sessionID);queue.unshift(next);notifyUser('OpenCode: очередь остановлена',e.message,`queue-${sessionID}`)}renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
 async function stopSelected(){if(!state.selected)return;try{await api.abortSession(state.selected.id);toast('Остановка отправлена')}catch(e){toast(`Остановка: ${e.message}`)}}
 
 function openProjectDialog(mode='create'){state.projectDialogMode=mode;const titles={copy:'Копировать с контекстом',move:'Перенести в проект'};$('projectDialogTitle').textContent=titles[mode]||'Создать в проекте';const currentDirectory=directory(state.selected);const projects=state.projects.filter((p)=>p.id!==QUICK_PROJECT_ID&&!(mode==='move'&&(p.id===state.selected?.projectID||p.canonical===currentDirectory)));$('projectChoices').hidden=false;$('projectBrowser')?.setAttribute('hidden','');$('projectChoices').innerHTML=projects.map((p)=>`<button class="choice" data-project="${escapeHtml(p.id)}"><div class="choice-title">${escapeHtml(projectLabel(p))}</div><div class="choice-meta">${escapeHtml(p.canonical||p.id)}</div></button>`).join('')||'<div class="empty">Проекты не найдены.</div>';$('projectChoices').querySelectorAll('button[data-project]').forEach((b)=>b.addEventListener('click',()=>chooseProject(b.dataset.project)));$('projectDialog').showModal()}
@@ -885,8 +900,8 @@ function updateBadge(){const count=state.running.size;try{if(count)navigator.set
 function ensureAssistant(id){let m=state.context.find((x)=>x.id===id);if(m)return m;m={id,type:'assistant',content:[],time:{created:Date.now()}};state.context.push(m);return m}
 function ensurePart(message,type,ordinal=0){let p=(message.content||[]).filter((x)=>x.type===type)[ordinal];if(p)return p;p={type,text:''};message.content||=[];message.content.push(p);return p}
 function ensureTool(message,data){let p=(message.content||[]).find((x)=>x.type==='tool'&&x.id===data.id);if(p)return p;p={type:'tool',id:data.id,name:data.name||'tool',state:{status:'streaming',input:''},time:{created:Date.now()}};message.content||=[];message.content.push(p);return p}
-function markStarted(sessionID,label='running'){if(!sessionID||(state.sessions.length&&!state.sessions.some((session)=>session.id===sessionID)))return;state.running.set(sessionID,{status:label,since:Date.now()});renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
-function markFinished(sessionID,kind='готово'){if(!sessionID)return;const wasRunning=state.running.has(sessionID);state.running.delete(sessionID);renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();const session=state.sessions.find((s)=>s.id===sessionID);if(wasRunning&&(document.hidden||state.selected?.id!==sessionID))notifyUser(`OpenCode: ${kind}`,sessionTitle(session),`done-${sessionID}`,sessionID);if(wasRunning||queueFor(sessionID).length)void flushQueue(sessionID)}
+function markStarted(sessionID,label='running'){if(!sessionID||(state.sessions.length&&!state.sessions.some((session)=>session.id===sessionID)))return;invalidateRunSync();state.running.set(sessionID,{status:label,since:Date.now()});statusPolling.wake();rateLimitPolling.wake();renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
+function markFinished(sessionID,kind='готово'){if(!sessionID)return;invalidateRunSync();const wasRunning=state.running.has(sessionID);state.running.delete(sessionID);renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();const session=state.sessions.find((s)=>s.id===sessionID);if(wasRunning&&(document.hidden||state.selected?.id!==sessionID))notifyUser(`OpenCode: ${kind}`,sessionTitle(session),`done-${sessionID}`,sessionID);if(wasRunning||queueFor(sessionID).length)void flushQueue(sessionID)}
 function handleEvent(payload){
   window.dispatchEvent(new CustomEvent('custom-opencode:event',{detail:payload}))
   const data=payload.data||payload.properties||{}, sid=data.sessionID||data.session?.id
@@ -917,7 +932,11 @@ function handleEvent(payload){
   }
 }
 function connectEventStream(){eventSource?.close();eventSource=api.connectEvents(handleEvent,()=>{if(state.running.size)toast('Переподключение к event stream…',1200)})}
-async function pollStatuses(){const statusGeneration=++statusSyncGeneration;const statuses=await api.sessionStatuses();if(statusGeneration!==statusSyncGeneration)return;let changed=false;for(const session of state.sessions){const running=runningStatus(statuses?.[session.id]);if(running&&!isRunning(session.id)){state.running.set(session.id,{status:normalizeRunStatus(statuses[session.id]),since:Date.now()});changed=true}else if(!running&&isRunning(session.id)&&statuses&&session.id in statuses){markFinished(session.id,'готово');changed=true}}if(changed){renderSessions();renderHeader();updateBadge()}}
+const pollStatusesCoalesced=createRefreshCoalescer()
+async function pollStatuses(force=false){if(force)statusSyncGeneration+=1;return pollStatusesCoalesced(async()=>{const statusGeneration=++statusSyncGeneration;const statuses=await api.sessionStatuses();if(statusGeneration!==statusSyncGeneration)return;let changed=false;for(const session of state.sessions){const running=runningStatus(statuses?.[session.id]);if(running&&!isRunning(session.id)){state.running.set(session.id,{status:normalizeRunStatus(statuses[session.id]),since:Date.now()});changed=true}else if(!running&&isRunning(session.id)&&statuses&&session.id in statuses){markFinished(session.id,'готово');changed=true}}if(changed){renderSessions();renderHeader();updateBadge()}},force)}
+const statusPolling=createAdaptivePoller({run:pollStatuses,isActive:()=>state.running.size>0,activeDelay:5000,idleDelay:15000,isVisible:()=>!document.hidden})
+const rateLimitPolling=createAdaptivePoller({run:pollRateLimit,isActive:()=>state.running.size>0,activeDelay:2500,idleDelay:15000,isVisible:()=>!document.hidden})
+const sessionPolling=createAdaptivePoller({run:()=>loadSessions({background:true}),isActive:()=>state.running.size>0,activeDelay:15000,idleDelay:30000,isVisible:()=>!document.hidden})
 
 function setupPullRefresh(){
   const el=$('messages')
@@ -1059,10 +1078,10 @@ function bindEvents(){
   $('scrollToBottom').addEventListener('click',scrollMessagesToBottom)
   $('messagesInner').addEventListener('click',(e)=>{const copyCode=e.target.closest('.copy-code');if(copyCode){navigator.clipboard.writeText(copyCode.closest('.code-block').querySelector('code')?.textContent||'');copyCode.textContent='Скопировано';setTimeout(()=>copyCode.textContent='Копировать',900);return}const copy=e.target.closest('[data-copy-message]');if(copy){navigator.clipboard.writeText(messagePlainText(state.context[Number(copy.dataset.copyMessage)])||'');toast('Сообщение скопировано');return}const fork=e.target.closest('[data-fork-message]');if(fork){forkAtMessage(fork.dataset.forkMessage)}})
   window.addEventListener('hashchange',()=>{const id=sessionIdFromHash();if(id&&state.selected?.id!==id)selectSession(id,{push:false});else if(!id&&state.selected)clearSelection()});window.addEventListener('beforeunload',saveDraftNow)
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden){pollStatuses();if(state.selected&&!isRunning(state.selected.id)){loadContext({force:false})}}})
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){pollStatuses(true);pollRateLimit(true);statusPolling.reschedule();rateLimitPolling.reschedule();sessionPolling.wake();if(state.selected&&!isRunning(state.selected.id)){loadContext({force:false})}}})
 }
 
 async function initialize(){
-  state.clientConfig=await api.getClientConfig();bindEvents();attachDragHandlers();setupPullRefresh();await initNotifications();connectEventStream();await loadSessions({selectHash:true});if(!state.selected){restoreDraft();await loadDraftControls()}statusTimer=setInterval(pollStatuses,5000);setInterval(pollRateLimit,2500);setInterval(()=>{if(!state.loading)loadSessions({background:true})},30000);autosizeInput();renderHeader()
+  state.clientConfig=await api.getClientConfig();bindEvents();attachDragHandlers();setupPullRefresh();await initNotifications();connectEventStream();await loadSessions({selectHash:true});if(!state.selected){restoreDraft();await loadDraftControls()}statusPolling.start();rateLimitPolling.start();sessionPolling.start();autosizeInput();renderHeader()
 }
 initialize().catch((error)=>{console.error(error);toast(`Ошибка запуска: ${error.message}`,7000)})
