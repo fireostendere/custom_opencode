@@ -63,6 +63,9 @@ let statusSyncGeneration = 0
 let sessionSyncGeneration = 0
 let rateLimitSyncGeneration = 0
 let messageRenderFrame = null
+const sessionModelVersions = new Map()
+const sessionModelOverrides = new Map()
+const sessionModelQueues = new Map()
 
 function loadJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || '') || fallback } catch { return fallback }
@@ -191,7 +194,7 @@ async function transferSessionToProject(session,project,{select=false,removeSour
     state.running.set(created.id,{status:'handoff',since:Date.now()});renderSessions();renderHeader()
     try { await api.sendPrompt(created,{text:handoff,files:[],delivery:'normal'}) }
     catch (error) {
-      state.running.delete(created.id);state.sessions=state.sessions.filter((item)=>item.id!==created.id)
+      state.running.delete(created.id);state.sessions=state.sessions.filter((item)=>item.id!==created.id);clearSessionModelState(created.id)
       try{await api.deleteSession(created.id)}catch{}
       renderSessions();renderHeader();throw error
     }
@@ -204,7 +207,7 @@ async function transferSessionToProject(session,project,{select=false,removeSour
       await api.deleteSession(session.id)
       state.sessions=state.sessions.filter((item)=>item.id!==session.id)
       delete sessionMeta[session.id];delete drafts[session.id];saveMeta();saveJson(DRAFT_KEY,drafts)
-      state.running.delete(session.id);state.queues.delete(session.id);sourceRemoved=true
+      state.running.delete(session.id);state.queues.delete(session.id);clearSessionModelState(session.id);sourceRemoved=true
     }catch{
       toast('Копия создана, но исходную сессию удалить не удалось')
     }
@@ -235,6 +238,33 @@ async function handleDrop(event) {
   toast(sourceRemoved?`Сессия перенесена в проект «${projectLabel(project)}»`:'Создана копия; исходная сессия сохранена')
 }
 function activeModelRef() { return state.selected?.model || (!state.selected && state.draftModel) || state.defaultModel || null }
+function modelRefChanged(a,b) { return a?.id!==b?.id || a?.providerID!==b?.providerID || a?.variant!==b?.variant }
+function clearSessionModelState(id) { sessionModelVersions.delete(id);sessionModelOverrides.delete(id);sessionModelQueues.delete(id) }
+function hasSession(id) { return state.selected?.id===id||state.sessions.some((session)=>session.id===id) }
+function dispatchModelChanged(sessionID,model,previousModel,ok,error) { window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok,...(error?{error}:{})}})) }
+function setSessionModel(id,model) {
+  const next={...model}
+  if(state.selected?.id===id)state.selected.model=next
+  const index=state.sessions.findIndex((session)=>session.id===id)
+  if(index>=0)state.sessions[index]={...state.sessions[index],model:next}
+}
+function sessionModelFromRead(id,model,versionAtStart,localModel) {
+  const override=sessionModelOverrides.get(id)
+  if(override){
+    if(!modelRefChanged(model,override.model))sessionModelOverrides.delete(id)
+    else return {...override.model}
+  }
+  if(sessionModelVersions.get(id)!==versionAtStart&&localModel)return {...localModel}
+  return model
+}
+function queueSessionModelChange(id,change) {
+  const previous=sessionModelQueues.get(id)||Promise.resolve()
+  const result=previous.catch(()=>{}).then(change)
+  const tail=result.catch(()=>{})
+  sessionModelQueues.set(id,tail)
+  tail.finally(()=>{if(sessionModelQueues.get(id)===tail)sessionModelQueues.delete(id)})
+  return result
+}
 function activeModel() { const ref=activeModelRef(); return ref && state.models.find((m)=>m.id===ref.id && m.providerID===ref.providerID) }
 function providerName(id) { return state.providers.find((p)=>p.id===id)?.name || id }
 function isRunning(id) { return state.running.has(id) }
@@ -255,11 +285,18 @@ async function loadSessionsNow({ selectHash = false, background = false } = {}) 
   if (!background && !state.sessions.length) { state.loading = true; renderSessions() }
   const sessionGeneration = ++sessionSyncGeneration
   const statusGeneration = ++statusSyncGeneration
+  const modelVersionsAtStart = new Map(sessionModelVersions)
   try {
     const [projects, sessions, statuses] = await Promise.all([api.listProjects(), api.listSessions(), api.sessionStatuses()])
     if (sessionGeneration !== sessionSyncGeneration) return
     state.projects = projects
     const unique = new Map(sessions.map((s)=>[s.id,s]))
+    for (const [id,session] of unique) {
+      const local=state.sessions.find((item)=>item.id===id)||state.selected?.id===id&&state.selected
+      const model=sessionModelFromRead(id,session.model,modelVersionsAtStart.get(id),local?.model)
+      if(model!==session.model)unique.set(id,{...session,model})
+    }
+    for(const id of new Set([...sessionModelVersions.keys(),...sessionModelOverrides.keys()]))if(!unique.has(id)&&state.selected?.id!==id){sessionModelVersions.delete(id);sessionModelOverrides.delete(id)}
     state.sessions = [...unique.values()].sort(compareSessions)
     if (statusGeneration === statusSyncGeneration) for (const [id,status] of Object.entries(statuses || {})) {
       if (runningStatus(status)) state.running.set(id,{ status:normalizeRunStatus(status), since:Date.now() })
@@ -350,8 +387,9 @@ async function selectSession(id,{push=true,saveDraft=true}={}) {
   if(push) setSessionHash(id)
   window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:id}}))
   const initialAgent=session.agent
+  const modelVersionAtStart=sessionModelVersions.get(id)
   const [detail]=await Promise.all([api.getSession(id).catch(()=>null),loadContext({force:Boolean(cachedContext),initial:true}),loadControls(),refreshGit()])
-  if(detail&&state.selected?.id===id){const liveAgent=state.selected.agent;state.selected={...state.selected,...detail,...(liveAgent!==initialAgent?{agent:liveAgent}:{})};const index=state.sessions.findIndex((item)=>item.id===id);if(index>=0)state.sessions[index]=state.selected;renderHeader();renderControls()}
+  if(detail&&state.selected?.id===id){const liveAgent=state.selected.agent,liveModel=state.selected.model&&{...state.selected.model},model=detail.model&&sessionModelFromRead(id,detail.model,modelVersionAtStart,liveModel);state.selected={...state.selected,...detail,...(liveAgent!==initialAgent?{agent:liveAgent}:{}),...(model?{model}:{})};const index=state.sessions.findIndex((item)=>item.id===id);if(index>=0)state.sessions[index]=state.selected;renderHeader();renderControls()}
 }
 function clearSelection() {
   saveDraftNow();initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=null;historyPaginationIntent=false;clearTimeout(historyPaginationIntentTimer);historyPaginationIntentTimer=0;historyPaginationTouch=null; state.selected=null;state.context=[];state.attachments=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
@@ -466,7 +504,7 @@ function renderControls(){
   $('variantSelect').value=selectedVariant; $('variantSelect').disabled=!variants.length
 }
 async function changeAgent(agent){const sessionID=state.selected?.id||null,previous=state.selected?.agent||state.draftAgent;if(!state.selected){state.draftAgent=agent;renderControls();window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:true}}));return true}state.selected.agent=agent;renderControls();try{await api.switchAgent(sessionID,agent);if(state.selected?.id!==sessionID){window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:false,error:'session changed'}}));return false}window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:true}}));return true}catch(e){if(state.selected?.id===sessionID&&state.selected.agent===agent){state.selected.agent=previous;renderControls()}toast(`Режим: ${e.message}`);window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:false,error:String(e?.message||e)}}));return false}}
-async function changeModel(model){const sessionID=state.selected?.id||null,previousModel=activeModelRef()?{...activeModelRef()}:null;if(!state.selected){state.draftModel={...model};saveLastModel(model);renderControls();window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok:true}}));return true}try{await api.switchModel(sessionID,model);if(state.selected?.id!==sessionID){window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok:false,error:'session changed'}}));return false}state.selected.model={...model};saveLastModel(model);renderControls();renderUsage();window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok:true}}));return true}catch(e){toast(`Модель: ${e.message}`);window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok:false,error:String(e?.message||e)}}));return false}}
+async function changeModel(model){const sessionID=state.selected?.id||null,previousModel=activeModelRef()?{...activeModelRef()}:null;if(!state.selected){state.draftModel={...model};saveLastModel(model);renderControls();dispatchModelChanged(sessionID,model,previousModel,true);return true}return queueSessionModelChange(sessionID,async()=>{if(!hasSession(sessionID)){dispatchModelChanged(sessionID,model,previousModel,false,'session removed');return false}try{await api.switchModel(sessionID,model);if(!hasSession(sessionID)){dispatchModelChanged(sessionID,model,previousModel,false,'session removed');return false}sessionModelVersions.set(sessionID,(sessionModelVersions.get(sessionID)||0)+1);sessionModelOverrides.set(sessionID,{model:{...model}});setSessionModel(sessionID,model);if(state.selected?.id===sessionID){saveLastModel(model);renderControls();renderUsage()}dispatchModelChanged(sessionID,model,previousModel,true);return true}catch(e){if(state.selected?.id===sessionID)toast(`Модель: ${e.message}`);dispatchModelChanged(sessionID,model,previousModel,false,String(e?.message||e));return false}})}
 function directModelRef(){
   const current=activeModelRef()
   if(current&&!ORCHESTRATED_MODELS.some((model)=>model.id===current.id&&model.providerID===current.providerID))return {...current}
@@ -853,7 +891,7 @@ async function forkWithFallback(session,messageID){
 
 function openSessionActions(id=state.selected?.id){const session=state.sessions.find((s)=>s.id===id);if(!session)return;state.actionSession=session;const m=meta(session.id);$('sessionActionList').innerHTML=`<button class="action" data-action="rename">Переименовать</button><button class="action" data-action="pin">${m.pinned?'Открепить':'Закрепить'}</button><button class="action" data-action="duplicate">Дублировать (Fork)</button><button class="action" data-action="fork-last">Fork от последнего сообщения</button><button class="action" data-action="copy-context">Копировать с контекстом…</button><button class="action" data-action="move-project">Перенести через handoff…</button><button class="action" data-action="delete">Удалить</button>`;document.querySelectorAll('[data-action]').forEach((b)=>b.addEventListener('click',()=>runSessionAction(b.dataset.action)));$('sessionDialog').showModal()}
 async function runSessionAction(action){const session=state.actionSession;if(!session)return;$('sessionDialog').close();if(action==='rename'){state.actionSession=session;$('renameInput').value=sessionTitle(session);$('renameDialog').showModal();$('renameInput').focus();return}if(action==='pin'){meta(session.id).pinned=!meta(session.id).pinned;saveMeta();renderSessions();return}if(action==='copy-context'||action==='move-project'){if(state.selected?.id!==session.id)await selectSession(session.id);openProjectDialog(action==='move-project'?'move':'copy');return}if(action==='duplicate'||action==='fork-last'){try{if(state.selected?.id!==session.id)await selectSession(session.id);const mid=action==='fork-last'?(state.context.at(-1)?.id||state.context.at(-1)?.messageID):undefined;const fork=await forkWithFallback(session,mid);state.sessions=[fork,...state.sessions.filter((s)=>s.id!==fork.id)];await selectSession(fork.id);toast('Fork создан')}catch(e){toast(`Fork: ${e.message}`)}return}if(action==='delete'){if(await confirmAction('Удалить сессию?',`«${sessionTitle(session)}» будет удалена без возможности восстановления.`))await removeSession(session)}}
-async function removeSession(session){try{await api.deleteSession(session.id);state.sessions=state.sessions.filter((s)=>s.id!==session.id);delete sessionMeta[session.id];delete drafts[session.id];saveMeta();saveJson(DRAFT_KEY,drafts);state.running.delete(session.id);state.queues.delete(session.id);if(state.selected?.id===session.id)clearSelection();else renderSessions();toast('Сессия удалена')}catch(e){toast(`Удаление: ${e.message}`)}}
+async function removeSession(session){try{await api.deleteSession(session.id);state.sessions=state.sessions.filter((s)=>s.id!==session.id);delete sessionMeta[session.id];delete drafts[session.id];saveMeta();saveJson(DRAFT_KEY,drafts);state.running.delete(session.id);state.queues.delete(session.id);clearSessionModelState(session.id);if(state.selected?.id===session.id)clearSelection();else renderSessions();toast('Сессия удалена')}catch(e){toast(`Удаление: ${e.message}`)}}
 async function renameCurrent(){const session=state.actionSession||state.selected;if(!session)return;const title=$('renameInput').value.trim();if(!title)return;try{const updated=await api.renameSession(session.id,title);session.title=updated?.title||title;$('renameDialog').close();renderSessions();renderHeader()}catch(e){toast(`Rename: ${e.message}`)}}
 async function forkAtMessage(messageID){if(!state.selected)return;try{const fork=await forkWithFallback(state.selected,messageID.startsWith('idx-')?undefined:messageID);state.sessions=[fork,...state.sessions.filter((s)=>s.id!==fork.id)];await selectSession(fork.id);toast('Fork создан')}catch(e){toast(`Fork: ${e.message}`)}}
 

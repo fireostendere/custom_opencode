@@ -12,7 +12,8 @@ globalThis.localStorage = {
   setItem: (key, value) => storage.set(key, String(value)),
   removeItem: (key) => storage.delete(key),
 }
-globalThis.window = { addEventListener() {}, dispatchEvent() {} }
+const events = []
+globalThis.window = { addEventListener() {}, dispatchEvent(event) { events.push(event) } }
 function makeElement() {
   return {
     value: '', innerHTML: '', textContent: '', hidden: false, disabled: false, title: '', selectionStart: 0, selectionEnd: 0, scrollHeight: 42,
@@ -35,6 +36,7 @@ globalThis.document = {
 const API_METHODS = [
   'getSession', 'getContext', 'createSession', 'sendPrompt',
   'deleteSession', 'forkSession', 'switchAgent', 'switchModel',
+  'listProjects', 'listSessions', 'sessionStatuses',
 ]
 const handlers = {}
 globalThis.__smoke = {
@@ -62,7 +64,7 @@ assert.ok(!source.includes("from './refresh-coalescer.js'"), 'refresh-coalescer 
 const bootIndex = source.lastIndexOf('initialize().catch')
 assert.ok(bootIndex > 0, 'app.js boot call not found')
 source = source.slice(0, bootIndex)
-  + 'globalThis.__smoke.exports = { transferSessionToProject, forkWithFallback, sessionWithControls, handoffText, messagePlainText, changeAgent, changeModel, resetPromptHistory, navigatePromptHistory, state, seedDraft: (id, value) => { drafts[id] = value }, draftOf: (id) => drafts[id] }\n'
+  + 'globalThis.__smoke.exports = { transferSessionToProject, forkWithFallback, sessionWithControls, handoffText, messagePlainText, changeAgent, changeModel, loadSessionsNow, selectSession, resetPromptHistory, navigatePromptHistory, state, seedDraft: (id, value) => { drafts[id] = value }, draftOf: (id) => drafts[id] }\n'
 
 await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
 const app = globalThis.__smoke.exports
@@ -72,6 +74,8 @@ const calls = { createSession: [], sendPrompt: [], deleteSession: [], switchAgen
 const error = (status, message = 'boom') => Object.assign(new Error(message), { status })
 
 function reset() {
+  storage.clear()
+  events.length = 0
   state.sessions = []
   state.selected = null
   state.context = []
@@ -87,6 +91,15 @@ function reset() {
   handlers.forkSession = async () => { throw error(404, 'fork unsupported') }
   handlers.switchAgent = async (id, agent) => { calls.switchAgent.push({ id, agent }) }
   handlers.switchModel = async (id, model) => { calls.switchModel.push({ id, model }) }
+  handlers.listProjects = async () => []
+  handlers.listSessions = async () => []
+  handlers.sessionStatuses = async () => ({})
+}
+
+function deferred() {
+  let resolve, reject
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
 }
 
 const sourceSession = { id: 'ses_src', title: 'Source', location: { directory: '/src' } }
@@ -292,4 +305,152 @@ assert.deepEqual(state.selected.model, { id: 'new', providerID: 'np' })
 assert.equal(state.draftAgent, 'plan', 'selected-session agent switch must not touch the home draft')
 assert.deepEqual(state.draftModel, { id: 'qwen-flash', providerID: 'bailian-cli', variant: 'low' }, 'selected-session model switch must not touch the home draft')
 
-console.log('Session transfer smoke passed: handoff rollback + draft move + source-delete safety + fork fallback + clipping + session prompt history + draft isolation')
+// ── Scenario 15: stale list refresh must not undo a model switch ────────────
+reset()
+const listed = { id: 'ses_list', agent: 'build', model: { id: 'old', providerID: 'p' } }
+state.sessions = [listed]
+state.selected = listed
+const staleList = deferred()
+handlers.listSessions = async () => staleList.promise
+const refresh = app.loadSessionsNow({ background: true })
+await app.changeModel({ id: 'new', providerID: 'np', variant: 'high' })
+staleList.resolve([{ id: 'ses_list', agent: 'build', model: { id: 'old', providerID: 'p' } }])
+await refresh
+assert.deepEqual(state.selected.model, { id: 'new', providerID: 'np', variant: 'high' }, 'stale list response must preserve the switched selected model')
+assert.deepEqual(state.sessions[0].model, { id: 'new', providerID: 'np', variant: 'high' }, 'stale list response must preserve the switched list model')
+
+// ── Scenario 16: stale session detail must not undo a model switch ──────────
+reset()
+const detailSession = { id: 'ses_detail', agent: 'build', model: { id: 'old', providerID: 'p' } }
+state.sessions = [detailSession]
+const staleDetail = deferred()
+handlers.getSession = async () => staleDetail.promise
+const selecting = app.selectSession('ses_detail', { push: false })
+await app.changeModel({ id: 'new', providerID: 'np', variant: 'high' })
+staleDetail.resolve({ agent: 'plan', model: { id: 'old', providerID: 'p' } })
+await selecting
+assert.equal(state.selected.agent, 'plan', 'stale detail may still update unrelated fields')
+assert.deepEqual(state.selected.model, { id: 'new', providerID: 'np', variant: 'high' }, 'stale detail must preserve the switched selected model')
+assert.deepEqual(state.sessions[0].model, { id: 'new', providerID: 'np', variant: 'high' }, 'stale detail must preserve the switched list model')
+
+// ── Scenario 17: post-switch stale reads stay overridden until confirmation ─
+reset()
+const consistentSession = { id: 'ses_consistent', agent: 'build', model: { id: 'old', providerID: 'p' } }
+state.sessions = [consistentSession]
+state.selected = consistentSession
+await app.changeModel({ id: 'new', providerID: 'np', variant: 'high' })
+handlers.listSessions = async () => [{ id: 'ses_consistent', agent: 'build', model: { id: 'old', providerID: 'p' } }]
+await app.loadSessionsNow({ background: true })
+assert.deepEqual(state.sessions[0].model, { id: 'new', providerID: 'np', variant: 'high' }, 'a stale refresh started after switch must keep the local override')
+handlers.listSessions = async () => [{ id: 'ses_consistent', agent: 'build', model: { id: 'new', providerID: 'np', variant: 'high' } }]
+await app.loadSessionsNow({ background: true })
+assert.deepEqual(state.sessions[0].model, { id: 'new', providerID: 'np', variant: 'high' }, 'the matching backend model must confirm the override')
+
+// ── Scenario 18: a post-switch stale detail stays overridden until confirmed
+reset()
+const eventualDetailSession = { id: 'ses_eventual_detail', agent: 'build', model: { id: 'old', providerID: 'p' } }
+state.sessions = [eventualDetailSession]
+state.selected = eventualDetailSession
+await app.changeModel({ id: 'new', providerID: 'np', variant: 'high' })
+handlers.getSession = async () => ({ model: { id: 'old', providerID: 'p' } })
+await app.selectSession('ses_eventual_detail', { push: false })
+assert.deepEqual(state.selected.model, { id: 'new', providerID: 'np', variant: 'high' }, 'a stale detail started after switch must keep the local override')
+handlers.getSession = async () => ({ model: { id: 'new', providerID: 'np', variant: 'high' } })
+await app.selectSession('ses_eventual_detail', { push: false })
+assert.deepEqual(state.selected.model, { id: 'new', providerID: 'np', variant: 'high' }, 'the matching detail must confirm the override')
+
+// ── Scenario 19: a pre-mutation detail cannot roll back after confirmation ──
+reset()
+const confirmedSession = { id: 'ses_confirmed', agent: 'build', model: { id: 'old', providerID: 'p' } }
+state.sessions = [confirmedSession]
+const preMutationDetail = deferred()
+handlers.getSession = async () => preMutationDetail.promise
+const pendingSelection = app.selectSession('ses_confirmed', { push: false })
+await app.changeModel({ id: 'new', providerID: 'np', variant: 'high' })
+handlers.listSessions = async () => [{ id: 'ses_confirmed', agent: 'build', model: { id: 'new', providerID: 'np', variant: 'high' } }]
+await app.loadSessionsNow({ background: true })
+preMutationDetail.resolve({ model: { id: 'old', providerID: 'p' } })
+await pendingSelection
+assert.deepEqual(state.selected.model, { id: 'new', providerID: 'np', variant: 'high' }, 'a pre-mutation detail must stay stale even after another read confirms the model')
+
+// ── Scenario 20: model requests are serialized and recover after failure ───
+reset()
+const queuedSession = { id: 'ses_queue', agent: 'build', model: { id: 'old', providerID: 'p' } }
+state.sessions = [queuedSession]
+state.selected = queuedSession
+const firstSwitch = deferred(), secondSwitch = deferred()
+handlers.switchModel = async (id, model) => {
+  calls.switchModel.push({ id, model })
+  return calls.switchModel.length === 1 ? firstSwitch.promise : secondSwitch.promise
+}
+const switchA = app.changeModel({ id: 'a', providerID: 'p' })
+const switchB = app.changeModel({ id: 'b', providerID: 'p' })
+await new Promise(setImmediate)
+assert.deepEqual(calls.switchModel.map((call) => call.model.id), ['a'], 'the second switch must wait for the first backend call')
+firstSwitch.resolve()
+await new Promise(setImmediate)
+assert.deepEqual(calls.switchModel.map((call) => call.model.id), ['a', 'b'], 'the second switch must start after the first settles')
+secondSwitch.resolve()
+assert.equal(await switchA, true)
+assert.equal(await switchB, true)
+assert.deepEqual(state.selected.model, { id: 'b', providerID: 'p' }, 'the final UI model must be the last selection')
+assert.deepEqual(state.sessions[0].model, { id: 'b', providerID: 'p' }, 'the list model must follow the final selection')
+
+reset()
+const recoverSession = { id: 'ses_recover', agent: 'build', model: { id: 'old', providerID: 'p' } }
+state.sessions = [recoverSession]
+state.selected = recoverSession
+let recoverCalls = 0
+handlers.switchModel = async (id, model) => {
+  calls.switchModel.push({ id, model })
+  if (++recoverCalls === 1) throw error(500, 'first failed')
+}
+const failedA = app.changeModel({ id: 'a', providerID: 'p' })
+const recoveredB = app.changeModel({ id: 'b', providerID: 'p' })
+assert.equal(await failedA, false, 'the first failure must be reported')
+assert.equal(await recoveredB, true, 'a failed switch must not block the next request')
+assert.deepEqual(calls.switchModel.map((call) => call.model.id), ['a', 'b'])
+assert.deepEqual(state.selected.model, { id: 'b', providerID: 'p' })
+
+// ── Scenario 21: a queued switch after deletion must not call the API ───────
+reset()
+const deletedQueueSession = { id: 'ses_deleted_queue', agent: 'build', model: { id: 'old', providerID: 'p' } }
+state.sessions = [deletedQueueSession]
+state.selected = deletedQueueSession
+const activeDeletedSwitch = deferred()
+handlers.switchModel = async (id, model) => {
+  calls.switchModel.push({ id, model })
+  return activeDeletedSwitch.promise
+}
+const deletingA = app.changeModel({ id: 'a', providerID: 'p' })
+const deletingB = app.changeModel({ id: 'b', providerID: 'p' })
+await new Promise(setImmediate)
+state.sessions = []
+state.selected = null
+activeDeletedSwitch.resolve()
+assert.equal(await deletingA, false, 'an in-flight result after deletion must fail locally')
+assert.equal(await deletingB, false, 'a queued request after deletion must fail locally')
+assert.deepEqual(calls.switchModel.map((call) => call.model.id), ['a'], 'the queued request must not call switchModel after deletion')
+assert.equal(events.at(-1).detail.ok, false)
+assert.equal(events.at(-1).detail.error, 'session removed')
+
+// ── Scenario 22: old-session completion cannot overwrite last model ─────────
+reset()
+const oldSession = { id: 'ses_old', agent: 'build', model: { id: 'old', providerID: 'p' } }
+const currentSession = { id: 'ses_current', agent: 'build', model: { id: 'current', providerID: 'p' } }
+state.sessions = [oldSession, currentSession]
+state.selected = oldSession
+const lateOldSwitch = deferred()
+handlers.switchModel = async (id, model) => {
+  calls.switchModel.push({ id, model })
+  return id === oldSession.id ? lateOldSwitch.promise : undefined
+}
+const oldChange = app.changeModel({ id: 'old-result', providerID: 'p' })
+await new Promise(setImmediate)
+state.selected = currentSession
+await app.changeModel({ id: 'current-result', providerID: 'p' })
+lateOldSwitch.resolve()
+assert.equal(await oldChange, true)
+assert.deepEqual(JSON.parse(localStorage.getItem('opencode:web:last-model-v1')), { id: 'current-result', providerID: 'p' }, 'a late old-session result must not overwrite the latest selected model')
+
+console.log('Session transfer smoke passed: handoff rollback + draft move + source-delete safety + fork fallback + clipping + session prompt history + draft isolation + stale model guards + serialized model changes')
