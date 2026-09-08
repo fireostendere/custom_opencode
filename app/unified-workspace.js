@@ -93,7 +93,7 @@ function openPanel(tab=state.tab){ensureUI();state.open=true;$('unifiedPanel').c
 function closePanel(){state.open=false;$('unifiedPanel')?.classList.remove('open');if($('unifiedScrim'))$('unifiedScrim').hidden=true;stopPolling()}
 function setTab(tab){state.tab=tab||'activity';document.querySelectorAll('[data-unified-tab]').forEach(button=>button.classList.toggle('active',button.dataset.unifiedTab===state.tab));document.querySelectorAll('[data-unified-view]').forEach(view=>view.hidden=view.dataset.unifiedView!==state.tab);renderCurrent()}
 
-function startPolling(){stopPolling();state.timer=setInterval(()=>{if(state.open)refreshAll(false)},2800)}
+function startPolling(){stopPolling();state.timer=setInterval(()=>{if(state.open&&!document.hidden)refreshAll(false)},2800)}
 function stopPolling(){if(state.timer){clearInterval(state.timer);state.timer=null}}
 
 async function refreshAll(force=false){
@@ -226,7 +226,7 @@ function closePalette(){if($('unifiedPalette'))$('unifiedPalette').hidden=true}
 
 function bindKeys(){document.addEventListener('keydown',event=>{const key=event.key.toLowerCase();if((event.ctrlKey&&key==='k')||(event.ctrlKey&&event.shiftKey&&key==='p')){event.preventDefault();openPalette();return}if(event.key==='Escape'){if(!$('unifiedPalette')?.hidden){closePalette();return}if(state.open)closePanel()}if(event.ctrlKey&&event.altKey&&!event.shiftKey){if(key==='a'){event.preventDefault();openPanel('activity')}else if(key==='p'){event.preventDefault();openPanel('plan')}else if(key==='c'){event.preventDefault();openPanel('runtime')}}},true)}
 
-function boot(){ensureUI();bindKeys();window.addEventListener('hashchange',()=>{state.refreshSeq+=1;state.planSeq+=1;state.activity=[];state.plan=null;state.lastEventID=0;state.unseen=0;state.followActivity=true;if(state.open)refreshAll(true)});window.addEventListener('custom-opencode:session-selected',()=>{if(state.open)refreshAll(true)});setTimeout(()=>refreshAll(true),500)}
+function boot(){ensureUI();bindKeys();window.addEventListener('hashchange',()=>{state.refreshSeq+=1;state.planSeq+=1;state.activity=[];state.plan=null;state.lastEventID=0;state.unseen=0;state.followActivity=true;if(state.open)refreshAll(true)});window.addEventListener('custom-opencode:session-selected',()=>{if(state.open)refreshAll(true)});document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.open)refreshAll(true)});setTimeout(()=>refreshAll(true),500)}
 
 window.CustomOpenCodeWorkspace={open:openPanel,close:closePanel,tab:setTab,refresh:()=>refreshAll(true),palette:openPalette,action:runAction}
 boot()

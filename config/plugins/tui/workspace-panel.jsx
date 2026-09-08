@@ -241,9 +241,9 @@ export default Plugin.define({
         if (!item.enabled || item.pinned || item.collapsed) continue
         const size = extent(side)
         if (side === "left" && x < size) return true
-        if (side === "right" && x > width - size) return true
+        if (side === "right" && x >= width - size) return true
         if (side === "top" && y < size) return true
-        if (side === "bottom" && y > height - size) return true
+        if (side === "bottom" && y >= height - size) return true
       }
       return false
     }
@@ -373,12 +373,10 @@ export default Plugin.define({
                 </box>
               </box>
               <box flexDirection="row" flexGrow={1} width="100%" minHeight={0}>
-                <Show when={props.side === "right"}>
-                  <box width={HANDLE} flexShrink={0} />
-                </Show>
                 <scrollbox
                   ref={(node) => { scroll = node; scrollRefs.set(props.side, node) }}
                   flexGrow={1}
+                  minWidth={0}
                   minHeight={0}
                   scrollY={true}
                   stickyScroll={true}
@@ -390,7 +388,7 @@ export default Plugin.define({
                     trackOptions: { backgroundColor: theme.background.surface.offset, foregroundColor: theme.scrollbar.default },
                   }}
                 >
-                  <box flexDirection="column" paddingX={1} paddingTop={1} paddingBottom={1} gap={1} flexShrink={0}>
+                  <box flexDirection="column" width="100%" minWidth={0} paddingX={1} paddingTop={1} paddingBottom={1} gap={1} flexShrink={0}>
                     <PanelContent view={item().active} sessionID={sessionID()} />
                   </box>
                 </scrollbox>

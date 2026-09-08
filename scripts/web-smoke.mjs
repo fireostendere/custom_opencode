@@ -244,7 +244,8 @@ if (!advanced.includes('const livePanelMarkup = `<details class="orchestration-p
 if (!advanced.includes('if (host._structureMarkup === structureMarkup)')) throw new Error('Unchanged activity structure must not churn the DOM')
 if (!appSource.includes('inner._lastHtml===fullHtml&&!anchor&&!bottom')) throw new Error('DOM cache must not suppress requested scroll restoration')
 if (advanced.includes('id="projectDefaultMode"')) throw new Error('Web project settings must not expose Plan mode')
-if (!advanced.includes("const panelOpen={plan:host.querySelector('.plan-panel')?.open===true")) throw new Error('Orchestration panel must preserve its open state while refreshing')
+if (!advanced.includes("const panelOpen=host.querySelector('.plan-panel')?.open===true||host.querySelector('.live-panel')?.open===true")) throw new Error('Orchestration panels must reopen together when either was open')
+if (!advanced.includes('details.forEach((row)=>{row.open=detail.open})') || !advanced.includes('details.forEach((detail)=>{detail.open=panelOpen})')) throw new Error('Orchestration panel toggles must synchronize both cards')
 if (!advanced.includes('captureScrollState(host.querySelector(\'.plan-panel-body\'))') || !advanced.includes('captureScrollState(host.querySelector(\'.orchestration-nodes\'))') || !advanced.includes('requestAnimationFrame(() =>')) throw new Error('Orchestration panel must preserve both scroll positions after layout while refreshing')
 if (!advanced.includes('orchestrationRevision') || !advanced.includes('orchestrationRenderRevision') || !advanced.includes('state.sessionID !== sessionID')) throw new Error('Orchestration refresh and deferred scroll restoration must reject stale sessions/renders')
 if (advanced.includes('activity-chevron') || advancedCss.includes('activity-chevron')) throw new Error('Orchestration summaries must use only the shared right chevron')
@@ -284,7 +285,9 @@ for (const marker of ['.question-card', '.queue-list', '.orchestration-trace', '
 for (const marker of ['orchestration-panels', 'orchestration-summary', 'activity-current-label', 'activityItems', 'activityDescriptor', 'panelOpen']) {
   if (!(advanced.includes(marker) || advancedCss.includes(marker))) throw new Error(`Activity dock marker missing: ${marker}`)
 }
-if (!advanced.includes('details.some((detail)=>detail.open)')) throw new Error('Plan and activity panels must share expanded state')
+if (!advancedCss.includes('.orchestration-panels{display:grid;align-items:start;')) throw new Error('Orchestration cards must not stretch to the height of a neighbor')
+if (advancedCss.includes('.plan-panel-body{max-height:') || advancedCss.includes('.plan-panel-body{overflow-y:auto')) throw new Error('Plan panel must not have an internal height limit or scrollbar')
+if (!advancedCss.includes('.orchestration-nodes{display:grid;gap:7px;max-height:300px;overflow-y:auto') || !advancedCss.includes('.orchestration-nodes{max-height:240px}')) throw new Error('Only the activity panel may keep desktop and mobile height limits')
 for (const marker of ['--sidebar-width', '--scrollbar-size', '.sidebar-resizer', '*::-webkit-scrollbar-thumb', '.limits-summary::after', '.model-provider-chevron', 'overflow-y:auto', '.workflow-grid']) {
   if (!designSystem.includes(marker)) throw new Error(`Design-system styling missing: ${marker}`)
 }

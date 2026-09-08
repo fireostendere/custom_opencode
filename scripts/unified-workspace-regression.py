@@ -91,12 +91,21 @@ assert "arguments:JSON.stringify(input)" not in workspace_js
 
 for marker in (
     "if (!state.sessionID || !activityBelongsToSession(payload)) return",
+    "orchestrationRenderFrame: null",
+    "function scheduleOrchestrationRender()",
+    "if (state.orchestrationRenderFrame !== null) return",
+    "state.orchestrationRenderFrame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(render) : setTimeout(render, 0)",
+    "scheduleOrchestrationRender()",
     "host.hidden = !state.sessionID",
     "const planPanelMarkup = plan ?",
     "const livePanelMarkup = `<details class=\"orchestration-panel live-panel\">",
 ):
     assert marker in advanced_features_js, marker
 assert "workflowSurfaceEnabled" not in advanced_features_js
+assert "setInterval(() => { if (!document.hidden && state.sessionID) renderStatus() }, 2000)" in advanced_features_js
+
+assert "function startPolling(){stopPolling();state.timer=setInterval(()=>{if(state.open&&!document.hidden)refreshAll(false)},2800)}" in workspace_js
+assert "document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.open)refreshAll(true)})" in workspace_js
 
 wizard_action = workspace_js[workspace_js.index("function runAction"):workspace_js.index("function filteredActions")]
 assert "prefillCommand(action.command)" in wizard_action

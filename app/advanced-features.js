@@ -31,6 +31,7 @@ const state = {
   activityHydrated: false,
   orchestrationRevision: 0,
   orchestrationRenderRevision: 0,
+  orchestrationRenderFrame: null,
   runStartedAt: null,
   lastDurationMs: 0,
   attachments: [],
@@ -994,7 +995,15 @@ function updateActivityFromEvent(payload) {
   else state.activityItems.push(next)
   state.activityItems = state.activityItems.slice(-32)
   state.currentActivityID = descriptor.id
-  renderOrchestration()
+  scheduleOrchestrationRender()
+}
+function scheduleOrchestrationRender() {
+  if (state.orchestrationRenderFrame !== null) return
+  const render = () => {
+    state.orchestrationRenderFrame = null
+    renderOrchestration()
+  }
+  state.orchestrationRenderFrame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(render) : setTimeout(render, 0)
 }
 function latestActivityFromMessages(messages, child) {
   const rows = Array.isArray(messages) ? messages : []
@@ -1106,7 +1115,7 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   if (!host) return
   const renderRevision = ++state.orchestrationRenderRevision
   const conversation = captureScrollState($('messages'))
-  const panelOpen={plan:host.querySelector('.plan-panel')?.open===true,live:host.querySelector('.live-panel')?.open===true}
+  const panelOpen=host.querySelector('.plan-panel')?.open===true||host.querySelector('.live-panel')?.open===true
   const planScroll = captureScrollState(host.querySelector('.plan-panel-body'))
   const nodesScroll = captureScrollState(host.querySelector('.orchestration-nodes'))
   const children = state.children || []
@@ -1178,12 +1187,11 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
     const summary = detail.querySelector('summary')
     summary?.addEventListener('pointerdown', rememberConversation)
     summary?.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') rememberConversation() })
-    detail.addEventListener('toggle', () => { host.classList.toggle('is-expanded',details.some((row)=>row.open));restoreScrollState($('messages'), detail._conversationScroll || captureScrollState($('messages'))) })
+    detail.addEventListener('toggle', () => { details.forEach((row)=>{row.open=detail.open});host.classList.toggle('is-expanded',detail.open);restoreScrollState($('messages'), detail._conversationScroll || captureScrollState($('messages'))) })
   })
   const planPanel=host.querySelector('.plan-panel'),livePanel=host.querySelector('.live-panel')
-  if(planPanel)planPanel.open=panelOpen.plan
-  if(livePanel)livePanel.open=panelOpen.live
-  host.classList.toggle('is-expanded',details.some((detail)=>detail.open))
+  details.forEach((detail)=>{detail.open=panelOpen})
+  host.classList.toggle('is-expanded',panelOpen)
   restoreScrollState($('messages'), conversation)
   const sessionID = state.sessionID
   const revision = state.orchestrationRevision
@@ -1425,7 +1433,7 @@ function init() {
   refreshSelectedSession()
   setInterval(tickFast, 2500)
   setInterval(tickMedium, 5000)
-  setInterval(() => { if (state.sessionID) renderStatus() }, 2000)
+  setInterval(() => { if (!document.hidden && state.sessionID) renderStatus() }, 2000)
 }
 
 if (typeof document !== 'undefined') init()

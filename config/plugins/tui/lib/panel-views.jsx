@@ -244,14 +244,14 @@ export function createPanelViews(context) {
     const win = () => props.win
     return (
       <Show when={win() && typeof win().usedPercent === "number"}>
-        <box flexDirection="column" flexShrink={0}>
-          <text fg={theme.text.subdued}><span>{props.label}</span></text>
-          <box flexDirection="row" gap={1}>
+        <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
+          <text fg={theme.text.subdued} wrapMode="word"><span>{props.label}</span></text>
+          <box flexDirection="row" gap={1} width="100%" minWidth={0} flexShrink={1}>
             <text fg={usageColor(win().usedPercent)}><span>{bar(win().usedPercent)}</span></text>
-            <text fg={theme.text.default}><span>{Math.round(win().usedPercent)}%</span></text>
+            <text fg={theme.text.default} flexShrink={0}><span>{Math.round(win().usedPercent)}%</span></text>
           </box>
-          <Show when={win().resetsAt}><text fg={theme.text.subdued}><span>сброс {fmtReset(win().resetsAt)}</span></text></Show>
-          <Show when={win().limit != null && win().usedCredits != null}><text fg={theme.text.subdued}><span>{fmtK(win().usedCredits)} / {fmtK(win().limit)} исп.</span></text></Show>
+          <Show when={win().resetsAt}><text fg={theme.text.subdued} wrapMode="word"><span>сброс {fmtReset(win().resetsAt)}</span></text></Show>
+          <Show when={win().limit != null && win().usedCredits != null}><text fg={theme.text.subdued} wrapMode="word"><span>{fmtK(win().usedCredits)} / {fmtK(win().limit)} исп.</span></text></Show>
         </box>
       </Show>
     )
@@ -269,7 +269,7 @@ export function createPanelViews(context) {
       return g ?? { available: false }
     }
     return (
-      <box flexDirection="column" gap={1} flexShrink={0}>
+      <box flexDirection="column" width="100%" minWidth={0} gap={1} flexShrink={0}>
         <Show when={codex().available} fallback={<text fg={theme.text.subdued}><span>ChatGPT: нет данных</span></text>}>
           <WindowRows label={codex().primary?.windowDurationMins ? `ChatGPT · ${fmtWindow(codex().primary.windowDurationMins)}` : "ChatGPT"} win={codex().primary} />
           <WindowRows label={codex().secondary?.windowDurationMins ? `ChatGPT · ${fmtWindow(codex().secondary.windowDurationMins)}` : "ChatGPT · доп."} win={codex().secondary} />
@@ -278,9 +278,9 @@ export function createPanelViews(context) {
           when={qwen().available && qwen().state === "ok"}
           fallback={
             qwen().state === "expired" || qwen().reason === "session-expired" ? (
-              <box flexDirection="column" flexShrink={0}>
-                <text fg={theme.text.feedback.warning.default}><span>Alibaba: сессия истекла</span></text>
-                <text fg={theme.text.subdued}><span>bl auth login --console</span></text>
+              <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
+                <text fg={theme.text.feedback.warning.default} wrapMode="word"><span>Alibaba: сессия истекла</span></text>
+                <text fg={theme.text.subdued} wrapMode="word"><span>bl auth login --console</span></text>
               </box>
             ) : (
               <text fg={theme.text.subdued}><span>Alibaba: нет данных</span></text>

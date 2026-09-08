@@ -60,6 +60,7 @@ let historyPaginationIntent = false
 let historyPaginationIntentTimer = 0
 let historyPaginationTouch = null
 let statusSyncGeneration = 0
+let messageRenderFrame = null
 
 function loadJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || '') || fallback } catch { return fallback }
@@ -713,6 +714,15 @@ function renderMessages({anchor=null,bottom=false}={}){
   updateScrollToBottomButton()
 }
 
+// Streaming SSE events can arrive much faster than the browser can paint.
+// Keep their state updates synchronous, but render the accumulated result once
+// per frame. Explicit navigation/history renders still call renderMessages.
+function scheduleMessageRender(){
+  if(messageRenderFrame!==null)return
+  const render=()=>{messageRenderFrame=null;renderMessages()}
+  messageRenderFrame=typeof requestAnimationFrame==='function'?requestAnimationFrame(render):setTimeout(render,0)
+}
+
 function messagesAtBottom(view=$('messages')){return !view||view.scrollHeight-view.clientHeight-view.scrollTop<=100}
 function updateScrollToBottomButton(){const button=$('scrollToBottom'),view=$('messages');if(button)button.hidden=!state.selected||messagesAtBottom(view)}
 function scrollMessagesToBottom(){const view=$('messages');if(!view)return;view.scrollTo({top:view.scrollHeight,behavior:'instant'});updateScrollToBottomButton()}
@@ -889,19 +899,19 @@ function handleEvent(payload){
   if(!state.selected||sid!==state.selected.id)return
   let message,part
   switch(payload.type){
-    case'session.step.started':ensureAssistant(data.assistantMessageID);renderMessages();break
-    case'session.reasoning.started':ensurePart(ensureAssistant(data.assistantMessageID),'reasoning',data.ordinal||0);renderMessages();break
-    case'session.reasoning.delta':part=ensurePart(ensureAssistant(data.assistantMessageID),'reasoning',data.ordinal||0);part.text+=(data.delta||'');renderMessages();break
-    case'session.reasoning.ended':part=ensurePart(ensureAssistant(data.assistantMessageID),'reasoning',data.ordinal||0);part.text=data.text||part.text;renderMessages();break
-    case'session.text.started':ensurePart(ensureAssistant(data.assistantMessageID),'text',data.ordinal||0);renderMessages();break
-    case'session.text.delta':part=ensurePart(ensureAssistant(data.assistantMessageID),'text',data.ordinal||0);part.text+=(data.delta||'');renderMessages();break
-    case'session.text.ended':part=ensurePart(ensureAssistant(data.assistantMessageID),'text',data.ordinal||0);part.text=data.text||part.text;renderMessages();break
-    case'session.tool.input.started':ensureTool(ensureAssistant(data.assistantMessageID),data);renderMessages();break
-    case'session.tool.input.delta':part=ensureTool(ensureAssistant(data.assistantMessageID),data);part.state.input+=(data.delta||'');renderMessages();break
-    case'session.tool.called':part=ensureTool(ensureAssistant(data.assistantMessageID),data);part.state={status:'running',input:data.input||{},metadata:{}};renderMessages();break
-    case'session.tool.progress':part=ensureTool(ensureAssistant(data.assistantMessageID),data);part.state.metadata=data.metadata||{};renderMessages();break
-    case'session.tool.success':part=ensureTool(ensureAssistant(data.assistantMessageID),data);part.state={status:'completed',input:part.state.input||data.input||{},content:data.content||[],metadata:data.metadata||{}};renderMessages();break
-    case'session.tool.failed':part=ensureTool(ensureAssistant(data.assistantMessageID),data);part.state={status:'error',input:part.state.input||{},error:data.error,content:data.content||[]};renderMessages();break
+    case'session.step.started':ensureAssistant(data.assistantMessageID);scheduleMessageRender();break
+    case'session.reasoning.started':ensurePart(ensureAssistant(data.assistantMessageID),'reasoning',data.ordinal||0);scheduleMessageRender();break
+    case'session.reasoning.delta':part=ensurePart(ensureAssistant(data.assistantMessageID),'reasoning',data.ordinal||0);part.text+=(data.delta||'');scheduleMessageRender();break
+    case'session.reasoning.ended':part=ensurePart(ensureAssistant(data.assistantMessageID),'reasoning',data.ordinal||0);part.text=data.text||part.text;scheduleMessageRender();break
+    case'session.text.started':ensurePart(ensureAssistant(data.assistantMessageID),'text',data.ordinal||0);scheduleMessageRender();break
+    case'session.text.delta':part=ensurePart(ensureAssistant(data.assistantMessageID),'text',data.ordinal||0);part.text+=(data.delta||'');scheduleMessageRender();break
+    case'session.text.ended':part=ensurePart(ensureAssistant(data.assistantMessageID),'text',data.ordinal||0);part.text=data.text||part.text;scheduleMessageRender();break
+    case'session.tool.input.started':ensureTool(ensureAssistant(data.assistantMessageID),data);scheduleMessageRender();break
+    case'session.tool.input.delta':part=ensureTool(ensureAssistant(data.assistantMessageID),data);part.state.input+=(data.delta||'');scheduleMessageRender();break
+    case'session.tool.called':part=ensureTool(ensureAssistant(data.assistantMessageID),data);part.state={status:'running',input:data.input||{},metadata:{}};scheduleMessageRender();break
+    case'session.tool.progress':part=ensureTool(ensureAssistant(data.assistantMessageID),data);part.state.metadata=data.metadata||{};scheduleMessageRender();break
+    case'session.tool.success':part=ensureTool(ensureAssistant(data.assistantMessageID),data);part.state={status:'completed',input:part.state.input||data.input||{},content:data.content||[],metadata:data.metadata||{}};scheduleMessageRender();break
+    case'session.tool.failed':part=ensureTool(ensureAssistant(data.assistantMessageID),data);part.state={status:'error',input:part.state.input||{},error:data.error,content:data.content||[]};scheduleMessageRender();break
     case'session.inbox.delivered':case'session.execution.succeeded':case'session.execution.failed':case'session.execution.interrupted':scheduleContextReload(120);break
     default: if(payload.type.startsWith('session.'))scheduleContextReload(450)
   }

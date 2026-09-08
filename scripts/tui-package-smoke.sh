@@ -92,6 +92,22 @@ while time.time() < deadline:
                 if not extra:
                     break
                 buffer += extra
+            if geometry == '80x24':
+                os.write(master, b'/panel right limits\r')
+                command_deadline = time.time() + 2.0
+                while time.time() < command_deadline:
+                    ready, _, _ = select.select([master], [], [], 0.10)
+                    if not ready:
+                        continue
+                    try:
+                        extra = os.read(master, 4096)
+                    except OSError:
+                        break
+                    if not extra:
+                        break
+                    buffer += extra
+                    if 'Лимиты'.encode() in buffer:
+                        break
             break
     if proc.poll() is not None:
         break
@@ -123,6 +139,12 @@ PY
     echo "TUI did not reach the prompt at $geometry" >&2
     exit 1
   }
+  if [[ "$geometry" == "80x24" ]]; then
+    grep -Fq 'Лимиты' "$capture" || {
+      echo "TUI did not open /panel right limits at 80x24" >&2
+      exit 1
+    }
+  fi
 done
 
 echo "Packaged TUI smoke passed: pinned opencode2 loader + plugin runtime at 80x24/120x30/160x40; model selection behavior is gated by model-selector-smoke.mjs"
