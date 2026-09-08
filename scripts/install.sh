@@ -141,6 +141,52 @@ if [[ "$RAG_MODE" != 0 ]]; then
   fi
 fi
 
+DIPTRACE_MODE=${DIPTRACE_MCP_ENABLED:-auto}
+case "$DIPTRACE_MODE" in
+  0|1|auto) ;;
+  *)
+    echo "DIPTRACE_MCP_ENABLED must be one of: 0, 1, auto" >&2
+    exit 1
+    ;;
+esac
+
+DIPTRACE_ROOT="$ROOT"
+DIPTRACE_BIN="diptrace-mcp"
+DIPTRACE_WORKSPACE="$ROOT"
+DIPTRACE_ALLOWED_ROOTS="$ROOT"
+DIPTRACE_STATE_DIR=""
+DIPTRACE_DISABLED=true
+if [[ "$DIPTRACE_MODE" != 0 ]]; then
+  DIPTRACE_ROOT=${DIPTRACE_MCP_ROOT:-}
+  if [[ -z "$DIPTRACE_ROOT" ]]; then
+    candidate="$ROOT/../mcp_diptrace"
+    if [[ -d "$candidate" && -f "$candidate/.venv/bin/diptrace-mcp" && -x "$candidate/.venv/bin/diptrace-mcp" ]]; then
+      DIPTRACE_ROOT=$candidate
+    fi
+  fi
+  DIPTRACE_BIN=${DIPTRACE_MCP_BIN:-}
+  if [[ -z "$DIPTRACE_BIN" && -n "$DIPTRACE_ROOT" ]]; then
+    DIPTRACE_BIN="$DIPTRACE_ROOT/.venv/bin/diptrace-mcp"
+  fi
+  DIPTRACE_WORKSPACE=${DIPTRACE_MCP_WORKSPACE:-"$DIPTRACE_ROOT"}
+  DIPTRACE_ALLOWED_ROOTS=${DIPTRACE_MCP_ALLOWED_ROOTS:-"$DIPTRACE_WORKSPACE"}
+  DIPTRACE_STATE_DIR=${DIPTRACE_MCP_STATE_DIR:-}
+  if [[ -d "$DIPTRACE_ROOT" && -f "$DIPTRACE_BIN" && -x "$DIPTRACE_BIN" && -d "$DIPTRACE_WORKSPACE" ]]; then
+    DIPTRACE_DISABLED=false
+  elif [[ "$DIPTRACE_MODE" == 1 ]]; then
+    echo "DIPTRACE_MCP_ENABLED=1 requires a valid DIPTRACE_MCP_ROOT, executable DIPTRACE_MCP_BIN, and directory DIPTRACE_MCP_WORKSPACE" >&2
+    exit 1
+  fi
+fi
+if [[ "$DIPTRACE_DISABLED" == true ]]; then
+  # Keep a disabled entry syntactically valid without using unverified paths.
+  DIPTRACE_ROOT="$ROOT"
+  DIPTRACE_BIN="diptrace-mcp"
+  DIPTRACE_WORKSPACE="$ROOT"
+  DIPTRACE_ALLOWED_ROOTS="$ROOT"
+  DIPTRACE_STATE_DIR=""
+fi
+
 # Ponytail: managed upstream checkout. It is enabled by default; an unavailable
 # enabled checkout is an installation failure, not a silent feature downgrade.
 PONYTAIL_ENABLED=${PONYTAIL_ENABLED:-1}
@@ -279,10 +325,12 @@ if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
     done < <(cd "$ROOT/config/plugins/tui" && find . -type f -print0)
   fi
   install -m 0644 "$ROOT"/config/themes/*.json "$CONFIG_DIR/themes/"
-  "$PYTHON3" - "$ROOT/config/opencode.json.template" "$CONFIG_DIR/opencode.json" "$CONFIG_DIR" "$ROOT" "$RAG_DISABLED" "$PONYTAIL_PLUGIN_PATH" <<'PY'
+  "$PYTHON3" - "$ROOT/config/opencode.json.template" "$CONFIG_DIR/opencode.json" "$CONFIG_DIR" "$ROOT" "$RAG_DISABLED" "$PONYTAIL_PLUGIN_PATH" "$DIPTRACE_DISABLED" "$DIPTRACE_BIN" "$DIPTRACE_ROOT" "$DIPTRACE_WORKSPACE" "$DIPTRACE_ALLOWED_ROOTS" "$DIPTRACE_STATE_DIR" <<'PY'
 import json, os, shutil, sys
 from pathlib import Path
-source, target, config_dir, root, rag_disabled, ponytail_plugin = sys.argv[1:]
+(source, target, config_dir, root, rag_disabled, ponytail_plugin, diptrace_disabled,
+ diptrace_bin, diptrace_root, diptrace_workspace, diptrace_allowed_roots,
+ diptrace_state_dir) = sys.argv[1:]
 text = open(source, encoding="utf-8").read()
 def json_string_value(value):
     return json.dumps(value, ensure_ascii=False)[1:-1]
@@ -300,6 +348,23 @@ config["tool_output"] = {"max_lines": 1600, "max_bytes": 48000}
 kb = (((config.get("mcp") or {}).get("servers") or {}).get("kb"))
 if isinstance(kb, dict):
     kb["codemode"] = True
+servers = config.setdefault("mcp", {}).setdefault("servers", {})
+diptrace_environment = {
+    "DIPTRACE_MCP_WORKSPACE": diptrace_workspace,
+    "DIPTRACE_MCP_ALLOWED_ROOTS": diptrace_allowed_roots,
+    "DIPTRACE_MCP_POLICY": "read_only",
+}
+if diptrace_state_dir:
+    diptrace_environment["DIPTRACE_MCP_STATE_DIR"] = diptrace_state_dir
+servers["diptrace"] = {
+    "type": "local",
+    "command": [diptrace_bin],
+    "cwd": diptrace_root,
+    "disabled": diptrace_disabled == "true",
+    "codemode": True,
+    "timeout": {"startup": 10000, "catalog": 10000, "execution": 60000},
+    "environment": diptrace_environment,
+}
 target = Path(target)
 if target.is_symlink():
     raise SystemExit(f"refusing symlink config target: {target}")
@@ -447,6 +512,7 @@ SERVICE_ENV=(
   OPENCODE_ORCHESTRATED_MODEL OPENCODE_SOL_ORCHESTRATED_MODEL
   OPENCODE_SOL_BUILDER_MODEL OPENCODE_SOL_READER_MODEL OPENCODE_SOL_REVIEW_MODEL
   PONYTAIL_DEFAULT_MODE GEMINI_API_KEY GOOGLE_API_KEY OPENCODE_PLAN_DIRECTORY
+  MCP_RAG_ROOT MCP_RAG_BIN
 )
 install -d -m 0700 "$CONFIG_DIR"
 "$PYTHON3" - "$CONFIG_DIR/service.json" "$CONFIG_DIR" "${SERVICE_ENV[@]}" <<'PY'
@@ -471,6 +537,8 @@ for name in names:
     value = config_dir if name == "OPENCODE_CONFIG_DIR" else os.environ.get(name, "")
     if value and value != "CHANGE_ME":
         service_env[name] = value
+    else:
+        service_env.pop(name, None)
 config["env"] = service_env
 temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
 with temporary.open("x", encoding="utf-8") as handle:
@@ -506,4 +574,11 @@ elif [[ "$RAG_MODE" == 0 ]]; then
   echo "RAG MCP: intentionally disabled (MCP_RAG_ENABLED=0)"
 else
   echo "RAG MCP: disabled; set MCP_RAG_ENABLED=1 plus MCP_RAG_ROOT/MCP_RAG_BIN, then rerun install/update"
+fi
+if [[ "$DIPTRACE_DISABLED" == false ]]; then
+  echo "DipTrace MCP: enabled ($DIPTRACE_ROOT)"
+elif [[ "$DIPTRACE_MODE" == 0 ]]; then
+  echo "DipTrace MCP: intentionally disabled (DIPTRACE_MCP_ENABLED=0)"
+else
+  echo "DipTrace MCP: unavailable in auto mode; set DIPTRACE_MCP_ENABLED=1 plus DIPTRACE_MCP_ROOT/DIPTRACE_MCP_BIN, then rerun install/update"
 fi

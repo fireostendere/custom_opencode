@@ -8,6 +8,7 @@ no ingestion and no model inference.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import sys
@@ -16,12 +17,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
 
 
-def _search_payload(value: object) -> dict[str, object] | None:
-    """Normalize direct FastMCP dicts and compatibility result wrappers."""
-    if not isinstance(value, dict):
-        return None
-    nested = value.get("result")
-    return nested if isinstance(nested, dict) else value
+def _contract_validator():
+    spec = importlib.util.spec_from_file_location("rag_probe", ROOT / "scripts" / "rag-probe.py")
+    if not spec or not spec.loader:
+        raise ImportError("cannot load rag-probe contract validator")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.validate_probe_contract
 
 
 def main() -> int:
@@ -52,14 +54,20 @@ def main() -> int:
         return 1
 
     probe = server_rag.plus._run_rag_probe("search", args.query)
-    required = {"knowledge_search", "knowledge_get", "knowledge_sources", "knowledge_status"}
+    required = {
+        "knowledge_search", "knowledge_get", "knowledge_sources", "knowledge_status",
+        "knowledge_research", "knowledge_figures", "knowledge_get_figure",
+        "knowledge_get_part_evidence",
+    }
     tools = set(probe.get("tools") or []) if isinstance(probe, dict) else set()
     raw_search = probe.get("search") if isinstance(probe, dict) else None
-    search = _search_payload(raw_search)
-    hits = search.get("hits") if isinstance(search, dict) else None
-    search_error = search.get("error") if isinstance(search, dict) else "invalid search response"
-    search_ready = not search_error and isinstance(hits, list) and len(hits) > 0
-    ok = bool(probe.get("ok") and required.issubset(tools) and search_ready)
+    contract = _contract_validator()(raw_search, probe.get("get"), probe.get("continuation"), require_get=True)
+    hits = raw_search.get("hits") if isinstance(raw_search, dict) else None
+    ok = bool(
+        probe.get("ok") and probe.get("requiredToolsPresent") and required.issubset(tools)
+        and not probe.get("contractErrors") and contract["ok"]
+        and probe.get("searchChecks") and probe.get("getChecks")
+    )
 
     output = {
         "ok": ok,
@@ -70,8 +78,13 @@ def main() -> int:
         "protocol": result.get("protocol"),
         "search": raw_search,
         "searchHitCount": len(hits) if isinstance(hits, list) else 0,
-        "searchError": search_error,
+        "contractErrors": probe.get("contractErrors") if isinstance(probe, dict) else ["invalid probe response"],
+        "localContractErrors": contract["contractErrors"],
+        "searchChecks": probe.get("searchChecks") if isinstance(probe, dict) else False,
+        "getChecks": probe.get("getChecks") if isinstance(probe, dict) else False,
+        "continuationState": probe.get("continuationState") if isinstance(probe, dict) else "invalid probe response",
         "tools": sorted(tools),
+        "requiredTools": sorted(required),
     }
     if args.json:
         print(json.dumps(output, ensure_ascii=False, separators=(",", ":"), default=str))

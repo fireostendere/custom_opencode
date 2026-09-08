@@ -12,7 +12,7 @@ if [[ -z "$NODE" ]]; then echo "node is required" >&2; exit 1; fi
   "$ROOT/app/server_rag.py" "$ROOT/app/server_features.py" "$ROOT/app/server_control.py" \
   "$ROOT/app/server_workflow.py" "$ROOT/app/server_runtime.py" "$ROOT/app/runtime_store.py" \
   "$ROOT/app/model_registry.py" "$ROOT/app/repo_services.py" "$ROOT/app/runtime_resume.py" \
-  "$ROOT/scripts/rag-probe.py" "$ROOT/scripts/rag-start-smoke.py" "$ROOT/scripts/runtime-smoke.py" \
+  "$ROOT/scripts/rag-probe.py" "$ROOT/scripts/rag-probe-contract-regression.py" "$ROOT/scripts/rag-start-smoke.py" "$ROOT/scripts/runtime-smoke.py" \
   "$ROOT/scripts/runtime-resume-smoke.py" "$ROOT/scripts/webserver-control.py"
 
 WORKSPACE_TEST_ROOT=$(mktemp -d)
@@ -84,6 +84,7 @@ done
 "$PYTHON3" "$ROOT/scripts/unified-workspace-regression.py"
 "$NODE" "$ROOT/scripts/session-transfer-smoke.mjs"
 "$PYTHON3" "$ROOT/scripts/limits-smoke.py"
+"$PYTHON3" "$ROOT/scripts/rag-probe-contract-regression.py"
 "$PYTHON3" "$ROOT/scripts/rag-start-smoke.py"
 "$PYTHON3" "$ROOT/scripts/runtime-smoke.py"
 "$PYTHON3" "$ROOT/scripts/runtime-resume-smoke.py"

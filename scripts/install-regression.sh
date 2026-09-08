@@ -30,6 +30,9 @@ OPENCODE_BACKEND_PASSWORD=test
 OPENCODE_RUNTIME_PLUGIN_HOST=127.0.0.1
 OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS=1800
 MCP_RAG_ENABLED=0
+MCP_RAG_ROOT=$TMP/rag-root
+MCP_RAG_BIN=$TMP/rag-bin/knowledge-mcp
+DIPTRACE_MCP_ENABLED=0
 INSTALL_OPENCODE_CONFIG=1
 CUSTOM_OPENCODE_INSTALL_SELFTEST=0
 TOKEN_PLAN_API_KEY=CHANGE_ME
@@ -80,8 +83,15 @@ printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/model-selector.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-helper.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/lib/clipboard.js"
 
+# Managed secrets left by an older install must be removed when now empty or
+# placeholders, while unrelated service settings stay intact.
+mkdir -p "$HOME_DIR/.config/opencode"
+cat >"$HOME_DIR/.config/opencode/service.json" <<'EOF'
+{"env":{"GEMINI_API_KEY":"stale-secret","GOOGLE_API_KEY":"CHANGE_ME","MCP_RAG_ROOT":"stale-root","MCP_RAG_BIN":"stale-bin","UNMANAGED_SETTING":"preserve-me"}}
+EOF
+
 # Fresh install: no real OpenCode service, model call or systemd user manager.
-CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
   bash "$COPY/scripts/install.sh" >"$TMP/install.out"
 
 CONFIG="$HOME_DIR/.config/opencode/opencode.json"
@@ -119,7 +129,7 @@ fi
 
 AUTH="$HOME_DIR/.local/share/opencode/auth.json"
 printf '%s\n' '{broken' >"$AUTH"
-if CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" bash "$COPY/scripts/install.sh" >"$TMP/broken-auth.out" 2>&1; then
+if env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" bash "$COPY/scripts/install.sh" >"$TMP/broken-auth.out" 2>&1; then
   echo "installer replaced malformed auth state" >&2
   exit 1
 fi
@@ -202,6 +212,18 @@ config = json.loads(text)
 kb = ((config.get('mcp') or {}).get('servers') or {}).get('kb') or {}
 assert kb.get('disabled') is True
 assert kb.get('codemode') is True
+diptrace = ((config.get('mcp') or {}).get('servers') or {}).get('diptrace') or {}
+assert diptrace.get('disabled') is True
+assert 'enabled' not in diptrace
+assert diptrace.get('codemode') is True
+assert diptrace.get('timeout') == {'startup': 10000, 'catalog': 10000, 'execution': 60000}
+assert diptrace.get('environment') == {
+    'DIPTRACE_MCP_WORKSPACE': str(root),
+    'DIPTRACE_MCP_ALLOWED_ROOTS': str(root),
+    'DIPTRACE_MCP_POLICY': 'read_only',
+}
+assert diptrace.get('command') == ['diptrace-mcp']
+assert diptrace.get('cwd') == str(root)
 assert config.get('model') == 'bailian-cli/qwen3.8-max'
 assert config.get('compaction') == {'auto': True, 'keep': {'tokens': 12000}, 'buffer': 24000}
 assert config.get('tool_output') == {'max_lines': 1600, 'max_bytes': 48000}
@@ -210,6 +232,58 @@ assert str(root / 'scripts' / 'rag-mcp.sh') in (kb.get('command') or [])
 plugin_list = config.get('plugins') or []
 assert plugin_list == [] or plugin_list == [''], f"Expected no ponytail plugin when disabled, got: {plugin_list}"
 PY
+python3 - "$SERVICE_CONFIG" "$TMP" "$CONFIG" <<'PY'
+import json, sys
+from pathlib import Path
+path, tmp, config_dir = map(Path, sys.argv[1:])
+env = json.loads(path.read_text(encoding='utf-8'))['env']
+assert env['OPENCODE_CONFIG_DIR'] == str(config_dir.parent)
+assert env['MCP_RAG_ROOT'] == str(tmp / 'rag-root')
+assert env['MCP_RAG_BIN'] == str(tmp / 'rag-bin/knowledge-mcp')
+assert env['UNMANAGED_SETTING'] == 'preserve-me'
+for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY'):
+    assert name not in env, (name, env)
+PY
+grep -Fq 'DipTrace MCP: intentionally disabled (DIPTRACE_MCP_ENABLED=0)' "$TMP/install.out"
+
+# Auto mode without the sibling checkout remains disabled; it never reaches into
+# HOME or inherits arbitrary environment variables.
+sed -i 's/^DIPTRACE_MCP_ENABLED=.*/DIPTRACE_MCP_ENABLED=auto/' "$COPY/.env"
+env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+  bash "$COPY/scripts/install.sh" >"$TMP/diptrace-auto.out"
+grep -Fq 'DipTrace MCP: unavailable in auto mode' "$TMP/diptrace-auto.out"
+
+# Required mode renders only the DipTrace MCP's explicit read-only environment.
+DIPTRACE_ROOT="$TMP/mcp_diptrace"
+mkdir -p "$DIPTRACE_ROOT/.venv/bin" "$TMP/diptrace-workspace"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$DIPTRACE_ROOT/.venv/bin/diptrace-mcp"
+chmod +x "$DIPTRACE_ROOT/.venv/bin/diptrace-mcp"
+cat >>"$COPY/.env" <<EOF
+DIPTRACE_MCP_ENABLED=1
+DIPTRACE_MCP_ROOT=$DIPTRACE_ROOT
+DIPTRACE_MCP_WORKSPACE=$TMP/diptrace-workspace
+DIPTRACE_MCP_ALLOWED_ROOTS=$TMP/diptrace-workspace
+EOF
+env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+  bash "$COPY/scripts/install.sh" >"$TMP/diptrace-enabled.out"
+python3 - "$CONFIG" "$DIPTRACE_ROOT" "$TMP/diptrace-workspace" <<'PY'
+import json, sys
+config = json.load(open(sys.argv[1], encoding='utf-8'))
+root, workspace = sys.argv[2:]
+server = config['mcp']['servers']['diptrace']
+assert server['disabled'] is False
+assert 'enabled' not in server
+assert server['command'] == [root + '/.venv/bin/diptrace-mcp']
+assert server['cwd'] == root
+assert server['codemode'] is True
+assert server['timeout']['execution'] == 60000
+assert server['environment'] == {
+    'DIPTRACE_MCP_WORKSPACE': workspace,
+    'DIPTRACE_MCP_ALLOWED_ROOTS': workspace,
+    'DIPTRACE_MCP_POLICY': 'read_only',
+}
+PY
+grep -Fq "DipTrace MCP: enabled ($DIPTRACE_ROOT)" "$TMP/diptrace-enabled.out"
 
 grep -Fq 'ctx.tool.hook("execute.before"' "$RUNTIME_GUARD"
 grep -Fq '/internal/runtime/context' "$RUNTIME_GUARD"
@@ -238,7 +312,7 @@ chmod +x "$FAKE_BIN/git"
 # still starts the service temporarily for its self-test, then restores it.
 mkdir -p "$XDG_CONFIG_HOME/opencode"
 printf '%s\n' '{"version":1,"running":false,"defaultEnabled":false}' >"$XDG_CONFIG_HOME/opencode/webserver.json"
-CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
   bash "$COPY/scripts/update.sh" >"$TMP/update.out"
 grep -Fxq 'git fetch --prune origin main' "$LOG"
 grep -Fxq 'git merge --ff-only FETCH_HEAD' "$LOG"
@@ -289,7 +363,7 @@ PONYTAIL_UPSTREAM_URL=$PONYTAIL_UPSTREAM
 PONYTAIL_PIN_COMMIT=$PONYTAIL_PIN
 EOF
 
-CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
   bash "$COPY/scripts/install.sh" >"$TMP/ponytail-install.out"
 
 python3 - "$CONFIG" "$PONYTAIL_CHECKOUT" "$XDG_CONFIG_HOME" <<'PY'
@@ -307,7 +381,7 @@ PY
 # A later install may change the configured default but must not overwrite the
 # user's active mode.
 sed -i 's/^PONYTAIL_DEFAULT_MODE=.*/PONYTAIL_DEFAULT_MODE=ultra/' "$COPY/.env"
-CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
   bash "$COPY/scripts/install.sh" >"$TMP/ponytail-reinstall.out"
 [[ "$(cat "$XDG_CONFIG_HOME/opencode/.ponytail-active")" == lite ]] || {
   echo "Ponytail reinstall overwrote the active mode" >&2
