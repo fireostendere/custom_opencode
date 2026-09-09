@@ -727,6 +727,7 @@ def desktop(browser, base_url: str, server_workflow) -> None:
     page.wait_for_function("document.querySelector('#questionHost').hidden")
 
     page.locator("#permissionBanner").wait_for(state="visible")
+    page.locator("#permissionBanner .permission-project-button").wait_for(state="visible")
     summary = page.locator("#permissionSummary").inner_text()
     assert "echo fixture" in summary, summary
     page.locator("#permissionBanner [data-permission='once']").click()

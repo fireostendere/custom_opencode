@@ -26,8 +26,11 @@ def main():
                     requests = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
                     page.on('request', lambda request: requests.append(request.url))
+                    page.route('**/api/vcs?*', lambda route: route.fulfill(json={'data':{'branch':{}}}))
                     harness.fixture.login(page, url)
                     harness.fixture.open_session(page)
+                    page.locator('#permissionBanner .permission-project-button').wait_for(state='visible', timeout=5000)
+                    assert page.locator('#gitButton').inner_text() == 'Git'
                     page.wait_for_function("document.querySelector('#taskCenterButton').getAttribute('aria-busy') === 'false'")
                     await_refresh = "() => window.CustomOpenCodeRuntime.refresh(true)"
                     page.evaluate(await_refresh)

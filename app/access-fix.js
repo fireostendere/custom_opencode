@@ -1,3 +1,5 @@
+import { createAdaptivePoller } from './refresh-coalescer.js'
+
 const $ = (id) => document.getElementById(id)
 
 const permissionSuppression = window.__permissionSuppression
@@ -182,6 +184,7 @@ async function permissionRequests(directory) {
 
 function clearBanner() {
   activePermission = null
+  window.dispatchEvent(new CustomEvent('custom-opencode:permission-current', { detail:null }))
   expectedPermissionDetail = ''
   const banner = $('permissionBanner')
   if (!banner) return
@@ -220,6 +223,7 @@ function showPermission(requestRow) {
   const key = `${sid}:${pid}`
   if (key === lastClearBannerKey && Date.now() - lastClearBannerAt < 3000) return
   activePermission = requestRow
+  window.dispatchEvent(new CustomEvent('custom-opencode:permission-current', { detail:requestRow }))
   expectedPermissionDetail = permissionDetailText(requestRow)
   const banner = $('permissionBanner')
   if (!banner) return
@@ -308,9 +312,7 @@ async function handlePermissionAction(button, event) {
   try {
     await sendPermissionReply(requestRow, reply)
     toast(reply === 'reject' ? 'Отклонено' : 'Разрешено', 1800)
-    setTimeout(refreshPermission, 120)
-    setTimeout(refreshPermission, 500)
-    setTimeout(refreshPermission, 1300)
+    permissionPolling.wake()
   } catch (error) {
     permissionSuppression.forget(key)
     toast(`Permission: ${error.message}`, 5000)
@@ -354,22 +356,27 @@ function installPermissionScope() {
     if (['permission.replied', 'permission.rejected', 'permission.cancelled'].includes(payload?.type)) refreshPermission()
   })
 
-  window.addEventListener('hashchange', () => {
+  const selectSession = () => {
     clearBanner()
-    refreshPermission()
-  })
+    permissionPolling.wake()
+  }
+  window.addEventListener('hashchange', selectSession)
+  window.addEventListener('custom-opencode:session-selected', selectSession)
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
-      refreshPermission()
+      permissionPolling.wake()
     }
   })
-  setInterval(() => {
-    if (!document.hidden) {
-      refreshPermission()
-    }
-  }, 2500)
-  refreshPermission()
+  permissionPolling.start()
 }
+
+const permissionPolling = createAdaptivePoller({
+  run:refreshPermission,
+  isActive:() => Boolean($('stop') && !$('stop').hidden),
+  activeDelay:5000,
+  idleDelay:30000,
+  isVisible:() => !document.hidden,
+})
 
 function init() {
   installPermissionScope()

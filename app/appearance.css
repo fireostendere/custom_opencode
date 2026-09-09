@@ -53,6 +53,7 @@ html[data-theme="light"]{
 }
 
 body,.main{background:var(--bg);color:var(--text)}
+.activity-code,.activity-output{color:var(--text)}
 .sidebar{background:var(--panel);border-color:var(--line)}
 .header,.composer-wrap{border-color:var(--line)}
 button{transition:background-color .16s ease,border-color .16s ease,color .16s ease,filter .16s ease,transform .11s ease,box-shadow .16s ease}

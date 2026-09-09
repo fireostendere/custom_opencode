@@ -275,6 +275,7 @@ for (const marker of ['model-favorite-toggle', 'permissionFromEvent', 'permissio
   if (!(uiSource.includes(marker) || accessFix.includes(marker) || designSystem.includes(marker))) throw new Error(`UI regression marker missing: ${marker}`)
 }
 if (appSource.includes("payload.type==='permission.asked'") || appSource.includes('setInterval(refreshPermissions')) throw new Error('Permission banner must have a single access-fix owner')
+if (advanced.includes('/api/permission/request') || accessFix.includes('setInterval(')) throw new Error('Permission polling must have one adaptive owner')
 if (!accessFix.includes("window.addEventListener('custom-opencode:event'")) throw new Error('Permission events must reach the web banner owner')
 for (const marker of ['dialog#modelDialog', 'height:0', 'overflow-y:scroll', 'scrollbar-gutter:stable']) {
   if (!designSystem.includes(marker)) throw new Error(`Model dialog scroll contract missing: ${marker}`)

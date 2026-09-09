@@ -805,7 +805,7 @@ async function refreshGit(){
   const id=state.selected.id, dir=directory(state.selected); if(!dir)return
   const [vcs,files]=await Promise.all([api.getVcs(dir),api.getFileStatus(dir)]); if(state.selected?.id!==id)return;state.git={vcs,files,diffs:[]};renderGitButton()
 }
-function gitBranch(){const v=state.git.vcs;return typeof v==='string'?v:v?.branch||v?.name||v?.ref||''}
+function gitBranch(){const v=state.git.vcs;return [v,v?.branch,v?.name,v?.ref].find(value=>typeof value==='string'&&value.trim())||''}
 function renderGitButton(){const branch=gitBranch(),count=state.git.files.length;$('gitButton').disabled=!state.selected;$('gitButton').textContent=state.selected?`${branch||'Git'}${count?` · ${count}`:''}`:'Git —'}
 async function openGitDialog(){
   if(!state.selected)return; $('gitDialog').showModal(); $('gitSummary').textContent='Загрузка…'; const id=state.selected.id

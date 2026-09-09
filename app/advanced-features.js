@@ -7,6 +7,7 @@ const state = {
   session: null,
   directory: '',
   settings: null,
+  settingsAvailable: false,
   queue: { count:0, items:[], error:null },
   queueCounts: {},
   question: null,
@@ -46,7 +47,6 @@ const state = {
 const selectedSessionRefresh = createRefreshCoalescer()
 const queueRefresh = createRefreshCoalescer()
 const questionRefresh = createRefreshCoalescer()
-const permissionRefresh = createRefreshCoalescer()
 const orchestrationRefresh = createRefreshCoalescer()
 const planRefresh = createRefreshCoalescer()
 
@@ -187,6 +187,7 @@ async function refreshSelectedSessionNow() {
   state.session = null
   state.directory = ''
    state.settings = null
+   state.settingsAvailable = false
    state.queue = { count:0, items:[], error:null }
   state.question = null
   state.questionKey = ''
@@ -218,8 +219,7 @@ async function refreshSelectedSessionNow() {
     if (state.sessionID !== id) return
     state.session = session
     state.directory = session?.location?.directory || ''
-    $('projectSettingsButton').hidden = !state.directory
-    await Promise.allSettled([loadProjectSettings(id), refreshQueue(id, true), refreshQuestions(true), refreshOrchestration(true), refreshPlan(true), refreshPermission(id, true)])
+    await Promise.allSettled([loadProjectSettings(id), refreshQueue(id, true), refreshQuestions(true), refreshOrchestration(true), refreshPlan(true)])
     if (state.sessionID !== id) return
     await applyProjectDefaultsOnce(id)
     if (state.sessionID !== id) return
@@ -233,7 +233,8 @@ async function loadProjectSettings(sessionID = state.sessionID) {
   if (!sessionID) return
   const value = await request(`/client-project-settings.json?sessionID=${encodeURIComponent(sessionID)}`)
   if (state.sessionID !== sessionID) return
-  $('projectSettingsButton').hidden = value?.available === false
+  state.settingsAvailable = value?.available !== false
+  $('projectSettingsButton').hidden = !state.settingsAvailable
   state.settings = { ...DEFAULT_SETTINGS, ...(value?.settings || {}) }
 }
 
@@ -864,18 +865,6 @@ function handleQuestionEvent(payload) {
   refreshQuestions(true)
 }
 
-function refreshPermission(sessionID = state.sessionID, force = false) { return permissionRefresh(() => refreshPermissionNow(state.sessionID || sessionID), force) }
-async function refreshPermissionNow(sessionID = state.sessionID) {
-  if (!sessionID || !state.directory) { if (state.sessionID === sessionID) { state.pendingPermission = null; syncPermissionProjectButton() }; return }
-  const q = workspaceQuery()
-  try {
-    const value = dataOf(await request(`/api/permission/request${q ? `?${q}` : ''}`))
-    if (state.sessionID !== sessionID) return
-    state.pendingPermission = Array.isArray(value) ? value.find((item) => item?.sessionID === sessionID) || null : null
-  } catch { if (state.sessionID === sessionID) state.pendingPermission = null }
-  if (state.sessionID !== sessionID) return
-  syncPermissionProjectButton()
-}
 function syncPermissionProjectButton() {
   const actions = document.querySelector('#permissionBanner .permission-actions')
   if (!actions) return
@@ -888,7 +877,7 @@ function syncPermissionProjectButton() {
     button.addEventListener('click', allowPermissionInProject)
     actions.append(button)
   }
-  button.hidden = !$('permissionBanner') || $('permissionBanner').hidden || !state.pendingPermission
+  button.hidden = !state.settingsAvailable || !$('permissionBanner') || $('permissionBanner').hidden || !state.pendingPermission
 }
 async function allowPermissionInProject() {
   const p = state.pendingPermission
@@ -1321,7 +1310,7 @@ function renderStatus() {
   $('queueStatusButton')?.addEventListener('click', openQueueDialog)
 }
 function renderAll() {
-  if ($('projectSettingsButton')) $('projectSettingsButton').hidden = !state.sessionID || !state.directory
+  if ($('projectSettingsButton')) $('projectSettingsButton').hidden = !state.sessionID || !state.directory || !state.settingsAvailable
   renderQuestion()
   renderOrchestration()
   renderStatus()
@@ -1464,6 +1453,11 @@ function observeRuntime() {
 }
 
 function bindEvents() {
+  window.addEventListener('custom-opencode:permission-current', (event) => {
+    const permission = event.detail
+    state.pendingPermission = permission && (permission.sessionID || permission.sessionId || permission.session?.id) === state.sessionID ? permission : null
+    syncPermissionProjectButton()
+  })
   window.addEventListener('hashchange', () => refreshSelectedSession(true))
   window.addEventListener('custom-opencode:session-selected', () => refreshSelectedSession(true))
   window.addEventListener('custom-opencode:agent-changed', () => {
@@ -1497,7 +1491,6 @@ function bindEvents() {
       refreshQuestions(true)
       refreshOrchestration(true)
       refreshPlan(true)
-      refreshPermission(undefined, true)
       fastPolling.reschedule()
       mediumPolling.reschedule()
     }
@@ -1505,7 +1498,7 @@ function bindEvents() {
 }
 
 async function tickFast() {
-  if (!document.hidden && state.sessionID) await Promise.allSettled([refreshQuestions(), refreshPermission()])
+  if (!document.hidden && state.sessionID) await refreshQuestions()
 }
 async function tickMedium() {
   if (!document.hidden && state.sessionID) await Promise.allSettled([refreshQueue(), refreshOrchestration(), refreshPlan()])
