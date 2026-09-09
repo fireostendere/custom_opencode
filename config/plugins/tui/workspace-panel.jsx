@@ -4,7 +4,7 @@
  * One manager owns left/right/top/bottom geometry; views never mutate layout.
  */
 import { Plugin } from "@opencode-ai/plugin/tui"
-import { createEffect, For, onCleanup, onMount, Show } from "solid-js"
+import { createEffect, For, onCleanup, Show } from "solid-js"
 import { PANEL_DEFS, PANEL_IDS, createPanelViews } from "./lib/panel-views.jsx"
 import { PANEL_SIDES, PANEL_VIEWS } from "./lib/panel-command.js"
 import { sessionInterruptCommand } from "./lib/session-interrupt.js"
@@ -591,20 +591,6 @@ export default Plugin.define({
       return rows
     }
 
-    function NativeSidebarGuard() {
-      onMount(() => {
-        // The stock sidebar would be a fifth panel. This slot only mounts while
-        // it is visible; the native toggle then moves auto -> hide on wide TTYs.
-        queueMicrotask(() => context.keymap.dispatch("session.sidebar.toggle"))
-      })
-      return null
-    }
-
-    const unNativeSidebar = context.ui.slot({
-      append: "sidebar_content",
-      render: () => <NativeSidebarGuard />,
-    })
-
     const unApp = context.ui.slot({
       append: "app",
       render: () => {
@@ -647,7 +633,6 @@ export default Plugin.define({
       if (dockRetry) clearTimeout(dockRetry)
       restoreDockTarget()
       renderer.removePostProcessFn?.(hideCursorUnderPanels)
-      unNativeSidebar?.()
       unApp?.()
       views.dispose()
     }

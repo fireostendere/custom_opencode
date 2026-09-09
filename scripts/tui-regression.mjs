@@ -22,7 +22,8 @@ const addCommand = await readFile(new URL('config/plugins/tui/lib/add-command.js
 const wslClipboard = await readFile(new URL('config/plugins/tui/wsl-clipboard.jsx', root), 'utf8')
 const cliConfig = JSON.parse(await readFile(new URL('config/cli.json', root), 'utf8'))
 assert.equal(cliConfig.session.scrollbar, true, 'The session transcript must expose its native scrollbar')
-assert.equal(cliConfig.session.sidebar, 'hide', 'The native sidebar must not flash behind the workspace dock on startup')
+assert.equal(cliConfig.session.sidebar, 'auto', 'The native context/MCP sidebar must be enabled by default')
+assert.ok(!workspacePanel.includes('session.sidebar.toggle'), 'The workspace dock must not force-hide the native context/MCP sidebar')
 const { sessionInterruptCommand } = await import(new URL('config/plugins/tui/lib/session-interrupt.js', root))
 let finishInterrupt
 const interrupted = []
@@ -265,8 +266,6 @@ for (const marker of [
   'jumpToEnd',
   'cursorUnderOverlay',
   'addPostProcessFn',
-  'append: "sidebar_content"',
-  'session.sidebar.toggle',
   'custom.panel.toggle',
   'custom.panel.activity',
   'custom.panel.plan',
