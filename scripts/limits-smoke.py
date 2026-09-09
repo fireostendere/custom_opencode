@@ -91,7 +91,9 @@ with tempfile.TemporaryDirectory() as temp:
     assert qwen_expired["reason"] == "session-expired"
     assert "bl auth login --console" in qwen_expired.get("hint", "")
 
-    gemini = server_ext.query_gemini_status()
+    # This is a fixture test; a fresh install may have no Google account.
+    with patch.dict(os.environ, {"GEMINI_API_KEY": "fixture-gemini-key", "GOOGLE_API_KEY": ""}):
+        gemini = server_ext.query_gemini_status()
     assert gemini["available"] is True
     assert gemini["minuteTokens"]["limit"] == 2_000_000
     assert gemini["minuteRequests"]["limit"] == 1_000
@@ -99,7 +101,7 @@ with tempfile.TemporaryDirectory() as temp:
     state_dir = Path(temp) / ".local/state/custom-opencode"
     state_dir.mkdir(parents=True)
     (state_dir / "rate-limit.json").write_text('{"active":true,"seconds":"bad","until":NaN,"limitedBucket":"rpm","limits":{"rpm":17},"usage":{"tokensLastMinute":"bad"}}', encoding="utf-8")
-    with patch.object(server_ext.base.Path, "home", return_value=Path(temp)):
+    with patch.object(server_ext.base.Path, "home", return_value=Path(temp)), patch.dict(os.environ, {"GEMINI_API_KEY": "fixture-gemini-key"}):
         malformed = server_ext.query_gemini_status()
     assert malformed["seconds"] == 0 and malformed["minuteRequests"]["limit"] == 17
     assert malformed["minuteRequests"]["usedCredits"] == 17

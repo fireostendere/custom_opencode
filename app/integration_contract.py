@@ -25,8 +25,9 @@ def contract() -> dict[str, Any]:
         "apiVersion": INTEGRATION_API_VERSION,
         "runtimeVersion": RUNTIME_VERSION,
         "frontend": {
-            "modes": ["build", "plan"],
-            "modeSelectorVisible": True,
+            "modes": ["build"],
+            "modeSelectorVisible": False,
+            "tui": {"modes": ["build", "plan"], "modeSelectorVisible": True},
             "legacyPlanCompatibility": True,
             "planVisibleDuringBuild": True,
             "modelProfiles": [

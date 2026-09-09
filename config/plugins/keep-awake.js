@@ -1,4 +1,3 @@
-import { Plugin } from "@opencode-ai/plugin"
 import { startEvents } from "../events.js"
 
 const GRACE_MIN = 30
@@ -52,7 +51,8 @@ function releaseKeeper() {
   keeper = null
 }
 
-export default Plugin.define({
+// Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
+export default {
   id: "keep-awake",
   setup(ctx) {
     const stop = startEvents(ctx, (event) => {
@@ -65,7 +65,7 @@ export default Plugin.define({
       releaseKeeper()
     }
   },
-})
+}
 
 if (process.env.KEEP_AWAKE_SELF_CHECK) {
   const cases = [

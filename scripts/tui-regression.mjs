@@ -430,6 +430,7 @@ import json
 print(json.dumps({'planName':'Personal Pro','per5HourPercentage':0.375,'per5HourResetTime':2000000000000,'per1WeekPercentage':0.72,'per1WeekResetTime':2000100000000}))
 `)
 
+process.env.GEMINI_API_KEY = "fixture-gemini-key"
 process.env.CODEX_BIN = codex
 process.env.BAILIAN_CLI_BIN = bailian
 process.env.OPENCODE_TUI_LIMITS_COMMAND_TIMEOUT_MS = '3000'

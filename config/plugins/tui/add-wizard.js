@@ -1,6 +1,7 @@
 import { Plugin } from "@opencode-ai/plugin/tui"
 import { installPanelSubmitRouter } from "./lib/panel-submit-router.js"
 import { ADD_KINDS, nativeAddCommand, parseAddCommand } from "./lib/add-command.js"
+import { readConfigReceipt } from "./lib/config-receipt.js"
 import { profileTemplates } from "./lib/mcp-profiles.js"
 
 const ID_RE = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/
@@ -84,10 +85,7 @@ async function managed(context) {
   const current = sessionID(context)
   const requestID = globalThis.crypto.randomUUID()
   await context.client.session.command({ sessionID: current, command: "managed", text: JSON.stringify({ requestID }) })
-  const messages = await context.client.session.context({ sessionID: current })
-  const message = messages.find((item) => item.text?.startsWith(`custom.config.receipt:${requestID}\n`))
-  if (!message) throw new Error("Configuration response missing; check config-manager plugin status.")
-  return JSON.parse(message.text.slice(message.text.indexOf("\n") + 1))
+  return readConfigReceipt(context.client, current, requestID)
 }
 
 async function multiple(context, title, options, initial = []) {

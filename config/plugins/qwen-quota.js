@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { Plugin } from "@opencode-ai/plugin"
 import { startEvents } from "../events.js"
 
 const CONFIG_PATH = process.env.BAILIAN_CONFIG_PATH || join(homedir(), ".bailian", "config.json")
@@ -46,7 +45,8 @@ export async function probe(apiKey) {
   return { state: "ok" }
 }
 
-export default Plugin.define({
+// Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
+export default {
   id: "qwen-quota",
   async setup(ctx) {
     // A completion-based quota probe consumes model quota. Keep installation,
@@ -91,7 +91,7 @@ export default Plugin.define({
       await decorate(event.data.sessionID)
     })
   },
-})
+}
 
 if (process.env.QWEN_QUOTA_SELF_CHECK) {
   const cases = [

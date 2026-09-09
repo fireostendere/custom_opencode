@@ -151,10 +151,12 @@ def run() -> dict[str, Any]:
 
     frontend = contract.get("frontend") if isinstance(contract.get("frontend"), dict) else {}
     modes = [str(item) for item in (frontend.get("modes") or [])]
-    if modes != ["build", "plan"]:
-        errors.append("integration contract frontend modes must expose Build and Plan")
-    if frontend.get("modeSelectorVisible") is not True:
-        errors.append("integration contract must expose the execution mode selector")
+    if modes != ["build"]:
+        errors.append("integration contract web modes must match the Build-only client")
+    if frontend.get("modeSelectorVisible") is not False:
+        errors.append("integration contract must not advertise a hidden web execution selector")
+    if frontend.get("tui") != {"modes": ["build", "plan"], "modeSelectorVisible": True}:
+        errors.append("integration contract must preserve native TUI Build/Plan capabilities")
     if frontend.get("legacyPlanCompatibility") is not True:
         errors.append("integration contract must preserve native plan compatibility")
     if frontend.get("planVisibleDuringBuild") is not True:

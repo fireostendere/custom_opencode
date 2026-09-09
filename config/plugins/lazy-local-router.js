@@ -1,4 +1,3 @@
-import { Plugin } from "@opencode-ai/plugin"
 
 const AUTO_START = /^(1|true|yes)$/i.test(process.env.OPENCODE_LOCAL_AUTO_START || "0")
 const LOCAL_PROVIDER = process.env.OPENCODE_LOCAL_PROVIDER || "ollama"
@@ -50,7 +49,8 @@ async function ensureRouter() {
   }
 }
 
-export default Plugin.define({
+// Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
+export default {
   id: "lazy-local-router",
   async setup(ctx) {
     return ctx.session.hook("model.request", async ({ model }) => {
@@ -59,4 +59,4 @@ export default Plugin.define({
       if (AUTO_START && model.providerID === LOCAL_PROVIDER) await ensureRouter()
     })
   },
-})
+}

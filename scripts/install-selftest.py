@@ -19,6 +19,8 @@ import sys
 import time
 from typing import Any, Callable
 
+from install_health import web_auth_headers
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
 
@@ -78,8 +80,11 @@ def main(argv: list[str] | None = None) -> int:
         state = (active.stdout or active.stderr or "unknown").strip()
         return active.returncode == 0 and state == "active", state
 
-    ok, detail = retry(service_check, timeout=15.0)
-    add("web-service", ok, detail)
+    if os.environ.get("CUSTOM_OPENCODE_SERVICE_MODE", "systemd") == "manual":
+        add("web-service", True, "manual supervision; live HTTP is verified below")
+    else:
+        ok, detail = retry(service_check, timeout=15.0)
+        add("web-service", ok, detail)
 
     try:
         import server_rag
@@ -209,8 +214,11 @@ def main(argv: list[str] | None = None) -> int:
             "lazy-local-router",
             "notify-win",
             "qwen-quota",
-            "slow-cmd-watchdog",
+            "slow-cmd-watchdog", "custom.config-manager", "custom-opencode.server-runtime-guard",
+            "custom.visible-plan", "orchestrated-qwen", "gemini-rate-limit",
         }
+        if os.environ.get("PONYTAIL_ENABLED", "1") != "0":
+            required_plugins.add("custom.ponytail-v2")
         inactive_plugins = sorted(
             plugin_id for plugin_id in required_plugins
             if plugin_status.get(plugin_id) != "active"
@@ -218,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
         add(
             "backend-plugin-catalog",
             not inactive_plugins and not failed_local_plugins,
-            "6 custom plugins active; no failed local plugins"
+            f"{len(required_plugins)} required custom plugins active; no failed local plugins"
             if not inactive_plugins and not failed_local_plugins
             else "; ".join(filter(None, [
                 "Missing/inactive: " + ", ".join(inactive_plugins) if inactive_plugins else "",
@@ -232,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
         host = local_probe_host(str(base.WEB_HOST))
         connection = http.client.HTTPConnection(host, int(base.WEB_PORT), timeout=4)
         try:
-            connection.request("GET", "/", headers={"Authorization": base.CLIENT_AUTH})
+            connection.request("GET", "/", headers=web_auth_headers(base))
             response = connection.getresponse()
             body = response.read(64 * 1024)
             return (
@@ -283,7 +291,7 @@ def emit(checks: list[dict[str, Any]], started: float, json_mode: bool) -> int:
     else:
         print("==> Post-install self-test")
         for item in checks:
-            mark = "PASS" if item["ok"] else ("SKIP" if not item["required"] else "FAIL")
+            mark = "SKIP" if not item["required"] else ("PASS" if item["ok"] else "FAIL")
             print(f"[{mark}] {item['name']}: {item['detail']}")
         print("Self-test PASS" if report["ok"] else "Self-test FAILED")
     return 0 if report["ok"] else 1

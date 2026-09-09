@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { Plugin } from "@opencode-ai/plugin"
 
 const TARGET_PROVIDER = "bailian-cli"
 const TARGET_MODEL = "qwen3.8-orchestrated"
@@ -33,7 +32,8 @@ function textOf(item) {
   return ""
 }
 
-export default Plugin.define({
+// Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
+export default {
   id: "orchestrated-qwen",
   async setup(ctx) {
     const policies = new Map(Object.entries(TARGETS).map(([target, config]) => {
@@ -51,7 +51,7 @@ export default Plugin.define({
       event.system.push({ type: "text", text: `${config.marker}:\n${config.policy}` })
     })
   },
-})
+}
 
 if (process.env.OPENCODE_ORCHESTRATED_QWEN_SELF_CHECK) {
   if (!isOrchestratedQwen({ model: { providerID: TARGET_PROVIDER, id: TARGET_MODEL } })) throw new Error("target selector failed")

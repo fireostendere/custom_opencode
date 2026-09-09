@@ -830,6 +830,11 @@ def desktop(browser, base_url: str, server_workflow) -> None:
     page.locator("#input").press("Enter")
     page.wait_for_function("document.querySelector('#input').value === ''")
     page.wait_for_function("!document.querySelector('#stop').hidden")
+    # An acknowledged prompt may be durably queued behind the previous dispatch.
+    # Wait for delivery rather than requiring two tasks to run in one session.
+    delivery_deadline = time.monotonic() + 12
+    while len(FixtureState.managed_sends_snapshot()) == sends_before_enter and time.monotonic() < delivery_deadline:
+        page.wait_for_timeout(50)
     assert [payload.get("text") for payload in FixtureState.managed_sends_snapshot()][sends_before_enter:] == ["desktop enter"]
 
     page.fill("#input", "desktop shift")

@@ -31,6 +31,18 @@ BIN_DIR="$HOME/.local/bin"
 SCRATCH_DIR=${OPENCODE_SCRATCH_DIRECTORY:-"$HOME/opencode-scratch"}
 AUTH_FILE=${OPENCODE_AUTH_FILE:-"$HOME/.local/share/opencode/auth.json"}
 SELFTEST=${CUSTOM_OPENCODE_INSTALL_SELFTEST:-1}
+SERVICE_MODE=${CUSTOM_OPENCODE_SERVICE_MODE:-systemd}
+case "$SERVICE_MODE" in
+  systemd)
+    if ! command -v systemctl >/dev/null || ! systemctl --user show-environment >/dev/null 2>&1; then
+      echo "A user systemd manager is unavailable. Set CUSTOM_OPENCODE_SERVICE_MODE=manual for foreground supervision." >&2
+      exit 1
+    fi
+    ;;
+  manual) ;;
+  *) echo "CUSTOM_OPENCODE_SERVICE_MODE must be systemd or manual" >&2; exit 1 ;;
+esac
+export CUSTOM_OPENCODE_SERVICE_MODE="$SERVICE_MODE"
 
 # custom_opencode targets one reviewed OpenCode V2 build. An explicit .env
 # override can advance the pin after the regression suite is run against it.
@@ -287,7 +299,7 @@ if [[ "$WEBSERVER_STATE_SNAPSHOT" =~ ^(0|1)[[:space:]]+(0|1)$ ]]; then
   WEBSERVER_STATE_PRESENT=1
 fi
 restore_webserver_state() {
-  if [[ "$WEBSERVER_STATE_PRESENT" != 1 ]]; then return 0; fi
+  if [[ "$SERVICE_MODE" != systemd || "$WEBSERVER_STATE_PRESENT" != 1 ]]; then return 0; fi
   if ! systemctl --user daemon-reload >/dev/null 2>&1; then return 0; fi
   if [[ "$WEBSERVER_STATE_DEFAULT" == 1 ]]; then
     systemctl --user enable opencode-web-client.service >/dev/null 2>&1 || true
@@ -300,7 +312,25 @@ restore_webserver_state() {
     systemctl --user stop opencode-web-client.service >/dev/null 2>&1 || true
   fi
 }
-trap restore_webserver_state EXIT
+MANUAL_WEB_PID=""
+MANUAL_WEB_LOG=""
+cleanup_install() {
+  local result=$?
+  if [[ -n "$MANUAL_WEB_PID" ]]; then
+    kill "$MANUAL_WEB_PID" 2>/dev/null || true
+    wait "$MANUAL_WEB_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$MANUAL_WEB_LOG" ]]; then
+    if [[ "$result" != 0 ]]; then
+      echo "Manual web startup log: $MANUAL_WEB_LOG" >&2
+    else
+      rm -f "$MANUAL_WEB_LOG"
+    fi
+  fi
+  restore_webserver_state
+  return "$result"
+}
+trap cleanup_install EXIT
 
 if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   install -d "$CONFIG_DIR/plugins" "$CONFIG_DIR/plugins/tui" "$CONFIG_DIR/prompts" "$CONFIG_DIR/themes"
@@ -339,8 +369,9 @@ text = text.replace("__CUSTOM_OPENCODE_ROOT__", json_string_value(root))
 text = text.replace("__RAG_DISABLED__", rag_disabled)
 text = text.replace("__PONYTAIL_PLUGIN_PATH__", json_string_value(ponytail_plugin))
 config = json.loads(text)
-if not ponytail_plugin:
-    config.pop("plugins", None)
+# The discovered native ponytail-v2.js bridge uses the pinned upstream builder.
+# Do not register the upstream V1 callback API as a V2 manifest.
+config.pop("plugins", None)
 # Runtime V3 relies on native durable compaction and Code Mode. Code Mode keeps
 # MCP schemas out of the provider tool list until the namespace is actually used.
 config["compaction"] = {"auto": True, "keep": {"tokens": 12000}, "buffer": 24000}
@@ -496,8 +527,6 @@ exec "$PYTHON3" "$ROOT/scripts/webserver-control.py" "\$@"
 EOF
 chmod 0755 "$BIN_DIR/custom-opencode-webserver"
 
-systemctl --user daemon-reload
-systemctl --user enable --now opencode-web-client.service
 # The shared V2 service is long-lived and does not inherit variables from a
 # later custom-opencode client. Persist only variables needed by providers and
 # server-runtime plugins; arbitrary agent shells are scrubbed by the guard.
@@ -511,7 +540,7 @@ SERVICE_ENV=(
   OPENCODE_READER_MODEL OPENCODE_REVIEW_MODEL OPENCODE_LONG_HORIZON_MODEL
   OPENCODE_ORCHESTRATED_MODEL OPENCODE_SOL_ORCHESTRATED_MODEL
   OPENCODE_SOL_BUILDER_MODEL OPENCODE_SOL_READER_MODEL OPENCODE_SOL_REVIEW_MODEL
-  PONYTAIL_DEFAULT_MODE GEMINI_API_KEY GOOGLE_API_KEY OPENCODE_PLAN_DIRECTORY
+  PONYTAIL_ENABLED PONYTAIL_CHECKOUT_DIR PONYTAIL_DEFAULT_MODE GEMINI_API_KEY GOOGLE_API_KEY OPENCODE_PLAN_DIRECTORY
   MCP_RAG_ROOT MCP_RAG_BIN
 )
 install -d -m 0700 "$CONFIG_DIR"
@@ -549,7 +578,30 @@ os.replace(temporary, target)
 PY
 timeout 15s env -u OPENCODE_CONFIG_DIR opencode2 service stop >/dev/null 2>&1 || true
 timeout 45s env -u OPENCODE_CONFIG_DIR opencode2 service start >/dev/null
-systemctl --user restart opencode-web-client.service
+cat >"$BIN_DIR/custom-opencode-serve" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH="$BIN_DIR:\$PATH"
+export CUSTOM_OPENCODE_ROOT="$ROOT"
+set -a
+source "$ROOT/.env"
+set +a
+timeout 45s env -u OPENCODE_CONFIG_DIR opencode2 service start >/dev/null
+exec "$PYTHON3" "$ROOT/app/server_workflow.py"
+EOF
+chmod 0755 "$BIN_DIR/custom-opencode-serve"
+
+if [[ "$SERVICE_MODE" == systemd ]]; then
+  systemctl --user daemon-reload
+  systemctl --user enable --now opencode-web-client.service
+  systemctl --user restart opencode-web-client.service
+elif [[ "$SELFTEST" != 0 ]]; then
+  # Real foreground server for the same HTTP/plugin self-tests. No systemctl
+  # stubs and no mocked backend; stop only this owned process on installer exit.
+  MANUAL_WEB_LOG=$(mktemp "${TMPDIR:-/tmp}/custom-opencode-install-web.XXXXXX.log")
+  "$PYTHON3" "$ROOT/app/server_workflow.py" >"$MANUAL_WEB_LOG" 2>&1 &
+  MANUAL_WEB_PID=$!
+fi
 
 if [[ "$SELFTEST" != 0 ]]; then
   "$ROOT/scripts/cli-wrapper-selftest.sh" "$BIN_DIR/custom-opencode"
@@ -568,6 +620,9 @@ if [[ "$SELFTEST" != 0 ]]; then
 fi
 
 echo "Installed. Start OpenCode with: custom-opencode"
+if [[ "$SERVICE_MODE" == manual ]]; then
+  echo "Manual supervision: run custom-opencode-serve in a separate terminal (no autostart configured)."
+fi
 if [[ "$RAG_DISABLED" == false ]]; then
   echo "RAG MCP: enabled ($RAG_ROOT)"
 elif [[ "$RAG_MODE" == 0 ]]; then

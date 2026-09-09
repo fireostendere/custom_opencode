@@ -1,4 +1,3 @@
-import { Plugin } from "@opencode-ai/plugin"
 
 const MIN = Number(process.env.SLOW_CMD_MIN || 5)
 
@@ -6,7 +5,8 @@ export function elapsedMinutes(startedAt, endedAt) {
   return (endedAt - startedAt) / 60_000
 }
 
-export default Plugin.define({
+// Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
+export default {
   id: "slow-cmd-watchdog",
   async setup(ctx) {
     const started = new Map()
@@ -25,7 +25,7 @@ export default Plugin.define({
       await after.dispose()
     }
   },
-})
+}
 
 if (process.env.SLOW_CMD_SELF_CHECK) {
   if (elapsedMinutes(1000, 31_000) >= MIN) throw new Error("fast call crossed threshold")

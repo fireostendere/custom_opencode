@@ -245,8 +245,8 @@ if (!advanced.includes('const livePanelMarkup = `<details class="orchestration-p
 if (!advanced.includes('if (host._structureMarkup === structureMarkup)')) throw new Error('Unchanged activity structure must not churn the DOM')
 if (!appSource.includes('inner._lastHtml===fullHtml&&!anchor&&!bottom')) throw new Error('DOM cache must not suppress requested scroll restoration')
 if (advanced.includes('id="projectDefaultMode"')) throw new Error('Web project settings must not expose Plan mode')
-if (!advanced.includes("const panelOpen=host.querySelector('.plan-panel')?.open===true||host.querySelector('.live-panel')?.open===true")) throw new Error('Orchestration panels must reopen together when either was open')
-if (!advanced.includes('details.forEach((row)=>{row.open=detail.open})') || !advanced.includes('details.forEach((detail)=>{detail.open=panelOpen})')) throw new Error('Orchestration panel toggles must synchronize both cards')
+if (!advanced.includes("const planOpen = host.querySelector('.plan-panel')?.open === true") || !advanced.includes("const liveOpen = host.querySelector('.live-panel')?.open === true")) throw new Error('Orchestration panels must retain independent open state')
+if (advanced.includes('row.open=detail.open') || advanced.includes('detail.open=panelOpen')) throw new Error('Toggling one panel must not change its sibling')
 if (!advanced.includes('captureScrollState(host.querySelector(\'.plan-panel-body\'))') || !advanced.includes('captureScrollState(host.querySelector(\'.orchestration-nodes\'))') || !advanced.includes('requestAnimationFrame(() =>')) throw new Error('Orchestration panel must preserve both scroll positions after layout while refreshing')
 if (!advanced.includes('orchestrationRevision') || !advanced.includes('orchestrationRenderRevision') || !advanced.includes('state.sessionID !== sessionID')) throw new Error('Orchestration refresh and deferred scroll restoration must reject stale sessions/renders')
 if (advanced.includes('activity-chevron') || advancedCss.includes('activity-chevron')) throw new Error('Orchestration summaries must use only the shared right chevron')
@@ -283,12 +283,12 @@ for (const marker of ['/api/form/request', '/api/question', 'question.asked', 'q
 for (const marker of ['.question-card', '.queue-list', '.orchestration-trace', '.orchestration-plan', '.orchestration-plan-meter', '.review-hunk', '.workflow-status']) {
   if (!advancedCss.includes(marker)) throw new Error(`Advanced workflow styling missing: ${marker}`)
 }
-for (const marker of ['orchestration-panels', 'orchestration-summary', 'activity-current-label', 'activityItems', 'activityDescriptor', 'panelOpen']) {
+for (const marker of ['orchestration-panels', 'orchestration-summary', 'activity-current-label', 'activityItems', 'activityDescriptor', 'planOpen', 'liveOpen']) {
   if (!(advanced.includes(marker) || advancedCss.includes(marker))) throw new Error(`Activity dock marker missing: ${marker}`)
 }
 if (!advancedCss.includes('.orchestration-panels{display:grid;align-items:start;')) throw new Error('Orchestration cards must not stretch to the height of a neighbor')
-if (advancedCss.includes('.plan-panel-body{max-height:') || advancedCss.includes('.plan-panel-body{overflow-y:auto')) throw new Error('Plan panel must not have an internal height limit or scrollbar')
-if (!advancedCss.includes('.orchestration-nodes{display:grid;gap:7px;max-height:300px;overflow-y:auto') || !advancedCss.includes('.orchestration-nodes{max-height:240px}')) throw new Error('Only the activity panel may keep desktop and mobile height limits')
+if (!/\.plan-panel-body\{[^}]*max-height:300px[^}]*overflow-y:auto/.test(advancedCss)) throw new Error('Long plans need a bounded independent scroll surface')
+if (!advancedCss.includes('.orchestration-nodes{display:grid;gap:7px;max-height:300px;overflow-y:auto') || !advancedCss.includes('.orchestration-nodes,.plan-panel-body{max-height:240px}')) throw new Error('Both panels need bounded desktop/mobile heights')
 for (const marker of ['--sidebar-width', '--scrollbar-size', '.sidebar-resizer', '*::-webkit-scrollbar-thumb', '.limits-summary::after', '.model-provider-chevron', 'overflow-y:auto', '.workflow-grid']) {
   if (!designSystem.includes(marker)) throw new Error(`Design-system styling missing: ${marker}`)
 }
@@ -396,7 +396,7 @@ for (const id of ['sol-fast-reader', 'sol-role-builder', 'sol-role-builder-high'
   if (!agents[id]) throw new Error(`SOL role agent missing: ${id}`)
 }
 const orchestratedPlugin = readFileSync(resolve(root, 'config/plugins/orchestrated-qwen.js'), 'utf8')
-for (const marker of ['Plugin.define({', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'gpt-5.6-sol-orchestrated', 'isOrchestratedSol', 'orchestrator-sol.md', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy']) {
+for (const marker of ['export default {', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'gpt-5.6-sol-orchestrated', 'isOrchestratedSol', 'orchestrator-sol.md', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy']) {
   if (!orchestratedPlugin.includes(marker)) throw new Error(`Orchestrated Qwen plugin marker missing: ${marker}`)
 }
 for (const source of [orchestratedPlugin, readFileSync(resolve(root, 'config/plugins/server-runtime-guard.js'), 'utf8')]) {

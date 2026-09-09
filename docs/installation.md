@@ -106,7 +106,7 @@ Installer:
 
 ## Ponytail checkout
 
-Installer управляет отдельным checkout `DietrichGebert/ponytail` на reviewed commit `2ed6c52c9d7e5e56942508591085fd45dea277d3`. Путь по умолчанию — `$XDG_DATA_HOME/opencode/ponytail` или `~/.local/share/opencode/ponytail`. В конфигурацию OpenCode попадает только абсолютный путь к `.opencode/plugins/ponytail.mjs`; upstream `skills/`, `commands/` и `hooks/` не копируются в `~/.config/opencode`.
+Installer управляет отдельным checkout `DietrichGebert/ponytail` на reviewed commit `2ed6c52c9d7e5e56942508591085fd45dea277d3`. Путь по умолчанию — `$XDG_DATA_HOME/opencode/ponytail` или `~/.local/share/opencode/ponytail`. Native V2 bridge `plugins/ponytail-v2.js` загружает instruction builder из reviewed checkout. Старый upstream V1 callback-entrypoint в V2 не регистрируется; upstream `skills/`, `commands/` и `hooks/` не копируются в `~/.config/opencode`.
 
 Provisioning fail-closed проверяет origin, ветку `main`, чистоту checkout, наличие обязательных файлов, принадлежность pin к `origin/main` и fast-forward-only обновление. Неиспользуемые локальные коммиты и изменения не перезаписываются.
 
@@ -283,3 +283,14 @@ custom-opencode --version || true
 ```text
 /rag-start
 ```
+
+## Foreground / контейнер без user-systemd
+
+По умолчанию `CUSTOM_OPENCODE_SERVICE_MODE=systemd`: installer требует реальный
+user manager до установки. Для контейнера или явного ручного supervision задайте
+`CUSTOM_OPENCODE_SERVICE_MODE=manual` в `.env`. Остальные проверки не отключаются.
+Во время post-install проверки installer временно поднимает настоящий web server
+и завершает только собственный web-процесс. После установки запускайте
+`custom-opencode-serve` в отдельном терминале. Backend остаётся под управлением
+нативного `opencode2 service`; автоматический web-autostart в этом режиме отсутствует.
+Ключи провайдеров для model-free self-test не обязательны.

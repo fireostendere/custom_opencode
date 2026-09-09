@@ -164,7 +164,9 @@ def context_envelope(features:Any,session_id:str,project_instructions:str="")->d
 def dispatch_immediate(features:Any,*,session_id:str,text:str,files:list[Any],profile:str="direct")->dict[str,Any]:
     created=enqueue_prompt(features,{"sessionID":session_id,"text":text,"files":files,"profile":profile,"priority":100,"kind":"prompt"}); task=STORE.get_task(created["task"]["id"])
     if not task: raise RuntimeError("task creation failed")
-    result=_dispatch_task(features,task); return {"task":_public(STORE.get_task(task["id"]) or task),"result":result}
+    result=_dispatch_task(features,task)
+    current=STORE.get_task(task["id"]) or task
+    return {"task":_public(current),"result":result,"queued":current["state"] in QUEUE_STATES}
 
 
 def _dispatch_task(features:Any,task:dict[str,Any])->Any:
@@ -333,12 +335,13 @@ def _refresh_indexes()->None:
 
 def worker(features:Any)->None:
     global LAST_PRUNE_AT
-    while True:
+    stop = getattr(features, "WORKER_STOP", threading.Event())
+    while not stop.is_set():
         try:
             _migrate(features); active=STORE.list_tasks(states=ACTIVE_STATES|QUEUE_STATES,limit=1000); statuses=features._status_payload() if active else {}; _monitor_active(features,statuses); _dispatch_ready(features,statuses); features._apply_permission_policies(); _refresh_indexes()
             if time.monotonic()-LAST_PRUNE_AT>3600: STORE.prune(); LAST_PRUNE_AT=time.monotonic()
         except Exception as exc: STORE.event(kind="runtime.worker_error",data={"error":f"{type(exc).__name__}: {exc}"[:1000]})
-        time.sleep(1.5)
+        stop.wait(1.5)
 
 
 def install(features:Any)->None:

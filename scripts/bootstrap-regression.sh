@@ -7,6 +7,7 @@ trap 'rm -rf "$TMP"' EXIT
 SOURCE=$TMP/source
 INSTALL=$TMP/install
 HOME_DIR=$TMP/home
+export XDG_CONFIG_HOME="$HOME_DIR/.config" XDG_DATA_HOME="$HOME_DIR/.local/share" XDG_STATE_HOME="$HOME_DIR/.local/state" XDG_CACHE_HOME="$HOME_DIR/.cache"
 ENV_SOURCE=$TMP/source.env
 LOG=$TMP/actions.log
 mkdir -p "$SOURCE/scripts" "$HOME_DIR"

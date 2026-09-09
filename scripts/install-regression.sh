@@ -2,6 +2,12 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# The shipped env template must be sourceable, not merely valid assignment text.
+bash -euc 'set -a; source "$1"; [[ "$OPENCODE_SECRET_PREFIXES" == *";OPENAI_;"* ]]' -- "$ROOT/.env.example"
+# The fixture intentionally tests removal of stale credentials. Ambient CI or
+# developer credentials must not silently repopulate the rendered service env.
+unset GEMINI_API_KEY GOOGLE_API_KEY OPENCODE_OPENAI_ACCESS OPENCODE_OPENAI_REFRESH \
+  OPENCODE_OPENAI_EXPIRES OPENCODE_OPENAI_ACCOUNT_ID OPENCODE_ZEN_KEY OPENCODE_GO_KEY
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 COPY="$TMP/custom-opencode"
@@ -372,7 +378,8 @@ from pathlib import Path
 config_path, checkout, config_home = map(Path, sys.argv[1:])
 config = json.loads(config_path.read_text(encoding='utf-8'))
 entry = str(checkout / '.opencode/plugins/ponytail.mjs')
-assert config.get('plugins') == [entry], config.get('plugins')
+assert not config.get('plugins'), 'legacy V1 Ponytail entry must not be registered in V2'
+assert (Path(sys.argv[1]).parent / 'plugins' / 'ponytail-v2.js').is_file()
 assert 'plugin' not in config
 state = config_home / 'opencode/.ponytail-active'
 assert state.read_text(encoding='utf-8').strip() == 'lite'
