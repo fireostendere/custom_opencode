@@ -105,7 +105,10 @@ body.sidebar-resizing *{cursor:col-resize!important}
 .main{min-height:0}
 .orchestration-trace{flex:0 0 auto;min-height:0}
 .orchestration-trace details{min-height:0}
-.orchestration-nodes{max-height:min(52dvh,620px);overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.orchestration-summary-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.orchestration-panel>.activity-panel-body{height:min(42dvh,360px);max-height:none;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.orchestration-nodes{align-content:start}
+@media(max-width:700px){.orchestration-panel>.activity-panel-body{height:auto;max-height:min(32dvh,240px)}}
 
 .model-modal{width:min(760px,calc(100vw - 28px))}
 #modelDialog .model-modal{display:flex;flex:1 1 auto;flex-direction:column;min-width:0;min-height:0;height:100%;max-height:none;overflow:hidden}
@@ -158,7 +161,6 @@ dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
   dialog>.modal{padding:16px}
   .workflow-modal,.appearance-modal{width:100%;max-height:calc(100dvh - 12px)!important}
   dialog#modelDialog{height:calc(100dvh - 12px);max-height:calc(100dvh - 12px)}
-  .orchestration-nodes{max-height:42dvh}
 }
 
 @media(prefers-reduced-motion:reduce){

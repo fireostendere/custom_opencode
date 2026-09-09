@@ -309,7 +309,7 @@ if (!designSystem.includes('@media(hover:none) and (pointer:coarse)') || !design
 for (const marker of ['submitPending: false', 'if (state.submitPending) return', 'action.disabled = true', 'state.submitPending = false']) {
   if (!advanced.includes(marker)) throw new Error(`Managed-send duplicate guard missing: ${marker}`)
 }
-for (const marker of ['.orchestration-nodes{max-height:', 'overflow-y:auto', 'scrollbar-gutter:stable']) {
+for (const marker of ['.orchestration-panel>.activity-panel-body{height:', 'overflow-y:auto', 'scrollbar-gutter:stable']) {
   if (!designSystem.includes(marker)) throw new Error(`Orchestration scroll marker missing: ${marker}`)
 }
 for (const marker of ['sidebarResizer', 'localStorage', 'pointerdown', 'ArrowLeft', 'ArrowRight']) {

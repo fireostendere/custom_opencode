@@ -869,8 +869,14 @@ def desktop(browser, base_url: str, server_workflow) -> None:
     }""")
     assert conversation_before <= 1
     page.locator(".plan-panel > summary").click()
-    assert page.locator('.plan-panel').evaluate('el => el.open')
-    assert not page.locator('.live-panel').evaluate('el => el.open')
+    page.wait_for_function("document.querySelector('.plan-panel').open && document.querySelector('.live-panel').open")
+    def equal_panels():
+        boxes = [page.locator(selector).bounding_box() for selector in ('.plan-panel', '.live-panel')]
+        assert all(boxes), boxes
+        assert abs(boxes[0]['height'] - boxes[1]['height']) <= 1, boxes
+        assert abs(boxes[0]['width'] - boxes[1]['width']) <= 1, boxes
+        assert abs(boxes[0]['y'] - boxes[1]['y']) <= 1, boxes
+    equal_panels()
     plan_body = page.locator(".plan-panel-body")
     page.wait_for_function("() => { const el = document.querySelector('.plan-panel-body'); return el && el.scrollHeight > el.clientHeight }")
     before = plan_body.evaluate("el => { el.scrollTop = Math.max(1, el.scrollHeight - el.clientHeight - 30); return el.scrollTop }")
@@ -880,9 +886,21 @@ def desktop(browser, base_url: str, server_workflow) -> None:
     conversation_after = page.locator("#messages").evaluate("el => el.scrollTop")
     assert abs(conversation_after - conversation_before) <= 2, (conversation_before, conversation_after)
     page.locator('.live-panel > summary').click()
-    assert page.locator('.plan-panel').evaluate('el => el.open') and page.locator('.live-panel').evaluate('el => el.open')
+    page.wait_for_function("!document.querySelector('.plan-panel').open && !document.querySelector('.live-panel').open")
+    equal_panels()
+    page.locator('.live-panel > summary').press('Enter')
+    page.wait_for_function("document.querySelector('.plan-panel').open && document.querySelector('.live-panel').open")
+    equal_panels()
+    original_viewport = page.viewport_size
+    page.set_viewport_size({'width': 700, 'height': 850})
+    page.wait_for_function("document.querySelectorAll('.orchestration-panel[open]').length === 1")
     page.locator('.live-panel > summary').click()
-    assert page.locator('.plan-panel').evaluate('el => el.open') and not page.locator('.live-panel').evaluate('el => el.open')
+    page.wait_for_function("!document.querySelector('.plan-panel').open && document.querySelector('.live-panel').open")
+    page.set_viewport_size({'width': 701, 'height': 850})
+    page.wait_for_function("document.querySelectorAll('.orchestration-panel[open]').length === 2")
+    equal_panels()
+    page.set_viewport_size(original_viewport)
+    equal_panels()
 
     # A root-session switch must replace all orchestration data, rather than
     # briefly retaining the prior root's plan, child agent, or tool output.
@@ -916,6 +934,7 @@ def desktop(browser, base_url: str, server_workflow) -> None:
         const trace = document.querySelector('#orchestrationTrace')
         return panel?.open === true && trace?.innerText.includes('Other agent') && trace?.innerText.includes('other_tool')
     }""", timeout=5000)
+    equal_panels()  # A one-step plan must match a taller tools/agents panel too.
 
     clear_non_terminal_tasks(server_workflow)
     page.click("#logoutButton")
@@ -1087,9 +1106,13 @@ def mobile(browser, base_url: str) -> None:
     plan.locator(':scope > summary').click()
     assert plan.evaluate('el => el.open') and not live.evaluate('el => el.open')
     live.locator(':scope > summary').click()
-    assert plan.evaluate('el => el.open') and live.evaluate('el => el.open')
+    page.wait_for_function("!document.querySelector('.plan-panel').open && document.querySelector('.live-panel').open")
     plan.locator(':scope > summary').click()
-    assert not plan.evaluate('el => el.open') and live.evaluate('el => el.open')
+    page.wait_for_function("document.querySelector('.plan-panel').open && !document.querySelector('.live-panel').open")
+    page.wait_for_timeout(1200)
+    assert plan.evaluate('el => el.open') and not live.evaluate('el => el.open')
+    plan.locator(':scope > summary').click()
+    page.wait_for_function("document.querySelectorAll('.orchestration-panel[open]').length === 0")
     assert not errors, errors
     context.close()
 
@@ -1151,6 +1174,7 @@ def main() -> int:
                 server.shutdown()
                 server.server_close()
                 server_thread.join(timeout=2)
+                assert server_workflow.features._stop_worker(), 'Fixture worker must stop before deleting its database'
         finally:
             backend.shutdown()
             backend.server_close()

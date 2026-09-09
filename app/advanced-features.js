@@ -1133,6 +1133,21 @@ async function refreshPlanNow() {
     renderOrchestration()
   } catch (error) { console.debug('native V2 plan refresh', error) }
 }
+const compactOrchestration = globalThis.matchMedia?.('(max-width: 700px)')
+function syncOrchestrationPanels(panel, open) {
+  if (!panel) return
+  const panels = [...panel.parentElement.querySelectorAll(':scope > details')]
+  for (const row of panels) {
+    const next = row === panel ? open : compactOrchestration.matches ? (open ? false : row.open) : open
+    row._lastOpen = next
+    row.open = next
+  }
+  $('orchestrationTrace')?.classList.toggle('is-expanded', panels.some((row) => row.open))
+}
+compactOrchestration?.addEventListener('change', () => {
+  const panel = $('orchestrationTrace')?.querySelector('.orchestration-panel[open]')
+  syncOrchestrationPanels(panel, true)
+})
 function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   const host = $('orchestrationTrace')
   if (!host) return
@@ -1206,21 +1221,23 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   host._orchestrationMarkup = markup
   host.innerHTML = markup
   const details = [...host.querySelectorAll('details')]
+  const planPanel=host.querySelector('.plan-panel'),livePanel=host.querySelector('.live-panel')
+  if (planPanel) planPanel.open = planOpen
+  if (livePanel) livePanel.open = liveOpen
+  syncOrchestrationPanels(details.find((row) => row.open), true)
+  details.forEach((detail) => { detail._lastOpen = detail.open })
   details.forEach((detail) => {
     const rememberConversation = () => { detail._conversationScroll = captureScrollState($('messages')) }
     const summary = detail.querySelector('summary')
     summary?.addEventListener('pointerdown', rememberConversation)
     summary?.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') rememberConversation() })
     detail.addEventListener('toggle', () => {
-      if (!detail.isConnected) return
-      host.classList.toggle('is-expanded', details.some((row) => row.open))
+      if (!detail.isConnected || detail._lastOpen === detail.open) return
+      syncOrchestrationPanels(detail, detail.open)
       restoreScrollState($('messages'), detail._conversationScroll || captureScrollState($('messages')))
       detail._conversationScroll = null
     })
   })
-  const planPanel=host.querySelector('.plan-panel'),livePanel=host.querySelector('.live-panel')
-  if (planPanel) planPanel.open = planOpen
-  if (livePanel) livePanel.open = liveOpen
   host.classList.toggle('is-expanded', planOpen || liveOpen)
   restoreScrollState($('messages'), conversation)
   const sessionID = state.sessionID
