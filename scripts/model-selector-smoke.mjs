@@ -195,13 +195,10 @@ assert.deepEqual(switched, {
 assert.deepEqual(persisted[0], { providerID: 'bailian-cli', modelID: 'qwen-flash' })
 assert.equal(persisted.filter((item) => item.providerID === 'bailian-cli' && item.modelID === 'qwen-flash').length, 1)
 
-const keys = dialogOptions.map((item) => `${item.value.providerID}/${item.value.modelID}`)
-assert.equal(new Set(keys).size, keys.length, 'model list contains duplicates')
-assert.equal(keys.filter((item) => item === 'bailian-cli/qwen3.8-max').length, 1)
-assert.deepEqual(
-  dialogOptions.map((item) => item.category),
-  ['Current', 'Recent', 'Alibaba', 'Orchestrated', 'Google', 'Free', 'Others'],
-)
+assert.equal(new Set(dialogOptions.map((item) => `${item.category}:${item.value.providerID}/${item.value.modelID}`)).size, dialogOptions.length, 'model list contains duplicates inside a category')
+assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'qwen3.8-max').map((item) => item.category), ['Current', 'Orchestrated'])
+assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'qwen-flash').map((item) => item.category), ['Alibaba'])
+assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'gpt-test').map((item) => item.category), ['Recent', 'OpenAI'])
 assert.deepEqual(
   dialogOptions
     .filter((item) => item.category === 'Google')
@@ -224,7 +221,7 @@ assert.deepEqual(
   dialogOptions
     .filter((item) => item.category === 'Orchestrated')
     .map((item) => item.value.modelID),
-  ['qwen3.7-plus'],
+  ['qwen3.8-max', 'qwen3.7-plus'],
 )
 assert.deepEqual(
   dialogOptions
@@ -303,7 +300,7 @@ assert.deepEqual(favoriteRows.map((item) => item.category), ['Favorites', 'Recen
 assert.ok(favoriteRows.every((item) => item.title.startsWith('★ ')), 'both rows must show a star')
 assert.deepEqual(
   [...new Set(dialogOptions.map((item) => item.category))],
-  ['Current', 'Favorites', 'Recent', 'Alibaba', 'Orchestrated', 'Google', 'Free', 'Others'],
+  ['Current', 'Favorites', 'Recent', 'Alibaba', 'OpenAI', 'Orchestrated', 'Google', 'Free', 'Others'],
 )
 
 // ── Scenario 5: toggling the last favorite removes the dedicated section ──
@@ -319,7 +316,13 @@ assert.equal(
   dialogOptions.filter(
     (item) => item.value.providerID === 'bailian-cli' && item.value.modelID === 'qwen-flash',
   ).length,
-  1,
+  2,
+)
+assert.deepEqual(
+  dialogOptions
+    .filter((item) => item.value.providerID === 'bailian-cli' && item.value.modelID === 'qwen-flash')
+    .map((item) => item.category),
+  ['Recent', 'Alibaba'],
 )
 
 // ── Scenario 6: a current favorite remains in its normal category ──

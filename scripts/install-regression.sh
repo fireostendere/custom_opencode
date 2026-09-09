@@ -120,6 +120,7 @@ grep -Fq '"app.exit": "ctrl+shift+q"' "$CLI_CONFIG"
 [[ -f "$VISIBLE_PLAN" ]] || { echo "fresh install did not install visible plan plugin" >&2; exit 1; }
 grep -Fq 'unset WAYLAND_DISPLAY WAYLAND_SOCKET' "$WRAPPER"
 grep -Fq 'webserver-control.py' "$WEBSERVER_WRAPPER"
+grep -Fq 'export CUSTOM_OPENCODE_SERVICE_MODE="systemd"' "$WEBSERVER_WRAPPER"
 if grep -Fq 'pin-orchestrated-recent.py' "$WRAPPER"; then
   echo "custom-opencode must preserve the last-used model order" >&2
   exit 1

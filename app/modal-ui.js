@@ -143,7 +143,6 @@ function closeAndRestore(dialog) {
 function isActionSelection(target, dialog) {
   if (!target?.closest || !dialog?.open) return false
   if (target.closest('[data-fav]')) return false
-  if (dialog.id === 'modelDialog') return Boolean(target.closest('button[data-model][data-provider]'))
   if (dialog.id === 'projectDialog') {
     return Boolean(target.closest('button[data-project], button[data-open-directory]'))
   }

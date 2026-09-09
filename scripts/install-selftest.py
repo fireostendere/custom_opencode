@@ -213,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
             "keep-awake",
             "lazy-local-router",
             "notify-win",
+            "provider-retry-guard",
             "qwen-quota",
             "slow-cmd-watchdog", "custom.config-manager", "custom-opencode.server-runtime-guard",
             "custom.visible-plan", "orchestrated-qwen", "gemini-rate-limit",

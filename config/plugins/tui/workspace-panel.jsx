@@ -352,7 +352,7 @@ export default Plugin.define({
             minWidth={vertical() ? HANDLE : 0}
             minHeight={!vertical() ? HANDLE : 0}
             backgroundColor={theme.background.default}
-            border={props.side === "left" ? ["right"] : props.side === "right" ? ["left"] : props.side === "top" ? ["bottom"] : ["top"]}
+            border={item().collapsed ? false : props.side === "left" ? ["right"] : props.side === "right" ? ["left"] : props.side === "top" ? ["bottom"] : ["top"]}
             borderColor={theme.border.default}
             flexDirection="column"
           >

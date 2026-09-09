@@ -520,6 +520,7 @@ cat >"$BIN_DIR/custom-opencode-webserver" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 export CUSTOM_OPENCODE_ROOT="$ROOT"
+export CUSTOM_OPENCODE_SERVICE_MODE="$SERVICE_MODE"
 set -a
 source "$ROOT/.env"
 set +a

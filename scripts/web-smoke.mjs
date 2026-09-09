@@ -106,19 +106,22 @@ if (ui.isFreeModel({ id:'paid-model', cost:paidCost })) throw new Error('Paid mo
 if (!ui.isFreeModel({ id:'hy3-free' })) throw new Error('Free-ID fallback failed')
 if (!ui.isFreeModel({ id:'big-pickle' })) throw new Error('Big Pickle free fallback failed')
 const modelRows = [
-  { name:'Zulu', favorite:false, selected:false },
+  { name:'GPT-5.4', favorite:false, selected:false },
+  { name:'GPT-5.6', favorite:false, selected:false },
+  { name:'Qwen Orchestrated', favorite:false, selected:false, orchestrated:true },
   { name:'Alpha', favorite:false, selected:true },
   { name:'Beta', favorite:true, selected:false },
 ]
 modelRows.sort(ui.compareModelEntries)
-if (modelRows.map((row)=>row.name).join(',') !== 'Beta,Alpha,Zulu') throw new Error('Model favorite/selected/alphabetical ordering regression')
+if (modelRows.map((row)=>row.name).join(',') !== 'Alpha,Beta,Qwen Orchestrated,GPT-5.6,GPT-5.4') throw new Error('Model selected/favorite/orchestrated/version ordering regression')
 const providerRows = [
   { id:'z', label:'Zulu', favoriteCount:0 },
   { id:'a', label:'Alpha', favoriteCount:0 },
   { id:'f', label:'Favorite provider', favoriteCount:2 },
 ]
 providerRows.sort(ui.compareProviderGroups)
-if (providerRows.map((row)=>row.id).join(',') !== 'f,a,z') throw new Error('Provider favorite/alphabetical ordering regression')
+if (providerRows.map((row)=>row.id).join(',') !== 'a,f,z') throw new Error('Provider alphabetical ordering regression')
+if (!(ui.providerPriority({ id:'openai', selectedCount:1 }) < ui.providerPriority({ id:'bailian-cli' }))) throw new Error('Selected provider must sort before fixed provider priorities')
 
 const ux = await loadSource('app/ux-state.js')
 if (ux.composerActionState({ running:false, hasPayload:false }).kind !== 'send') throw new Error('Idle composer must show send')

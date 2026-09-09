@@ -206,7 +206,14 @@ function syncPermission() {
 function setTransitionControls(disabled) {
   for (const id of ['input', 'composerAction', 'modelButton', 'variantSelect', 'attachButton']) {
     const control = $(id)
-    if (control) control.disabled = disabled
+    if (!control) continue
+    if (disabled) {
+      control.dataset.transitionEnabled = control.disabled ? '0' : '1'
+      control.disabled = true
+    } else if ('transitionEnabled' in control.dataset) {
+      control.disabled = control.dataset.transitionEnabled !== '1'
+      delete control.dataset.transitionEnabled
+    }
   }
 }
 function nativeOrchestratedChoice(model = ORCHESTRATED_MODEL) {
@@ -305,7 +312,10 @@ function installModelProfileProxy() {
       event.preventDefault()
       event.stopImmediatePropagation()
       const model = ORCHESTRATED_MODELS.find((item) => item.id === orchestrated.dataset.model)
-      if (model) chooseOrchestrated(model)
+      if (model) {
+        $('modelDialog')?.close()
+        chooseOrchestrated(model)
+      }
       return
     }
     const native = event.target.closest('[data-model][data-provider]')

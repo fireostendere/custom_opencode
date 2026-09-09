@@ -78,6 +78,7 @@ done
 "$NODE" "$ROOT/scripts/visible-plan-regression.mjs"
 "$NODE" "$ROOT/scripts/ponytail-v2-regression.mjs"
 "$NODE" "$ROOT/scripts/gemini-rate-limit-regression.mjs"
+"$NODE" "$ROOT/scripts/provider-retry-guard-regression.mjs"
 "$NODE" "$ROOT/scripts/refresh-coalescing-regression.mjs"
 "$NODE" "$ROOT/scripts/server-runtime-guard-regression.mjs"
 "$NODE" "$ROOT/scripts/mcp-profiles-regression.mjs"

@@ -130,6 +130,9 @@ function buildOptions(models, providerNames, recentEntries, current, favoriteEnt
   const favoriteKeys = new Set(
     favoriteEntries.map((entry) => `${entry.providerID}/${entry.modelID}`),
   )
+  const recentKeys = new Set(
+    recentEntries.map((entry) => `${entry.providerID}/${entry.modelID}`),
+  )
 
   if (current) {
     const currentKey = `${current.providerID}/${current.modelID}`
@@ -166,7 +169,7 @@ function buildOptions(models, providerNames, recentEntries, current, favoriteEnt
         (model) =>
           model.enabled &&
           !categorized.has(key(model)) &&
-          (!seen.has(key(model)) || favoriteKeys.has(key(model))) &&
+          (!seen.has(key(model)) || favoriteKeys.has(key(model)) || recentKeys.has(key(model))) &&
           predicate(model),
       )
       .map((model) => {

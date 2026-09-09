@@ -8,6 +8,7 @@ const root = new URL('../', import.meta.url)
 const helperUrl = new URL('config/plugins/tui/lib/limits-helper.js', root)
 const panelDataUrl = new URL('config/plugins/tui/lib/panel-data.js', root)
 const panelCommandUrl = new URL('config/plugins/tui/lib/panel-command.js', root)
+const dialogScrollbarUrl = new URL('config/plugins/tui/lib/dialog-scrollbar.js', root)
 const panelSlash = await readFile(new URL('config/plugins/tui/panel-slash.jsx', root), 'utf8')
 const workspacePanel = await readFile(new URL('config/plugins/tui/workspace-panel.jsx', root), 'utf8')
 const panelViews = await readFile(new URL('config/plugins/tui/lib/panel-views.jsx', root), 'utf8')
@@ -25,6 +26,39 @@ const updater = await readFile(new URL('scripts/update.sh', root), 'utf8')
 const agentsPolicy = await readFile(new URL('config/AGENTS.md', root), 'utf8')
 const orchestratorPolicy = await readFile(new URL('config/prompts/orchestrator.md', root), 'utf8')
 const solOrchestratorPolicy = await readFile(new URL('config/prompts/orchestrator-sol.md', root), 'utf8')
+const { installDialogScrollbars } = await import(`${dialogScrollbarUrl.href}?contract=${Date.now()}`)
+
+const backgroundScroll = { verticalScrollBar: { visible: false }, getChildren() { return [] } }
+const dialogScroll = {
+  verticalScrollBar: { visible: false },
+  set verticalScrollbarOptions(options) { Object.assign(this.verticalScrollBar, options) },
+  getChildren() { return [] },
+}
+const rootChildren = [backgroundScroll]
+const postProcesses = new Set()
+let resolveDialog
+const originalDialogSelect = () => {
+  rootChildren.push(dialogScroll)
+  for (const process of postProcesses) process()
+  return new Promise((resolve) => { resolveDialog = resolve })
+}
+const dialogContext = {
+  renderer: {
+    root: { getChildren() { return rootChildren } },
+    addPostProcessFn(process) { postProcesses.add(process) },
+    removePostProcessFn(process) { postProcesses.delete(process) },
+  },
+  ui: { dialog: { select: originalDialogSelect } },
+}
+const removeDialogScrollbars = installDialogScrollbars(dialogContext)
+const dialogResult = dialogContext.ui.dialog.select({ options: [] })
+assert.equal(backgroundScroll.verticalScrollBar.visible, false, 'Existing screen scrollbars must not be changed by a dialog')
+assert.equal(dialogScroll.verticalScrollBar.visible, true, 'Select dialogs must expose their native scrollbar')
+resolveDialog('done')
+assert.equal(await dialogResult, 'done')
+assert.equal(dialogScroll.verticalScrollBar.visible, false, 'Dialog scrollbar override must be released on close')
+removeDialogScrollbars()
+assert.equal(dialogContext.ui.dialog.select, originalDialogSelect, 'Dialog select wrapper must be removable')
 
 async function runtimeSources(directory) {
   const entries = await readdir(directory, { withFileTypes: true })
@@ -82,6 +116,7 @@ assert.equal(cliConfig.mouse, true, 'TUI mouse support must stay enabled for cli
 assert.equal(tuiPackage.exports['./tui'], './tui.js', 'TUI package must expose the V2 ./tui entrypoint')
 assert.equal(tuiPackage.exports['.'], './index.js', 'TUI package must expose a valid server entrypoint')
 assert.match(tuiServerEntry, /id: "custom\.tui-bundle"/)
+assert.ok(tuiEntry.includes('installDialogScrollbars(context)'), 'TUI bundle must install select-dialog scrollbars')
 for (const source of [
   'add-wizard.js',
   'effort-indicator.jsx',
@@ -228,6 +263,7 @@ assert.match(workspacePanel, /<box flexDirection="column" width="100%" minWidth=
 assert.ok(!workspacePanel.includes('live updates keep scroll'), 'The obsolete scroll-status label must be removed')
 assert.ok(!workspacePanel.includes('<box onMouseDown={() => setCollapsed(props.side, true)}><text fg={theme.text.subdued}><span>{COLLAPSE_ICON[props.side]}</span></text></box>'), 'Collapse must not remain in the header')
 assert.match(workspacePanel, /const HANDLE = 1\b/, 'Panel handles must occupy one terminal cell')
+assert.ok(workspacePanel.includes('border={item().collapsed ? false :'), 'Collapsed one-cell handles must not lose their icon behind a border')
 assert.ok(workspacePanel.includes('function ExpandedHandle(props)'), 'ExpandedHandle must exist')
 assert.match(workspacePanel, /<box flexDirection="column" flexShrink=\{0\} paddingX=\{1\} paddingTop=\{1\} gap=\{1\}>[\s\S]*?<\/box>[\s\S]*?<ExpandedHandle side=\{props\.side\} \/>/, 'ExpandedHandle must render separately from the header')
 assert.ok(workspacePanel.includes('const atStart = props.side === "right" || props.side === "bottom"'), 'ExpandedHandle must derive the internal edge from atStart')

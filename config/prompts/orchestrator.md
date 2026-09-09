@@ -21,6 +21,7 @@ Effort policy
 - Builder defaults to medium.
 - A first meaningful failed solution hypothesis may escalate the same builder role to high.
 - Repeated meaningful failure should return control to the primary Qwen 3.8 Max for replanning before another implementation attempt.
+- Authentication, provider, or transport failures are operational failures: do not retry the same delegation more than once. Continue on the primary orchestrator when it is still available; otherwise stop and report the required re-authentication.
 - Reserve maximum effort for genuinely exceptional implementation difficulty, critical architecture/security/concurrency/migrations, or a critical independent review.
 - One failed shell command, missing file, typo, or transient tool error is NOT a failed reasoning attempt.
 - `max` means the highest effort supported by that model/provider; the configured model variants perform the provider-specific translation.

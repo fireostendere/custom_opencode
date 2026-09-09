@@ -290,7 +290,7 @@ custom-opencode --version || true
 user manager до установки. Для контейнера или явного ручного supervision задайте
 `CUSTOM_OPENCODE_SERVICE_MODE=manual` в `.env`. Остальные проверки не отключаются.
 Во время post-install проверки installer временно поднимает настоящий web server
-и завершает только собственный web-процесс. После установки запускайте
-`custom-opencode-serve` в отдельном терминале. Backend остаётся под управлением
-нативного `opencode2 service`; автоматический web-autostart в этом режиме отсутствует.
+и завершает только собственный web-процесс. После установки запускайте его через
+`/server` или `custom-opencode-webserver start`; `custom-opencode-serve` остаётся
+foreground-вариантом. Автоматический web-autostart в этом режиме отсутствует.
 Ключи провайдеров для model-free self-test не обязательны.

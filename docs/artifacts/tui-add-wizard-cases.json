@@ -34,7 +34,7 @@
       "id": "skill",
       "nativeCommand": "addskill",
       "prompts": ["review", "Review", "Review changes", "", "Review the current changes.\nVerify the result."],
-      "selects": [false],
+      "selects": ["manual", false],
       "expected": "skills.review"
     },
     {

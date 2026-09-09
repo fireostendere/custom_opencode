@@ -142,6 +142,7 @@ function appliedSettings() {
 
 const commandCalls = []
 const prompts = []
+const promptInputs = []
 const selects = []
 const alerts = []
 const toasts = []
@@ -155,6 +156,7 @@ const dialog = {
   async confirm() { return confirmSave },
   async prompt(input) {
     prompts.push(input.title)
+    promptInputs.push(input)
     if (!dialogPrompts.length) throw new Error(`Unexpected prompt: ${input.title}`)
     return dialogPrompts.shift()
   },
@@ -248,7 +250,7 @@ function configureDialog(promptsToReturn, selectsToReturn = []) {
 async function waitFor(predicate, label) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) return
-    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setTimeout(resolve, 1))
   }
   throw new Error(`Timed out waiting for ${label}: ${JSON.stringify({ prompts, alerts, toasts, remainingPrompts: dialogPrompts, commandCalls })}`)
 }
@@ -280,6 +282,12 @@ await runButton('mcp', localCase.prompts, localCase.selects)
 const skillCase = fixture.buttons.find((item) => item.id === 'skill')
 await runButton('skill', skillCase.prompts, skillCase.selects)
 assert.ok(alerts.some((message) => message.includes('Skill content is required')))
+
+const importedSkillPath = join(configRoot, 'hardware-engineer')
+await mkdir(importedSkillPath)
+const importedSkill = '---\nname: hardware-engineer\ndescription: Design hardware from verified evidence.\n---\n\n# Hardware engineer\n\nUse RAG evidence.\n'
+await writeFile(join(importedSkillPath, 'SKILL.md'), importedSkill)
+await runButton('skill', [importedSkillPath], ['import', false])
 
 const orchestrationCase = fixture.buttons.find((item) => item.id === 'orchestration')
 await runButton('orchestration', orchestrationCase.prompts, orchestrationCase.selects)
@@ -352,6 +360,10 @@ assert.ok(registry.mcp.docs)
 assert.ok(registry.mcp.filesystem)
 assert.ok(registry.mcp['alias-docs'])
 assert.equal(registry.skills.review.content, 'Review the current changes.\nVerify the result.')
+assert.equal(registry.skills['hardware-engineer'].name, 'hardware-engineer')
+assert.equal(registry.skills['hardware-engineer'].description, 'Design hardware from verified evidence.')
+assert.equal(registry.skills['hardware-engineer'].content, '# Hardware engineer\n\nUse RAG evidence.')
+assert.equal(promptInputs.filter((input) => input.title === 'Skill ID').length, 1)
 assert.ok(registry.orchestrations['acme-ui/coder-orchestrated'])
 assert.equal(registry.orchestrations['acme-ui/coder-orchestrated'].prompt, 'Verify before completion.')
 

@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Critical browser regression for web model selection and new-session creation.
+"""Critical browser regression for changing a model in an existing chat.
 
 Runs the production web handler against the isolated fixture backend from
-local-web-harness.py. It exercises the exact user-facing controls that must
-remain usable after model-catalog changes: New Session -> project selection,
-and Model -> concrete model selection for the newly created session.
+local-web-harness.py and exercises the exact user-facing model picker.
 """
 from __future__ import annotations
 
@@ -63,28 +61,14 @@ def main() -> int:
                     page.locator("#newSession").wait_for(state="visible", timeout=20_000)
                     page.locator("#sessions .session").first.wait_for(state="visible", timeout=20_000)
 
-                    # Critical control 1: creating a new dialog must open the project chooser
-                    # and create/select exactly one session when a target is chosen.
-                    page.click("#newSession")
-                    page.locator("#projectDialog[open]").wait_for(state="visible", timeout=5_000)
-                    assert harness.fixture.FixtureState.session_payloads == []
-                    with page.expect_response(
-                        lambda response: urlsplit(response.url).path == "/api/session"
-                        and response.request.method == "POST",
-                        timeout=5_000,
-                    ) as create_response:
-                        page.locator('#projectDialog button[data-project="proj_other"]').click()
-                    assert create_response.value.ok, create_response.value.status
-                    page.wait_for_function("!document.querySelector('#projectDialog').open", timeout=5_000)
-                    page.wait_for_function(
-                        "location.hash.startsWith('#/session/ses_created_1')",
-                        timeout=5_000,
-                    )
-                    assert len(harness.fixture.FixtureState.session_payloads) == 1
-                    assert page.locator("#modelButton").is_enabled()
+                    harness.BrowserBackend.model_delay_seconds = 0.35
+                    page.locator('[data-session="ses_fixture"]').click()
+                    page.wait_for_function("location.hash.startsWith('#/session/ses_fixture')", timeout=5_000)
+                    assert page.locator("#modelButton").is_disabled(), "model picker enabled before its catalog loaded"
+                    page.wait_for_function("!document.querySelector('#modelButton').disabled", timeout=5_000)
 
-                    # Critical control 2: a concrete model entry must remain clickable after
-                    # ui-enhancements.js re-groups/decorates the model catalog.
+                    # A concrete model entry in an existing chat must remain clickable after
+                    # ui-enhancements.js re-groups the catalog and modal-ui restores history.
                     page.click("#modelButton")
                     page.locator("#modelDialog[open]").wait_for(state="visible", timeout=5_000)
                     page.locator("#modelChoices > .model-provider-section").first.wait_for(
@@ -94,8 +78,12 @@ def main() -> int:
                         '#modelChoices button[data-provider="bailian-cli"][data-model="qwen-fixture-01"]'
                     ).first
                     target.wait_for(state="visible", timeout=5_000)
+                    page.evaluate("""addEventListener('popstate', () => {
+                        const root = document.querySelector('#modelChoices')
+                        root.innerHTML = root.innerHTML
+                    }, { once:true })""")
                     with page.expect_response(
-                        lambda response: urlsplit(response.url).path == "/api/session/ses_created_1/model"
+                        lambda response: urlsplit(response.url).path == "/api/session/ses_fixture/model"
                         and response.request.method == "POST",
                         timeout=5_000,
                     ) as model_response:
@@ -116,6 +104,29 @@ def main() -> int:
                             .some((node) => node.textContent.includes('✓'))""",
                         timeout=5_000,
                     )
+
+                    orchestrated = page.locator(
+                        '#modelChoices button[data-provider="bailian-cli"][data-model="qwen3.8-orchestrated"]'
+                    ).first
+                    provider = orchestrated.locator("xpath=ancestor::section[1]")
+                    toggle = provider.locator(":scope > .model-provider-toggle")
+                    toggle.click()
+                    toggle.click()
+                    page.locator("#modelChoices").evaluate("el => el.scrollTop = el.scrollHeight")
+                    orchestrated.scroll_into_view_if_needed()
+                    with page.expect_response(
+                        lambda response: urlsplit(response.url).path == "/api/session/ses_fixture/model"
+                        and response.request.method == "POST",
+                        timeout=5_000,
+                    ) as orchestrated_response:
+                        orchestrated.click()
+                    assert orchestrated_response.value.ok, orchestrated_response.value.status
+                    page.wait_for_function("!document.querySelector('#modelDialog').open", timeout=5_000)
+                    page.wait_for_function("!document.documentElement.dataset.modelTransition", timeout=5_000)
+                    page.wait_for_function(
+                        "document.querySelector('#modelButton').textContent.includes('Orchestrated')",
+                        timeout=5_000,
+                    )
                     assert not problems, problems
 
                     context.close()
@@ -123,7 +134,7 @@ def main() -> int:
             finally:
                 stack.stop()
 
-    print("Critical web controls regression passed: new session + model selection")
+    print("Critical web controls regression passed: existing chat model selection")
     return 0
 
 

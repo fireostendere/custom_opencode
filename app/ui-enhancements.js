@@ -75,24 +75,32 @@ export function isFreeModel(model) {
 }
 
 export function compareModelEntries(a, b) {
-  return Number(Boolean(b.favorite)) - Number(Boolean(a.favorite))
-    || Number(Boolean(b.selected)) - Number(Boolean(a.selected))
+  const aName = String(a.name || ''), bName = String(b.name || '')
+  const aParts = /^(.*?)(\d+(?:\.\d+)*)(.*)$/.exec(aName)
+  const bParts = /^(.*?)(\d+(?:\.\d+)*)(.*)$/.exec(bName)
+  const sameFamily = aParts && bParts && aParts[1].localeCompare(bParts[1], 'ru', { sensitivity:'base' }) === 0
+  return Number(Boolean(b.selected)) - Number(Boolean(a.selected))
+    || Number(Boolean(b.favorite)) - Number(Boolean(a.favorite))
+    || Number(Boolean(b.orchestrated)) - Number(Boolean(a.orchestrated))
+    || (sameFamily ? bParts[2].localeCompare(aParts[2], 'en', { numeric:true }) : 0)
     || String(a.name || '').localeCompare(String(b.name || ''), 'ru', { sensitivity:'base', numeric:true })
 }
 
 export function compareProviderGroups(a, b) {
-  return Number(b.favoriteCount || 0) - Number(a.favoriteCount || 0)
-    || String(a.label || a.id || '').localeCompare(String(b.label || b.id || ''), 'ru', { sensitivity:'base', numeric:true })
+  return String(a.label || a.id || '').localeCompare(String(b.label || b.id || ''), 'ru', { sensitivity:'base', numeric:true })
 }
 
-function providerPriority(group) {
-  if (group.id === '__favorites__') return -1
-  if (group.id === '__free__') return 2
+export function providerPriority(group) {
+  if (group.id === '__favorites__') return -2
+  if (group.selectedCount) return -1
   const value = `${group.id} ${group.label}`.toLowerCase()
   if (/bailian|alibaba/.test(value)) return 0
   if (/openai/.test(value)) return 1
-  if (/local|ollama|lm ?studio|llama ?cpp/.test(value)) return 3
-  return 4
+  if (/opencode/.test(value)) return 2
+  if (/google|gemini/.test(value)) return 3
+  if (group.id === '__free__') return 4
+  if (/local|ollama|lm ?studio|llama ?cpp/.test(value)) return 5
+  return 6
 }
 
 function providerLabelsFromFlatList(root) {
@@ -147,6 +155,7 @@ function normalizeChoice(button, favorites, orchestrated) {
     button,
     selected,
     favorite: favorites.has(key),
+    orchestrated: button.dataset.model.includes('orchestrated'),
     name: title?.textContent?.replace(/\s·\s✓\s*$/, '') || button.dataset.model || key,
   }
 }
@@ -251,6 +260,7 @@ async function decorateModelChoices() {
       entries: providerEntries,
       label: providerLabels.get(id) || id,
       favoriteCount: providerEntries.filter((entry) => entry.favorite).length,
+      selectedCount: providerEntries.filter((entry) => entry.selected).length,
     })).sort(compareProviderGroups)
 
     const sections = []
@@ -266,6 +276,7 @@ async function decorateModelChoices() {
       label: 'Бесплатные модели',
       entries: freeEntries,
       favoriteCount: freeEntries.filter((entry) => entry.favorite).length,
+      selectedCount: freeEntries.filter((entry) => entry.selected).length,
     })
     sections.push(...providerGroups)
     sections.sort((a, b) => providerPriority(a) - providerPriority(b) || compareProviderGroups(a, b))

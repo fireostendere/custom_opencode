@@ -8,6 +8,7 @@ import panelSlash from "./panel-slash.jsx"
 import retiredPanel from "./limits-panels.jsx"
 import workspacePanel from "./workspace-panel.jsx"
 import wslClipboard from "./wsl-clipboard.jsx"
+import { installDialogScrollbars } from "./lib/dialog-scrollbar.js"
 
 const plugins = [
   effortIndicator,
@@ -24,7 +25,7 @@ const plugins = [
 export default Plugin.define({
   id: "custom.tui-bundle",
   setup(context) {
-    const cleanups = []
+    const cleanups = [installDialogScrollbars(context)]
     for (const plugin of plugins) {
       const cleanup = plugin.setup(context)
       if (typeof cleanup === "function") cleanups.push(cleanup)

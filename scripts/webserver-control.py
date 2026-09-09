@@ -4,15 +4,18 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import importlib.util
 import json
 import os
 from pathlib import Path
 import re
+import signal
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any
 
 
@@ -57,6 +60,109 @@ def state_path() -> Path:
 
 def unit_path() -> Path:
     return Path(os.environ.get("HOME", "~")).expanduser() / ".config" / "systemd" / "user" / UNIT
+
+
+def service_mode() -> str:
+    return os.environ.get("CUSTOM_OPENCODE_SERVICE_MODE", "systemd").strip() or "systemd"
+
+
+def manual_launcher() -> Path:
+    return Path(os.environ.get("HOME", "~")).expanduser() / ".local" / "bin" / "custom-opencode-serve"
+
+
+def manual_deployed() -> bool:
+    launcher = manual_launcher()
+    return launcher.is_file() and os.access(launcher, os.X_OK)
+
+
+def manual_pid(saved: dict[str, Any] | None = None) -> int | None:
+    value = (saved or read_state()).get("pid")
+    try:
+        pid = int(value)
+    except (TypeError, ValueError):
+        return None
+    try:
+        arguments = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except (OSError, http.client.HTTPException):
+        return None
+    expected = {
+        os.fsencode(root_directory() / "app" / "server_workflow.py"),
+        os.fsencode(manual_launcher()),
+    }
+    return pid if expected.intersection(arguments) else None
+
+
+def manual_ready() -> bool:
+    host, port = web_config()
+    if host in {"0.0.0.0", "::"}:
+        host = "127.0.0.1" if host == "0.0.0.0" else "::1"
+    connection = http.client.HTTPConnection(host, port, timeout=0.5)
+    try:
+        connection.request("GET", "/login.html")
+        return connection.getresponse().status < 500
+    except OSError:
+        return False
+    finally:
+        connection.close()
+
+
+def manual_apply(running: bool, default_enabled: bool) -> dict[str, Any]:
+    if default_enabled:
+        raise ControlError("manual service mode does not support autostart")
+    saved = read_state()
+    pid = manual_pid(saved)
+    if running and pid is None:
+        launcher = manual_launcher()
+        if not launcher.is_file() or not os.access(launcher, os.X_OK):
+            raise ControlError("manual web launcher is not deployed")
+        log_path = state_path().with_name("webserver.log")
+        log_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+        log_fd = os.open(log_path, flags, 0o600)
+        os.fchmod(log_fd, 0o600)
+        try:
+            process = subprocess.Popen(
+                [str(launcher)], cwd=root_directory(), stdout=log_fd,
+                stderr=subprocess.STDOUT, start_new_session=True,
+            )
+        except OSError as exc:
+            raise ControlError(f"manual web start failed: {exc}") from exc
+        finally:
+            os.close(log_fd)
+        deadline = time.monotonic() + 50
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise ControlError(f"manual web server exited {process.returncode}; see {log_path}")
+            if manual_pid({"pid": process.pid}) is not None and manual_ready():
+                pid = process.pid
+                break
+            time.sleep(0.1)
+        else:
+            os.killpg(process.pid, signal.SIGTERM)
+            raise ControlError(f"manual web server did not start; see {log_path}")
+    elif not running and pid is not None:
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + 5
+        while manual_pid({"pid": pid}) is not None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if manual_pid({"pid": pid}) is not None:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        pid = None
+    write_state({
+        **saved,
+        "version": 1,
+        "deployed": True,
+        "running": running,
+        "defaultEnabled": False,
+        "pid": pid,
+    })
+    return status()
 
 
 def read_state() -> dict[str, Any]:
@@ -139,14 +245,21 @@ def web_config() -> tuple[str, int]:
 
 def status() -> dict[str, Any]:
     saved = read_state()
-    active = probe("is-active", UNIT)
-    enabled = probe("is-enabled", UNIT)
-    deployed = unit_path().is_file()
-    running = active == "active" if active is not None else bool(saved.get("running", False))
-    default_enabled = enabled in ENABLED_STATES if enabled is not None else bool(saved.get("defaultEnabled", False))
+    mode = service_mode()
+    if mode == "manual":
+        deployed = manual_deployed()
+        running = manual_pid(saved) is not None
+        default_enabled = False
+    else:
+        active = probe("is-active", UNIT)
+        enabled = probe("is-enabled", UNIT)
+        deployed = unit_path().is_file()
+        running = active == "active" if active is not None else bool(saved.get("running", False))
+        default_enabled = enabled in ENABLED_STATES if enabled is not None else bool(saved.get("defaultEnabled", False))
     host, port = web_config()
     result = {
         "ok": True,
+        "serviceMode": mode,
         "unit": UNIT,
         "deployed": deployed,
         "running": running,
@@ -169,12 +282,15 @@ def status() -> dict[str, Any]:
 
 
 def require_deployed() -> None:
-    if not unit_path().is_file():
+    deployed = manual_deployed() if service_mode() == "manual" else unit_path().is_file()
+    if not deployed:
         raise ControlError("web server is not deployed")
 
 
 def apply(running: bool, default_enabled: bool) -> dict[str, Any]:
     require_deployed()
+    if service_mode() == "manual":
+        return manual_apply(running, default_enabled)
     checked_systemctl("daemon-reload")
     checked_systemctl("enable" if default_enabled else "disable", UNIT)
     checked_systemctl("start" if running else "stop", UNIT)
@@ -325,12 +441,20 @@ def port_command(port: int, host: str | None) -> dict[str, Any]:
         if len(host) > 253 or not all(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label) for label in labels):
             raise ControlError("invalid host: use an IPv4 address or DNS hostname")
 
+    manual_running = service_mode() == "manual" and manual_pid() is not None
     _rewrite_env_file(port, host)
 
     # Check if service is active and restart if needed
     restarted = False
-    active = probe("is-active", UNIT)
-    if active == "active":
+    active = probe("is-active", UNIT) if service_mode() != "manual" else ""
+    if manual_running:
+        manual_apply(False, False)
+        os.environ["OPENCODE_WEB_PORT"] = str(port)
+        if host is not None:
+            os.environ["OPENCODE_WEB_HOST"] = host
+        manual_apply(True, False)
+        restarted = True
+    elif active == "active":
         try:
             checked_systemctl("restart", UNIT)
             restarted = True

@@ -386,6 +386,7 @@ async function selectSession(id,{push=true,saveDraft=true}={}) {
   renderAttachments(); renderSessions(); renderHeader(); renderMessages({bottom:true}); restoreDraft(); $('sidebar').classList.remove('open')
   if(push) setSessionHash(id)
   window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:id}}))
+  renderControls()
   const initialAgent=session.agent
   const modelVersionAtStart=sessionModelVersions.get(id)
   const [detail]=await Promise.all([api.getSession(id).catch(()=>null),loadContext({force:Boolean(cachedContext),initial:true}),loadControls(),refreshGit()])

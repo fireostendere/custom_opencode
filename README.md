@@ -273,8 +273,8 @@ Installer по умолчанию выполняет pre-install verification и
 `OPENCODE2_BIN` позволяет явно указать проверяемый бинарник.
 
 Установка без user-systemd поддерживается только при явном
-`CUSTOM_OPENCODE_SERVICE_MODE=manual`. Web запускается командой
-`custom-opencode-serve` в отдельном терминале; автозапуск не имитируется.
+`CUSTOM_OPENCODE_SERVICE_MODE=manual`. Web запускается через `/server` или
+`custom-opencode-webserver start`; автозапуск не имитируется.
 Post-install self-test проверяет настоящий API и все обязательные backend-плагины,
 используя обычную cookie-авторизацию, без включения legacy Basic Auth.
 

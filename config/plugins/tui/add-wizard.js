@@ -1,4 +1,7 @@
 import { Plugin } from "@opencode-ai/plugin/tui"
+import { readFile } from "node:fs/promises"
+import { homedir } from "node:os"
+import { basename, join } from "node:path"
 import { installPanelSubmitRouter } from "./lib/panel-submit-router.js"
 import { ADD_KINDS, nativeAddCommand, parseAddCommand } from "./lib/add-command.js"
 import { readConfigReceipt } from "./lib/config-receipt.js"
@@ -299,14 +302,57 @@ async function mcpInput(context) {
 }
 
 async function skillInput(context) {
-  const id = await ask(context, "Skill ID", "review", (value) => requiredID(value, "Skill ID"))
-  if (id == null) return null
-  const name = await ask(context, "Skill name", id, null, true)
-  if (name == null) return null
-  const description = await ask(context, "Skill description", "Review current changes")
-  if (description == null) return null
-  const content = await ask(context, "Skill content", "Paste the skill instructions", (value) => value ? "" : "Skill content is required.")
-  if (content == null) return null
+  const source = await choose(context, "Skill source", [
+    { title: "Import local SKILL.md", value: "import", description: "Reuse an existing skill file or directory." },
+    { title: "Enter instructions manually", value: "manual" },
+  ])
+  if (source == null) return null
+  let content = ""
+  let defaultID = "review"
+  let defaultName = ""
+  let defaultDescription = ""
+  if (source === "import") {
+    while (true) {
+      const inputPath = await ask(context, "Skill path", "/path/to/skill or /path/to/SKILL.md", (value) => value ? "" : "Skill path is required.")
+      if (inputPath == null) return null
+      const expanded = inputPath === "~" ? homedir() : inputPath.startsWith("~/") ? join(homedir(), inputPath.slice(2)) : inputPath
+      const path = basename(expanded).toLowerCase() === "skill.md" ? expanded : join(expanded, "SKILL.md")
+      try {
+        const sourceText = await readFile(path, "utf8")
+        const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(sourceText)
+        if (!match) throw new Error("SKILL.md must start with YAML frontmatter")
+        const frontmatter = match[1]
+        const scalar = (key) => {
+          const value = new RegExp(`^${key}:\\s*(.+)$`, "mi").exec(frontmatter)?.[1]?.trim() || ""
+          if (!value || value === ">" || value === "|") return ""
+          return value.replace(/^(['"])(.*)\1$/, "$2")
+        }
+        defaultName = scalar("name")
+        defaultDescription = scalar("description")
+        if (!ID_RE.test(defaultName)) throw new Error("frontmatter name must be a valid Skill ID")
+        if (!defaultDescription) throw new Error("frontmatter description is required")
+        content = sourceText.slice(match[0].length).trim()
+        if (!content) throw new Error("skill instructions are required")
+        defaultID = defaultName
+        break
+      } catch (error) {
+        await alert(context, `Cannot read skill: ${error.message}`)
+      }
+    }
+  }
+  let id = defaultID
+  let name = defaultName
+  let description = defaultDescription
+  if (source === "manual") {
+    id = await ask(context, "Skill ID", "review", (value) => requiredID(value, "Skill ID"))
+    if (id == null) return null
+    name = await ask(context, "Skill name", id, null, true)
+    if (name == null) return null
+    description = await ask(context, "Skill description", "Review current changes")
+    if (description == null) return null
+    content = await ask(context, "Skill content", "Paste the skill instructions", (value) => value ? "" : "Skill content is required.")
+    if (content == null) return null
+  }
   const autoinvoke = await choose(context, "Enable autoinvoke?", [
     { title: "No", value: false },
     { title: "Yes", value: true },

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -320,7 +321,44 @@ path.write_text(json.dumps(state))
         assert value["ok"] is False, value
         assert "invalid" in str(value["error"]).lower() or "username" in str(value["error"]).lower(), value["error"]
 
-    print("Webserver control smoke passed: status + current/default lifecycle + state permissions + user management + port configuration + security validation")
+        # Manual installs use the existing foreground launcher as an explicitly
+        # controlled detached process when no user-systemd manager is available.
+        launcher = home / ".local" / "bin" / "custom-opencode-serve"
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            manual_port = probe.getsockname()[1]
+        (root / "app" / "server_workflow.py").write_text(
+            "import os\nfrom http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer\n"
+            "ThreadingHTTPServer(('127.0.0.1', int(os.environ['OPENCODE_WEB_PORT'])), SimpleHTTPRequestHandler).serve_forever()\n",
+            encoding="utf-8",
+        )
+        launcher.write_text(
+            f"#!/bin/sh\nexec {sys.executable} {root / 'app' / 'server_workflow.py'}\n",
+            encoding="utf-8",
+        )
+        launcher.chmod(0o755)
+        manual_env = {
+            **env,
+            "CUSTOM_OPENCODE_SERVICE_MODE": "manual",
+            "OPENCODE_WEBSERVER_STATE": str(root / "manual-webserver.json"),
+            "OPENCODE_WEB_HOST": "127.0.0.1",
+            "OPENCODE_WEB_PORT": str(manual_port),
+        }
+        code, value = run_control(["apply", "--running", "on", "--default", "off"], manual_env)
+        assert code == 0 and value["running"] is True and value["serviceMode"] == "manual", value
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            next_port = probe.getsockname()[1]
+        code, value = run_control(["port", "--port", str(next_port), "--host", "127.0.0.1"], manual_env)
+        assert code == 0 and value["restarted"] is True and value["port"] == next_port, value
+        manual_env["OPENCODE_WEB_PORT"] = str(next_port)
+        code, value = run_control(["default", "on"], manual_env)
+        assert code == 1 and "does not support autostart" in str(value["error"]), value
+        code, value = run_control(["stop"], manual_env)
+        assert code == 0 and value["running"] is False, value
+
+    print("Webserver control smoke passed: systemd/manual lifecycle + state permissions + user management + port configuration + security validation")
     return 0
 
 

@@ -22,6 +22,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 from types import ModuleType
 from urllib.parse import urlsplit
 
@@ -45,6 +46,8 @@ fixture = load_module("custom_opencode_web_fixture", SCRIPTS / "web-fixture-e2e.
 class BrowserBackend(fixture.Backend):
     """Fixture backend shaped for the generic browser-smoke expectations."""
 
+    model_delay_seconds = 0.0
+
     def do_GET(self) -> None:
         path = urlsplit(self.path).path
         if path.startswith("/api/session/") and path.endswith("/message") and path != "/api/session/ses_fixture/message":
@@ -62,6 +65,7 @@ class BrowserBackend(fixture.Backend):
             })
             return
         if path == "/api/model":
+            time.sleep(self.model_delay_seconds)
             models = []
             for index in range(36):
                 models.append({
