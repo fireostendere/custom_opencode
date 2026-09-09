@@ -52,6 +52,10 @@ def main() -> int:
         parser.error("--timeout must be positive")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    # Resolve the real browser cache before replacing HOME/XDG for each suite.
+    # Isolation must not hide the browser installed by the calling CI job.
+    browser_cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or str(
+        (Path(os.environ.get("XDG_CACHE_HOME") or Path.home()/".cache") / "ms-playwright").resolve())
     rows = []
     report = {"startedAt": datetime.now(timezone.utc).isoformat(), "suites": rows,
               "externalGates": ["paid provider inference", "live RAG corpus", "live DipTrace",
@@ -64,7 +68,8 @@ def main() -> int:
                 ("OPENCODE_", "CUSTOM_OPENCODE_", "TOKEN_PLAN_", "MCP_RAG_", "DIPTRACE_MCP_", "GEMINI_", "GOOGLE_"))}
             env.update(HOME=temporary, XDG_CONFIG_HOME=temporary+"/.config",
                        XDG_DATA_HOME=temporary+"/.local/share", XDG_STATE_HOME=temporary+"/.local/state",
-                       XDG_CACHE_HOME=temporary+"/.cache", PYTHONUNBUFFERED="1")
+                       XDG_CACHE_HOME=temporary+"/.cache", PYTHONUNBUFFERED="1",
+                       PLAYWRIGHT_BROWSERS_PATH=browser_cache)
             if os.environ.get("OPENCODE2_BIN"):
                 env["OPENCODE2_BIN"] = os.environ["OPENCODE2_BIN"]
             started = time.monotonic()
