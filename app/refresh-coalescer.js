@@ -59,7 +59,7 @@ export function createAdaptivePoller({ run, isActive, activeDelay, idleDelay, is
     }
   }
   return {
-    start() { if (stopped) { stopped = false; if (polling) wakeRequested = true; else schedule(0) } },
+    start({ immediate = true } = {}) { if (stopped) { stopped = false; if (polling) wakeRequested = true; else schedule(immediate ? 0 : isActive() ? activeDelay : idleDelay) } },
     stop() { stopped = true; wakeRequested = false; if (timer !== null) clearTimeoutFn(timer); timer = null },
     reschedule() {
       if (stopped || polling) return

@@ -47,6 +47,9 @@ def main():
                         assert result.status == 200
                         unavailable = result.json()
                         assert unavailable['available'] is False and unavailable['tasks'] == []
+                        for path in ('client-project-settings.json', 'client-unified.json', 'client-activity.json'):
+                            scoped = page.request.get(url + '/' + path + '?sessionID=ses_fixture')
+                            assert scoped.status == 200 and scoped.json()['available'] is False, path
                     finally:
                         harness.fixture.Backend.session = staticmethod(original)
                     page.route('**/client-tasks.json?*', lambda route: route.fulfill(json=unavailable))
@@ -64,6 +67,24 @@ def main():
                     page.click('#runtimeRefresh')
                     page.wait_for_function("!document.querySelector('#taskCenterButton').textContent.includes('недоступны')")
                     assert not errors, errors
+                    page.locator('[data-runtime-close]').click()
+                    page.route('**/client-diagnostic-fixture*', lambda route: route.fulfill(status=503, json={'error':'fixture'}))
+                    page.evaluate("() => fetch('/client-diagnostic-fixture?token=secret-marker-not-for-export')")
+                    page.click('#networkButton')
+                    page.locator('#networkDialog[open]').wait_for()
+                    page.check('#networkErrors')
+                    assert '503' in page.locator('#networkRows').inner_text()
+                    snapshot = page.evaluate('window.CustomOpenCodeNetwork.snapshot()')
+                    import json
+                    assert 'secret-marker-not-for-export' not in json.dumps(snapshot)
+                    assert all(set(row) == {'id','method','route','queryKeys','source','status','ms'} for row in snapshot['requests'])
+                    assert any('.js:' in row['source'] for row in snapshot['requests'])
+                    with page.expect_download() as download:
+                        page.click('#networkExport')
+                    exported = json.loads(Path(download.value.path()).read_text())
+                    assert exported['version'] == 1 and 'secret-marker-not-for-export' not in json.dumps(exported)
+                    page.click('#networkClear')
+                    assert page.evaluate('window.CustomOpenCodeNetwork.snapshot().total') == 0
                     browser.close()
             finally:
                 stack.stop()

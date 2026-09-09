@@ -103,6 +103,12 @@ body.sidebar-resizing *{cursor:col-resize!important}
 
 /* Keep long orchestration runs inside the conversation viewport. */
 .main{min-height:0}
+#networkDialog{width:min(1100px,calc(100vw - 24px))}
+.network-actions{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin:12px 0}
+.network-table{overflow:auto;max-height:55dvh}
+.network-table table{width:100%;border-collapse:collapse;font-size:12px}
+.network-table th,.network-table td{padding:8px;text-align:left;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.network-table th{position:sticky;top:0;background:var(--panel)}
 .orchestration-trace{flex:0 0 auto;min-height:0}
 .orchestration-trace details{min-height:0}
 @media(prefers-reduced-motion:no-preference){

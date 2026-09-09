@@ -943,6 +943,7 @@ function markStarted(sessionID,label='running'){if(!sessionID||(state.sessions.l
 function markFinished(sessionID,kind='готово'){if(!sessionID)return;invalidateRunSync();const wasRunning=state.running.has(sessionID);state.running.delete(sessionID);renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();const session=state.sessions.find((s)=>s.id===sessionID);if(wasRunning&&(document.hidden||state.selected?.id!==sessionID))notifyUser(`OpenCode: ${kind}`,sessionTitle(session),`done-${sessionID}`,sessionID);if(wasRunning||queueFor(sessionID).length)void flushQueue(sessionID)}
 function handleEvent(payload){
   window.dispatchEvent(new CustomEvent('custom-opencode:event',{detail:payload}))
+  if(['session.created','session.deleted'].includes(payload.type))sessionPolling.wake()
   const data=payload.data||payload.properties||{}, sid=data.sessionID||data.session?.id
   if(['session.execution.started','session.busy','session.status.running'].includes(payload.type))markStarted(sid,payload.type)
   if(payload.type==='session.status'){const type=data.status?.type||data.type;if(['busy','retry','running'].includes(type))markStarted(sid,type);if(type==='idle')markFinished(sid,'готово')}
@@ -973,9 +974,9 @@ function handleEvent(payload){
 function connectEventStream(){eventSource?.close();eventSource=api.connectEvents(handleEvent,()=>{if(state.running.size)toast('Переподключение к event stream…',1200)})}
 const pollStatusesCoalesced=createRefreshCoalescer()
 async function pollStatuses(force=false){if(force)statusSyncGeneration+=1;return pollStatusesCoalesced(async()=>{const statusGeneration=++statusSyncGeneration;const statuses=await api.sessionStatuses();if(statusGeneration!==statusSyncGeneration)return;let changed=false;for(const session of state.sessions){const running=runningStatus(statuses?.[session.id]);if(running&&!isRunning(session.id)){state.running.set(session.id,{status:normalizeRunStatus(statuses[session.id]),since:Date.now()});changed=true}else if(!running&&isRunning(session.id)&&statuses&&session.id in statuses){markFinished(session.id,'готово');changed=true}}if(changed){renderSessions();renderHeader();updateBadge()}},force)}
-const statusPolling=createAdaptivePoller({run:pollStatuses,isActive:()=>state.running.size>0,activeDelay:5000,idleDelay:15000,isVisible:()=>!document.hidden})
-const rateLimitPolling=createAdaptivePoller({run:pollRateLimit,isActive:()=>state.running.size>0,activeDelay:2500,idleDelay:15000,isVisible:()=>!document.hidden})
-const sessionPolling=createAdaptivePoller({run:()=>loadSessions({background:true}),isActive:()=>state.running.size>0,activeDelay:15000,idleDelay:30000,isVisible:()=>!document.hidden})
+const statusPolling=createAdaptivePoller({run:pollStatuses,isActive:()=>state.running.size>0,activeDelay:15000,idleDelay:30000,isVisible:()=>!document.hidden})
+const rateLimitPolling=createAdaptivePoller({run:pollRateLimit,isActive:()=>state.running.size>0,activeDelay:10000,idleDelay:30000,isVisible:()=>!document.hidden})
+const sessionPolling=createAdaptivePoller({run:()=>loadSessions({background:true}),isActive:()=>state.running.size>0,activeDelay:60000,idleDelay:60000,isVisible:()=>!document.hidden})
 
 function setupPullRefresh(){
   const el=$('messages')
@@ -1121,6 +1122,6 @@ function bindEvents(){
 }
 
 async function initialize(){
-  state.clientConfig=await api.getClientConfig();bindEvents();attachDragHandlers();setupPullRefresh();await initNotifications();connectEventStream();await loadSessions({selectHash:true});if(!state.selected){restoreDraft();await loadDraftControls()}statusPolling.start();rateLimitPolling.start();sessionPolling.start();autosizeInput();renderHeader()
+  state.clientConfig=await api.getClientConfig();bindEvents();attachDragHandlers();setupPullRefresh();await initNotifications();connectEventStream();await loadSessions({selectHash:true});if(!state.selected){restoreDraft();await loadDraftControls()}statusPolling.start({immediate:false});rateLimitPolling.start();sessionPolling.start({immediate:false});autosizeInput();renderHeader()
 }
 initialize().catch((error)=>{console.error(error);toast(`Ошибка запуска: ${error.message}`,7000)})

@@ -618,7 +618,13 @@ class Handler(baseplus.Handler):
                     self.json_response(queue_snapshot(sid))
                     return
                 if parsed.path == "/client-project-settings.json":
-                    directory = _resolve_directory(params=params)
+                    try:
+                        directory = _resolve_directory(params=params)
+                    except ValueError as exc:
+                        if str(exc) != "directory outside allowed project roots":
+                            raise
+                        self.json_response({"ok": True, "available": False, "reason": "project-outside-roots", "settings": {}})
+                        return
                     self.json_response({"directory": directory, "settings": project_settings(directory)})
                     return
                 state = _with_state_read()

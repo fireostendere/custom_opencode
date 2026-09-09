@@ -102,6 +102,7 @@ function stopPolling(){workspacePolling.stop()}
 
 function refreshAll(force=false){return refreshAllCoalesced(refreshAllNow,force)}
 async function refreshAllNow(force=false){
+  if(state.snapshot?.available===false&&!force)return
   const session=sid()
   const refreshSeq=++state.refreshSeq
   $('unifiedPanelContext').textContent=session?session.slice(0,10):'no session'
@@ -132,6 +133,12 @@ async function loadPlan(){const sessionID=sid(),planSeq=++state.planSeq;try{cons
 
 function renderCurrent(){
   ensureUI()
+  const host=$(`unified-${state.tab}`)
+  if(host)host.dataset.unavailable=String(state.snapshot?.available===false)
+  if(state.snapshot?.available===false&&state.tab!=='plan'){
+    host.textContent='Серверные функции недоступны: проект вне разрешённых корней. Диалог и план доступны. После изменения настройки нажми «Обновить».'
+    return
+  }
   if(state.tab==='activity')renderActivity()
   else if(state.tab==='plan')renderPlan()
   else if(state.tab==='changes')renderChanges()

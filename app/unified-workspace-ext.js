@@ -32,7 +32,7 @@ async function githubAction(action,reference){
 
 async function enrichRuntime(){
   const host=$('unified-runtime'),sessionID=sid()
-  if(!host||!sessionID||host.hidden||host.querySelector('[data-unified-ext]')||enrichBusy)return
+  if(!host||!sessionID||host.hidden||host.dataset.unavailable==='true'||host.querySelector('[data-unified-ext]')||enrichBusy)return
   enrichBusy=true
   try{
     const [snapshot,github]=await Promise.all([

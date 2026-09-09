@@ -233,6 +233,7 @@ async function loadProjectSettings(sessionID = state.sessionID) {
   if (!sessionID) return
   const value = await request(`/client-project-settings.json?sessionID=${encodeURIComponent(sessionID)}`)
   if (state.sessionID !== sessionID) return
+  $('projectSettingsButton').hidden = value?.available === false
   state.settings = { ...DEFAULT_SETTINGS, ...(value?.settings || {}) }
 }
 
@@ -1510,7 +1511,7 @@ async function tickMedium() {
   if (!document.hidden && state.sessionID) await Promise.allSettled([refreshQueue(), refreshOrchestration(), refreshPlan()])
 }
 
-const fastPolling = createAdaptivePoller({ run:tickFast, isActive:running, activeDelay:2500, idleDelay:15000, isVisible:() => !document.hidden })
+const fastPolling = createAdaptivePoller({ run:tickFast, isActive:running, activeDelay:5000, idleDelay:15000, isVisible:() => !document.hidden })
 const mediumPolling = createAdaptivePoller({ run:tickMedium, isActive:running, activeDelay:5000, idleDelay:30000, isVisible:() => !document.hidden })
 
 function init() {

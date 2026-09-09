@@ -464,6 +464,9 @@ def handle_get(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
             handler.json_response({"ok": True, **_global_search(runtime, directory=directory, query=str((params.get("q") or [""])[0]), limit=int((params.get("limit") or [60])[0]))})
         return True
     except Exception as exc:
+        if parsed.path in {"/client-unified.json", "/client-activity.json"} and isinstance(exc, ValueError) and str(exc) == "directory outside allowed project roots":
+            handler.json_response({"ok": True, "available": False, "reason": "project-outside-roots", "events": [], "actions": []})
+            return True
         handler.json_response({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=404 if isinstance(exc, KeyError) else 400 if isinstance(exc, (ValueError, PermissionError)) else 500)
         return True
 
