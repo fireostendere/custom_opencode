@@ -2,72 +2,69 @@ name: Clean Regression
 
 on:
   pull_request:
-    paths:
-      - 'app/**'
-      - 'config/**'
-      - 'scripts/**'
-      - '.github/workflows/clean-regression.yml'
+    paths: ['app/**', 'config/**', 'scripts/**', '.env.example', '.github/workflows/clean-regression.yml']
   push:
-    branches:
-      - main
+    branches: [main, 'astra/**']
+    paths: ['app/**', 'config/**', 'scripts/**', '.env.example', '.github/workflows/clean-regression.yml']
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  clean-regression:
+  model-free-matrix:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    env:
-      GEMINI_API_KEY: fixture-gemini-key
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install browser test dependencies
+      - name: Install pinned browser, real CLI and policy dependencies
         run: |
-          python -m pip install --disable-pip-version-check playwright
-          python -m playwright install --with-deps chromium
-      - name: Syntax
+          python -m pip install --disable-pip-version-check playwright==1.57.0
+          python -m playwright install --with-deps chromium --only-shell
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+          npm install --global --prefix "$RUNNER_TEMP/opencode-v2" @opencode-ai/cli@0.0.0-beta-18743
+          echo "OPENCODE2_BIN=$RUNNER_TEMP/opencode-v2/bin/opencode2" >> "$GITHUB_ENV"
+      - name: Run all 20 independent regression suites
+        run: python scripts/audit-regression.py --output "$RUNNER_TEMP/regression"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: model-free-regression-${{ github.sha }}
+          path: ${{ runner.temp }}/regression/
+          retention-days: 7
+          if-no-files-found: warn
+  native-clean-install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install sandbox policy dependency
         run: |
-          python -m py_compile app/unified_control.py app/server_workflow.py scripts/local-web-harness.py scripts/browser-smoke.py scripts/web-critical-controls-e2e.py scripts/web-fixture-e2e.py scripts/runtime-queue-reconcile-smoke.py
-          node --check app/unified-workspace.js
-          node --check app/advanced-features.js
-          bash -n scripts/tui-package-smoke.sh
-      - name: Unified contract regression
-        run: python scripts/unified-workspace-regression.py
-      - name: TUI regression
-        run: node scripts/tui-regression.mjs
-      - name: TUI wizard regression
-        run: |
-          node scripts/tui-add-wizard-regression.mjs
-          node scripts/tui-server-wizard-regression.mjs
-          node scripts/tui-webserver-wizard-regression.mjs
-          node scripts/wizard-validation-smoke.mjs
-          node scripts/panel-submit-regression.mjs
-      - name: Runtime queue reconciliation regression
-        run: python scripts/runtime-queue-reconcile-smoke.py
-      - name: Existing verification suite
-        run: bash scripts/verify.sh
-      - name: Install reviewed OpenCode V2 build
-        run: |
-          prefix="$RUNNER_TEMP/opencode-v2"
-          rm -rf "$prefix"
-          npm install --global --prefix "$prefix" @opencode-ai/cli@0.0.0-beta-18743
-          bin="$prefix/bin/opencode2"
-          test -x "$bin"
-          "$bin" --version
-          printf 'OPENCODE2_BIN=%s\n' "$bin" >> "$GITHUB_ENV"
-      - name: Packaged TUI loader smoke
-        run: bash scripts/tui-package-smoke.sh
-      - name: Isolated production browser smoke
-        run: python scripts/local-web-harness.py test
-      - name: Critical web controls regression
-        run: python scripts/web-critical-controls-e2e.py
-      - name: Full fixture browser regression
-        run: python scripts/web-fixture-e2e.py
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+      - name: Real installer, native configuration CRUD and real PTY
+        run: python scripts/install-native-regression.py --output "$RUNNER_TEMP/native-install"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-install-${{ github.sha }}
+          path: ${{ runner.temp }}/native-install/
+          retention-days: 7
+          if-no-files-found: warn
