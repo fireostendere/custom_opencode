@@ -28,25 +28,9 @@ def install(runtime:Any,v3mod:Any,features:Any)->None:
             value=original(profiles); gpu=value.get("gpu") if isinstance(value.get("gpu"),dict) else {}
             value["pressureHigh"]=bool(value.get("pressureHigh") or gpu.get("pressureHigh")); return value
         runtime.SCHEDULER.snapshot=snapshot; runtime.SCHEDULER._v3_snapshot_wrapped=True
-    # V2 already detects worktree conflicts while polling. Enforce the same
-    # ownership root before mutations so parallel worktrees cannot race between polls.
-    if not getattr(v3.gateway,"_ownership_root_wrapped",False):
-        original_before=v3.gateway.before
-        def before(payload):
-            result=original_before(payload); tool=str(payload.get("tool") or "")
-            if tool not in _WRITE_TOOLS: return result
-            task=v3.gateway._task(str(payload.get("sessionID") or "") or None,str(payload.get("cwd") or "") or None)
-            if not task: return result
-            metadata=task.get("metadata") if isinstance(task.get("metadata"),dict) else {}; owner=str(metadata.get("ownershipRoot") or task.get("project_dir") or ""); project=str(task.get("project_dir") or "")
-            if not owner or owner==project: return result
-            paths=v3.gateway._paths(tool,payload.get("input") if isinstance(payload.get("input"),(dict,list)) else {})
-            runtime.STORE.ownership_replace(project,str(task["id"]),[])
-            conflicts=runtime.STORE.ownership_replace(owner,str(task["id"]),paths)
-            if conflicts:
-                runtime.STORE.event(kind="patch.conflict",task_id=task["id"],session_id=task.get("session_id"),project_dir=owner,data={"conflicts":conflicts,"phase":"pre-write"})
-                raise RuntimeError("patch ownership conflict: "+", ".join(f"{c['path']} owned by {c['taskID']}" for c in conflicts[:8]))
-            return result
-        v3.gateway.before=before; v3.gateway._ownership_root_wrapped=True
+    # ToolGateway now validates and claims the ownership root atomically.
+    # Keep the marker for older integration checks; do not double-wrap mutations.
+    v3.gateway._ownership_root_wrapped = True
     with _LOCK:
         if _STARTED: return
         threading.Thread(target=_worker,args=(runtime,v3,features),name="custom-opencode-v3-maintenance",daemon=True).start(); _STARTED=True

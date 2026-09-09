@@ -85,7 +85,7 @@ async function doPort(context, current) {
     title: "Адрес (host) web server",
     value: current.host,
     validate: (value) => {
-      if (!value || /[\s/:]/.test(value)) return "Некорректный host"
+      if (!value || value.length > 253 || /\s/.test(value) || !value.replace(/\.$/, "").split(".").every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label))) return "Укажите IPv4-адрес или DNS-имя"
       return ""
     },
   })

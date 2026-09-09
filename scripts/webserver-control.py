@@ -77,11 +77,18 @@ def write_state(values: dict[str, Any]) -> None:
     if path.is_symlink() or path.is_dir():
         raise ControlError(f"unsafe webserver state path: {path}")
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(json.dumps(values, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.chmod(0o600)
-    temporary.replace(path)
-    path.chmod(0o600)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(values, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
 
 
 def systemctl_binary() -> str:
@@ -312,8 +319,11 @@ def port_command(port: int, host: str | None) -> dict[str, Any]:
     if not (1 <= port <= 65535):
         raise ControlError(f"port must be 1..65535, got {port}")
     if host is not None:
-        if not host or " " in host or "/" in host or ":" in host:
-            raise ControlError(f"invalid host: {host!r} (no spaces, slashes, or colons)")
+        # This value is persisted in a sourced .env, so accepting shell syntax
+        # here is code execution on the next service start, not just a bad URL.
+        labels = host.rstrip(".").split(".")
+        if len(host) > 253 or not all(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label) for label in labels):
+            raise ControlError("invalid host: use an IPv4 address or DNS hostname")
 
     _rewrite_env_file(port, host)
 

@@ -38,6 +38,7 @@ with tempfile.TemporaryDirectory() as temp:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address[:2]
+    base.WEB_HOST, base.WEB_PORT = host, port
 
     def request(method: str, path: str, *, body=None, headers=None):
         connection = http.client.HTTPConnection(host, port, timeout=5)
@@ -112,6 +113,14 @@ with tempfile.TemporaryDirectory() as temp:
 
         authed_headers = {**remote_headers, "Cookie": cookie}
         status, _, _ = request("GET", "/auth/session", headers=authed_headers)
+        assert status == 200, status
+
+        # Installer health checks must authenticate when Basic and localhost
+        # bypass are unavailable, without changing production auth defaults.
+        from install_health import web_auth_headers
+        health_headers = web_auth_headers(base)
+        assert "Authorization" not in health_headers and "Cookie" in health_headers
+        status, _, _ = request("GET", "/auth/session", headers={**remote_headers, **health_headers})
         assert status == 200, status
 
         # Logout must revoke the exact token server-side; replaying a copied

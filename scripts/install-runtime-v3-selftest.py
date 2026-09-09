@@ -12,6 +12,8 @@ import sys
 import time
 from typing import Any
 
+from install_health import web_auth_headers
+
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/"app"))
 
@@ -46,7 +48,7 @@ def main()->int:
         def web():
             conn=http.client.HTTPConnection(host,int(base.WEB_PORT),timeout=4)
             try:
-                conn.request("GET","/client-runtime-v3.json",headers={"Authorization":base.CLIENT_AUTH}); response=conn.getresponse(); body=response.read(2_000_000)
+                conn.request("GET","/client-runtime-v3.json",headers=web_auth_headers(base)); response=conn.getresponse(); body=response.read(2_000_000)
                 if response.status!=200: return False,f"HTTP {response.status}: {body[:200]!r}"
                 value=json.loads(body); services=value.get("services") or {}; required={"nativeDynamicCompaction","astIndex","repoEmbeddings","mcpCodeMode","sandboxEnforcement","sharedNativeRAG","zeroTokenReplay"}; missing=sorted(k for k in required if services.get(k) is not True)
                 return not missing,"runtime v3 services active" if not missing else "missing: "+", ".join(missing)

@@ -37,6 +37,8 @@ _run_rag_probe = baseplus._run_rag_probe
 STATE_LOCK = threading.RLock()
 WORKER_LOCK = threading.Lock()
 WORKER_STARTED = False
+WORKER_STOP = threading.Event()
+WORKER_THREAD: threading.Thread | None = None
 MAX_REQUEST_BYTES = 12 * 1024 * 1024
 MAX_QUEUE_ITEM_BYTES = 10 * 1024 * 1024
 MAX_QUEUE_ITEMS_PER_SESSION = 50
@@ -476,7 +478,7 @@ def _apply_permission_policies() -> None:
 
 
 def _worker() -> None:
-    while True:
+    while not WORKER_STOP.is_set():
         try:
             state = _with_state_read()
             queues = state.get("queues", {}) if isinstance(state.get("queues"), dict) else {}
@@ -486,19 +488,35 @@ def _worker() -> None:
             _apply_permission_policies()
         except Exception:
             pass
-        time.sleep(1.5)
+        WORKER_STOP.wait(1.5)
 
 
 def _ensure_worker() -> None:
-    global WORKER_STARTED
+    global WORKER_STARTED, WORKER_THREAD
     if WORKER_STARTED:
         return
     with WORKER_LOCK:
         if WORKER_STARTED:
             return
-        thread = threading.Thread(target=_worker, name="custom-opencode-feature-worker", daemon=True)
-        thread.start()
+        WORKER_STOP.clear()
+        WORKER_THREAD = threading.Thread(target=_worker, name="custom-opencode-feature-worker", daemon=True)
+        WORKER_THREAD.start()
         WORKER_STARTED = True
+
+
+def _stop_worker(timeout: float = 30.0) -> bool:
+    """Stop owned background work before closing/deleting its persistent storage."""
+    global WORKER_STARTED
+    with WORKER_LOCK:
+        WORKER_STOP.set()
+        thread = WORKER_THREAD
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(timeout=max(0.0, timeout))
+    with WORKER_LOCK:
+        stopped = thread is None or not thread.is_alive()
+        if stopped:
+            WORKER_STARTED = False
+        return stopped
 
 
 def _git_path(directory: str, relative: str) -> tuple[Path, Path]:

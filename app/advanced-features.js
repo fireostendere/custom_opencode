@@ -407,14 +407,18 @@ async function interceptSubmit(event) {
       toast('Добавлено в серверную очередь')
       return
     }
-    await request('/client-send.json', { method:'POST', body:JSON.stringify({ sessionID, text, files, profile }) })
+    const accepted = await request('/client-send.json', { method:'POST', body:JSON.stringify({ sessionID, text, files, profile }) })
     if (state.sessionID !== sessionID || state.orchestrationRevision !== revision) return
     clearComposer()
     window.CustomOpenCodeControls?.startRun?.(sessionID, 'managed-send')
     if ($('stop')) $('stop').hidden = false
     if (!state.runStartedAt) state.runStartedAt = Date.now()
     renderStatus()
-    toast('Отправлено', 1300)
+    if (accepted?.queued) {
+      await refreshQueue(undefined, true)
+      if (state.sessionID !== sessionID || state.orchestrationRevision !== revision) return
+      toast('Добавлено в серверную очередь')
+    } else toast('Отправлено', 1300)
     setTimeout(() => refreshOrchestration(true), 300)
   } catch (error) {
     if (state.sessionID === sessionID && state.orchestrationRevision === revision && input) input.value = text
@@ -1134,7 +1138,8 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   if (!host) return
   const renderRevision = ++state.orchestrationRenderRevision
   const conversation = captureScrollState($('messages'))
-  const panelOpen=host.querySelector('.plan-panel')?.open===true||host.querySelector('.live-panel')?.open===true
+  const planOpen = host.querySelector('.plan-panel')?.open === true
+  const liveOpen = host.querySelector('.live-panel')?.open === true
   const planScroll = captureScrollState(host.querySelector('.plan-panel-body'))
   const nodesScroll = captureScrollState(host.querySelector('.orchestration-nodes'))
   const children = state.children || []
@@ -1206,11 +1211,17 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
     const summary = detail.querySelector('summary')
     summary?.addEventListener('pointerdown', rememberConversation)
     summary?.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') rememberConversation() })
-    detail.addEventListener('toggle', () => { details.forEach((row)=>{row.open=detail.open});host.classList.toggle('is-expanded',detail.open);restoreScrollState($('messages'), detail._conversationScroll || captureScrollState($('messages'))) })
+    detail.addEventListener('toggle', () => {
+      if (!detail.isConnected) return
+      host.classList.toggle('is-expanded', details.some((row) => row.open))
+      restoreScrollState($('messages'), detail._conversationScroll || captureScrollState($('messages')))
+      detail._conversationScroll = null
+    })
   })
   const planPanel=host.querySelector('.plan-panel'),livePanel=host.querySelector('.live-panel')
-  details.forEach((detail)=>{detail.open=panelOpen})
-  host.classList.toggle('is-expanded',panelOpen)
+  if (planPanel) planPanel.open = planOpen
+  if (livePanel) livePanel.open = liveOpen
+  host.classList.toggle('is-expanded', planOpen || liveOpen)
   restoreScrollState($('messages'), conversation)
   const sessionID = state.sessionID
   const revision = state.orchestrationRevision

@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto"
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
-import { Plugin } from "@opencode-ai/plugin"
 
 const TOOL = "plan_update"
 const MARKER = "Custom visible plan policy"
@@ -95,7 +94,8 @@ function turnKey(messages) {
   return `${users.length}:${JSON.stringify(latest?.content || latest || "").slice(-4000)}`
 }
 
-export default Plugin.define({
+// Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
+export default {
   id: "custom.visible-plan",
   async setup(ctx) {
     const turns = new Map()
@@ -137,4 +137,4 @@ export default Plugin.define({
       await Promise.allSettled(registrations.map((registration) => registration.dispose()))
     }
   },
-})
+}

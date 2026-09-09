@@ -1,4 +1,3 @@
-import { Plugin } from "@opencode-ai/plugin"
 import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -183,7 +182,8 @@ export function createRetryFetch(origFetch, { sleepFn = sleep } = {}) {
   return wrappedFetch
 }
 
-export default Plugin.define({
+// Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
+export default {
   id: "gemini-rate-limit",
   setup: async (ctx) => {
     writeRateLimitState({ active: false, seconds: 0 })
@@ -216,7 +216,7 @@ export default Plugin.define({
       await Promise.allSettled(disposers.map((registration) => registration.dispose()))
     }
   },
-})
+}
 
 if (process.env.GEMINI_RATE_LIMIT_SELF_CHECK) {
   const sample = "* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_paid_tier_input_token_count, limit: 2000000, model: gemini-3.8-flash\\nPlease retry in 51.86177085s."

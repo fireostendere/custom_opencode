@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { Plugin } from "@opencode-ai/plugin"
 
 const BASE = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", "opencode")
 const DIR = process.env.OPENCODE_CONFIG_BACKUP_DIR || join(BASE, "backups")
@@ -28,7 +27,8 @@ function backup() {
   for (const file of pruneList(files, KEEP)) unlinkSync(join(DIR, file))
 }
 
-export default Plugin.define({
+// Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
+export default {
   id: "config-backup",
   setup() {
     try {
@@ -37,4 +37,4 @@ export default Plugin.define({
       console.warn(`[config-backup] skipped: ${error?.message ?? error}`)
     }
   },
-})
+}

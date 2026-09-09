@@ -198,6 +198,7 @@ with tempfile.TemporaryDirectory() as temp:
     finally:
         server.shutdown()
         server.server_close()
+        assert server_workflow.features._stop_worker(timeout=10), "runtime worker failed to stop"
         stub_backend.shutdown()
         stub_backend.server_close()
         thread.join(timeout=5)

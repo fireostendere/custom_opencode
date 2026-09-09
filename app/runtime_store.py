@@ -19,6 +19,7 @@ TASK_STATES = {
     "verifying", "needs_attention", "completed", "failed", "cancelled", "recovering",
 }
 TERMINAL_STATES = {"completed", "failed", "cancelled"}
+EXECUTION_STATES = frozenset({"submitted", "running", "waiting_permission", "verifying", "recovering"})
 
 
 def now_ms() -> int:
@@ -292,6 +293,16 @@ class RuntimeStore:
                         "task.blocked", {"waitingFor": waiting}, timestamp,
                     )
                 return None
+            # A claim must serialize the session, not just this task row. Two
+            # HTTP requests may both observe an idle UI before either is sent.
+            # BEGIN IMMEDIATE protects this check across store instances too.
+            occupied = db.execute(
+                "SELECT 1 FROM tasks WHERE session_id=? AND id<>? AND state IN (%s) LIMIT 1"
+                % ",".join("?" for _ in EXECUTION_STATES),
+                (current["session_id"], task_id, *sorted(EXECUTION_STATES)),
+            ).fetchone()
+            if occupied:
+                return None
             claimed = db.execute(
                 """UPDATE tasks
                    SET state='submitted',updated_at=?,last_progress_at=?,
@@ -484,8 +495,6 @@ class RuntimeStore:
             if not normalized:
                 db.execute("DELETE FROM patch_ownership WHERE project_dir=? AND task_id=?",(project,task_id))
                 return []
-            for path in normalized:
-                db.execute("INSERT OR REPLACE INTO patch_ownership(project_dir,path,task_id,symbol,updated_at) VALUES(?,?,?,?,?)",(project,path,task_id,"",timestamp))
             rows=db.execute(
                 """SELECT ownership.path,ownership.task_id
                    FROM patch_ownership ownership
@@ -495,7 +504,13 @@ class RuntimeStore:
                      AND ownership.path IN (%s)""" % ",".join("?" for _ in normalized),
                 [project,task_id,*normalized],
             ).fetchall()
-        return [{"path":r["path"],"taskID":r["task_id"]} for r in rows]
+            if rows:
+                # Reject the whole acquisition. Inserting before checking left
+                # denied agents holding locks and deadlocked the rightful owner.
+                return [{"path":r["path"],"taskID":r["task_id"]} for r in rows]
+            for path in normalized:
+                db.execute("INSERT OR REPLACE INTO patch_ownership(project_dir,path,task_id,symbol,updated_at) VALUES(?,?,?,?,?)",(project,path,task_id,"",timestamp))
+        return []
 
     def recover_inflight(self) -> int:
         self.initialize(); timestamp=now_ms()

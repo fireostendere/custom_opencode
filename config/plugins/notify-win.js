@@ -1,4 +1,3 @@
-import { Plugin } from "@opencode-ai/plugin"
 import { startEvents } from "../events.js"
 
 const IDLE_MIN_MS = 60_000
@@ -35,7 +34,8 @@ $m::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShe
   } catch {}
 }
 
-export default Plugin.define({
+// Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
+export default {
   id: "notify-win",
   async setup(ctx) {
     let busySince = 0
@@ -82,7 +82,7 @@ export default Plugin.define({
       await permission.dispose()
     }
   },
-})
+}
 
 if (process.env.NOTIFY_WIN_SELF_CHECK) {
   if (psQuote("it's") !== "it''s") throw new Error("apostrophe not doubled")

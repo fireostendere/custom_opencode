@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const storage = new Map()
@@ -33,6 +33,7 @@ globalThis.__smoke = {
 
 let source = readFileSync(resolve(root, 'app/app.js'), 'utf8')
 source = source
+  .replace("from './refresh-coalescer.js'", `from '${pathToFileURL(resolve(root, 'app/refresh-coalescer.js')).href}'`)
   .replace("import * as api from './api.js'", 'const api = globalThis.__smoke.api')
   .replace("import { escapeHtml, renderMarkdown } from './markdown.js'", 'const escapeHtml = (value) => String(value ?? ""); const renderMarkdown = (value) => String(value ?? "")')
   .replace("import { modeFromAgent, ORCHESTRATED_MODELS } from './ux-state.js'", 'const { modeFromAgent, ORCHESTRATED_MODELS } = globalThis.__smoke.ux')

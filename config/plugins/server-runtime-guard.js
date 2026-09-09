@@ -1,4 +1,3 @@
-import { Plugin } from "@opencode-ai/plugin"
 
 const WEB_HOST = process.env.OPENCODE_RUNTIME_PLUGIN_HOST || "127.0.0.1"
 const WEB_PORT = process.env.OPENCODE_WEB_PORT || "4098"
@@ -6,6 +5,12 @@ const TOKEN = process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN || process.env.OPENCODE_
 const BASE = `http://${WEB_HOST}:${WEB_PORT}`
 const TIMEOUT = Number(process.env.OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS || 1800)
 const SECRET_PREFIXES = (process.env.OPENCODE_SECRET_PREFIXES || "TOKEN_PLAN_;OPENAI_;GITHUB_;MCP_;QDRANT_;HF_;GEMINI_;GOOGLE_").split(";").filter(Boolean)
+// These credentials must never enter an agent shell, even when a configured
+// broker scope explicitly grants other provider secrets to that shell.
+const RESERVED_SECRETS = new Set([
+  "OPENCODE_SERVER_PASSWORD", "OPENCODE_BACKEND_PASSWORD", "OPENCODE_RUNTIME_PLUGIN_TOKEN",
+  "OPENCODE_OPENAI_ACCESS", "OPENCODE_OPENAI_REFRESH", "OPENCODE_ZEN_KEY", "OPENCODE_GO_KEY",
+])
 const CONTEXT_MARKER = "Server runtime context"
 
 async function call(path, payload) {
@@ -28,7 +33,7 @@ function contextOf(event) {
 }
 
 function stripSecrets(env) {
-  for (const key of Object.keys(env || {})) if (SECRET_PREFIXES.some((prefix)=>key.startsWith(prefix))) delete env[key]
+  for (const key of Object.keys(env || {})) if (RESERVED_SECRETS.has(key) || SECRET_PREFIXES.some((prefix)=>key.startsWith(prefix))) delete env[key]
 }
 
 function systemText(item) {
@@ -42,7 +47,8 @@ function hasManagedContext(system) {
   return systemText(system).includes(CONTEXT_MARKER)
 }
 
-export default Plugin.define({
+// Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
+export default {
   id: "custom-opencode.server-runtime-guard",
   setup: async (ctx)=>{
     await ctx.session.hook("context",async(event)=>{
@@ -85,7 +91,8 @@ export default Plugin.define({
         if (decision?.cwd) event.cwd=decision.cwd
         if (decision?.shell) event.shell=decision.shell
         Object.assign(event.env,decision?.env || {})
+        for (const name of RESERVED_SECRETS) delete event.env[name]
       })
     }
   },
-})
+}

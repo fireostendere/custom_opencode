@@ -376,6 +376,7 @@ def main() -> None:
         pass
     finally:
         server.server_close()
+        features._stop_worker()
 
 
 if __name__ == "__main__":

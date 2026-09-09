@@ -31,7 +31,7 @@ from urllib.error import URLError
 from urllib.parse import quote
 
 from repo_services import ArtifactStore, git_snapshot, safe_repo_file
-from runtime_store import RuntimeStore, now_ms
+from runtime_store import EXECUTION_STATES, RuntimeStore, now_ms
 
 WRITE_TOOLS={"edit","write","apply_patch","patch","multiedit"}
 READ_TOOLS={"read","grep","glob","list","lsp"}
@@ -210,6 +210,12 @@ class SemanticRepoIndexer:
         changed_files=sorted(changed_lines); return {"baseline":baseline,"current":current,"changedFiles":changed_files,"changedSymbols":impacted[:500],"changedLineRanges":{k:v[:100] for k,v in changed_lines.items()},"summary":f"{len(changed_files)} files / {len(impacted)} impacted symbols"}
 
 
+RESERVED_SECRET_NAMES = frozenset({
+    "OPENCODE_SERVER_PASSWORD", "OPENCODE_BACKEND_PASSWORD", "OPENCODE_RUNTIME_PLUGIN_TOKEN",
+    "OPENCODE_OPENAI_ACCESS", "OPENCODE_OPENAI_REFRESH", "OPENCODE_ZEN_KEY", "OPENCODE_GO_KEY",
+})
+
+
 class ScopedSecretBroker:
     def __init__(self): self.prefixes=tuple(x for x in os.environ.get("OPENCODE_SECRET_PREFIXES","TOKEN_PLAN_;OPENAI_;GITHUB_;MCP_;QDRANT_;HF_;GEMINI_;GOOGLE_").split(";") if x); self.rules=self._rules(); self._leases={}; self._lock=threading.Lock()
     def _rules(self):
@@ -221,7 +227,7 @@ class ScopedSecretBroker:
                 if name.strip(): rules[scope.strip()].add(name.strip())
         return rules
     def allowed(self,name:str,scope:str)->bool:
-        if not SECRET_NAME.match(name) or not any(name.startswith(prefix) for prefix in self.prefixes): return False
+        if name in RESERVED_SECRET_NAMES or not SECRET_NAME.match(name) or not any(name.startswith(prefix) for prefix in self.prefixes): return False
         if not self.rules: return True
         return name in (self.rules.get(scope) or set()) or name in (self.rules.get("*") or set())
     def issue(self,name:str,*,scope:str,ttl:int=60)->str:
@@ -384,11 +390,17 @@ class ToolGateway:
     def __init__(self,store:RuntimeStore,artifacts:ArtifactStore,sandbox:SandboxManager,secrets:ScopedSecretBroker): self.store=store; self.artifacts=artifacts; self.sandbox=sandbox; self.secrets=secrets
     def _task(self,session_id:str|None,cwd:str|None)->dict[str,Any]|None:
         if session_id:
-            rows=self.store.list_tasks(session_id=session_id,states=["submitted","running","waiting_permission","verifying","recovering","queued"],limit=20)
-            if rows: return rows[0]
+            rows = self.store.list_tasks(session_id=session_id, states=EXECUTION_STATES, limit=2)
+            if len(rows) > 1:
+                raise PermissionError("multiple active tasks own this session; reconcile before executing tools")
+            # An explicit session is authoritative. Never borrow a different
+            # session's sandbox/secret scope just because it shares a directory.
+            return rows[0] if rows else None
         if cwd:
-            rows=self.store.list_tasks(project_dir=str(Path(cwd).resolve(strict=False)),states=["submitted","running","waiting_permission","verifying","recovering","queued"],limit=20)
-            if rows: return rows[0]
+            rows = self.store.list_tasks(project_dir=str(Path(cwd).resolve(strict=False)), states=EXECUTION_STATES, limit=2)
+            if len(rows) > 1:
+                raise PermissionError("ambiguous task context: sessionID is required")
+            return rows[0] if rows else None
         return None
     def _paths(self,tool:str,payload:Any)->list[str]:
         out=[]
@@ -402,7 +414,7 @@ class ToolGateway:
         if tool=="apply_patch" and isinstance(payload,dict):
             patch=str(payload.get("patchText") or payload.get("patch") or "")
             for line in patch.splitlines():
-                m=re.match(r"\*\*\* (?:Add|Update|Delete) File:\s*(.+)",line)
+                m=re.match(r"\*\*\* (?:(?:Add|Update|Delete) File|Move to):\s*(.+)",line)
                 if m: out.append(m.group(1).strip())
         return out
     def _rate(self,task_id:str,tool:str)->None:
@@ -421,7 +433,16 @@ class ToolGateway:
         for path in paths:
             if not self.sandbox.path_allowed(path,root,profile,write=write): raise PermissionError(f"path outside {profile} sandbox: {path}")
         if write and paths:
-            conflicts=self.store.ownership_replace(root,task_id,paths)
+            # Worktree file paths are checked against the execution root, then
+            # claimed once against the shared ownership root using relative names.
+            project_root = Path(root).resolve(strict=False)
+            owner = str(metadata.get("ownershipRoot") or project_root)
+            relative_paths = []
+            for path in paths:
+                target = Path(path).expanduser()
+                target = target if target.is_absolute() else project_root / target
+                relative_paths.append(target.resolve(strict=False).relative_to(project_root).as_posix())
+            conflicts=self.store.ownership_replace(owner,task_id,relative_paths)
             if conflicts: self.store.event(kind="patch.conflict",task_id=task_id,session_id=task.get("session_id"),project_dir=root,data={"conflicts":conflicts}); raise RuntimeError("patch ownership conflict: "+", ".join(f"{c['path']} owned by {c['taskID']}" for c in conflicts[:8]))
         self.store.event(kind="tool.before",task_id=task_id,session_id=task.get("session_id"),project_dir=root,data={"tool":tool,"signature":signature[:16],"sandbox":profile}); return {"allow":True,"taskID":task_id,"sandbox":profile,"root":root}
     def after(self,payload:dict[str,Any])->dict[str,Any]:
@@ -436,7 +457,18 @@ class ToolGateway:
     def shell(self,payload:dict[str,Any])->dict[str,Any]:
         cwd=str(payload.get("cwd") or ""); command=str(payload.get("command") or ""); task=self._task(str(payload.get("sessionID") or "") or None,cwd)
         if not task: return {"command":command,"cwd":cwd,"shell":str(payload.get("shell") or "/bin/sh"),"env":{}}
-        metadata=task.get("metadata") if isinstance(task.get("metadata"),dict) else {}; profile=self.sandbox.normalize(str(metadata.get("sandbox") or "repo-write")); wrapped=self.sandbox.wrap_shell(command,cwd or str(task.get("project_dir")),profile); scope=f"task:{task['id']}:shell"; allowed_names=[x.strip() for x in os.environ.get("OPENCODE_SHELL_SECRET_REFS","").split(",") if x.strip()]; env={}
+        metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+        profile = self.sandbox.normalize(str(metadata.get("sandbox") or "repo-write"))
+        root = Path(str(task["project_dir"])).resolve(strict=False)
+        target = Path(cwd).expanduser() if cwd else root
+        target = target if target.is_absolute() else root / target
+        target = target.resolve(strict=False)
+        if not self.sandbox.path_allowed(str(target), str(root), profile, write=False):
+            raise PermissionError(f"shell cwd outside {profile} sandbox: {cwd}")
+        wrapped = self.sandbox.wrap_shell(command, str(target), profile)
+        scope = f"task:{task['id']}:shell"
+        allowed_names = [x.strip() for x in os.environ.get("OPENCODE_SHELL_SECRET_REFS", "").split(",") if x.strip()]
+        env = {}
         for name in allowed_names:
             if self.secrets.allowed(name,scope) or self.secrets.allowed(name,"shell"):
                 value=os.environ.get(name)

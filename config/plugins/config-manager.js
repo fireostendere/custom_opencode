@@ -1,7 +1,6 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { appendFile } from "node:fs/promises"
-import { Plugin } from "@opencode-ai/plugin"
 import { filterMcpTools, resolveMcpProfile, mcpNamespace } from "./tui/lib/mcp-profiles.js"
 
 const STORAGE_KEY = "registry-v2"
@@ -229,7 +228,8 @@ function usage(name, example) {
   return `/${name} expects one JSON object. Example:\n${example}`
 }
 
-export default Plugin.define({
+// Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
+export default {
   id: "custom.config-manager",
   async setup(ctx) {
     const saved = await ctx.storage.get(STORAGE_KEY)
@@ -468,7 +468,7 @@ export default Plugin.define({
       })
     })
   },
-})
+}
 
 if (process.env.OPENCODE_CONFIG_MANAGER_SELF_CHECK) {
   const provider = providerDefinition({ id: "acme", settings: { apiKey: "{env:ACME_API_KEY}" } })

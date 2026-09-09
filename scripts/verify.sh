@@ -17,7 +17,14 @@ if [[ -z "$NODE" ]]; then echo "node is required" >&2; exit 1; fi
 
 WORKSPACE_TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$WORKSPACE_TEST_ROOT"' EXIT
-mkdir -p "$WORKSPACE_TEST_ROOT/projects/alpha/sub" "$WORKSPACE_TEST_ROOT/outside"
+# The verifier exercises fixtures, not the installer's private credentials or
+# existing user state. Never let a sourced .env change a zero-token test's inputs.
+for name in $(compgen -e); do
+  case "$name" in OPENCODE_*|CUSTOM_OPENCODE_*|TOKEN_PLAN_*|GEMINI_*|GOOGLE_*|MCP_RAG_*|DIPTRACE_MCP_*) unset "$name" ;; esac
+done
+export HOME="$WORKSPACE_TEST_ROOT/home"
+export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
+mkdir -p "$HOME" "$WORKSPACE_TEST_ROOT/projects/alpha/sub" "$WORKSPACE_TEST_ROOT/outside"
 ln -s "$WORKSPACE_TEST_ROOT/outside" "$WORKSPACE_TEST_ROOT/projects/escape-link"
 OPENCODE_SERVER_PASSWORD=test \
 OPENCODE_BACKEND_URL=http://localhost:9 \
@@ -69,6 +76,7 @@ done
 "$NODE" "$ROOT/scripts/wizard-validation-smoke.mjs"
 "$NODE" "$ROOT/scripts/config-manager-regression.mjs"
 "$NODE" "$ROOT/scripts/visible-plan-regression.mjs"
+"$NODE" "$ROOT/scripts/ponytail-v2-regression.mjs"
 "$NODE" "$ROOT/scripts/gemini-rate-limit-regression.mjs"
 "$NODE" "$ROOT/scripts/refresh-coalescing-regression.mjs"
 "$NODE" "$ROOT/scripts/server-runtime-guard-regression.mjs"
@@ -89,6 +97,8 @@ done
 "$PYTHON3" "$ROOT/scripts/runtime-smoke.py"
 "$PYTHON3" "$ROOT/scripts/runtime-resume-smoke.py"
 "$PYTHON3" "$ROOT/scripts/security-boundary-smoke.py"
+"$PYTHON3" "$ROOT/scripts/runtime-isolation-regression.py"
+"$PYTHON3" "$ROOT/scripts/webserver-boundary-regression.py"
 for file in "$ROOT/scripts/"*.sh; do
   bash -n "$file"
 done
@@ -255,7 +265,7 @@ for name, policy, producer_token in (("orchestrator", orchestrator, "TUI panels 
 for token in ("Планирование задач", "OpenCode V2", "primary-agent `plan`", "plan_update", "1-7", "До первой shell/edit/write/patch", "не создавай инструменты или подагентов только ради UI"):
     if token not in agents_policy:
         bad.append(f"global agent policy must keep conditional V2 planning: {token}")
-for marker in ('Plugin.define({', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'gpt-5.6-sol-orchestrated', 'isOrchestratedSol', 'orchestrator-sol.md', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy'):
+for marker in ('export default {', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'gpt-5.6-sol-orchestrated', 'isOrchestratedSol', 'orchestrator-sol.md', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy'):
     if marker not in orchestrated_plugin_js:
         bad.append(f"orchestrated model plugin marker missing: {marker}")
 for marker in ('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'sol-role-builder', 'sol-role-reviewer'):
@@ -354,15 +364,11 @@ config_text = (root / "config/opencode.json.template").read_text(encoding="utf-8
 config_text = config_text.replace("__CONFIG_DIR__", "/tmp/opencode-config")
 config_text = config_text.replace("__CUSTOM_OPENCODE_ROOT__", "/tmp/custom-opencode")
 config_text = config_text.replace("__RAG_DISABLED__", "true")
-# Ponytail plugin placeholder: verifier substitutes a stub path.
-ponytail_plugin = "/tmp/opencode/ponytail/.opencode/plugins/ponytail.mjs"
-config_text = config_text.replace(
-    "__PONYTAIL_PLUGIN_PATH__",
-    json.dumps(ponytail_plugin, ensure_ascii=False)[1:-1],
-)
 config = json.loads(config_text)
-if config.get("plugins") != [ponytail_plugin]:
-    bad.append("OpenCode V2 config must expose the managed Ponytail entry point via plugins")
+if config.get("plugins"):
+    bad.append("Ponytail must use the discovered native V2 bridge, not the upstream V1 entrypoint")
+if not (root / "config/plugins/ponytail-v2.js").is_file():
+    bad.append("missing native Ponytail V2 bridge")
 if "plugin" in config:
     bad.append("legacy singular V1 plugin field must not be present")
 for legacy in ("provider", "agent", "permission"):

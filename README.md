@@ -188,10 +188,10 @@ RAG опционален. При `MCP_RAG_ENABLED=0` или отсутствии
 
 ## Ponytail
 
-В комплект включён OpenCode V2 plugin [Ponytail](https://github.com/DietrichGebert/ponytail) с фиксированным reviewed commit `2ed6c52c9d7e5e56942508591085fd45dea277d3`. По умолчанию installer:
+В комплект включена интеграция [Ponytail](https://github.com/DietrichGebert/ponytail) с фиксированным reviewed commit `2ed6c52c9d7e5e56942508591085fd45dea277d3`. По умолчанию installer:
 
 - клонирует upstream в `$XDG_DATA_HOME/opencode/ponytail` или `~/.local/share/opencode/ponytail`;
-- подключает его entry point через V2-поле `plugins` в глобальном `opencode.json`;
+- загружает reviewed instruction builder через native V2 bridge `config/plugins/ponytail-v2.js`; upstream V1 entrypoint не регистрируется в V2;
 - сохраняет выбранный режим в `~/.config/opencode/.ponytail-active` только при первой установке;
 - не копирует upstream skills, commands или hooks в конфигурацию этого репозитория.
 
@@ -263,3 +263,23 @@ Installer по умолчанию выполняет pre-install verification и
 - sandbox/worktree ownership checks до writable execution;
 - auth/API/HTML responses не кэшируются service worker как offline app shell;
 - install/update fail closed при critical self-test failure.
+
+## Воспроизводимая проверка
+
+`python3 scripts/audit-regression.py --output /tmp/opencode-audit` запускает 20
+независимых model-free наборов, сохраняет каждый лог и `report.json`, продолжает
+остальные проверки после отказа и возвращает ненулевой код при любой ошибке.
+Нужны Python, Node, Playwright/Chromium, bubblewrap и закреплённый `opencode2`.
+`OPENCODE2_BIN` позволяет явно указать проверяемый бинарник.
+
+Установка без user-systemd поддерживается только при явном
+`CUSTOM_OPENCODE_SERVICE_MODE=manual`. Web запускается командой
+`custom-opencode-serve` в отдельном терминале; автозапуск не имитируется.
+Post-install self-test проверяет настоящий API и все обязательные backend-плагины,
+используя обычную cookie-авторизацию, без включения legacy Basic Auth.
+
+Native acceptance: `scripts/native-runtime-smoke.mjs` проверяет реальные команды
+и durable configuration, `scripts/native-tui-smoke.py` — открытие/отмену визардов
+и шесть панелей через PTY. Эти скрипты требуют отдельный тестовый HOME с маркером
+`.custom-opencode-audit-home`, не предназначены для запуска на пользовательском HOME.
+Полная инструкция и границы проверки: [аудит 2026-09-09](docs/audit-2026-09-09.md).

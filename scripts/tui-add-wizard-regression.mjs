@@ -66,6 +66,7 @@ const store = {
 
 const serverCommands = new Map()
 const synthetic = []
+const consumed = new Set()
 const reloads = []
 const hooks = new Map()
 let catalogTransform
@@ -197,7 +198,11 @@ const context = {
   },
   client: {
     session: {
-      context: async () => synthetic.map((text) => ({ type: 'synthetic', text })),
+      context: async () => [], // Native resume:false does not admit inbox messages.
+      inbox: {
+        list: async () => synthetic.flatMap((text, index) => consumed.has(index) ? [] : [{ id: String(index), type: 'synthetic', payload: { text } }]),
+        cancel: async ({ inboxID }) => { consumed.add(Number(inboxID)) },
+      },
       command: async ({ sessionID, command, text: argumentsText }) => {
         assert.equal(typeof argumentsText, 'string', 'V2 session.command requires text')
         if (command === 'managed') return serverCommands.get(command).execute({ sessionID, prompt: { text: argumentsText } })
