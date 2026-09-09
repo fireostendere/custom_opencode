@@ -1053,7 +1053,7 @@ function renderActivityItem(item, current = false) {
   const status = item.status || 'completed'
   const input = activityValue(item.input, 5000)
   const output = item.error || item.output || ''
-  return `<article class="activity-item ${current ? 'current' : ''} ${escapeHtml(status)}"><div class="activity-item-head"><span class="activity-kind">${escapeHtml(activityKindLabel(item.kind))}</span><span class="activity-status ${escapeHtml(status)}">${escapeHtml(activityStatusLabel(status))}</span></div><strong>${escapeHtml(item.title || 'Операция')}</strong><span class="activity-detail">${escapeHtml(item.detail || '')}</span>${input && current ? `<pre class="activity-code">${escapeHtml(input)}</pre>` : ''}${output ? `<pre class="activity-output ${item.error ? 'error' : ''}">${escapeHtml(output)}</pre>` : ''}</article>`
+  return `<article data-scroll-key="${escapeHtml(item.id)}" class="activity-item ${current ? 'current' : ''} ${escapeHtml(status)}"><div class="activity-item-head"><span class="activity-kind">${escapeHtml(activityKindLabel(item.kind))}</span><span class="activity-status ${escapeHtml(status)}">${escapeHtml(activityStatusLabel(status))}</span></div><strong>${escapeHtml(item.title || 'Операция')}</strong><span class="activity-detail">${escapeHtml(item.detail || '')}</span>${input ? `<pre class="activity-code">${escapeHtml(input)}</pre>` : ''}${output ? `<pre class="activity-output ${item.error ? 'error' : ''}">${escapeHtml(output)}</pre>` : ''}</article>`
 }
 function renderActivityFromEvent(payload) {
   updateActivityFromEvent(payload)
@@ -1155,8 +1155,8 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   const conversation = captureScrollState($('messages'))
   const planOpen = host.querySelector('.plan-panel')?.open === true
   const liveOpen = host.querySelector('.live-panel')?.open === true
-  const planScroll = captureScrollState(host.querySelector('.plan-panel-body'))
-  const nodesScroll = captureScrollState(host.querySelector('.orchestration-nodes'))
+  const planScroll = capturePanelScroll(host.querySelector('.plan-panel-body'))
+  const nodesScroll = capturePanelScroll(host.querySelector('.orchestration-nodes'))
   const children = state.children || []
   host.hidden = !state.sessionID
   if (host.hidden) { host.innerHTML = ''; host._orchestrationMarkup = ''; return }
@@ -1220,6 +1220,9 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   host._structureMarkup = structureMarkup
   host._orchestrationMarkup = markup
   host.innerHTML = markup
+  host.querySelector('.primary-node').dataset.scrollKey = 'primary'
+  host.querySelectorAll('.child-node').forEach((node, index) => { node.dataset.scrollKey = `agent:${children[index].id}` })
+  host.querySelectorAll('.orchestration-plan-list li').forEach((node, index) => { node.dataset.scrollKey = `todo:${todos[index]?.id || todos[index]?.content || index}` })
   const details = [...host.querySelectorAll('details')]
   const planPanel=host.querySelector('.plan-panel'),livePanel=host.querySelector('.live-panel')
   if (planPanel) planPanel.open = planOpen
@@ -1240,13 +1243,43 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   })
   host.classList.toggle('is-expanded', planOpen || liveOpen)
   restoreScrollState($('messages'), conversation)
+  // Restore before paint: another render must not capture the replacement DOM at zero.
+  restorePanelScroll(host.querySelector('.plan-panel-body'), planScroll)
+  restorePanelScroll(host.querySelector('.orchestration-nodes'), nodesScroll)
   const sessionID = state.sessionID
   const revision = state.orchestrationRevision
   requestAnimationFrame(() => {
     if (state.sessionID !== sessionID || state.orchestrationRevision !== revision || state.orchestrationRenderRevision !== renderRevision || host.hidden) return
-    restoreScrollState(host.querySelector('.plan-panel-body'), planScroll)
-    restoreScrollState(host.querySelector('.orchestration-nodes'), nodesScroll)
+    restoreScrollState($('messages'), conversation)
   })
+}
+
+function capturePanelScroll(element) {
+  if (!element || !element.clientHeight) return null
+  const top = element.getBoundingClientRect().top
+  const anchors = [...element.querySelectorAll('[data-scroll-key]')].map((node) => ({
+    key: node.dataset.scrollKey,
+    offset: node.getBoundingClientRect().top - top,
+    bottom: node.getBoundingClientRect().bottom - top,
+    inner: [...node.querySelectorAll('pre')].map((pre) => ({ className: pre.classList[0], top: pre.scrollTop, left: pre.scrollLeft })),
+  }))
+  return { top: element.scrollTop, anchors }
+}
+function restorePanelScroll(element, saved) {
+  if (!element || !saved) return
+  const nodes = new Map([...element.querySelectorAll('[data-scroll-key]')].map((node) => [node.dataset.scrollKey, node]))
+  for (const anchor of saved.anchors) {
+    const node = nodes.get(anchor.key)
+    for (const inner of anchor.inner) {
+      const pre = [...(node?.querySelectorAll('pre') || [])].find((pre) => pre.classList.contains(inner.className))
+      if (pre) { pre.scrollTop = inner.top; pre.scrollLeft = inner.left }
+    }
+  }
+  if (saved.top <= 1) { element.scrollTop = 0; return }
+  const anchor = saved.anchors.find((row) => row.bottom > 0 && nodes.has(row.key))
+  element.scrollTop = anchor
+    ? element.scrollTop + nodes.get(anchor.key).getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.offset
+    : saved.top
 }
 
 function captureScrollState(element) {

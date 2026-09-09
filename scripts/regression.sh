@@ -78,6 +78,7 @@ PY
   then
     python3 scripts/queue-badge-convergence.py
     python3 scripts/web-critical-controls-e2e.py
+    python3 scripts/web-panel-scroll-e2e.py
     python3 scripts/web-fixture-e2e.py
   elif [[ "$REQUIRE_BROWSER" == 1 ]]; then
     echo "Playwright is installed but Chromium is unavailable" >&2
