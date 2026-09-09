@@ -174,7 +174,7 @@ for marker in (
 ):
     assert marker in config_manager_js, marker
 
-assert "#taskCenterButton{display:none!important}" in workspace_css
+assert '#taskCenterButton:not([data-attention="true"]){display:none!important}' in workspace_css
 assert "@media(prefers-reduced-motion:reduce)" in workspace_css
 for marker in (".unified-wizard{", "100dvh", "calc(100vw - 24px)", ".unified-wizard-form"):
     assert marker in workspace_css, marker

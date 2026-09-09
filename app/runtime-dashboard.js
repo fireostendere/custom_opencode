@@ -1,7 +1,9 @@
+import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'
 const $=(id)=>document.getElementById(id)
 const PROFILE_KEY='opencode:web:runtime-profile-v2:'
 
-const state={sessionID:null,tasks:[],counts:{},capabilities:null,resources:null,selectedTask:null,previous:new Map(),timer:null}
+const state={sessionID:null,tasks:[],counts:{},capabilities:null,resources:null,selectedTask:null,previous:new Map(),unavailable:false,error:'',loading:false}
+const refreshOnce=createRefreshCoalescer()
 
 function esc(value){return String(value??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function sid(){const m=/^#\/session\/([^/?]+)/.exec(location.hash||'');return m?decodeURIComponent(m[1]):null}
@@ -21,6 +23,8 @@ function ensureUI(){
   $('runtimeProfileBadge')?.remove()
   if(!$('taskCenterButton')){const button=document.createElement('button');button.id='taskCenterButton';button.type='button';button.className='header-chip task-center-open';button.textContent='Tasks';button.title='Server tasks, checkpoints, usage and resources';$('gitButton')?.after(button);button.addEventListener('click',openCenter)}
   if(!$('taskCenterDialog')){const dialog=document.createElement('dialog');dialog.id='taskCenterDialog';dialog.innerHTML=`<div class="modal runtime-modal"><div class="modal-head"><div><h3>Task Center</h3><div id="runtimeSummary" class="runtime-subtitle">Server runtime</div></div><button class="icon" type="button" data-runtime-close>×</button></div><div id="runtimeTop" class="runtime-top"></div><div class="runtime-section"><div class="runtime-section-head"><strong>Model profiles</strong><span>Capabilities остаются на сервере</span></div><div id="runtimeProfiles" class="runtime-profiles"></div></div><div class="runtime-section"><div class="runtime-section-head"><strong>Tasks</strong><div class="runtime-head-actions"><button id="runtimeIsolated" type="button">Новая isolated</button><button id="runtimeSpeculate" type="button">2× исследование</button><button id="runtimeRefresh" type="button">Обновить</button></div></div><div id="runtimeTasks" class="runtime-tasks"></div></div><div class="runtime-section" id="runtimeTaskDetailSection" hidden><div class="runtime-section-head"><strong>Task details</strong><button id="runtimeCloseDetail" type="button">Скрыть</button></div><div id="runtimeTaskDetail" class="runtime-task-detail"></div></div></div>`;document.body.append(dialog);dialog.querySelector('[data-runtime-close]').addEventListener('click',()=>dialog.close());$('runtimeRefresh').addEventListener('click',()=>refresh(true));$('runtimeCloseDetail').addEventListener('click',()=>{$('runtimeTaskDetailSection').hidden=true;state.selectedTask=null});$('runtimeSpeculate').addEventListener('click',speculate);$('runtimeIsolated').addEventListener('click',isolated);dialog.addEventListener('click',(event)=>{if(event.target===dialog)dialog.close()})}
+  const refreshButton=$('runtimeRefresh'),heading=$('taskCenterDialog')?.querySelector('.modal-head')
+  if(refreshButton&&heading&&!heading.contains(refreshButton))heading.insertBefore(refreshButton,heading.lastElementChild)
   syncBadge()
 }
 function syncBadge(label=''){const badge=$('runtimeProfileBadge');if(!badge)return;const id=profile();badge.textContent=label||profileRow(id)?.label||(id==='direct'?'Direct':id);badge.dataset.profile=id;badge.title=id==='direct'?'Selected OpenCode model':'Server model profile'}
@@ -31,19 +35,53 @@ async function chooseProfile(id){const item=profileRow(id);if(!item)return;if(id
 
 
 function activeCount(){return state.tasks.filter((task)=>['queued','blocked','paused','submitted','running','waiting_permission','verifying','recovering'].includes(task.state)).length}
-async function refresh(force=false){const session=sid();state.sessionID=session;if(!session){state.tasks=[];state.counts={};render();return}try{const [tasks,resources]=await Promise.all([req(`/client-tasks.json?sessionID=${encodeURIComponent(session)}&limit=200`),req('/client-resource-status.json'),force||!state.capabilities?capabilities():Promise.resolve()]);state.tasks=tasks?.tasks||[];state.counts=tasks?.counts||{};state.resources=resources||null;notifyTransitions();render();if(state.selectedTask)await detail(state.selectedTask,false)}catch(error){console.debug('runtime refresh',error)}}
+function refresh(force=false){return refreshOnce(()=>refreshNow(force),force)}
+async function refreshNow(force=false){
+  const session=sid()
+  state.sessionID=session
+  if(!session){state.tasks=[];state.counts={};state.unavailable=false;state.error='';render();return}
+  if(state.unavailable&&!force)return
+  state.loading=true;render()
+  try{
+    const tasks=await req(`/client-tasks.json?sessionID=${encodeURIComponent(session)}&limit=200`)
+    if(sid()!==session)return
+    state.tasks=tasks?.tasks||[];state.counts=tasks?.counts||{};state.unavailable=tasks?.available===false;state.error=''
+    if($('taskCenterDialog')?.open&&!state.unavailable){
+      const resources=await req('/client-resource-status.json')
+      if(sid()!==session)return
+      state.resources=resources
+      if(force||!state.capabilities)await capabilities()
+      if(sid()!==session)return
+      if(state.selectedTask)await detail(state.selectedTask,false)
+    }
+    notifyTransitions()
+  }catch(error){if(sid()===session)state.error='Не удалось обновить задачи. Повторим позже; можно нажать «Обновить».'}
+  finally{if(sid()===session){state.loading=false;render()}}
+}
+const polling=createAdaptivePoller({run:refresh,isActive:()=>!state.error&&!!$('taskCenterDialog')?.open,activeDelay:5000,idleDelay:30000,isVisible:()=>!document.hidden})
 function render(){
   ensureUI();
   const active=activeCount();
   const btn=$('taskCenterButton');
-  if(btn)btn.textContent=active?`Tasks ${active}`:'Tasks';
+  if(btn){
+    btn.dataset.attention=String(state.unavailable||!!state.error)
+    btn.textContent=state.unavailable?'Задачи · недоступны':state.error?'Задачи · нет связи':active?`Задачи ${active}`:'Задачи'
+    btn.title=state.unavailable?'Проект вне разрешённых корней: серверные задачи недоступны. Диалог работает.':state.error||'Задачи, результаты и состояние сервера'
+    btn.setAttribute('aria-busy',String(state.loading))
+  }
   const dlg=$('taskCenterDialog');
   if(!dlg||!dlg.open)return;
+  dlg.dataset.unavailable=String(state.unavailable)
+  dlg.querySelector('h3').textContent='Задачи и состояние'
+  for(const id of ['runtimeTop','runtimeV3Panel','runtimeProfiles','runtimeTasks']){
+    const el=$(id);if(el)(id==='runtimeProfiles'||id==='runtimeTasks'?el.closest('.runtime-section'):el).hidden=state.unavailable
+  }
+  if(state.unavailable)$('runtimeTaskDetailSection').hidden=true
   const r=state.resources||{};
   const resource=r.gameDetected?'Игра → cloud':r.pressureHigh?'Нагрузка → cloud':r.localAvailable?'Local доступен':'Cloud fallback';
-  const summaryText=Object.entries(state.counts).map(([name,count])=>`${name} ${count}`).join(' · ')||'нет задач';
+  const summaryText=state.unavailable?'Проект вне разрешённых корней. Серверные задачи недоступны; диалог продолжает работать.':state.error|| (state.loading?'Обновление…':Object.entries(state.counts).map(([name,count])=>`${name} ${count}`).join(' · ')||'Задач пока нет');
   const sumEl=$('runtimeSummary');
-  if(sumEl&&sumEl.textContent!==summaryText)sumEl.textContent=summaryText;
+  if(sumEl){sumEl.setAttribute('role','status');if(sumEl.textContent!==summaryText)sumEl.textContent=summaryText}
   const topMarkup=`<div class="runtime-stat"><span>Scheduler</span><strong>${esc(resource)}</strong></div><div class="runtime-stat"><span>Profile</span><strong>${esc(profileRow(profile())?.label||profile())}</strong></div><div class="runtime-stat"><span>Load</span><strong>${r.loadRatio==null?'—':Math.round(r.loadRatio*100)+'%'}</strong></div><div class="runtime-stat"><span>Local</span><strong>${r.localAvailable==null?'—':r.localAvailable?'ready':'offline'}</strong></div>`;
   const topEl=$('runtimeTop');
   if(topEl&&topEl._lastMarkup!==topMarkup){topEl._lastMarkup=topMarkup;topEl.innerHTML=topMarkup}
@@ -76,6 +114,6 @@ async function isolated(){const session=sid(),text=$('input')?.value.trim()||'';
 async function speculate(){const session=sid(),text=$('input')?.value.trim()||'';if(!session||!text){toast('Сначала введи задачу в composer');return}try{const value=await req('/client-speculate.json',{method:'POST',body:JSON.stringify({sessionID:session,text,count:2})});toast(`Запущено исследователей: ${value.children?.length||0}`);await refresh(true)}catch(error){toast(`Parallel research: ${error.message}`)}}
 function notifyTransitions(){for(const task of state.tasks){const before=state.previous.get(task.id);state.previous.set(task.id,task.state);if(before&&before!==task.state&&['completed','needs_attention','failed','waiting_permission'].includes(task.state)&&'Notification'in window&&Notification.permission==='granted'){try{new Notification('OpenCode task',{body:`${task.kind}: ${task.state}`,tag:`runtime-${task.id}`})}catch{}}}}
 async function openCenter(){ensureUI();$('taskCenterDialog').showModal();await refresh(true)}
-function bind(){ensureUI();state.sessionID=sid();setProfile(explicitProfile());$('modelChoices')?.addEventListener('click',(event)=>{if(event.target.closest('[data-model]'))setTimeout(()=>setProfile('direct'),0)},true);window.addEventListener('hashchange',()=>{state.sessionID=sid();state.capabilities=null;state.selectedTask=null;setProfile(explicitProfile());refresh(true)});new MutationObserver(()=>{if(document.documentElement.dataset.modelProfile==='orchestrated'&&explicitProfile()==='direct'){const id=document.documentElement.dataset.orchestratedModel;syncBadge(id==='gpt-5.6-sol-orchestrated'?'GPT-5.6 Sol · Orchestrated':'Qwen 3.8 · Orchestrated')}}).observe(document.documentElement,{attributes:true,attributeFilter:['data-model-profile','data-orchestrated-model']});capabilities();refresh();state.timer=setInterval(refresh,4000)}
+function bind(){ensureUI();state.sessionID=sid();setProfile(explicitProfile());$('modelChoices')?.addEventListener('click',(event)=>{if(event.target.closest('[data-model]'))setTimeout(()=>setProfile('direct'),0)},true);window.addEventListener('hashchange',()=>{if(state.sessionID===sid())return;state.sessionID=sid();state.capabilities=null;state.selectedTask=null;state.unavailable=false;state.error='';state.tasks=[];state.counts={};state.resources=null;setProfile(explicitProfile());refresh(true)});new MutationObserver(()=>{if(document.documentElement.dataset.modelProfile==='orchestrated'&&explicitProfile()==='direct'){const id=document.documentElement.dataset.orchestratedModel;syncBadge(id==='gpt-5.6-sol-orchestrated'?'GPT-5.6 Sol · Orchestrated':'Qwen 3.8 · Orchestrated')}}).observe(document.documentElement,{attributes:true,attributeFilter:['data-model-profile','data-orchestrated-model']});document.addEventListener('visibilitychange',()=>{if(!document.hidden)polling.wake()});polling.start()}
 window.CustomOpenCodeRuntime={currentProfile:profile,setProfile,refresh,open:openCenter}
 bind()

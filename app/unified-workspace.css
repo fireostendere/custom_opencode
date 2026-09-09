@@ -1,5 +1,5 @@
 :root{--unified-panel-width:390px}
-#taskCenterButton{display:none!important}
+#taskCenterButton:not([data-attention="true"]){display:none!important}
 .unified-panel-toggle{min-width:72px}
 .unified-panel{position:fixed;z-index:1200;top:0;right:0;bottom:0;width:min(var(--unified-panel-width),92vw);background:var(--bg,#171717);border-left:1px solid color-mix(in srgb,currentColor 16%,transparent);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .16s ease;box-shadow:-16px 0 36px rgba(0,0,0,.18)}
 .unified-panel.open{transform:translateX(0)}

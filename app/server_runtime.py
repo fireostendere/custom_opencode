@@ -569,7 +569,15 @@ def handle_get(handler:Any,parsed:Any,features:Any)->bool:
         except Exception as exc: _error(handler,exc)
         return True
     try:
-        sid=(params.get("sessionID") or [None])[0]; directory=features._session_directory(str(sid)) if sid else (params.get("directory") or [None])[0]; directory=features._canonical_directory(str(directory)) if directory else None
+        sid=(params.get("sessionID") or [None])[0]
+        try:
+            directory=features._session_directory(str(sid)) if sid else (params.get("directory") or [None])[0]
+            directory=features._canonical_directory(str(directory)) if directory else None
+        except ValueError as exc:
+            if parsed.path != "/client-tasks.json" or not sid or str(exc) != "directory outside allowed project roots":
+                raise
+            handler.json_response({"ok": True, "available": False, "reason": "project-outside-roots", "tasks": [], "counts": {}})
+            return True
         if parsed.path=="/client-runtime.json": handler.json_response(runtime_snapshot(features,directory))
         elif parsed.path=="/client-tasks.json":
             states=[item for item in (params.get("state") or [""])[0].split(",") if item in TASK_STATES]; rows=STORE.list_tasks(session_id=str(sid) if sid else None,project_dir=directory,states=states or None,limit=int((params.get("limit") or [200])[0])); handler.json_response({"ok":True,"tasks":[_public(item) for item in rows],"counts":_counts(rows)})

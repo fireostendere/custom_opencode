@@ -105,6 +105,12 @@ body.sidebar-resizing *{cursor:col-resize!important}
 .main{min-height:0}
 .orchestration-trace{flex:0 0 auto;min-height:0}
 .orchestration-trace details{min-height:0}
+@media(prefers-reduced-motion:no-preference){
+  dialog[open]{animation:panel-reveal .14s ease-out}
+  .header-chip{transition:background-color .14s ease,border-color .14s ease,transform .1s ease}
+  .header-chip:active{transform:translateY(1px)}
+}
+@keyframes panel-reveal{from{opacity:.65}to{opacity:1}}
 .orchestration-summary-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .orchestration-panel>.activity-panel-body{height:min(42dvh,360px);max-height:none;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
 .orchestration-nodes{align-content:start}
@@ -164,6 +170,7 @@ dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
 }
 
 @media(prefers-reduced-motion:reduce){
+  dialog[open]{animation:none}
   #modelButton::after,.limits-summary::after,.model-provider-chevron,.permission-details>summary::after,.tool>summary::after,.trace>summary::after,.review-file>summary::after,.runtime-v3-panel>summary::after,.orchestration-trace details>summary::after,.pull-refresh,.pull-refresh-progress,.pull-refresh-arrow{transition:none}
   .pull-refresh[data-state="pulling"] .pull-refresh-icon,.pull-refresh[data-state="refreshing"] .pull-refresh-icon{animation:none}
 }

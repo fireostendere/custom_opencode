@@ -11,6 +11,7 @@ function ensure(){
   host.innerHTML=`<summary><strong>Runtime control plane</strong><span>AST · RAG · MCP · sandbox · replay · telemetry</span></summary><div id="runtimeV3Stats" class="runtime-v3-stats"></div><div class="runtime-v3-actions"><button type="button" id="runtimeV3Refresh">Refresh</button><button type="button" id="runtimeV3Branch">Branch session</button><button type="button" id="runtimeV3Merge">Merge last branch</button><button type="button" id="runtimeV3WorktreeMerge">Merge worktree</button><button type="button" id="runtimeV3Replay">Replay selected task</button><select id="runtimeV3Sandbox"><option value="safe">safe</option><option value="repo-write" selected>repo-write</option><option value="docker">docker</option><option value="wsl">wsl</option><option value="full-machine">full-machine</option></select><button type="button" id="runtimeV3SetSandbox">Set sandbox</button></div><div class="runtime-v3-search"><input id="runtimeV3Search" placeholder="Semantic repo search…"><button type="button" id="runtimeV3SearchButton">Search</button></div><div id="runtimeV3Results" class="runtime-v3-results"></div>`
   const top=$('runtimeTop');top?.after(host)
   $('runtimeV3Refresh').addEventListener('click',refresh)
+  host.addEventListener('toggle',()=>{if(host.open)refresh()})
   $('runtimeV3Branch').addEventListener('click',branch)
   $('runtimeV3Merge').addEventListener('click',merge)
   $('runtimeV3WorktreeMerge').addEventListener('click',mergeWorktree)
@@ -44,4 +45,5 @@ function attachPanel(){
   render()
   return true
 }
-const observer=new MutationObserver(attachPanel);observer.observe(document.documentElement,{childList:true,subtree:true});window.addEventListener('hashchange',()=>setTimeout(refresh,100));setInterval(()=>{if($('taskCenterDialog')?.open)refresh()},5000);setTimeout(()=>{attachPanel();refresh()},500)
+function visible(){return $('taskCenterDialog')?.open&&$('taskCenterDialog').dataset.unavailable!=='true'&&$('runtimeV3Panel')?.open&&!document.hidden}
+const observer=new MutationObserver(attachPanel);observer.observe(document.documentElement,{childList:true,subtree:true});window.addEventListener('hashchange',()=>{if(visible())setTimeout(refresh,100)});setInterval(()=>{if(visible())refresh()},5000);setTimeout(attachPanel,500)
