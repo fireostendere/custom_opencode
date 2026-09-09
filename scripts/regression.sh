@@ -43,6 +43,9 @@ python3 scripts/web-users-smoke.py
 step "Runtime invariant regression"
 python3 scripts/runtime-invariants-smoke.py
 
+step "MCP automatic reconnect regression"
+node scripts/mcp-reconnect-regression.mjs
+
 step "TUI server wizard regression"
 node scripts/tui-server-wizard-regression.mjs
 

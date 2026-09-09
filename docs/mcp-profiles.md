@@ -1,5 +1,20 @@
 # MCP profiles
 
+## Automatic connection recovery
+
+`mcp-reconnect.js` runs inside the managed background OpenCode service, independently
+of the web UI. It checks native in-process MCP status every two seconds and retries
+transient connection failures up to three times, with 2/10/30-second backoffs.
+Sixty seconds of observed healthy connection resets the budget; short flaps do not.
+Disabled, removed and authentication-failed servers are not re-enabled. After the
+budget is exhausted, use the native manual reconnect control. Existing tool calls
+are never replayed: recovery restores the catalog for subsequent model requests.
+Logs use the `mcp automatic recovery` marker and contain server names/attempts/status,
+not credentials or tool arguments. Standalone/unmanaged servers are not controlled.
+
+Checks: `node scripts/mcp-reconnect-regression.mjs` and
+`python3 scripts/mcp-reconnect-live.py` (isolated native service, no inference).
+
 ## Implementation and acceptance status
 
 Implementation is in progress. Native-dialog mocks exercise the real wizard and

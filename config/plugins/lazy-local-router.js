@@ -53,10 +53,11 @@ async function ensureRouter() {
 export default {
   id: "lazy-local-router",
   async setup(ctx) {
-    return ctx.session.hook("model.request", async ({ model }) => {
+    const registration = await ctx.session.hook("model.request", async ({ model }) => {
       // Automatic orchestration never selects local models. This hook exists only
       // for explicit manual Ollama selection and is disabled by default.
       if (AUTO_START && model.providerID === LOCAL_PROVIDER) await ensureRouter()
     })
+    return () => registration.dispose()
   },
 }
