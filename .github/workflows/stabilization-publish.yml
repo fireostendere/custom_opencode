@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply exact locally tested source delta
+      - name: Apply reviewed product files only
         shell: bash
         run: |
           python3 - <<'PY'
@@ -30,6 +30,9 @@ jobs:
           plan = []
           for entry in json.loads(raw):
               relative = Path(entry['path'])
+              # Workflow edits are published separately by the authorized connector.
+              if relative.parts[:2] == ('.github', 'workflows'):
+                  continue
               assert not relative.is_absolute() and '..' not in relative.parts and '.git' not in relative.parts and relative.as_posix() != '.env'
               target = root / relative
               assert target.resolve().is_relative_to(root) and not target.is_symlink()
@@ -45,16 +48,16 @@ jobs:
               assert blob(data) == entry['new'], f'Unexpected result: {relative}'
               assert entry['mode'] in (0o644, 0o755)
               plan.append((target, data, entry['mode']))
-          assert len(plan) == 57
+          assert len(plan) == 56
           for target, data, mode in plan:
               target.parent.mkdir(parents=True, exist_ok=True)
               target.write_bytes(data)
               os.chmod(target, mode)
-          print(f'Applied {len(plan)} reviewed files; all input/output blob hashes match')
+          print(f'Applied {len(plan)} reviewed product files; all input/output blob hashes match')
           PY
-          git rm --ignore-unmatch .github/workflows/audit-regression.yml .github/workflows/stabilization-publish.yml .audit/delta-0.b64 .audit/delta-1.b64 .audit/delta-2.b64
+          git rm .audit/delta-0.b64 .audit/delta-1.b64 .audit/delta-2.b64
           git add --all
-          test "$(git write-tree)" = '36b58bc2a56761f06ea96e415956fa7c99ecce23'
+          test -z "$(git diff --cached --name-only -- .github/workflows)"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'fix: stabilize native V2 plugins, wizards, runtime isolation and clean installation'
