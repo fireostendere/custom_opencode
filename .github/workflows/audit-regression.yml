@@ -1,0 +1,31 @@
+name: Audit Regression
+
+on:
+  push:
+    branches: ['astra/stabilization-20260909']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export tracked source and history for offline reproduction
+        run: |
+          mkdir -p "$RUNNER_TEMP/audit-source"
+          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/audit-source/source.tar.gz"
+          git bundle create "$RUNNER_TEMP/audit-source/repository.bundle" HEAD refs/remotes/origin/main
+          git rev-parse HEAD > "$RUNNER_TEMP/audit-source/commit.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audit-source-${{ github.sha }}
+          path: ${{ runner.temp }}/audit-source/
+          retention-days: 7
+          if-no-files-found: error
