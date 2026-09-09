@@ -7,8 +7,8 @@
     "wrap": "word"
   },
   "session": {
-    "sidebar": "auto",
-    "scrollbar": false,
+    "sidebar": "hide",
+    "scrollbar": true,
     "thinking": "hide",
     "grouping": "auto"
   },

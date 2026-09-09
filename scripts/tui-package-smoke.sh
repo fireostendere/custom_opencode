@@ -27,6 +27,8 @@ printf '%s\n' '# Packaged V2 plan fixture' '- [x] Load the native plan document'
 cp "$ROOT/config/cli.json" "$CONFIG/cli.json"
 cp "$ROOT/config/AGENTS.md" "$CONFIG/AGENTS.md"
 cp -a "$ROOT/config/plugins/tui/." "$CONFIG/plugins/tui/"
+mv "$CONFIG/plugins/tui/tui.js" "$CONFIG/plugins/tui/production-tui.js"
+cp "$ROOT/scripts/tui-keyboard-probe.jsx" "$CONFIG/plugins/tui/tui.js"
 cp -a "$ROOT/config/prompts/." "$CONFIG/prompts/"
 cp -a "$ROOT/config/themes/." "$CONFIG/themes/"
 
@@ -54,12 +56,13 @@ export MCP_RAG_ENABLED=0
 export OPENCODE_SERVER_PASSWORD=test
 export CODEX_BIN=/nonexistent/custom-opencode-codex
 export BAILIAN_CLI_BIN=/nonexistent/custom-opencode-bl
+export TUI_KEYBOARD_PROBE="$TMP/keyboard.json"
 
 for geometry in 80x24 120x30 160x40; do
   capture="$TMP/tui-$geometry.typescript"
   log="$TMP/tui-$geometry.log"
   python3 - "$geometry" "$TMP/project" "$capture" "$log" "$OPENCODE2_BIN" <<'PY'
-import fcntl, os, pty, select, struct, subprocess, sys, termios, time
+import fcntl, json, os, pty, select, struct, subprocess, sys, termios, time
 geometry, project, capture_path, log_path, opencode_bin = sys.argv[1:6]
 cols, rows = map(int, geometry.split('x'))
 master, slave = pty.openpty()
@@ -94,6 +97,25 @@ while time.time() < deadline:
                 if not extra:
                     break
                 buffer += extra
+            if geometry == '160x40':
+                def settle(seconds):
+                    global buffer
+                    until = time.monotonic() + seconds
+                    while time.monotonic() < until:
+                        if select.select([master], [], [], .05)[0]:
+                            buffer += os.read(master, 65536)
+                os.write(master, b'\x1b')
+                settle(.15)
+                os.write(master, b'\x1b')
+                settle(.8)
+                with open(os.environ['TUI_KEYBOARD_PROBE']) as handle:
+                    assert json.load(handle) == [{'sessionID':'ses_keyboard_probe','continue':False}]
+                os.write(master, b'\x1bOS')  # F4 opens a real native dialog.
+                settle(.5)
+                os.write(master, b'\x1b')
+                settle(.5)
+                with open(os.environ['TUI_KEYBOARD_PROBE']) as handle:
+                    assert json.load(handle) == [{'sessionID':'ses_keyboard_probe','continue':False}, 'dialog-closed']
             if geometry == '80x24':
                 os.write(master, b'/panel right limits\r')
                 command_deadline = time.time() + 2.0
@@ -149,4 +171,4 @@ PY
   fi
 done
 
-echo "Packaged TUI smoke passed: pinned opencode2 loader + plugin runtime at 80x24/120x30/160x40; model selection behavior is gated by model-selector-smoke.mjs"
+echo "Packaged TUI smoke passed: native PTY at 80x24/120x30/160x40; single Escape, in-flight deduplication and dialog Escape; model selection is gated by model-selector-smoke.mjs"

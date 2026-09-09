@@ -131,7 +131,7 @@ def _dynamic_mcp_config() -> dict[str, Any]:
         "cwd": str(plus.REPO_ROOT.resolve()),
         "disabled": False,
         "timeout": {
-            "startup": 10_000,
+            "startup": 60_000,
             "catalog": 10_000,
             "execution": 60_000,
         },
@@ -184,7 +184,7 @@ def _connect_kb(directory: str) -> dict[str, Any]:
             "PUT",
             _v2_workspace_target("/api/mcp/kb", directory),
             {"config": _dynamic_mcp_config()},
-            timeout=20.0,
+            timeout=75.0,
         )
     except plus.BackendHTTPError as exc:
         if exc.status not in (400, 404, 405, 409, 422):
@@ -198,7 +198,7 @@ def _connect_kb(directory: str) -> dict[str, Any]:
                 "POST",
                 _v2_workspace_target("/api/mcp/kb/connect", directory),
                 None,
-                timeout=20.0,
+                timeout=75.0,
             )
         except plus.BackendHTTPError as exc:
             if exc.status not in (404, 405):

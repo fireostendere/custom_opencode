@@ -7,6 +7,7 @@ import { Plugin } from "@opencode-ai/plugin/tui"
 import { createEffect, For, onCleanup, onMount, Show } from "solid-js"
 import { PANEL_DEFS, PANEL_IDS, createPanelViews } from "./lib/panel-views.jsx"
 import { PANEL_SIDES, PANEL_VIEWS } from "./lib/panel-command.js"
+import { sessionInterruptCommand } from "./lib/session-interrupt.js"
 
 const HANDLE = 1
 const DEFAULT_SIDE_SIZE = 36
@@ -608,6 +609,8 @@ export default Plugin.define({
       append: "app",
       render: () => {
         context.keymap.layer(() => ({ mode: "global", priority: 120, commands: commandRows() }))
+        const interrupt = sessionInterruptCommand(context, () => routeSessionID(context))
+        context.keymap.layer(() => ({ mode: "base", priority: 120, commands: [interrupt] }))
 
         createEffect(() => {
           for (const side of PANEL_SIDES) {

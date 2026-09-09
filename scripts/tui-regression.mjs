@@ -21,6 +21,30 @@ const addWizard = await readFile(new URL('config/plugins/tui/add-wizard.js', roo
 const addCommand = await readFile(new URL('config/plugins/tui/lib/add-command.js', root), 'utf8')
 const wslClipboard = await readFile(new URL('config/plugins/tui/wsl-clipboard.jsx', root), 'utf8')
 const cliConfig = JSON.parse(await readFile(new URL('config/cli.json', root), 'utf8'))
+assert.equal(cliConfig.session.scrollbar, true, 'The session transcript must expose its native scrollbar')
+assert.equal(cliConfig.session.sidebar, 'hide', 'The native sidebar must not flash behind the workspace dock on startup')
+const { sessionInterruptCommand } = await import(new URL('config/plugins/tui/lib/session-interrupt.js', root))
+let finishInterrupt
+const interrupted = []
+const interruptErrors = []
+let interruptStatus = 'running'
+const stopCommand = sessionInterruptCommand({
+  data: { session: { status: () => interruptStatus } },
+  client: { session: { interrupt: (input) => { interrupted.push(input); return new Promise(resolve => { finishInterrupt = resolve }) } } },
+  ui: { toast: { show: (error) => interruptErrors.push(error) } },
+}, () => 'ses_stop')
+assert.equal(stopCommand.enabled(), true)
+const stopping = stopCommand.run()
+await stopCommand.run()
+assert.deepEqual(interrupted, [{ sessionID:'ses_stop', continue:false }], 'One Escape must stop without resuming; repeated Escape must not duplicate in-flight requests')
+finishInterrupt()
+await stopping
+interruptStatus = 'idle'
+assert.equal(stopCommand.enabled(), false)
+await stopCommand.run()
+assert.equal(interrupted.length, 1)
+assert.deepEqual(interruptErrors, [])
+assert.ok(workspacePanel.includes('mode: "base", priority: 120, commands: [interrupt]'), 'Interrupt must not steal Escape from dialogs or autocomplete')
 const envExample = await readFile(new URL('.env.example', root), 'utf8')
 const updater = await readFile(new URL('scripts/update.sh', root), 'utf8')
 const agentsPolicy = await readFile(new URL('config/AGENTS.md', root), 'utf8')

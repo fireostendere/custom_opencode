@@ -22,6 +22,7 @@ config = server_rag._dynamic_mcp_config()
 assert config["type"] == "local"
 assert config["disabled"] is False
 assert config["timeout"]["execution"] == 60_000
+assert config["timeout"]["startup"] == 60_000
 assert config["command"][0] == "bash"
 assert config["command"][1].endswith("scripts/rag-mcp.sh")
 
