@@ -11,18 +11,30 @@ permissions:
 jobs:
   source-snapshot:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Export tracked source and history for offline reproduction
         run: |
           mkdir -p "$RUNNER_TEMP/audit-source"
           git archive --format=tar.gz HEAD > "$RUNNER_TEMP/audit-source/source.tar.gz"
           git bundle create "$RUNNER_TEMP/audit-source/repository.bundle" HEAD refs/remotes/origin/main
           git rev-parse HEAD > "$RUNNER_TEMP/audit-source/commit.txt"
+      - name: Capture reviewed public dependencies without credentials
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/audit-deps/cli" @opencode-ai/cli@0.0.0-beta-18743
+          "$RUNNER_TEMP/audit-deps/cli/bin/opencode2" --version
+          git clone --branch main --single-branch --no-tags https://github.com/DietrichGebert/ponytail.git "$RUNNER_TEMP/ponytail"
+          git -C "$RUNNER_TEMP/ponytail" cat-file -e '2ed6c52c9d7e5e56942508591085fd45dea277d3^{commit}'
+          git -C "$RUNNER_TEMP/ponytail" bundle create "$RUNNER_TEMP/audit-deps/ponytail.bundle" main
+          tar -C "$RUNNER_TEMP/audit-deps" -czf "$RUNNER_TEMP/audit-source/dependencies.tar.gz" .
+          sha256sum "$RUNNER_TEMP/audit-source/"* > "$RUNNER_TEMP/audit-source/SHA256SUMS"
       - uses: actions/upload-artifact@v4
         with:
           name: audit-source-${{ github.sha }}
