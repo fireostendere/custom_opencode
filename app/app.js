@@ -388,7 +388,7 @@ function renderSessionShortcuts(collapsed) {
   const recent=[]
   for(const session of sessions.sort((a,b)=>activity.get(b.id).lastOpenedAt-activity.get(a.id).lastOpenedAt||sessionTime(b)-sessionTime(a))){
     if(mirrorHasConversation(session))recent.push(session)
-    if(recent.length===5)break
+    if(recent.length===10)break
   }
   const groups=[
     ['current','Текущее',sessions.filter(session=>{const info=activity.get(session.id);return (info.selected||info.running)&&mirrorHasConversation(session)}).sort((a,b)=>Number(activity.get(b.id).selected)-Number(activity.get(a.id).selected)||sessionTime(b)-sessionTime(a))],

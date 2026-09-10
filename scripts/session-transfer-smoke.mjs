@@ -503,4 +503,15 @@ await new Promise(setImmediate)
 assert.ok(app.renderSessionShortcuts(new Set()).includes(`data-session-shortcut="${maintenance.id}"`),'Recheck after new conversation activity')
 assert.equal(state.sessions.length,6,'Mirror filtering must not delete or move real sessions')
 
+// Recent mirrors show at most ten chats, newest first, without trimming real sessions.
+reset()
+const recentChats=Array.from({length:11},(_,i)=>({id:`recent_${i}`,tokens:{input:1},time:{updated:i+1}}))
+for(const count of [0,1,10,11]){
+  state.sessions=recentChats.slice(0,count)
+  const html=app.renderSessionShortcuts(new Set())
+  const ids=[...html.matchAll(/data-session-shortcut="([^"]+)"/g)].map(match=>match[1])
+  assert.deepEqual(ids,recentChats.slice(0,count).reverse().slice(0,10).map(session=>session.id),`Recent limit at ${count} chats`)
+  assert.equal(state.sessions.length,count,'The limit affects only the mirror')
+}
+
 console.log('Session transfer smoke passed: handoff safety + history/draft isolation + model guards + full active snapshots + root-only conversation mirrors')
