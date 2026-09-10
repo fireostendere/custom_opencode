@@ -125,7 +125,7 @@ async def upstream(fabric, row, op, arguments, output):
         raise ValueError("upstream runtime.command must be an argv list")
     spawn_op = {**op, "argv": argv}
     command, env, _ = fabric.command(row, spawn_op, arguments, output)
-    command = fabric.limit_command(command, op)
+    command = fabric.limit_command(command, op, policy)
     async with Client(bounded_stdio(command, env, fabric.root), read_timeout_seconds=30) as client:
         return await call_checked(fabric, client, row, op, arguments)
 

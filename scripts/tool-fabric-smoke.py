@@ -5,6 +5,7 @@ import copy
 import json
 import os
 import site
+import shutil
 import socket
 from pathlib import Path
 import sys
@@ -16,7 +17,7 @@ sys.path.insert(0, str(ROOT / "app"))
 
 from jsonschema import ValidationError
 from mcp import Client, StdioServerParameters, stdio_client
-from tool_fabric import Fabric, digest, fingerprint, validate_manifest, load_config
+from tool_fabric import Fabric, digest, fingerprint, validate_manifest, validate_policy, load_config
 from tool_fabric_mcp import make_server
 
 
@@ -43,6 +44,15 @@ async def terminal(fabric, job):
 
 
 async def main():
+    for invalid_limit in (0, -1, True, "unlimited", 4_398_046_511_105):
+        try:
+            validate_policy({"defaults": {"addressSpaceBytes": invalid_limit}})
+            raise AssertionError("invalid address-space limit accepted")
+        except ValueError:
+            pass
+    assert "--as=2147483648" in Fabric.limit_command(["true"], {})
+    assert "--nofile=1024" in Fabric.limit_command(["true"], {})
+    assert "--as=4398046511104" in Fabric.limit_command(["true"], {}, {"addressSpaceBytes": 4_398_046_511_104})
     with tempfile.TemporaryDirectory(prefix="fabric-smoke-") as temp:
         base = Path(temp)
         project = base / "project"
@@ -59,6 +69,11 @@ async def main():
         fixture["operations"]["flash"] = recipe([sys.executable, str(engine), "ok", "{output}", "{device}"], {"device": TEXT}, ["device"], risk="device-write")
         fixture["operations"]["timeout"] = {**copy.deepcopy(fixture["operations"]["sleep"]), "timeoutSeconds": 1}
         config = {"tools": [fixture], "permissions": {"fixture": {"trustedHost": True, "cache": True, "toolchainDigest": digest("fixture-v1")}}}
+        container_row = {**fixture, "kind": "container", "image": "example@sha256:" + "a" * 64}
+        probe = Fabric(str(project), str(base / "container-command"), config)
+        argv, _, _ = probe.command(container_row, fixture["operations"]["ok"], {"value": "check"}, base / "output")
+        assert not any(arg.startswith("PATH=") for arg in argv), "host PATH must not replace image PATH"
+        await probe.close()
         empty = Fabric(str(project), str(base / "empty"))
         assert empty.rows == {} and empty.search()["catalogSize"] == 0
         await empty.close()
@@ -194,11 +209,15 @@ async def main():
         outside.write_text("not visible to the tool")
         sandboxed = copy.deepcopy(fixture)
         sandboxed["id"] = "sandboxed"
+        # This fixture uses only stdlib. Keep the isolation test independent of
+        # a caller's venv/managed-Python paths and private runtime mount policy.
+        sandboxed["binary"] = shutil.which("python3", path="/usr/bin:/bin")
+        assert sandboxed["binary"], "system Python required for the isolation fixture"
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             listener.listen()
             port = str(listener.getsockname()[1])
-            sandboxed["operations"] = {"check": recipe([sys.executable, str(engine), "sandbox", "{output}", str(outside), port])}
+            sandboxed["operations"] = {"check": recipe([sandboxed["binary"], str(engine), "sandbox", "{output}", str(outside), port])}
             sandbox_config = {"tools": [sandboxed], "permissions": {"sandboxed": {"runtimeRoots": [str(engine.parent)]}}}
             isolated = Fabric(str(project), str(base / "isolated"), sandbox_config)
             isolated.start()

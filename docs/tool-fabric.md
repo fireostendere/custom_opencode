@@ -236,6 +236,10 @@ are rejected. Failure backoff is 30 seconds, without automatic operation retry.
 Local process groups are terminated on timeout/cancel. Local execution has CPU,
 address-space, file-size and descriptor limits; OCI additionally has memory/PID/CPU
 limits. Stdout and stderr are drained but each retained prefix is limited to 48 KB.
+Operator policy can set `addressSpaceBytes` (256 MiB–4 TiB; default 2 GiB) for
+runtimes that reserve large virtual address ranges. This is not a physical RAM
+quota. Use OCI memory limits when a resident-memory boundary is required; tool
+arguments cannot change this policy.
 Artifacts are limited to 32 files, 16 MB each and 64 MB total per result.
 Artifact resources return `nextUri` when further chunks are available. Upstream
 stdio frames and HTTP responses are bounded at 1 MiB before parsing; a stdio

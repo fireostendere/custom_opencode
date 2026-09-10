@@ -93,8 +93,11 @@ def validate_policy(config):
     booleans = {"network", "allowUnreviewedLicense", "trustedHost", "workspaceWrite", "cache"}
     lists = {"risks", "operations", "licenses", "environment", "runtimeRoots", "devicePaths", "devices", "hosts"}
     for policy in [config.get("defaults", {}), *config.get("permissions", {}).values()]:
-        if not isinstance(policy, dict) or set(policy) - booleans - lists - {"secrets", "toolchainDigest", "binarySha256"}:
+        if not isinstance(policy, dict) or set(policy) - booleans - lists - {"secrets", "toolchainDigest", "binarySha256", "addressSpaceBytes"}:
             raise ValueError("unknown permission fields")
+        address_space = policy.get("addressSpaceBytes", 2_147_483_648)
+        if type(address_space) is not int or not 268_435_456 <= address_space <= 4_398_046_511_104:
+            raise ValueError("addressSpaceBytes must be 256 MiB to 4 TiB; this limits virtual address space, not resident RAM")
         if any(type(policy[k]) is not bool for k in booleans & policy.keys()):
             raise ValueError("permission switches must be booleans")
         if any(not isinstance(policy[k], list) or not all(isinstance(v, str) for v in policy[k]) for k in lists & policy.keys()):
@@ -415,7 +418,10 @@ class Fabric:
                    "--mount", f"type=bind,src={self.root},dst=/workspace" + ("" if policy.get("workspaceWrite") else ",readonly"),
                    "--mount", f"type=bind,src={output},dst=/artifacts", "--workdir", "/workspace"]
             for name, value in env.items():
-                cmd.extend(["--env", f"{name}={value}"])
+                # The image owns executable lookup; the host's PATH can hide its
+                # Java/Node/toolchain installation or point to nonexistent paths.
+                if name != "PATH":
+                    cmd.extend(["--env", f"{name}={value}"])
             return cmd + [row["image"], *argv], env, container_name
         binary = self._binary(argv[0])
         if not binary:
@@ -578,7 +584,7 @@ class Fabric:
     async def _process(self, row, op, args, output):
         argv, env, container = self.command(row, op, args, output)
         if not container:
-            argv = self.limit_command(argv, op)
+            argv = self.limit_command(argv, op, self._policy(row["id"]))
         proc = await asyncio.create_subprocess_exec(*argv, cwd=self.root, env=env, stdin=asyncio.subprocess.DEVNULL,
                                                      stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=True)
         async def drain(stream):
@@ -616,11 +622,12 @@ class Fabric:
             await asyncio.gather(*readers, return_exceptions=True)
 
     @staticmethod
-    def limit_command(argv, op):
+    def limit_command(argv, op, policy=None):
         limiter = shutil.which("prlimit")
         if not limiter:
             raise RuntimeError("prlimit required for bounded local tool execution")
-        return [limiter, "--as=2147483648", "--fsize=67108864", "--nofile=256", f"--cpu={op.get('timeoutSeconds', 300)}", "--", *argv]
+        address_space = (policy or {}).get("addressSpaceBytes", 2_147_483_648)
+        return [limiter, f"--as={address_space}", "--fsize=67108864", "--nofile=1024", f"--cpu={op.get('timeoutSeconds', 300)}", "--", *argv]
 
     def _redact(self, text, row):
         for ref in self._policy(row["id"]).get("secrets", {}).values():
