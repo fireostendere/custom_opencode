@@ -1,0 +1,4 @@
+# Official MCP SDK handles modern/legacy protocol negotiation and transports.
+mcp==2.0.0
+jsonschema==4.26.0
+packaging==25.0

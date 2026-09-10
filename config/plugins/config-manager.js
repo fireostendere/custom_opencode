@@ -2,6 +2,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { appendFile } from "node:fs/promises"
 import { filterMcpTools, resolveMcpProfile, mcpNamespace } from "./tui/lib/mcp-profiles.js"
+import { toolFabricConfig } from "./tui/lib/tool-fabric.js"
 
 const STORAGE_KEY = "registry-v2"
 const CONFIG_DIR = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", "opencode")
@@ -304,6 +305,8 @@ export default {
     })
 
     await ctx.mcp.transform((draft) => {
+      const fabric = toolFabricConfig(ctx.location?.directory)
+      if (fabric && !(draft.list?.() || []).some(([name]) => name === "fabric")) draft.set("fabric", fabric)
       for (const [name, config] of Object.entries(registry.mcp)) draft.set(name, structuredClone(config))
       installed = Object.fromEntries(draft.list?.() || Object.entries(registry.mcp))
       if (Object.keys(registry.mcpProfiles).length) {

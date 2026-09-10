@@ -1,5 +1,9 @@
 # MCP profiles
 
+The optional [Universal Tool Fabric](tool-fabric.md) adds a workspace-scoped
+`fabric` namespace with five stable discovery/execution tools. Include it in a
+profile to expose operator-selected private layers; existing upstreams are not migrated.
+
 ## Automatic connection recovery
 
 `mcp-reconnect.js` runs inside the managed background OpenCode service, independently

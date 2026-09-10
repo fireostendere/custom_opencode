@@ -24,6 +24,15 @@ set -a
 source "$ENV_FILE"
 set +a
 
+if [[ ${OPENCODE_TOOL_FABRIC:-0} == 1 ]]; then
+  FABRIC_PYTHON=${OPENCODE_FABRIC_PYTHON:-"$PYTHON3"}
+  "$FABRIC_PYTHON" -c 'from mcp.server import MCPServer; from mcp.client import Client; from packaging.licenses import canonicalize_license_expression; import jsonschema' || {
+    echo "Tool Fabric dependencies missing: install scripts/tool-fabric-requirements.txt in OPENCODE_FABRIC_PYTHON's venv" >&2
+    exit 1
+  }
+  export OPENCODE_FABRIC_LAUNCHER=${OPENCODE_FABRIC_LAUNCHER:-"$ROOT/scripts/tool-fabric.sh"}
+fi
+
 SHARED_CONFIG_DIR="$HOME/.config/opencode"
 CONFIG_DIR=${OPENCODE_CONFIG_DIR:-"$SHARED_CONFIG_DIR"}
 UNIT_DIR="$HOME/.config/systemd/user"
@@ -543,6 +552,7 @@ SERVICE_ENV=(
   OPENCODE_SOL_BUILDER_MODEL OPENCODE_SOL_READER_MODEL OPENCODE_SOL_REVIEW_MODEL
   PONYTAIL_ENABLED PONYTAIL_CHECKOUT_DIR PONYTAIL_DEFAULT_MODE GEMINI_API_KEY GOOGLE_API_KEY OPENCODE_PLAN_DIRECTORY
   MCP_RAG_ROOT MCP_RAG_BIN
+  OPENCODE_TOOL_FABRIC OPENCODE_FABRIC_PYTHON OPENCODE_FABRIC_LAUNCHER OPENCODE_FABRIC_CONFIG
 )
 install -d -m 0700 "$CONFIG_DIR"
 "$PYTHON3" - "$CONFIG_DIR/service.json" "$CONFIG_DIR" "${SERVICE_ENV[@]}" <<'PY'

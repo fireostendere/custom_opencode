@@ -9,3 +9,7 @@ __pycache__/
 .tmp_fake_null.c
 .tmp_verify/
 node_modules/
+# Local reference material only. Active Tool Fabric policy/layers live outside
+# both this repository and tool workspaces, never in a public config template.
+.private/
+.mcp-artifacts/

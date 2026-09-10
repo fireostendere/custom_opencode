@@ -54,9 +54,12 @@ server_workflow.py
             +--> manual direct model
             +--> adaptive/orchestrated/review server profiles
             +--> optional kb / mcp-rag
+            +--> optional universal Tool Fabric (private layers → inspect → run)
 ```
 
 ## Основные safety/UX invariants
+
+[Universal Tool Fabric: общее ядро и приватные слои](tool-fabric.md).
 
 - web execution mode всегда Build; `plan*` доступен в TUI/CLI как native compatibility ID;
 - direct/manual model selection не меняется adaptive scheduler-ом;

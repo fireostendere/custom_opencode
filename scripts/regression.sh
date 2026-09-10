@@ -46,6 +46,19 @@ python3 scripts/runtime-invariants-smoke.py
 step "MCP automatic reconnect regression"
 node scripts/mcp-reconnect-regression.mjs
 
+step "Tool Fabric configuration regression"
+node scripts/tool-fabric-config-smoke.mjs
+FABRIC_TEST_PYTHON=${OPENCODE_FABRIC_PYTHON:-python3}
+if "$FABRIC_TEST_PYTHON" -c 'from mcp.server import MCPServer; from packaging.licenses import canonicalize_license_expression; import jsonschema' >/dev/null 2>&1; then
+  step "Tool Fabric broker / MCP wire regression"
+  "$FABRIC_TEST_PYTHON" scripts/tool-fabric-smoke.py
+elif [[ ${OPENCODE_TOOL_FABRIC:-0} == 1 ]]; then
+  echo "Enabled Tool Fabric is missing its dependencies" >&2
+  exit 1
+else
+  skip "Tool Fabric broker: optional SDK environment not installed"
+fi
+
 step "TUI server wizard regression"
 node scripts/tui-server-wizard-regression.mjs
 
