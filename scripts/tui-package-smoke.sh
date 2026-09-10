@@ -116,6 +116,20 @@ while time.time() < deadline:
                 settle(.5)
                 with open(os.environ['TUI_KEYBOARD_PROBE']) as handle:
                     assert json.load(handle) == [{'sessionID':'ses_keyboard_probe','continue':False}, 'dialog-closed']
+                os.write(master, b'\x1b[15~')  # F5 injects one native location sync failure.
+                recovery_deadline = time.monotonic() + 28
+                recovery = None
+                while time.monotonic() < recovery_deadline:
+                    settle(.1)
+                    with open(os.environ['TUI_KEYBOARD_PROBE']) as handle:
+                        events = json.load(handle)
+                    recovery = next((item for item in events if isinstance(item, dict) and 'recovery' in item), None)
+                    if recovery is not None:
+                        break
+                assert 'location-warning-visible' in events, events
+                assert recovery and recovery['recovery'] and not recovery['nativeWarning'], events
+                assert recovery['elapsed'] >= 15000, recovery
+                print('Native location recovery: warning shown, real 15s retry, warning cleared', flush=True)
             if geometry == '80x24':
                 os.write(master, b'/panel right limits\r')
                 command_deadline = time.time() + 2.0
@@ -171,4 +185,4 @@ PY
   fi
 done
 
-echo "Packaged TUI smoke passed: native PTY at 80x24/120x30/160x40; single Escape, in-flight deduplication and dialog Escape; model selection is gated by model-selector-smoke.mjs"
+echo "Packaged TUI smoke passed: native PTY at 80x24/120x30/160x40; Escape, dialog Escape and automatic location recovery; model selection is gated by model-selector-smoke.mjs"

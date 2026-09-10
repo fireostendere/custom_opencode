@@ -343,19 +343,33 @@ class RuntimeStore:
             row=db.execute("SELECT * FROM tasks WHERE id=?",(task_id,)).fetchone()
             if row is None: raise KeyError(task_id)
             updates=["updated_at=?"]; args:list[Any]=[timestamp]
-            if priority is not None: updates.append("priority=?"); args.append(max(-100,min(100,int(priority))))
+            changes:dict[str,Any]={}
+            if priority is not None:
+                value=max(-100,min(100,int(priority)))
+                updates.append("priority=?"); args.append(value)
+                if value!=row["priority"]: changes["priority"]=value
             if metadata_patch is not None:
                 current=_loads(row["metadata_json"],{}); current=current if isinstance(current,dict) else {}; current.update(metadata_patch)
                 updates.append("metadata_json=?"); args.append(_json(current))
-            if route is not None: updates.append("route_json=?"); args.append(_json(route))
-            if verification is not None: updates.append("verification_json=?"); args.append(_json(verification))
+            if route is not None:
+                updates.append("route_json=?"); args.append(_json(route))
+                if route!=_loads(row["route_json"],{}): changes["route"]=route
+            if verification is not None:
+                updates.append("verification_json=?"); args.append(_json(verification))
+                if verification!=_loads(row["verification_json"],{}): changes["verification"]=verification
             args.append(task_id); db.execute(f"UPDATE tasks SET {','.join(updates)} WHERE id=?",args)
             if dependencies is not None:
-                deps=[str(item) for item in dependencies if item and str(item)!=task_id]
+                deps=list(dict.fromkeys(str(item) for item in dependencies if item and str(item)!=task_id))
+                before={item[0] for item in db.execute("SELECT depends_on FROM task_dependencies WHERE task_id=?",(task_id,))}
+                if set(deps)!=before: changes["dependencies"]=deps
                 db.execute("DELETE FROM task_dependencies WHERE task_id=?",(task_id,))
                 for dep in dict.fromkeys(deps): db.execute("INSERT OR IGNORE INTO task_dependencies(task_id,depends_on) VALUES(?,?)",(task_id,dep))
-                if str(row["state"]) in {"queued","blocked","paused"}: db.execute("UPDATE tasks SET state=? WHERE id=?",("queued" if not deps else "blocked",task_id))
-            self._event_db(db,task_id,str(row["session_id"]),str(row["project_dir"]),"task.updated",{"priority":priority},timestamp)
+                if str(row["state"]) in {"queued","blocked","paused"}:
+                    state="queued" if not deps else "blocked"
+                    db.execute("UPDATE tasks SET state=? WHERE id=?",(state,task_id))
+                    if state!=row["state"]: changes["state"]=state
+            # Progress/heartbeat metadata is persisted, not a user-facing edit.
+            if changes: self._event_db(db,task_id,str(row["session_id"]),str(row["project_dir"]),"task.updated",changes,timestamp)
         return self.get_task(task_id) or {}
 
     def reorder(self, session_id: str, ids: list[str]) -> None:

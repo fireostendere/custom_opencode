@@ -21,6 +21,7 @@ function makeElement() {
     classList: { add() {}, remove() {}, toggle() {}, contains() { return false } },
     addEventListener() {}, focus() {}, showModal() {}, close() {}, setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end },
     querySelector() { return null }, querySelectorAll() { return [] },
+    setAttribute(name, value) { this[name] = value },
     contains() { return false }, closest() { return null },
   }
 }
@@ -36,7 +37,7 @@ globalThis.document = {
 const API_METHODS = [
   'getSession', 'getContext', 'createSession', 'sendPrompt',
   'deleteSession', 'forkSession', 'switchAgent', 'switchModel',
-  'listProjects', 'listSessions', 'sessionStatuses',
+  'listProjects', 'listSessions', 'sessionStatuses', 'isPromptPending', 'hasConversation',
 ]
 const handlers = {}
 globalThis.__smoke = {
@@ -64,7 +65,7 @@ assert.ok(!source.includes("from './refresh-coalescer.js'"), 'refresh-coalescer 
 const bootIndex = source.lastIndexOf('initialize().catch')
 assert.ok(bootIndex > 0, 'app.js boot call not found')
 source = source.slice(0, bootIndex)
-  + 'globalThis.__smoke.exports = { transferSessionToProject, forkWithFallback, sessionWithControls, handoffText, messagePlainText, changeAgent, changeModel, loadSessionsNow, selectSession, resetPromptHistory, navigatePromptHistory, state, seedDraft: (id, value) => { drafts[id] = value }, draftOf: (id) => drafts[id] }\n'
+  + 'globalThis.__smoke.exports = { transferSessionToProject, forkWithFallback, sessionWithControls, handoffText, messagePlainText, changeAgent, changeModel, loadSessionsNow, selectSession, resetPromptHistory, navigatePromptHistory, syncRunStatuses, renderSessionShortcuts, state, seedDraft: (id, value) => { drafts[id] = value }, draftOf: (id) => drafts[id] }\n'
 
 await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
 const app = globalThis.__smoke.exports
@@ -81,6 +82,8 @@ function reset() {
   state.context = []
   state.projects = []
   state.running.clear()
+  state.mirrorHistory.clear()
+  state.contextCache.clear()
   state.queues.clear()
   for (const list of Object.values(calls)) list.length = 0
   handlers.getSession = async () => ({})
@@ -94,6 +97,8 @@ function reset() {
   handlers.listProjects = async () => []
   handlers.listSessions = async () => []
   handlers.sessionStatuses = async () => ({})
+  handlers.isPromptPending = () => false
+  handlers.hasConversation = async () => null
 }
 
 function deferred() {
@@ -453,4 +458,49 @@ lateOldSwitch.resolve()
 assert.equal(await oldChange, true)
 assert.deepEqual(JSON.parse(localStorage.getItem('opencode:web:last-model-v1')), { id: 'current-result', providerID: 'p' }, 'a late old-session result must not overwrite the latest selected model')
 
-console.log('Session transfer smoke passed: handoff rollback + draft move + source-delete safety + fork fallback + clipping + session prompt history + draft isolation + stale model guards + serialized model changes')
+// Full active snapshots omit idle sessions; network failure is not an idle snapshot.
+reset()
+state.sessions = [{id:'ses_status'}]
+state.running.set('ses_status', {status:'running',since:Date.now()-6000})
+assert.equal(app.syncRunStatuses(null), false)
+assert.equal(state.running.has('ses_status'), true)
+handlers.isPromptPending = () => true
+assert.equal(app.syncRunStatuses({}), false, 'Never finish a prompt while its send request is pending')
+handlers.isPromptPending = () => false
+assert.equal(app.syncRunStatuses({}), true)
+assert.equal(state.running.has('ses_status'), false, 'An absent idle session must disappear from Active')
+state.running.set('ses_status', {status:'running',since:Date.now()})
+assert.equal(app.syncRunStatuses({}), false, 'Allow native admission after a just-accepted prompt')
+assert.equal(app.syncRunStatuses({ses_status:{type:'idle'}}), true)
+assert.equal(app.syncRunStatuses({ses_status:{type:'running'}}), true)
+
+// Mirrors collapse nested workers into their root and exclude only proven empty history.
+reset()
+const rootChat = {id:'mirror_root',title:'Refresh model catalog',tokens:{input:10}}
+const worker = {id:'mirror_worker',parentID:rootChat.id,title:'Worker'}
+const nestedWorker = {id:'mirror_nested',parentSessionID:worker.id,title:'Nested'}
+const orphanWorker = {id:'mirror_orphan',parentID:'missing',title:'Orphan'}
+const maintenance = {id:'mirror_admin',title:'Ordinary-looking title',time:{updated:10}}
+const unknownChat = {id:'mirror_unknown',title:'Unknown'}
+state.sessions = [rootChat,worker,nestedWorker,orphanWorker,maintenance,unknownChat]
+state.selected = nestedWorker
+state.running.set(nestedWorker.id,{since:Date.now()})
+state.running.set(orphanWorker.id,{since:Date.now()})
+let probes=0
+handlers.hasConversation = async id => {probes++;return id===maintenance.id?false:null}
+app.renderSessionShortcuts(new Set())
+await new Promise(setImmediate)
+let mirrors=app.renderSessionShortcuts(new Set())
+assert.equal((mirrors.match(/data-session-shortcut="mirror_root"/g)||[]).length,2,'Root is mirrored once per group')
+assert.match(mirrors,/Работают агенты/)
+for(const id of [worker.id,nestedWorker.id,orphanWorker.id,maintenance.id])assert.ok(!mirrors.includes(`data-session-shortcut="${id}"`),id)
+assert.ok(mirrors.includes(`data-session-shortcut="${unknownChat.id}"`),'Unknown history must not hide a real chat')
+assert.equal(probes,2,'Reuse token evidence and cached probes; never load every worker history')
+maintenance.time.updated++
+handlers.hasConversation = async () => true
+app.renderSessionShortcuts(new Set())
+await new Promise(setImmediate)
+assert.ok(app.renderSessionShortcuts(new Set()).includes(`data-session-shortcut="${maintenance.id}"`),'Recheck after new conversation activity')
+assert.equal(state.sessions.length,6,'Mirror filtering must not delete or move real sessions')
+
+console.log('Session transfer smoke passed: handoff safety + history/draft isolation + model guards + full active snapshots + root-only conversation mirrors')

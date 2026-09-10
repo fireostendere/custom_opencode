@@ -151,7 +151,9 @@ function renderCurrent(){
 function renderActivity(){
   const host=$('unified-activity');if(!host)return
   const oldBottom=host.scrollHeight-host.scrollTop
-  host.innerHTML=state.activity.map(event=>`<div class="unified-event" data-group="${esc(event.group||'system')}"><div class="unified-event-head"><span class="unified-pill">${esc(event.group||'system')}</span><span class="unified-event-kind">${esc(event.kind||'event')}</span><time>${esc(timeLabel(event.createdAt))}</time></div>${event.data&&Object.keys(event.data).length?`<div class="unified-event-data">${esc(JSON.stringify(event.data,null,2).slice(0,1200))}</div>`:''}</div>`).join('')||'<div class="unified-card unified-muted">No runtime events for this session yet.</div>'
+  // Older servers recorded internal progress bookkeeping as a null priority edit.
+  const visible=state.activity.filter(event=>!(event.kind==='task.updated'&&event.data?.priority==null&&Object.keys(event.data||{}).every(key=>key==='priority')))
+  host.innerHTML=visible.map(event=>`<div class="unified-event" data-group="${esc(event.group||'system')}"><div class="unified-event-head"><span class="unified-pill">${esc(event.group||'system')}</span><span class="unified-event-kind">${esc(event.kind||'event')}</span><time>${esc(timeLabel(event.createdAt))}</time></div>${event.data&&Object.keys(event.data).length?`<div class="unified-event-data">${esc(JSON.stringify(event.data,null,2).slice(0,1200))}</div>`:''}</div>`).join('')||'<div class="unified-card unified-muted">Значимых событий задач пока нет.</div>'
   renderActivityFollow()
   if(state.followActivity)requestAnimationFrame(()=>{host.scrollTop=host.scrollHeight})
   else host.scrollTop=Math.max(0,host.scrollHeight-oldBottom)

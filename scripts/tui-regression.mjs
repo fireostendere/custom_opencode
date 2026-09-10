@@ -145,6 +145,7 @@ assert.ok(tuiEntry.includes('installDialogScrollbars(context)'), 'TUI bundle mus
 for (const source of [
   'add-wizard.js',
   'effort-indicator.jsx',
+  'location-recovery.jsx',
   'model-selector.jsx',
   'panel-slash.jsx',
   'limits-panels.jsx',

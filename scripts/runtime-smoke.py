@@ -69,6 +69,19 @@ with tempfile.TemporaryDirectory() as temp:
         baseline=baseline,
     )
     assert second["state"] == "blocked"
+    events_before=store.events(task_id=first["id"])
+    store.update_task(first["id"],metadata_patch={"progressCheckedAt":123})
+    assert store.get_task(first["id"])["metadata"]["progressCheckedAt"]==123
+    assert store.events(task_id=first["id"])==events_before, "Internal observations must not emit null-priority edits"
+    store.update_task(first["id"],priority=5)
+    assert store.events(task_id=first["id"])==events_before, "Unchanged priorities must not emit edits"
+    store.update_task(first["id"],priority=10)
+    assert store.events(task_id=first["id"])[-1]["data"]=={"priority":10}
+    store.update_task(first["id"],route={"selectedModel":"test/model"})
+    assert store.events(task_id=first["id"])[-1]["data"]=={"route":{"selectedModel":"test/model"}}
+    store.update_task(first["id"],verification={"ok":False})
+    assert store.events(task_id=first["id"])[-1]["data"]=={"verification":{"ok":False}}
+    store.update_task(first["id"],verification={})
     assert store.next_ready(session_id="ses_second") is None
     store.transition(first["id"], "completed")
     ready = store.next_ready(session_id="ses_second")

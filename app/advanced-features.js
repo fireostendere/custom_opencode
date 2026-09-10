@@ -8,6 +8,7 @@ const state = {
   directory: '',
   settings: null,
   settingsAvailable: false,
+  settingsTarget: null,
   queue: { count:0, items:[], error:null },
   queueCounts: {},
   question: null,
@@ -37,6 +38,7 @@ const state = {
   orchestrationRenderRevision: 0,
   orchestrationRenderFrame: null,
   runStartedAt: null,
+  observedRunning: false,
   lastDurationMs: 0,
   attachments: [],
   attachmentReads: [],
@@ -155,13 +157,15 @@ function ensureSurfaces() {
     dialog.innerHTML = `
       <form class="modal workflow-modal" id="projectSettingsForm">
         <div class="modal-head"><div><h3>Настройки проекта</h3><div id="projectSettingsPath" class="choice-meta"></div></div><button class="icon" type="button" data-workflow-close="projectSettingsDialog">×</button></div>
-        <div class="workflow-section"><label class="workflow-label" for="projectInstructions">Постоянные инструкции проекта</label><textarea class="workflow-textarea" id="projectInstructions" placeholder="Например: перед завершением запускай pytest; не меняй public API без необходимости"></textarea><div class="workflow-note">Передаются OpenCode как system context, поэтому не засоряют текст пользовательского сообщения.</div></div>
+        <p class="workflow-note">Настройки веб-интерфейса для всех чатов этой папки. Хранятся на сервере отдельно от репозитория, не записываются в AGENTS.md. Уже выполняющийся ответ не меняется.</p>
+        <div class="workflow-section"><label class="workflow-label" for="projectInstructions">Постоянные инструкции проекта</label><textarea class="workflow-textarea" id="projectInstructions" placeholder="Например: перед завершением запускай pytest; не меняй public API без необходимости"></textarea><div class="workflow-note">Добавляются в системный контекст начиная со следующего сообщения через веб, в том числе в существующих чатах. В текст вашего сообщения не вставляются.</div></div>
         <div class="workflow-section"><div class="workflow-grid">
-          <label><span class="workflow-label">Модель/profile по умолчанию</span><select class="workflow-select" id="projectDefaultModel"><option value="inherit">Не менять</option></select></label>
-          <label><span class="workflow-label">RAG</span><select class="workflow-select" id="projectRag"><option value="auto">Auto</option><option value="on">Всегда подключать</option><option value="off">Не запускать автоматически</option></select></label>
+          <label><span class="workflow-label">Модель для новых чатов</span><select class="workflow-select" id="projectDefaultModel"><option value="inherit">Оставить выбранную</option></select><span class="workflow-note">Применяется при первом открытии пустого чата в вебе. Сохранение не переключает модель текущего чата.</span></label>
+          <label><span class="workflow-label">Поиск в базе знаний (RAG)</span><select class="workflow-select" id="projectRag"><option value="auto">Автоматически по задаче</option><option value="on">Искать для каждого сообщения</option><option value="off">Не добавлять RAG-контекст</option></select><span class="workflow-note">Со следующего сообщения. «Выкл.» не отключает MCP-инструменты и не удаляет уже полученный контекст.</span></label>
         </div></div>
-        <div class="workflow-section"><div class="modal-head"><div><strong>Permission policy</strong><div class="workflow-note">Первое совпавшее правило: allow / deny. Ask оставляет стандартную карточку.</div></div><button type="button" id="addPermissionRule">+ правило</button></div><div id="projectPermissionRules" class="workflow-rules"></div></div>
-        <div class="workflow-actions"><button type="button" data-workflow-close="projectSettingsDialog">Отмена</button><button class="primary" type="submit">Сохранить</button></div>
+        <div class="workflow-section"><div class="modal-head"><div><strong>Разрешения действий</strong><div class="workflow-note">Правила проверяются сверху вниз: первое совпадение решает. Действуют после сохранения, включая ожидающие запросы. Опасные действия всё равно требуют подтверждения.</div></div><button type="button" id="addPermissionRule">+ правило</button></div><div id="projectPermissionRules" class="workflow-rules"></div></div>
+        <div id="projectSettingsStatus" class="workflow-note" role="status" aria-live="polite"></div>
+        <div class="workflow-actions"><button type="button" data-workflow-close="projectSettingsDialog">Закрыть</button><button id="projectSettingsSave" class="primary" type="submit">Сохранить</button></div>
       </form>`
     document.body.append(dialog)
     $('projectSettingsForm').addEventListener('submit', saveProjectSettings)
@@ -179,6 +183,8 @@ async function refreshSelectedSessionNow() {
   const id = sessionFromHash()
   if (id === state.sessionID && state.session) return
   state.sessionID = id
+  $('projectSettingsDialog')?.close()
+  state.settingsTarget = null
   resetSubmitControls()
   state.orchestrationRevision += 1
   state.queueRefreshSeq += 1
@@ -211,7 +217,9 @@ async function refreshSelectedSessionNow() {
     state.activityHydrating = false
   state.attachments = []
   state.attachmentReads = []
-  state.runStartedAt = running() ? Date.now() : null
+  state.runStartedAt = null
+  state.lastDurationMs = 0
+  state.observedRunning = running()
   renderAll()
   if (!id) return
   try {
@@ -240,7 +248,8 @@ async function loadProjectSettings(sessionID = state.sessionID) {
 
 async function saveProjectSettings(event) {
   event.preventDefault()
-  if (!state.sessionID) return
+  const target = state.settingsTarget
+  if (!target || target.sessionID !== state.sessionID || $('projectSettingsSave').disabled) return
   const rules = [...$('projectPermissionRules').querySelectorAll('.workflow-rule')].map((row) => ({
     action: row.querySelector('[data-rule-action]').value.trim() || '*',
     resource: row.querySelector('[data-rule-resource]').value.trim() || '*',
@@ -253,18 +262,25 @@ async function saveProjectSettings(event) {
     rag: $('projectRag').value,
     permissionRules: rules,
   }
+  $('projectSettingsSave').disabled = true
+  $('projectSettingsStatus').textContent = 'Сохранение…'
   try {
-    const value = await request('/client-project-settings.json', { method:'POST', body:JSON.stringify({ sessionID:state.sessionID, settings }) })
+    const value = await request('/client-project-settings.json', { method:'POST', body:JSON.stringify({ sessionID:target.sessionID, settings }) })
+    if (state.settingsTarget !== target || state.sessionID !== target.sessionID) return
     state.settings = { ...DEFAULT_SETTINGS, ...(value?.settings || settings) }
-    $('projectSettingsDialog').close()
+    $('projectSettingsStatus').textContent = 'Сохранено на сервере. Инструкции и RAG — со следующего сообщения; разрешения — сразу. Модель текущего чата не менялась.'
     toast('Настройки проекта сохранены')
-  } catch (error) { toast(`Настройки проекта: ${error.message}`, 5000) }
+  } catch (error) {
+    if (state.settingsTarget === target) $('projectSettingsStatus').textContent = `Не сохранено: ${error.message}`
+  } finally {
+    if (state.settingsTarget === target) $('projectSettingsSave').disabled = false
+  }
 }
 
 function addRuleRow(rule) {
   const row = document.createElement('div')
   row.className = 'workflow-rule'
-  row.innerHTML = `<input class="workflow-input" data-rule-action placeholder="action" value="${escapeHtml(rule?.action || '*')}"><input class="workflow-input" data-rule-resource placeholder="resource glob" value="${escapeHtml(rule?.resource || '*')}"><select class="workflow-select" data-rule-effect><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select><button type="button" class="workflow-button-danger" data-remove-rule>×</button>`
+  row.innerHTML = `<input class="workflow-input" data-rule-action aria-label="Действие" placeholder="Действие: bash, edit, *" value="${escapeHtml(rule?.action || '*')}"><input class="workflow-input" data-rule-resource aria-label="Шаблон ресурса" placeholder="Шаблон ресурса: *" value="${escapeHtml(rule?.resource || '*')}"><select class="workflow-select" data-rule-effect aria-label="Решение"><option value="ask">Спрашивать</option><option value="allow">Разрешать</option><option value="deny">Запрещать</option></select><button type="button" class="workflow-button-danger" data-remove-rule aria-label="Удалить правило">×</button>`
   row.querySelector('[data-rule-effect]').value = ['allow','deny','ask'].includes(rule?.effect) ? rule.effect : 'ask'
   row.querySelector('[data-remove-rule]').addEventListener('click', () => row.remove())
   $('projectPermissionRules').append(row)
@@ -275,7 +291,7 @@ function syncProjectModelOptions() {
   if (!select) return
   const current = select.value
   const options = new Map([
-    ['inherit', 'Не менять'],
+    ['inherit', 'Оставить выбранную'],
     ['orchestrated', 'Qwen 3.8 Max · Оркестрированная'],
     ['sol-orchestrated', 'GPT-5.6 Sol · Оркестрированная'],
   ])
@@ -289,16 +305,26 @@ function syncProjectModelOptions() {
   select.value = options.has(current) ? current : 'inherit'
 }
 
-function openProjectSettings() {
+async function openProjectSettings() {
   if (!state.sessionID || !state.directory) return
+  const sessionID = state.sessionID
+  try { await loadProjectSettings(sessionID) }
+  catch (error) { toast(`Не удалось загрузить настройки: ${error.message}`); return }
+  if (state.sessionID !== sessionID || !state.settingsAvailable) return
+  state.settingsTarget = { sessionID, directory: state.directory }
   syncProjectModelOptions()
   const settings = state.settings || DEFAULT_SETTINGS
+  if (settings.defaultModel && !$('projectDefaultModel').querySelector(`option[value="${CSS.escape(settings.defaultModel)}"]`)) {
+    $('projectDefaultModel').add(new Option(settings.defaultModel, settings.defaultModel))
+  }
   $('projectSettingsPath').textContent = state.directory
   $('projectInstructions').value = settings.instructions || ''
   $('projectDefaultModel').value = settings.defaultModel || 'inherit'
   $('projectRag').value = settings.rag || 'auto'
   $('projectPermissionRules').innerHTML = ''
   for (const rule of settings.permissionRules || []) addRuleRow(rule)
+  $('projectSettingsSave').disabled = false
+  $('projectSettingsStatus').textContent = 'Загружены сохранённые настройки. Изменения применятся после нажатия «Сохранить».'
   $('projectSettingsDialog').showModal()
 }
 
@@ -306,18 +332,18 @@ async function applyProjectDefaultsOnce(sessionID = state.sessionID) {
   if (!sessionID || state.sessionID !== sessionID || !state.settings) return
   const key = `opencode:web:project-defaults:${sessionID}`
   if (sessionStorage.getItem(key)) return
-  sessionStorage.setItem(key, '1')
   try {
     const rows = dataOf(await request(`/api/session/${encodeURIComponent(sessionID)}/message?limit=1`))
     if (state.sessionID !== sessionID) return
-    if (Array.isArray(rows) && rows.length) return
-  } catch {}
+    if (!Array.isArray(rows)) return
+    if (rows.length) { sessionStorage.setItem(key, '1'); return }
+  } catch { return }
   if (state.sessionID !== sessionID) return
   const settings = state.settings
-  if (settings.defaultModel === 'orchestrated' || settings.defaultModel === 'sol-orchestrated') window.CustomOpenCodeUX?.setProfile?.(settings.defaultModel)
-  else if (typeof settings.defaultModel === 'string' && settings.defaultModel.includes('/')) {
-    await chooseConcreteModel(settings.defaultModel)
-  }
+  const ref = ({ orchestrated:'bailian-cli/qwen3.8-orchestrated', 'sol-orchestrated':'openai/gpt-5.6-sol-orchestrated' })[settings.defaultModel] || settings.defaultModel
+  if (typeof ref === 'string' && ref.includes('/') && !await chooseConcreteModel(ref)) return
+  if (state.sessionID !== sessionID) return
+  sessionStorage.setItem(key, '1')
   if (settings.rag === 'on') {
     request('/client-rag-start.json', { method:'POST', body:JSON.stringify({ mode:'quick', sessionID }) }).catch(() => {})
   }
@@ -326,10 +352,8 @@ async function applyProjectDefaultsOnce(sessionID = state.sessionID) {
 async function chooseConcreteModel(ref) {
   const [provider, ...rest] = ref.split('/')
   const model = rest.join('/')
-  if (!provider || !model || provider === 'ollama') return
-  $('modelButton')?.click()
-  await new Promise((resolve) => setTimeout(resolve, 40))
-  document.querySelector(`#modelChoices [data-model="${CSS.escape(model)}"][data-provider="${CSS.escape(provider)}"]`)?.click()
+  if (!provider || !model || provider === 'ollama') return false
+  return Boolean(await window.CustomOpenCodeControls?.changeModel?.({ providerID:provider, id:model }))
 }
 
 function readAttachment(file, slot, sessionID = state.sessionID, revision = state.orchestrationRevision, attachments = state.attachments) {
@@ -1173,7 +1197,7 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   if (children.some((child) => state.childDetails.get(child.id)?.rag)) panelMetaParts.push('RAG ✓')
   const panelMeta = panelMetaParts.join(' · ')
   const planMarkup = planTotal ? `<section class="orchestration-plan" aria-label="План"><div class="orchestration-plan-head"><div class="orchestration-plan-copy"><strong>${escapeHtml(plan.title || 'План')}</strong><span>Текущий этап: ${escapeHtml(currentStage)}</span></div><span class="orchestration-plan-count">${planDone}/${planTotal}</span></div><div class="orchestration-plan-meter" role="progressbar" aria-valuemin="0" aria-valuemax="${planTotal}" aria-valuenow="${planDone}"><span style="width:${planPercent}%"></span></div><ul class="orchestration-plan-list">${todos.map((todo) => { const status = ['completed', 'in_progress'].includes(todo?.status) ? todo.status : 'pending'; const mark = status === 'completed' ? '✓' : status === 'in_progress' ? '•' : ''; return `<li class="${status}"><span class="orchestration-plan-mark" aria-hidden="true">${mark}</span><span>${escapeHtml(todo?.content || '')}</span></li>` }).join('')}${plan.truncated ? `<li class="truncated"><span class="orchestration-plan-mark" aria-hidden="true">…</span><span>Показаны первые ${todos.length} из ${planTotal} пунктов</span></li>` : ''}</ul></section>` : '<div class="activity-empty">План появится после начала оркестрации.</div>'
-  const primaryTime = state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''
+  const primaryTime = running() ? state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : '' : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''
   const nodes = [`<div class="orchestration-node primary-node ${rootStatus}"><span class="node-icon"></span><div class="node-main"><div class="node-title">${escapeHtml(rootModel)}</div><div class="node-meta">${escapeHtml(currentMode())} · primary</div><div class="node-purpose">Основная модель: ведёт диалог и собирает итог</div></div><span class="node-time">${primaryTime}</span></div>`]
   const childActivities = []
   for (const child of children) {
@@ -1300,7 +1324,7 @@ function renderStatus() {
   const model = $('modelButton')?.textContent?.trim() || 'Модель'
   const context = $('usageButton')?.textContent?.trim() || ''
   const cost = usageCost()
-  const elapsed = running() && state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''
+  const elapsed = running() ? state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : '' : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''
   const queue = Number(state.queue?.count || 0)
   const rag = state.children.some((child) => state.childDetails.get(child.id)?.rag) || state.settings?.rag === 'on'
   const markup = `<span class="wf-pill strong">${escapeHtml(model)}</span>${context ? `<span class="wf-pill">${escapeHtml(context)}</span>` : ''}${cost ? `<span class="wf-pill">${escapeHtml(cost)}</span>` : ''}${elapsed ? `<span class="wf-pill"><span class="wf-dot ${running() ? 'busy' : ''}"></span>${escapeHtml(elapsed)}</span>` : ''}${rag ? '<span class="wf-pill">RAG ✓</span>' : ''}<button type="button" class="wf-pill clickable" id="queueStatusButton">Очередь ${queue}</button>`
@@ -1429,14 +1453,14 @@ function observeRuntime() {
   const stop = $('stop')
   if (stop) new MutationObserver(() => {
     if (running()) {
-      if (!state.runStartedAt) state.runStartedAt = Date.now()
       fastPolling.wake()
       mediumPolling.wake()
-    } else if (state.runStartedAt) {
-      state.lastDurationMs = Date.now() - state.runStartedAt
+    } else if (state.observedRunning) {
+      state.lastDurationMs = state.runStartedAt ? Date.now() - state.runStartedAt : 0
       state.runStartedAt = null
       setTimeout(() => { refreshQueue(undefined, true); refreshOrchestration(true); refreshPlan(true); loadReview() }, 120)
     }
+    state.observedRunning = running()
     renderStatus()
     renderOrchestration()
   }).observe(stop, { attributes:true, attributeFilter:['hidden'] })
@@ -1466,7 +1490,11 @@ function bindEvents() {
       refreshPlan(true)
     }, 0)
   })
-  window.addEventListener('custom-opencode:event', (event) => { handleQuestionEvent(event.detail); renderActivityFromEvent(event.detail) })
+  window.addEventListener('custom-opencode:event', (event) => {
+    const payload=event.detail,data=payload?.data||payload?.properties||{}
+    if(payload?.type==='session.execution.started'&&(data.sessionID||data.session?.id)===state.sessionID){state.runStartedAt=Date.now();state.lastDurationMs=0;renderStatus()}
+    handleQuestionEvent(payload);renderActivityFromEvent(payload)
+  })
   $('form')?.addEventListener('submit', interceptSubmit, true)
   $('fileInput')?.addEventListener('change', (event) => captureFiles(event.target.files), true)
   $('input')?.addEventListener('paste', (event) => {

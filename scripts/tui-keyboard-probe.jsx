@@ -6,11 +6,54 @@ import { sessionInterruptCommand } from './lib/session-interrupt.js'
 export default {
   id: 'custom.tui-keyboard-probe',
   setup(context) {
+    const nativeSync = context.data.location.sync
+    let probeSession, failedAt, recoveredAt
+    context.data.location.sync = async function (ref) {
+      if (probeSession && context.ui.router.current()?.sessionID === probeSession) {
+        if (!failedAt) {
+          failedAt = Date.now()
+          throw new Error('Injected location sync failure')
+        }
+        const result = await nativeSync.call(this, ref)
+        recoveredAt = Date.now()
+        return result
+      }
+      return nativeSync.call(this, ref)
+    }
     const cleanup = production.setup(context)
     const events = []
     const record = async (event) => {
       events.push(event)
       await Bun.write(process.env.TUI_KEYBOARD_PROBE, JSON.stringify(events))
+    }
+    function hasNode(id, node = context.renderer.root) {
+      return node?.id === id || (node?.getChildren?.() ?? []).some(child => hasNode(id, child))
+    }
+    async function recoveryProbe() {
+      try {
+        const session = await context.client.session.create({
+          title: 'Location recovery acceptance', location: context.data.location.default(),
+        })
+        probeSession = session.id
+        await context.data.session.sync(session.id)
+        context.ui.router.navigate({ type: 'session', sessionID: session.id })
+        let seen = false
+        const deadline = Date.now() + 25_000
+        while (Date.now() < deadline) {
+          const visible = hasNode('custom.location-recovery')
+          if (visible && !seen) {
+            seen = true
+            await record('location-warning-visible')
+          }
+          if (seen && !visible && recoveredAt) {
+            await record({ recovery: true, elapsed: recoveredAt - failedAt,
+              nativeWarning: hasNode('session.location-missing') })
+            return
+          }
+          await new Promise(resolve => setTimeout(resolve, 50))
+        }
+        throw new Error(`Location recovery timed out (seen=${seen}, recovered=${!!recoveredAt})`)
+      } catch (error) { await record({ recovery: false, error: String(error) }) }
     }
     const stop = sessionInterruptCommand({
       ...context,
@@ -27,9 +70,9 @@ export default {
           await context.ui.dialog.alert({ title:'Keyboard probe', message:'Escape must close this dialog, not interrupt.' })
           await record('dialog-closed')
         },
-      }] }))
+      }, { bind:'f5', title:'Location recovery probe', run: recoveryProbe }] }))
       return null
     } })
-    return () => { unslot(); cleanup?.() }
+    return () => { unslot(); cleanup?.(); context.data.location.sync = nativeSync }
   },
 }

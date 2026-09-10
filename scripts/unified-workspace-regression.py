@@ -201,9 +201,10 @@ for marker in (
     'jumpToEnd',
     'cursorUnderOverlay',
     'context.ui.DialogSelect',
-    'session.sidebar.toggle',
 ):
     assert marker in tui_host, marker
+# The custom dock must coexist with the native context/MCP sidebar.
+assert 'session.sidebar.toggle' not in tui_host
 for marker in (
     'function ActivityView',
     'function PlanView',

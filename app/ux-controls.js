@@ -47,6 +47,7 @@ function currentMode() {
   return 'build'
 }
 function currentProfile() {
+  if (!modelTransition && window.CustomOpenCodeControls?.activeModel?.()) return orchestratedModelSelected() ? 'orchestrated' : 'direct'
   if (desiredProfile) return desiredProfile
   return orchestratedModelSelected() ? 'orchestrated' : profileFromAgent(rawActiveAgent())
 }
@@ -125,9 +126,11 @@ function syncAgentSurface() {
 }
 
 function selectedOrchestratedModel() {
-  const selectedID = document.documentElement.dataset.orchestratedModel || ''
-  const byID = ORCHESTRATED_MODELS.find((model) => model.id === selectedID)
-  if (byID) return byID
+  const activeModel = window.CustomOpenCodeControls?.activeModel
+  if (activeModel) {
+    const ref = activeModel()
+    return ORCHESTRATED_MODELS.find((model) => model.id === ref?.id && model.providerID === ref?.providerID) || null
+  }
   const text = $('modelButton')?.textContent || ''
   return ORCHESTRATED_MODELS.find((model) => text.includes(model.id) || text.includes(model.label)) || null
 }
@@ -152,7 +155,6 @@ function syncModelSurface() {
   document.documentElement.dataset.modelProfile = profile
   const selectedOrchestrated = selectedOrchestratedModel()
   if (profile === 'orchestrated' && selectedOrchestrated) {
-    if (button.textContent !== selectedOrchestrated.label) button.textContent = selectedOrchestrated.label
     document.documentElement.dataset.orchestratedModel = selectedOrchestrated.id
     button.title = `${selectedOrchestrated.label} с автоматической делегацией read-only worker и optional RAG`
   } else {

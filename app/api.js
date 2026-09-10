@@ -45,9 +45,9 @@ export async function getSession(sessionID) {
 }
 
 export async function sessionStatuses() {
-  try { return dataOf(await request('/api/session/active')) || {} }
+  try { return dataOf(await request('/api/session/active')) }
   catch {
-    try { return dataOf(await request('/api/session/status')) || {} } catch { return {} }
+    try { return dataOf(await request('/api/session/status')) } catch { return null }
   }
 }
 
@@ -89,7 +89,8 @@ export async function getContextPage(sessionID, { cursor = '', limit = 80, order
     if (Array.isArray(page)) {
       return { messages: page.map(normalizeModernMessage), nextCursor: null, complete: true }
     }
-    const rows = Array.isArray(page?.data) ? page.data : []
+    if (!Array.isArray(page?.data)) throw new Error('Некорректная страница истории')
+    const rows = page.data
     return {
       messages: order === 'desc' ? rows.reverse().map(normalizeModernMessage) : rows.map(normalizeModernMessage),
       nextCursor: page?.cursor?.next || null,
@@ -98,12 +99,30 @@ export async function getContextPage(sessionID, { cursor = '', limit = 80, order
   } catch (error) {
     if (cursor || error.status !== 404) throw error
     const value = dataOf(await request(`/api/session/${encodedID}/context`))
+    if (!Array.isArray(value)) throw new Error('Некорректная история сессии')
     return {
-      messages: Array.isArray(value) ? value.map(normalizeModernMessage) : [],
+      messages: value.map(normalizeModernMessage),
       nextCursor: null,
       complete: true,
     }
   }
+}
+
+export async function hasConversation(sessionID) {
+  const seen = new Set()
+  let cursor = ''
+  try {
+    // ponytail: at most 100 entries per sidebar probe; use backend message counts if this becomes insufficient.
+    for (let pages = 0; pages < 5; pages++) {
+      const page = await getContextPage(sessionID, {cursor, limit:20, order:'asc'})
+      if (page.messages.some(message => ['user','assistant'].includes(message?.type || message?.role))) return true
+      if (!page.messages.length || page.complete || !page.nextCursor) return false
+      if (seen.has(page.nextCursor)) break
+      seen.add(page.nextCursor)
+      cursor = page.nextCursor
+    }
+  } catch {}
+  return null // Unavailable or incomplete history is not proof of an empty session.
 }
 
 export async function getContext(sessionID) {
@@ -185,7 +204,17 @@ export async function switchModel(sessionID, model) {
   return request(`/api/session/${encodeURIComponent(sessionID)}/model`, { method: 'POST', body: JSON.stringify({ model }) })
 }
 
-export async function sendPrompt(session, { text, files = [], delivery = 'normal' }) {
+const pendingPrompts = new Map()
+export function isPromptPending(sessionID) { return pendingPrompts.has(sessionID) }
+export async function sendPrompt(session, input) {
+  pendingPrompts.set(session.id, (pendingPrompts.get(session.id) || 0) + 1)
+  try { return await sendPromptNow(session, input) }
+  finally {
+    const remaining = pendingPrompts.get(session.id) - 1
+    remaining ? pendingPrompts.set(session.id, remaining) : pendingPrompts.delete(session.id)
+  }
+}
+async function sendPromptNow(session, { text, files = [], delivery = 'normal' }) {
   const id = encodeURIComponent(session.id)
   const mode = delivery === 'queue' ? 'queue' : 'steer'
   let lastFormatError

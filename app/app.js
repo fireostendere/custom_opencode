@@ -37,6 +37,7 @@ const state = {
   clientConfig: null,
   sessions: [], projects: [], selected: null, context: [],
   contextCache: new Map(),
+  mirrorHistory: new Map(),
   agents: [], models: [], providers: [], defaultModel: null,
   draftAgent: null, draftModel: null, attachments: [],
   loading: false, running: new Map(), queues: new Map(), deliveryMode: 'steer',
@@ -130,6 +131,7 @@ function attachDragHandlers() {
   if (!root) return
   dragHandlersInstalled=true
   root.addEventListener('dragstart',(event)=>{
+    if(event.target.closest?.('[data-session-mirror]')){event.preventDefault();clearDragState();return}
     const session=event.target.closest?.('[data-session-drag]')
     const group=event.target.closest?.('.project-group')
     if (session && group) { setDragData(event,'session',session.dataset.sessionDrag);session.classList.add('is-dragging');return }
@@ -275,6 +277,17 @@ function normalizeRunStatus(value) {
 }
 function runningStatus(value) { const s=normalizeRunStatus(value); return /running|busy|retry|working|pending/.test(s) }
 function invalidateRunSync() { statusSyncGeneration+=1; rateLimitSyncGeneration+=1 }
+function syncRunStatuses(statuses) {
+  if(!statuses||typeof statuses!=='object'||Array.isArray(statuses))return false
+  let changed=false
+  for(const session of state.sessions){
+    const active=runningStatus(statuses[session.id]),previous=state.running.get(session.id)
+    if(active&&!previous){state.running.set(session.id,{status:normalizeRunStatus(statuses[session.id]),since:Date.now()});changed=true}
+    // /active is a full snapshot. Allow a just-submitted prompt to reach the server.
+    else if(!active&&previous&&!api.isPromptPending(session.id)&&(session.id in statuses||Date.now()-previous.since>=5000)){markFinished(session.id,'готово');changed=true}
+  }
+  return changed
+}
 
 const loadSessionsCoalesced=createRefreshCoalescer()
 function loadSessions(options = {}) {
@@ -298,10 +311,7 @@ async function loadSessionsNow({ selectHash = false, background = false } = {}) 
     }
     for(const id of new Set([...sessionModelVersions.keys(),...sessionModelOverrides.keys()]))if(!unique.has(id)&&state.selected?.id!==id){sessionModelVersions.delete(id);sessionModelOverrides.delete(id)}
     state.sessions = [...unique.values()].sort(compareSessions)
-    if (statusGeneration === statusSyncGeneration) for (const [id,status] of Object.entries(statuses || {})) {
-      if (runningStatus(status)) state.running.set(id,{ status:normalizeRunStatus(status), since:Date.now() })
-      else if (state.running.has(id)) markFinished(id,'готово')
-    }
+    if (statusGeneration === statusSyncGeneration) syncRunStatuses(statuses)
     if (state.selected) state.selected = state.sessions.find((s)=>s.id===state.selected.id) || state.selected
     state.loading = false; renderSessions(); renderHeader(); if(state.selected&&state.models.length)renderControls(); updateBadge()
     if (selectHash && !state.selected) {
@@ -348,29 +358,64 @@ function renderSessionNode(session,children,expanded,query='',depth=0) {
     </button><button class="session-more" data-session-more="${escapeHtml(session.id)}">•••</button>
   </div>${childBody}</div>`
 }
+function mirrorHasConversation(session) {
+  const id=session.id
+  if(Number(session.tokens?.input)>0||Number(session.tokens?.output)>0||contextMessages(state.contextCache.get(id)?.messages||[]).length||state.selected?.id===id&&contextMessages(state.context).length)return true
+  const previous=state.mirrorHistory.get(id),updated=sessionTime(session)
+  if(!previous||previous.updated!==updated){
+    const entry={updated,value:previous?.value??null}
+    state.mirrorHistory.set(id,entry)
+    void api.hasConversation(id).then(value=>{
+      if(state.mirrorHistory.get(id)!==entry||!hasSession(id))return
+      entry.value=value
+      renderSessions()
+    }).catch(()=>{})
+  }
+  return previous?.value!==false
+}
+function renderSessionShortcuts(collapsed) {
+  const current=state.selected,tree=sessionTree(),activity=new Map()
+  const sessions=tree.roots.filter(session=>!session.parentID&&!session.parentSessionID)
+  for(const session of sessions){
+    const family=[session]
+    for(let i=0;i<family.length;i++)family.push(...(tree.children.get(family[i].id)||[]))
+    activity.set(session.id,{
+      selected:family.some(item=>item.id===current?.id),
+      running:family.some(item=>isRunning(item.id)),
+      lastOpenedAt:family.reduce((latest,item)=>Math.max(latest,meta(item.id).lastOpenedAt||0),0),
+    })
+  }
+  const recent=[]
+  for(const session of sessions.sort((a,b)=>activity.get(b.id).lastOpenedAt-activity.get(a.id).lastOpenedAt||sessionTime(b)-sessionTime(a))){
+    if(mirrorHasConversation(session))recent.push(session)
+    if(recent.length===5)break
+  }
+  const groups=[
+    ['current','Текущее',sessions.filter(session=>{const info=activity.get(session.id);return (info.selected||info.running)&&mirrorHasConversation(session)}).sort((a,b)=>Number(activity.get(b.id).selected)-Number(activity.get(a.id).selected)||sessionTime(b)-sessionTime(a))],
+    ['recent','Последнее',recent],
+  ]
+  return groups.filter(([,,rows])=>rows.length).map(([id,label,rows])=>`<details class="session-mirror" data-session-mirror="${id}" draggable="false"${collapsed.has(`mirror:${id}`)?'':' open'}><summary class="project" title="Быстрые ссылки на основные диалоги"><span>${label}</span><span class="count">${rows.length}</span></summary><div class="project-sessions">${rows.map(session=>{
+    const info=activity.get(session.id),status=isRunning(session.id)?'Выполняется':info.running?'Работают агенты':info.selected?(session.id===current?.id?'Открыт':'Открыт агент'):timeText(sessionTime(session))
+    return `<div class="session${info.selected?' active':''}"><span class="session-tree-spacer" aria-hidden="true"></span><button type="button" class="session-main" data-session-shortcut="${escapeHtml(session.id)}"${session.id===current?.id?' aria-current="page"':''} title="${escapeHtml(`${sessionTitle(session)} · ${directory(session)}`)}"><div class="session-title">${escapeHtml(sessionTitle(session))}</div><div class="session-meta">${info.running?'<span class="run-dot"></span>':''}<span>${escapeHtml(projectInfo(session).label)}</span><span>${status}</span></div></button></div>`
+  }).join('')}</div></details>`).join('')
+}
 function renderSessions() {
   const container = $('sessions')
   if (!container) return
   if (state.loading && !state.sessions.length) { container.innerHTML='<div class="loading">Загрузка сессий…</div>'; container._lastHtml=''; return }
   const query=$('search').value.trim().toLowerCase(),tree=sessionTree(),roots=tree.roots.filter((session)=>subtreeMatches(session,tree.children,query))
-  if (!roots.length) {
-    if (container._lastHtml !== 'empty') {
-      container.innerHTML='<div class="empty">Сессий не найдено.</div>'
-      container._lastHtml = 'empty'
-    }
-    return
-  }
   const groups=new Map()
   for(const session of roots){const info=projectInfo(session);if(!groups.has(info.key))groups.set(info.key,{info,items:[]});groups.get(info.key).items.push(session)}
   for(const group of groups.values())group.items.sort(compareSessions)
   const savedProjectOrder=projectOrder()
   const orderedGroups=[...groups.values()].sort((a,b)=>orderIndex(savedProjectOrder,a.info.key)-orderIndex(savedProjectOrder,b.info.key)||sessionTime(b.items[0])-sessionTime(a.items[0])||a.info.label.localeCompare(b.info.label,'ru',{sensitivity:'base',numeric:true}))
   const collapsedProjects=new Set(loadJson(PROJECT_COLLAPSE_KEY, [])),expanded=sessionTreeExpanded()
-  const html=orderedGroups.map(({info,items})=>`<details class="project-group" data-project="${escapeHtml(info.key)}"${collapsedProjects.has(info.key)?'':' open'}><summary class="project" draggable="true" title="${escapeHtml(info.directory)}"><span>${escapeHtml(info.label)}</span><span class="count">${items.length}</span></summary><div class="project-sessions">${items.map((session)=>renderSessionNode(session,tree.children,expanded,query)).join('')}</div></details>`).join('')
+  const projectsHtml=orderedGroups.map(({info,items})=>`<details class="project-group" data-project="${escapeHtml(info.key)}"${collapsedProjects.has(info.key)?'':' open'}><summary class="project" draggable="true" title="${escapeHtml(info.directory)}"><span>${escapeHtml(info.label)}</span><span class="count">${items.length}</span></summary><div class="project-sessions">${items.map((session)=>renderSessionNode(session,tree.children,expanded,query)).join('')}</div></details>`).join('')
+  const html=renderSessionShortcuts(collapsedProjects)+(projectsHtml||'<div class="empty">Сессий не найдено.</div>')
   if (container._lastHtml === html) return
   container._lastHtml = html
   container.innerHTML=html
-  document.querySelectorAll('[data-project]').forEach((group)=>group.addEventListener('toggle',()=>{const values=new Set(loadJson(PROJECT_COLLAPSE_KEY, []));group.open?values.delete(group.dataset.project):values.add(group.dataset.project);saveJson(PROJECT_COLLAPSE_KEY,[...values])}))
+  document.querySelectorAll('[data-project],[data-session-mirror]').forEach((group)=>group.addEventListener('toggle',()=>{const values=new Set(loadJson(PROJECT_COLLAPSE_KEY, [])),id=group.dataset.project||`mirror:${group.dataset.sessionMirror}`;group.open?values.delete(id):values.add(id);saveJson(PROJECT_COLLAPSE_KEY,[...values])}))
   document.querySelectorAll('[data-agent-folder]').forEach((folder)=>folder.addEventListener('toggle',()=>{const values=sessionTreeExpanded(),id=folder.dataset.agentFolder;folder.open?values.add(id):values.delete(id);saveJson(SESSION_TREE_KEY,[...values])}))
   document.querySelectorAll('[data-session]').forEach((button)=>button.addEventListener('click',()=>selectSession(button.dataset.session)))
   document.querySelectorAll('[data-session-more]').forEach((button)=>button.addEventListener('click',(event)=>{event.stopPropagation();openSessionActions(button.dataset.sessionMore)}))
@@ -381,6 +426,7 @@ async function selectSession(id,{push=true,saveDraft=true}={}) {
   if(saveDraft)saveDraftNow()
   const cachedContext=state.contextCache.get(id)
   state.selected=session; state.context=cachedContext?.messages||[]; state.attachments=[]; state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
+  meta(id).lastOpenedAt=Date.now();saveMeta()
   initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=id;historyPaginationIntent=false;clearTimeout(historyPaginationIntentTimer);historyPaginationIntentTimer=0;historyPaginationTouch=null
   resetPromptHistory(id)
   renderAttachments(); renderSessions(); renderHeader(); renderMessages({bottom:true}); restoreDraft(); $('sidebar').classList.remove('open')
@@ -433,11 +479,13 @@ async function loadContext({force=false,initial=false}={}) {
   try {
     const page=await api.getContextPage(id,{limit:CONTEXT_PAGE_SIZE})
     const incoming=contextMessages(page.messages)
+    const hadConversation=cache.messages.length>0
     cache.messages=wasLoaded?mergeContextMessages(cache.messages,incoming):incoming
     cache.loaded=true
     if(!wasLoaded){cache.complete=Boolean(page.complete);setContextPageCursor(cache,'',page.nextCursor)}
     else if(page.complete){cache.complete=true;cache.nextCursor=null;cache.hasMore=false}
     else if(!cache.hasMore&&cache.messages.length<=incoming.length)setContextPageCursor(cache,'',page.nextCursor)
+    if(!hadConversation&&cache.messages.length)renderSessions()
     if(state.selected?.id===id){
       state.context=cache.messages
       syncPromptHistory();renderMessages({bottom:initial||!wasLoaded});renderUsage()
@@ -498,7 +546,7 @@ function renderControls(){
   const mode=modeFromAgent(agentID)
   $('agentControls').innerHTML=state.agents.map((agent)=>`<button type="button" class="${agent.id===agentID||(['build','plan'].includes(agent.id)&&agent.id===mode)?'active':''}" data-agent="${escapeHtml(agent.id)}">${escapeHtml(agent.name||agent.id)}</button>`).join('')
   document.querySelectorAll('[data-agent]').forEach((b)=>b.addEventListener('click',()=>changeAgent(b.dataset.agent)))
-  const ref=activeModelRef(), model=activeModel(), selectedVariant=ref?.variant||''; $('modelButton').disabled=!state.models.length; $('modelButton').textContent=model?.name||ref?.id||'Модель'
+  const ref=activeModelRef(), model=activeModel(), selectedVariant=ref?.variant||''; $('modelButton').disabled=!state.models.length; $('modelButton').textContent=modelRefLabel(ref)||'Модель'
   const variants=modelVariants(model)
   const configuredEffort=model?.settings?.effort||''
   $('variantSelect').innerHTML=variants.length?`<option value="">${escapeHtml(configuredEffort||'default')}</option>${variants.map((v)=>`<option value="${escapeHtml(v.id)}">${escapeHtml(v.id)}</option>`).join('')}`:'<option value="">—</option>'
@@ -511,7 +559,7 @@ function directModelRef(){
   if(current&&!ORCHESTRATED_MODELS.some((model)=>model.id===current.id&&model.providerID===current.providerID))return {...current}
   return state.defaultModel?{...state.defaultModel}:null
 }
-window.CustomOpenCodeControls={changeModel,changeAgent,directModel:directModelRef,startRun:markStarted}
+window.CustomOpenCodeControls={changeModel,changeAgent,activeModel:activeModelRef,directModel:directModelRef,startRun:markStarted}
 
 const NIGHT_DISCOUNT_MODELS = new Set([
   'qwen3.8-max',
@@ -674,7 +722,7 @@ function modelRefLabel(ref) {
   const id=String(value?.id||value?.modelID||'')
   const provider=String(value?.providerID||value?.provider||'')
   const catalog=state.models.find((model)=>model.id===id&&(!provider||model.providerID===provider))
-  const label=String(catalog?.name||id||'')
+  const label=String(catalog?.name||ORCHESTRATED_MODELS.find(model=>model.id===id&&model.providerID===provider)?.label||id||'')
   return label||(provider?provider:'')
 }
 function messageOriginHint(message) {
@@ -973,7 +1021,7 @@ function handleEvent(payload){
 }
 function connectEventStream(){eventSource?.close();eventSource=api.connectEvents(handleEvent,()=>{if(state.running.size)toast('Переподключение к event stream…',1200)})}
 const pollStatusesCoalesced=createRefreshCoalescer()
-async function pollStatuses(force=false){if(force)statusSyncGeneration+=1;return pollStatusesCoalesced(async()=>{const statusGeneration=++statusSyncGeneration;const statuses=await api.sessionStatuses();if(statusGeneration!==statusSyncGeneration)return;let changed=false;for(const session of state.sessions){const running=runningStatus(statuses?.[session.id]);if(running&&!isRunning(session.id)){state.running.set(session.id,{status:normalizeRunStatus(statuses[session.id]),since:Date.now()});changed=true}else if(!running&&isRunning(session.id)&&statuses&&session.id in statuses){markFinished(session.id,'готово');changed=true}}if(changed){renderSessions();renderHeader();updateBadge()}},force)}
+async function pollStatuses(force=false){if(force)statusSyncGeneration+=1;return pollStatusesCoalesced(async()=>{const statusGeneration=++statusSyncGeneration;const statuses=await api.sessionStatuses();if(statusGeneration!==statusSyncGeneration)return;if(syncRunStatuses(statuses)){renderSessions();renderHeader();updateBadge()}},force)}
 const statusPolling=createAdaptivePoller({run:pollStatuses,isActive:()=>state.running.size>0,activeDelay:15000,idleDelay:30000,isVisible:()=>!document.hidden})
 const rateLimitPolling=createAdaptivePoller({run:pollRateLimit,isActive:()=>state.running.size>0,activeDelay:10000,idleDelay:30000,isVisible:()=>!document.hidden})
 const sessionPolling=createAdaptivePoller({run:()=>loadSessions({background:true}),isActive:()=>state.running.size>0,activeDelay:60000,idleDelay:60000,isVisible:()=>!document.hidden})
@@ -1061,6 +1109,7 @@ function setupPullRefresh(){
 function autosizeInput(){const el=$('input');el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}
 
 function bindEvents(){
+  $('sessions').addEventListener('click',event=>{const button=event.target.closest('[data-session-shortcut]');if(button)selectSession(button.dataset.sessionShortcut)})
    $('newSession').addEventListener('click',()=>openProjectDialog('create'))
   $('chooseProject').addEventListener('click',()=>openProjectDialog('create'));$('refresh').addEventListener('click',()=>{loadSessions();if(state.selected)loadContext({force:true})});$('search').addEventListener('input',renderSessions)
   $('menu').addEventListener('click',()=> $('sidebar').classList.toggle('open'));$('sessionActions').addEventListener('click',()=>openSessionActions());$('modelButton').addEventListener('click',()=>{renderModelChoices();$('modelDialog').showModal();$('modelSearch').focus()});$('modelSearch').addEventListener('input',renderModelChoices);$('modelChoices').addEventListener('click',(event)=>{const fav=event.target.closest?.('[data-fav]');if(fav){event.preventDefault();event.stopPropagation();const key=fav.dataset.fav;favorites.has(key)?favorites.delete(key):favorites.add(key);saveJson(FAV_KEY,[...favorites]);renderModelChoices();return}const button=event.target.closest?.('[data-model][data-provider]');if(!button)return;$('modelDialog').close();changeModel({id:button.dataset.model,providerID:button.dataset.provider})})

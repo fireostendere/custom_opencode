@@ -27,7 +27,7 @@ globalThis.document = {
   querySelectorAll: () => [], addEventListener() {}, createElement: () => element('created'),
 }
 globalThis.__smoke = {
-  api: { connectEvents() {} },
+  api: { connectEvents() {}, async hasConversation() { return null } },
   ux: await import(`data:text/javascript;base64,${Buffer.from(readFileSync(resolve(root, 'app/ux-state.js'), 'utf8')).toString('base64')}`),
 }
 
@@ -62,3 +62,24 @@ assert.equal(inner.renderWrites, 1, 'the queued frame must render once')
 assert.match(inner.innerHTML, /final answer/, 'the single render must contain the final stream value')
 
 console.log('Stream render smoke passed: burst SSE events coalesce into one final-state render')
+
+// A previous session's DOM/profile must not relabel the active model.
+globalThis.location = { hash: '#/session/ses_stream' }
+document.documentElement = { dataset: {} }
+const uxSource = readFileSync(resolve(root, 'app/ux-controls.js'), 'utf8')
+  .replace("from './ux-state.js'", `from '${pathToFileURL(resolve(root, 'app/ux-state.js')).href}'`)
+  .replace("if (typeof document !== 'undefined') init()", 'export { currentProfile, restoreDesiredProfile, syncModelSurface }')
+const controls = await import(`data:text/javascript;base64,${Buffer.from(uxSource).toString('base64')}`)
+const button = document.getElementById('modelButton')
+for (const model of [...__smoke.ux.ORCHESTRATED_MODELS, { id: 'qwen3.8-max', providerID: 'bailian-cli' }, { id: 'gpt-5.6-sol-orchestrated', providerID: 'other' }]) {
+  state.selected = { id: 'ses_stream', model }
+  storage.set('opencode:web:model-profiles-v1', JSON.stringify({ ses_stream: model.label ? 'direct' : 'orchestrated' }))
+  controls.restoreDesiredProfile()
+  document.documentElement.dataset.orchestratedModel = 'gpt-5.6-sol-orchestrated'
+  button.textContent = model.label || model.id
+  controls.syncModelSurface()
+  assert.equal(button.textContent, model.label || model.id, 'session model label must survive stale DOM state')
+  assert.equal(controls.currentProfile(), model.label ? 'orchestrated' : 'direct', 'session model must override stored profile')
+  assert.equal(document.documentElement.dataset.orchestratedModel, model.label ? model.id : undefined)
+}
+console.log('Model identity smoke passed: session model overrides stale labels and profiles')

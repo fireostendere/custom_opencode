@@ -104,7 +104,7 @@ if (sidebar && menu) {
 
     // Selecting a chat while the drawer owns a synthetic history entry should
     // consume that entry first, otherwise Back would need an extra press later.
-    const sessionButton = target?.closest?.('[data-session]')
+    const sessionButton = target?.closest?.('[data-session], [data-session-shortcut]')
     if (sessionButton && mobileQuery.matches && sidebarOpen() && history.state?.[SIDEBAR_STATE_KEY]) {
       event.preventDefault()
       event.stopImmediatePropagation()

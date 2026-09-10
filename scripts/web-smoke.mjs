@@ -50,6 +50,41 @@ await api.sendPrompt({ id:'ses_compat' }, { text:'fallback', files:[], delivery:
 body = JSON.parse(calls.at(-1).options.body)
 if (body.prompt?.text !== 'fallback' || body.delivery !== 'steer') throw new Error('Compatibility prompt fallback regression')
 
+const pending = []
+globalThis.fetch = () => new Promise(resolve => pending.push(resolve))
+const sendingFirst = api.sendPrompt({id:'ses_pending'}, {text:'first'})
+const sendingSecond = api.sendPrompt({id:'ses_pending'}, {text:'second'})
+if (!api.isPromptPending('ses_pending')) throw new Error('Pending send is not tracked')
+pending.shift()(response(200, {})); await sendingFirst
+if (!api.isPromptPending('ses_pending')) throw new Error('Concurrent send lost its pending guard')
+pending.shift()(response(503, 'fixture failure'))
+await sendingSecond.then(() => { throw new Error('Failed send unexpectedly succeeded') }, () => {})
+if (api.isPromptPending('ses_pending')) throw new Error('Pending guard survived a failed send')
+globalThis.fetch = async () => response(503, 'unavailable')
+if (await api.sessionStatuses() !== null) throw new Error('Unavailable status must not be treated as idle')
+globalThis.fetch = async () => response(200, {data:{}})
+if (JSON.stringify(await api.sessionStatuses()) !== '{}') throw new Error('Empty active snapshot must remain authoritative')
+
+let historyReads = 0
+globalThis.fetch = async path => {
+  historyReads++
+  return response(200, String(path).includes('cursor=') ? {data:[]} : {data:[{type:'agent-switched'},{type:'system',text:'configuration'}],cursor:{next:'end'}})
+}
+if (await api.hasConversation('maintenance') !== false || historyReads !== 2) throw new Error('Admin events are not a conversation; check the final page')
+for (const message of [{type:'user',text:'new'}, {type:'assistant',content:[]}, {info:{role:'user'},parts:[{type:'file'}]}]) {
+  globalThis.fetch = async () => response(200, {data:[message]})
+  if (await api.hasConversation('real') !== true) throw new Error('Real conversations, including unanswered or file-only requests, must remain visible')
+}
+for (const result of [response(503,'unavailable'),response(200,{data:{}})]) {
+  globalThis.fetch = async () => result
+  if (await api.hasConversation('unknown') !== null) throw new Error('Unknown history must not be mistaken for maintenance')
+}
+globalThis.fetch = async () => response(200,{data:[{type:'agent-switched'}],cursor:{next:'loop'}})
+if (await api.hasConversation('cycle') !== null) throw new Error('Repeated cursors are incomplete history')
+historyReads=0
+globalThis.fetch = async () => response(200,{data:[{type:'system'}],cursor:{next:String(++historyReads)}})
+if (await api.hasConversation('long-admin-history') !== null || historyReads!==5) throw new Error('Sidebar probes must remain bounded')
+
 globalThis.fetch = async (path) => {
   if (String(path).startsWith('/api/agent?')) return response(200, { data: [
     { id:'build', mode:'primary', hidden:false },
@@ -346,7 +381,7 @@ for (const marker of ['AUTH_COOKIE_NAME', 'SameSite=Strict', 'OPENCODE_AUTH_ALLO
 }
 if (serverSource.includes('WWW-Authenticate')) throw new Error('Web server must not trigger browser-native Basic Auth challenge')
 
- for (const marker of ['/client-model-capabilities.json', '/client-tasks.json', '/client-task-control.json', '/client-resource-status.json', '/client-speculate.json', '/client-task-create.json', 'Task Center', "profile:profile()"] ) {
+ for (const marker of ['/client-model-capabilities.json', '/client-tasks.json', '/client-task-control.json', '/client-resource-status.json', '/client-speculate.json', '/client-task-create.json', 'Задачи и состояние', "profile:profile()"] ) {
   if (!runtimeDashboard.includes(marker)) throw new Error(`Runtime dashboard behavior marker missing: ${marker}`)
 }
 for (const marker of ['runtime-task', 'runtime-profile', 'runtime-state']) {

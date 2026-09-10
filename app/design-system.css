@@ -86,12 +86,13 @@ body.sidebar-resizing *{cursor:col-resize!important}
 .quota-provider{min-width:0;padding:10px;border-color:var(--line);border-radius:var(--ui-radius);background:var(--surface-raised)}
 .quota-provider-head,.quota-label,.quota-cap{min-width:0}
 .quota-label span,.quota-cap span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sessions .project-group{margin:0 0 2px}
+.sessions :is(.project-group,.session-mirror){margin:0 0 2px}
 .sessions .project{margin:6px 2px 3px;padding:6px 8px;border-radius:6px;list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none}
 .sessions .project:hover{background:var(--panel2)}
 .sessions .project::-webkit-details-marker{display:none}
 .sessions .project::before{content:'';width:7px;height:7px;flex:0 0 7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);opacity:.72;transition:transform .16s ease}
-.sessions .project-group:not([open]) .project::before{transform:rotate(-45deg)}
+.sessions :is(.project-group,.session-mirror):not([open])>.project::before{transform:rotate(-45deg)}
+.session-mirror .session-meta>span:not(.run-dot){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sessions .project .count{margin-left:auto;font-size:10px;color:var(--muted);padding-right:4px}
 .sessions .session-more{margin-right:2px}
 .project-sessions{min-width:0}

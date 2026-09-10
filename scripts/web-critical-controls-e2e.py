@@ -127,6 +127,9 @@ def main() -> int:
                         "document.querySelector('#modelButton').textContent.includes('Orchestrated')",
                         timeout=5_000,
                     )
+                    assert 'Qwen' in page.locator('#modelButton').inner_text()
+                    assert page.evaluate('window.CustomOpenCodeRuntime.currentProfile()') == 'architect'
+                    assert page.evaluate('window.CustomOpenCodeControls.activeModel().id') == 'qwen3.8-orchestrated'
                     assert not problems, problems
 
                     context.close()

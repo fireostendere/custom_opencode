@@ -9,8 +9,10 @@ import retiredPanel from "./limits-panels.jsx"
 import workspacePanel from "./workspace-panel.jsx"
 import wslClipboard from "./wsl-clipboard.jsx"
 import { installDialogScrollbars } from "./lib/dialog-scrollbar.js"
+import locationRecovery from "./location-recovery.jsx"
 
 const plugins = [
+  locationRecovery,
   effortIndicator,
   addWizard,
   webserverWizard,
