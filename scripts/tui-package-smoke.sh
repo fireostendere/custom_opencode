@@ -2,15 +2,56 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# Bare opencode2 invocations (the --version validation below, any probe launch before the
+# rendered config is in place) detach the CLI's own updater: a bare `npm install --global
+# @opencode-ai/cli@latest` against the pinned global tree — a mid-run reify once replaced
+# opencode2.exe and produced "Exec format error" (see scripts/install.sh). The audit matrix
+# strips OPENCODE_*, so this is exported here instead of relying on workflow env alone.
+export OPENCODE_DISABLE_AUTOUPDATE=1
 OPENCODE2_BIN=${OPENCODE2_BIN:-}
 if [[ -z "$OPENCODE2_BIN" ]]; then
   OPENCODE2_BIN=$(command -v opencode2 || true)
 fi
-if [[ -z "$OPENCODE2_BIN" || ! -x "$OPENCODE2_BIN" ]]; then
-  echo "opencode2 is required for packaged TUI smoke (set OPENCODE2_BIN or add it to PATH)" >&2
-  exit 2
+if [[ -n "$OPENCODE2_BIN" ]]; then
+  OPENCODE2_BIN=$(readlink -f "$OPENCODE2_BIN")
 fi
-OPENCODE2_BIN=$(readlink -f "$OPENCODE2_BIN")
+
+# npm postinstall can leave the packaged placeholder behind (CI regression:
+# "Exec format error ... @opencode-ai/cli/bin/opencode2.exe"), so require that the
+# binary actually executes and otherwise fall back to the real platform-package
+# binary that postinstall.mjs copies from.
+opencode2_runs() { [[ -n "${1:-}" && -x "$1" ]] && timeout 30 "$1" --version >/dev/null 2>&1; }
+if ! opencode2_runs "${OPENCODE2_BIN:-}"; then
+  arch=$(uname -m)
+  case "$arch" in
+    x86_64) arch=x64 ;;
+    aarch64 | arm64) arch=arm64 ;;
+  esac
+  platform=$(uname -s | tr '[:upper:]' '[:lower:]')
+  candidates=()
+  if [[ -n "${OPENCODE2_BIN:-}" ]]; then
+    cli_dir=$(dirname "$(dirname "$OPENCODE2_BIN")")
+    candidates+=("$cli_dir"/node_modules/@opencode-ai/cli-"$platform"-"$arch"*/bin/opencode2)
+  fi
+  global_root=$(npm root -g 2>/dev/null || true)
+  if [[ -n "$global_root" ]]; then
+    # ponytail: the glob covers baseline/musl variants; --version rejects a wrong ABI.
+    candidates+=("$global_root"/@opencode-ai/cli/node_modules/@opencode-ai/cli-"$platform"-"$arch"*/bin/opencode2)
+    candidates+=("$global_root"/@opencode-ai/cli-"$platform"-"$arch"*/bin/opencode2)
+  fi
+  resolved=""
+  for candidate in "${candidates[@]}"; do
+    if opencode2_runs "$candidate"; then
+      resolved=$(readlink -f "$candidate")
+      break
+    fi
+  done
+  if [[ -z "$resolved" ]]; then
+    echo "opencode2 is required for packaged TUI smoke (set OPENCODE2_BIN or add it to PATH)" >&2
+    exit 2
+  fi
+  OPENCODE2_BIN="$resolved"
+fi
 
 TMP=$(mktemp -d)
 trap 'HOME="$TMP/home" "$OPENCODE2_BIN" service stop >/dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
@@ -41,7 +82,7 @@ text=text.replace('__CUSTOM_OPENCODE_ROOT__',root)
 text=text.replace('__RAG_DISABLED__','true')
 config=json.loads(text)
 config.pop('plugins', None)
-config['compaction']={'auto':True,'keep':{'tokens':12000},'buffer':24000}
+config['compaction']={'auto':True,'keep':{'tokens':4096},'buffer':2048}
 config['tool_output']={'max_lines':1600,'max_bytes':48000}
 kb=(((config.get('mcp') or {}).get('servers') or {}).get('kb'))
 if isinstance(kb,dict): kb['codemode']=True
@@ -116,8 +157,8 @@ while time.time() < deadline:
                 settle(.5)
                 with open(os.environ['TUI_KEYBOARD_PROBE']) as handle:
                     assert json.load(handle) == [{'sessionID':'ses_keyboard_probe','continue':False}, 'dialog-closed']
-                os.write(master, b'\x1b[15~')  # F5 injects one native location sync failure.
-                recovery_deadline = time.monotonic() + 28
+                os.write(master, b'\x1b[15~')  # F5 injects native location sync failures until the 15s retry window elapses.
+                recovery_deadline = time.monotonic() + 55
                 recovery = None
                 while time.monotonic() < recovery_deadline:
                     settle(.1)

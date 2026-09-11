@@ -10,11 +10,12 @@ NODE=$(command -v node || true)
   "$ROOT/app/runtime_v3.py" "$ROOT/app/runtime_v3_ext.py" "$ROOT/app/runtime_completion.py" \
   "$ROOT/app/server_workflow.py" "$ROOT/scripts/runtime-v3-smoke.py" \
   "$ROOT/scripts/runtime-v3-worktree-smoke.py" "$ROOT/scripts/runtime-completion-smoke.py" \
-  "$ROOT/scripts/install-runtime-v3-selftest.py"
+  "$ROOT/scripts/install-runtime-v3-selftest.py" "$ROOT/scripts/context-budget-regression.py"
 "$NODE" --check "$ROOT/config/plugins/server-runtime-guard.js"
 "$NODE" --check "$ROOT/app/runtime-v3-dashboard.js"
 "$NODE" --check "$ROOT/app/control-plane.js"
 "$PYTHON3" "$ROOT/scripts/runtime-v3-smoke.py"
+"$PYTHON3" "$ROOT/scripts/context-budget-regression.py"
 "$PYTHON3" "$ROOT/scripts/runtime-v3-worktree-smoke.py"
 "$PYTHON3" "$ROOT/scripts/runtime-completion-smoke.py"
 
@@ -46,7 +47,7 @@ required={
   "app/runtime_v3.py":["class SemanticRepoIndexer","class DynamicContextManager","class ToolGateway","class ScopedSecretBroker","class SandboxManager","class SharedRAGService","class ReplayService","class BranchStateService","class RuntimeV3"],
   "app/runtime_v3_ext.py":["notification.sent","run-replay","client-mcp-gateway-v3.json","client-runtime-telemetry.json","client-task-sandbox.json","client-worktree-merge.json","worktree.merged","_ownership_root_wrapped"],
   "app/runtime_completion.py":["permission_preview","wasted_retries","branch-state-merged","client-remote-status.json","client-remote-action.json"],
-  "app/server_workflow.py":["runtime_v3.install","runtime_v3_ext.install","runtime_completion.install","runtime_v3.context_envelope"],
+  "app/server_workflow.py":["runtime_v3.install","runtime_v3_ext.install","runtime_completion.install","_send_with_project_context"],
   "app/runtime-v3-dashboard.js":["client-runtime-telemetry.json","client-repo-index-v3.json","client-session-branch.json","client-session-merge.json","client-task-sandbox.json","client-replay.json","client-worktree-merge.json"],
   "app/control-plane.js":["decision.preview","serverPreview"],
 }
@@ -60,11 +61,11 @@ for marker in ('/runtime-v3-dashboard.js','/runtime-v3-dashboard.css'):
 text=(root/"config/opencode.json.template").read_text(encoding="utf-8")
 text=text.replace("__CONFIG_DIR__","/tmp/opencode").replace("__CUSTOM_OPENCODE_ROOT__","/tmp/custom-opencode").replace("__RAG_DISABLED__","true")
 config=json.loads(text)
-config["compaction"]={"auto":True,"keep":{"tokens":12000},"buffer":24000}
+config["compaction"]={"auto":True,"keep":{"tokens":4096},"buffer":2048}
 config["tool_output"]={"max_lines":1600,"max_bytes":48000}
 config["mcp"]["servers"]["kb"]["codemode"]=True
 assert config["compaction"]["auto"] is True
-assert config["compaction"]["buffer"]==24000
+assert config["compaction"]["buffer"]==2048
 assert config["tool_output"]["max_bytes"]==48000
 assert config["mcp"]["servers"]["kb"]["codemode"] is True
 print("Runtime V3 config render PASS")

@@ -143,6 +143,7 @@ class LocalStack:
         self.server: ThreadingHTTPServer | None = None
         self.server_thread: threading.Thread | None = None
         self.base_url = ""
+        self.features = None
         self._previous_backend_url = os.environ.get("OPENCODE_BACKEND_URL")
         self._previous_backend_password = os.environ.get("OPENCODE_BACKEND_PASSWORD")
 
@@ -159,6 +160,7 @@ class LocalStack:
             sys.path.insert(0, app_path)
         import server_workflow
 
+        self.features = server_workflow.features
         server_workflow.runtime.PLAN_DIRECTORY = self.root
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), server_workflow.Handler)
         self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -171,6 +173,11 @@ class LocalStack:
         if self.server is not None:
             self.server.shutdown()
             self.server.server_close()
+        # HTTP shutdown does not stop the queue worker. Stop it while the
+        # backend is still reachable, before deleting its database/environment.
+        if self.features is not None:
+            if not self.features._stop_worker(timeout=30):
+                raise RuntimeError("Local harness runtime worker failed to stop")
         if self.backend is not None:
             self.backend.shutdown()
             self.backend.server_close()

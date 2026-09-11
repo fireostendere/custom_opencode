@@ -287,9 +287,11 @@ export async function renameSession(sessionID, title) {
 }
 
 export async function forkSession(sessionID, messageID) {
-  const body = messageID ? { messageID } : {}
+  // Engine ForkRequestBoundary contract: {type:"before",messageID} | {type:"through"}.
+  // An empty body is rejected with 400 Missing key ["boundary"] by the pinned engine.
+  const boundary = messageID ? { type: 'before', messageID } : { type: 'through' }
   return dataOf(await request(`/api/session/${encodeURIComponent(sessionID)}/fork`, {
-    method: 'POST', body: JSON.stringify(body),
+    method: 'POST', body: JSON.stringify({ boundary }),
   }))
 }
 

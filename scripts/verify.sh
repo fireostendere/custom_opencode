@@ -261,13 +261,13 @@ for token in ("qwen3.8-max", "qwen3.8-flash#low", "qwen3.7-plus#medium", "deepse
 for token in ("Planning policy", "conditional, not a ritual", "primary `plan` agent", "short, obvious, bounded", "two or more meaningful stages", "before the first file mutation"):
     if token not in orchestrator:
         bad.append(f"orchestrator must keep conditional V2 planning: {token}")
-for name, policy, producer_token in (("orchestrator", orchestrator, "TUI panels populate automatically from session/provider state and natural plan/tool/subagent events"), ("SOL orchestrator", sol_orchestrator, "TUI panels populate automatically from session/provider state and natural plan/tool/subagent events"), ("global AGENTS", agents_policy, "Вкладки `Сессия`, `Activity`, `История`, `Оркестрация`, `Лимиты` заполняются автоматически из состояния session/provider и реальных tool/subagent событий")):
-    for token in ("plan_update", "1-7", "chain-of-thought", producer_token):
-        if token not in policy:
-            bad.append(f"{name} must keep visible plan status/UI producer policy: {token}")
-for token in ("Планирование задач", "OpenCode V2", "primary-agent `plan`", "plan_update", "1-7", "До первой shell/edit/write/patch", "не создавай инструменты или подагентов только ради UI"):
-    if token not in agents_policy:
-        bad.append(f"global agent policy must keep conditional V2 planning: {token}")
+for name, policy in (("orchestrator", orchestrator), ("SOL orchestrator", sol_orchestrator)):
+    for marker in ("plan_update", "1-7", "chain-of-thought", "never make artificial tool calls"):
+        if marker not in policy:
+            bad.append(f"{name} lost a planning/safety contract: {marker}")
+for marker in ("Планирование задач", "plan_update", "OPENCODE_VISIBLE_PLAN=strict", "1–7", "Скрытые рассуждения не публикуй", "`plan`/`plan-direct`", "реальными событиями", "только ради UI"):
+    if marker not in agents_policy:
+        bad.append(f"global agent policy lost adaptive planning/safety contract: {marker}")
 for marker in ('export default {', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'gpt-5.6-sol-orchestrated', 'isOrchestratedSol', 'orchestrator-sol.md', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy'):
     if marker not in orchestrated_plugin_js:
         bad.append(f"orchestrated model plugin marker missing: {marker}")
@@ -285,7 +285,7 @@ if not (root / "scripts/runtime-resume-smoke.py").is_file():
 if not (root / "docs/server-runtime-v2.md").is_file():
     bad.append("missing server runtime v2 documentation")
 
-for marker in ("/client-tasks.json", "/client-task-control.json", "/client-model-capabilities.json", "/client-resource-status.json", "Task Center", "profile:profile()"):
+for marker in ("/client-tasks.json", "/client-task-control.json", "/client-model-capabilities.json", "/client-resource-status.json", "runtimeTasks", "profile:profile()"):
     if marker not in runtime_dashboard_js:
         bad.append(f"runtime dashboard marker missing: {marker}")
 for marker in ("runtime-task", "runtime-profile", "runtime-state"):
@@ -494,3 +494,5 @@ if bad:
     raise SystemExit("\n".join(bad))
 print(f"Verification passed; Build-only web + native TUI Plan + dedicated Qwen/SOL orchestration + runtime-v2/checkpoint resume + bounded RAG lifecycle + Alibaba Personal models: {len(expected)} current + {len(special_ids) + len(openai_special_ids)} orchestrated aliases + {len(compat_ids)} compatibility ID")
 PY
+
+"$PYTHON3" "$ROOT/scripts/branch-protection-regression.py"

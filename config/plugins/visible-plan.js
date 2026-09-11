@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto"
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 
@@ -8,9 +16,21 @@ const MARKER = "Custom visible plan policy"
 const PLAN_AGENTS = new Set(["build", "build-direct", "plan", "plan-direct"])
 const BUILD_AGENTS = new Set(["build", "build-direct"])
 const PLAN_FREE_TOOLS = new Set([
-  TOOL, "read", "glob", "grep", "list", "lsp", "question", "skill",
-  "webfetch", "websearch", "fetch", "kb_knowledge_search", "kb_knowledge_get",
-  "kb_knowledge_sources", "kb_knowledge_status",
+  TOOL,
+  "read",
+  "glob",
+  "grep",
+  "list",
+  "lsp",
+  "question",
+  "skill",
+  "webfetch",
+  "websearch",
+  "fetch",
+  "kb_knowledge_search",
+  "kb_knowledge_get",
+  "kb_knowledge_sources",
+  "kb_knowledge_status",
 ])
 const STATUS_MARKER = { pending: " ", in_progress: ">", completed: "x" }
 const configuredDirectory = String(process.env.OPENCODE_PLAN_DIRECTORY || "").trim()
@@ -18,7 +38,8 @@ const PLAN_DIRECTORY = configuredDirectory
   ? resolve(configuredDirectory.replace(/^~(?=\/)/, homedir()))
   : join(homedir(), ".opencode", "plan")
 
-const POLICY = `For every primary-agent request that uses tools, changes state, or requires more than one meaningful step, publish a concise visible plan with ${TOOL}. You may inspect read-only context first, but in Build call ${TOOL} before the first shell, edit, write, patch, subagent, or other potentially state-changing tool; in Plan publish the resulting checklist before the final answer. If you form a plan in hidden reasoning for any reason, publish its outcome checklist instead of keeping it only in hidden reasoning. Keep 1-7 outcome-oriented items, mark the current item in_progress, update statuses as work advances, and mark finished items completed before the final answer. Do not expose chain-of-thought or private reasoning; publish only the short task checklist. A direct conversational answer that uses no tools and has no multi-step work does not need a synthetic plan.`
+const STRICT = process.env.OPENCODE_VISIBLE_PLAN === "strict"
+const POLICY = `Use ${TOOL} for complex or risky multi-step work. Keep 1-7 outcome-oriented items and update meaningful milestones. A small, bounded task can be completed directly without a plan tool call. Do not expose private reasoning.`
 
 const inputSchema = {
   type: "object",
@@ -35,7 +56,12 @@ const inputSchema = {
         additionalProperties: false,
         required: ["content", "status"],
         properties: {
-          content: { type: "string", minLength: 1, maxLength: 500, description: "Verifiable outcome, not a low-level command" },
+          content: {
+            type: "string",
+            minLength: 1,
+            maxLength: 500,
+            description: "Verifiable outcome, not a low-level command",
+          },
           status: { type: "string", enum: ["pending", "in_progress", "completed"] },
         },
       },
@@ -44,7 +70,9 @@ const inputSchema = {
 }
 
 function oneLine(value, limit, label) {
-  const text = String(value || "").replace(/\s+/g, " ").trim()
+  const text = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
   if (!text) throw new Error(`${label} is required`)
   return text.slice(0, limit)
 }
@@ -89,7 +117,9 @@ function textOf(value) {
 }
 
 function turnKey(messages) {
-  const users = Array.isArray(messages) ? messages.filter((message) => message?.role === "user") : []
+  const users = Array.isArray(messages)
+    ? messages.filter((message) => message?.role === "user")
+    : []
   const latest = users.at(-1)
   return `${users.length}:${JSON.stringify(latest?.content || latest || "").slice(-4000)}`
 }
@@ -100,25 +130,35 @@ export default {
   async setup(ctx) {
     const turns = new Map()
     const registrations = await Promise.all([
-      ctx.tool.transform((tools) => tools.add({
-        name: TOOL,
-        description: "Publish or update the concise task plan shown in the web Plan card and workspace sidebar. This is a checklist, never chain-of-thought.",
-        input: inputSchema,
-        options: { pinned: true, codemode: false },
-        execute: async (input, context) => {
-          const filename = writePlan(context.sessionID, input)
-          const turn = turns.get(String(context.sessionID)) || {}
-          turns.set(String(context.sessionID), { ...turn, planned: true })
-          return { content: `Visible plan updated (${input.todos.length} items).`, metadata: { filename } }
-        },
-      })),
+      ctx.tool.transform((tools) =>
+        tools.add({
+          name: TOOL,
+          description:
+            "Publish or update the concise task plan shown in the web Plan card and workspace sidebar. This is a checklist, never chain-of-thought.",
+          input: inputSchema,
+          options: { pinned: true, codemode: false },
+          execute: async (input, context) => {
+            const filename = writePlan(context.sessionID, input)
+            const turn = turns.get(String(context.sessionID)) || {}
+            turns.set(String(context.sessionID), { ...turn, planned: true })
+            return {
+              content: `Visible plan updated (${input.todos.length} items).`,
+              metadata: { filename },
+            }
+          },
+        }),
+      ),
       ctx.session.hook("context", (event) => {
         const agent = String(event?.agent || "")
         if (!PLAN_AGENTS.has(agent) || !Array.isArray(event.system)) return
         const sessionID = String(event.sessionID || "")
         const key = turnKey(event.messages)
         const previous = turns.get(sessionID)
-        turns.set(sessionID, { key, planned: previous?.key === key && previous.planned === true, gated: BUILD_AGENTS.has(agent) })
+        turns.set(sessionID, {
+          key,
+          planned: previous?.key === key && previous.planned === true,
+          gated: STRICT && BUILD_AGENTS.has(agent),
+        })
         if (turns.size > 512) turns.delete(turns.keys().next().value)
         if (!event.system.some((item) => textOf(item).includes(MARKER))) {
           event.system.push({ type: "text", text: `${MARKER}:\n${POLICY}` })

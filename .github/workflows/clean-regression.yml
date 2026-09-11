@@ -1,70 +1,154 @@
 name: Clean Regression
-
 on:
   pull_request:
-    paths: ['app/**', 'config/**', 'scripts/**', '.env.example', '.github/workflows/clean-regression.yml']
   push:
-    branches: [main, 'astra/**']
-    paths: ['app/**', 'config/**', 'scripts/**', '.env.example', '.github/workflows/clean-regression.yml']
+    branches: [main, astra2, 'astra/**']
   workflow_dispatch:
-
 permissions:
   contents: read
-
+env:
+  # Bare opencode2 invocations (--version validation, any launch without the rendered
+  # config) detach the CLI's own updater: `npm install --global @opencode-ai/cli@latest`.
+  # On runners npm's global prefix IS the pinned tree, and a mid-job reify once replaced
+  # opencode2.exe (packaged-tui-pty "Exec format error"; the runner orphan-tracker killed
+  # `npm install @op...` at Complete job). The pinned CLI honors this env gate. The audit
+  # matrix strips OPENCODE_* for suites, so scripts/tui-package-smoke.sh,
+  # scripts/audit-regression.py and scripts/native-budget-regression.py re-export it.
+  OPENCODE_DISABLE_AUTOUPDATE: "1"
+concurrency:
+  group: clean-regression-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   model-free-matrix:
-    runs-on: ubuntu-24.04
+    # Ubuntu 22.04 permits unprivileged network namespaces without disabling host policy.
+    runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+        with: {persist-credentials: false}
       - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Install pinned browser, real CLI and policy dependencies
+        with: {node-version: '22'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Validate workflow and CLI harness consistency
+        run: python scripts/workflow-cli-consistency.py
+      - name: Install browser harness dependencies
         run: |
-          python -m pip install --disable-pip-version-check playwright==1.57.0
-          python -m playwright install --with-deps chromium --only-shell
-          sudo apt-get update -qq
+          set -euo pipefail
+          python -m pip install playwright==1.57.0
+          python -m pip install -r scripts/tool-fabric-requirements.txt
+          python -m playwright install --with-deps chromium
+          sudo apt-get update
           sudo apt-get install -y bubblewrap
-          npm install --global --prefix "$RUNNER_TEMP/opencode-v2" @opencode-ai/cli@0.0.0-beta-18743
-          echo "OPENCODE2_BIN=$RUNNER_TEMP/opencode-v2/bin/opencode2" >> "$GITHUB_ENV"
-      - name: Run all 20 independent regression suites
-        run: python scripts/audit-regression.py --output "$RUNNER_TEMP/regression"
+      - name: Install pinned native OpenCode
+        run: |
+          set -euo pipefail
+          npm install -g @opencode-ai/cli@0.0.0-beta-18743
+          # Regression guard: a broken npm postinstall can leave the placeholder
+          # bin/opencode2.exe that dies with "Exec format error" mid-suite. Validate the
+          # real binary and force exactly one clean reinstall before anything depends on it.
+          # The workflow-level OPENCODE_DISABLE_AUTOUPDATE keeps this bare validation from
+          # detaching the CLI's own updater, whose `npm install --global` reify once
+          # replaced this pinned tree mid-job (see scripts/install.sh).
+          if ! opencode2 --version; then
+            echo "pinned opencode2 failed validation; reinstalling once" >&2
+            npm uninstall -g @opencode-ai/cli || true
+            npm install -g @opencode-ai/cli@0.0.0-beta-18743
+            opencode2 --version
+          fi
+      - name: Run clean model-free regression matrix
+        run: |
+          set -euo pipefail
+          python scripts/audit-regression.py --output "$RUNNER_TEMP/regression"
+          test -s "$RUNNER_TEMP/regression/report.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: model-free-regression-${{ github.sha }}
+          name: model-free-regression
           path: ${{ runner.temp }}/regression/
-          retention-days: 7
-          if-no-files-found: warn
   native-clean-install:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+        with: {persist-credentials: false}
       - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Install sandbox policy dependency
+        with: {node-version: '22'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install runtime test dependencies
         run: |
-          sudo apt-get update -qq
+          set -euo pipefail
+          sudo apt-get update
           sudo apt-get install -y bubblewrap
-      - name: Real installer, native configuration CRUD and real PTY
-        run: python scripts/install-native-regression.py --output "$RUNNER_TEMP/native-install"
+      - name: Install native runtime from scratch and exercise TUI
+        run: |
+          set -euo pipefail
+          python scripts/install-native-regression.py --output "$RUNNER_TEMP/native-install/reports"
+          test -s "$RUNNER_TEMP/native-install/reports/report.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: native-install-${{ github.sha }}
-          path: ${{ runner.temp }}/native-install/
-          retention-days: 7
-          if-no-files-found: warn
+          name: native-install-regression
+          path: ${{ runner.temp }}/native-install/reports/
+  native-budget-wire:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install pinned native OpenCode
+        run: |
+          set -euo pipefail
+          npm install -g @opencode-ai/cli@0.0.0-beta-18743
+          # Same postinstall-placeholder guard as model-free-matrix; the workflow-level
+          # OPENCODE_DISABLE_AUTOUPDATE keeps the bare validation from spawning the CLI's
+          # own updater against this pinned tree.
+          if ! opencode2 --version; then
+            echo "pinned opencode2 failed validation; reinstalling once" >&2
+            npm uninstall -g @opencode-ai/cli || true
+            npm install -g @opencode-ai/cli@0.0.0-beta-18743
+            opencode2 --version
+          fi
+      - name: Real native inference, retry, turn boundary and MCP wire contracts
+        run: |
+          set -euo pipefail
+          python scripts/native-budget-regression.py --retry-once --output "$RUNNER_TEMP/native-budget"
+          test -n "$(ls -A "$RUNNER_TEMP/native-budget")"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-budget-wire
+          path: ${{ runner.temp }}/native-budget/
+  kernel-sandbox:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install real isolation dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          python -m pip install -r scripts/tool-fabric-requirements.txt
+      - name: Require kernel isolation and execute Tool Fabric acceptance
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/kernel-sandbox"
+          uname -a > "$RUNNER_TEMP/kernel-sandbox/kernel.txt"
+          python scripts/sandbox-preflight.py --json | tee "$RUNNER_TEMP/kernel-sandbox/preflight.json"
+          python scripts/tool-fabric-smoke.py | tee "$RUNNER_TEMP/kernel-sandbox/tool-fabric.log"
+          test -s "$RUNNER_TEMP/kernel-sandbox/preflight.json"
+          test -s "$RUNNER_TEMP/kernel-sandbox/tool-fabric.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-sandbox
+          path: ${{ runner.temp }}/kernel-sandbox/

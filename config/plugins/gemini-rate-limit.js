@@ -2,7 +2,8 @@ import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-const STATE_DIR = process.env.CUSTOM_OPENCODE_STATE_DIR || join(homedir(), ".local", "state", "custom-opencode")
+const STATE_DIR =
+  process.env.CUSTOM_OPENCODE_STATE_DIR || join(homedir(), ".local", "state", "custom-opencode")
 const STATE_FILE = join(STATE_DIR, "rate-limit.json")
 const WRAPPED_FETCH = Symbol.for("custom-opencode.gemini-rate-limit.fetch")
 const handledResponses = new WeakSet()
@@ -72,7 +73,9 @@ function abortError(signal) {
 }
 
 async function discard(response) {
-  try { await response.body?.cancel() } catch {}
+  try {
+    await response.body?.cancel()
+  } catch {}
 }
 
 export function parseRetrySeconds(text, headers) {
@@ -89,7 +92,9 @@ export function parseRetrySeconds(text, headers) {
     const retryAfter = headers.get("retry-after")
     if (retryAfter) {
       const numeric = Number(retryAfter)
-      seconds = Number.isFinite(numeric) ? Math.ceil(numeric) : Math.ceil((Date.parse(retryAfter) - Date.now()) / 1000)
+      seconds = Number.isFinite(numeric)
+        ? Math.ceil(numeric)
+        : Math.ceil((Date.parse(retryAfter) - Date.now()) / 1000)
     }
   }
   return Number.isFinite(seconds) && seconds > 0 ? seconds : 60
@@ -110,10 +115,13 @@ export function createRetryFetch(origFetch, { sleepFn = sleep } = {}) {
   async function wrappedFetch(input, init, attempt = 0, initialResponse) {
     const signal = requestSignal(input, init)
     abortError(signal)
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input?.url || ""
-    const isGoogle = url.includes("generativelanguage.googleapis.com") || url.includes("aiplatform.googleapis.com")
-    const retryInput = typeof Request !== "undefined" && input instanceof Request ? input.clone() : input
-    const response = initialResponse || await origFetch(input, init)
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.href : input?.url || ""
+    const isGoogle =
+      url.includes("generativelanguage.googleapis.com") || url.includes("aiplatform.googleapis.com")
+    const retryInput =
+      typeof Request !== "undefined" && input instanceof Request ? input.clone() : input
+    const response = initialResponse || (await origFetch(input, init))
     handledResponses.add(response)
 
     if (!isGoogle || response.status !== 429) {
@@ -148,14 +156,25 @@ export function createRetryFetch(origFetch, { sleepFn = sleep } = {}) {
     const limitedBucket = quotaBucket(metric, details)
     const limits = { ...DEFAULT_LIMITS, [limitedBucket]: limit }
     if (attempt >= 5) {
-      writeRateLimitState({ active: true, seconds: retrySeconds, total: retrySeconds, until: earliest, metric, limit, limits, limitedBucket })
+      writeRateLimitState({
+        active: true,
+        seconds: retrySeconds,
+        total: retrySeconds,
+        until: earliest,
+        metric,
+        limit,
+        limits,
+        limitedBucket,
+      })
       return response
     }
     await discard(response)
     const retryAt = Math.max(earliest, nextRetryAt)
     nextRetryAt = retryAt + 1000
     cooldownUntil = Math.max(cooldownUntil, retryAt)
-    console.warn(`[gemini-rate-limit] 429 Quota Exceeded. Retrying in ${Math.ceil((retryAt - Date.now()) / 1000)}s (attempt ${attempt + 1})...`)
+    console.warn(
+      `[gemini-rate-limit] 429 Quota Exceeded. Retrying in ${Math.ceil((retryAt - Date.now()) / 1000)}s (attempt ${attempt + 1})...`,
+    )
 
     while (Date.now() < retryAt) {
       abortError(signal)
@@ -187,39 +206,49 @@ export default {
   id: "gemini-rate-limit",
   setup: async (ctx) => {
     writeRateLimitState({ active: false, seconds: 0 })
-    const originalGlobalFetch = globalThis.fetch
-    const wrappedGlobalFetch = typeof originalGlobalFetch === "function" ? createRetryFetch(originalGlobalFetch) : null
-    if (wrappedGlobalFetch) globalThis.fetch = wrappedGlobalFetch
-
-    if (ctx.aisdk?.hook) {
-      ctx.aisdk.hook("sdk", async (hook) => {
-        if (hook?.options) hook.options.fetch = createRetryFetch(hook.options.fetch || globalThis.fetch)
-      })
-    }
-    const requests = new WeakMap()
-    const disposers = []
-    if (ctx.session?.hook && wrappedGlobalFetch) {
-      disposers.push(await ctx.session.hook("http.request", async (event) => {
-        requests.set(event.request, event.request.clone())
-      }, { providerID: "google" }))
-      disposers.push(await ctx.session.hook("http.response", async (event) => {
-        const request = requests.get(event.request)
-        requests.delete(event.request)
-        if (!request || handledResponses.has(event.response)) return
-        event.response = await wrappedGlobalFetch(request, undefined, 0, event.response)
-      }, { providerID: "google" }))
-    }
-
+    // Exactly one retry owner: the native scheduler. Global fetch wrappers
+    // replay outside request hooks and otherwise evade the root-call budget.
+    let timer
+    const registration = await ctx.session.hook("retry", async (event) => {
+      if (event.model?.providerID !== "google") return
+      const status = Number(event.error?.status)
+      if (status !== 429) return
+      if (Number(event.attempt) >= 3) {
+        event.decision = { retry: false }
+        return
+      }
+      const message = String(event.error?.message || "")
+      const seconds = Math.max(1, Math.min(30, parseRetrySeconds(message, null) || 5))
+      const until = Date.now() + seconds * 1000
+      event.decision = { retry: true, delay: seconds * 1000 }
+      clearInterval(timer)
+      const render = () => {
+        const remaining = Math.max(0, Math.ceil((until - Date.now()) / 1000))
+        writeRateLimitState({
+          active: remaining > 0,
+          provider: "google",
+          seconds: remaining,
+          total: seconds,
+          until,
+          message: `Лимит Gemini (429): повтор через ${remaining}с…`,
+        })
+        if (!remaining) clearInterval(timer)
+      }
+      render()
+      timer = setInterval(render, 1000)
+      timer.unref?.()
+    })
     return async () => {
-      if (wrappedGlobalFetch && globalThis.fetch === wrappedGlobalFetch) globalThis.fetch = originalGlobalFetch
+      clearInterval(timer)
       writeRateLimitState({ active: false, seconds: 0 })
-      await Promise.allSettled(disposers.map((registration) => registration.dispose()))
+      await registration.dispose()
     }
   },
 }
 
 if (process.env.GEMINI_RATE_LIMIT_SELF_CHECK) {
-  const sample = "* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_paid_tier_input_token_count, limit: 2000000, model: gemini-3.8-flash\\nPlease retry in 51.86177085s."
+  const sample =
+    "* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_paid_tier_input_token_count, limit: 2000000, model: gemini-3.8-flash\\nPlease retry in 51.86177085s."
   const seconds = parseRetrySeconds(sample, null)
   if (seconds !== 52) throw new Error(`Expected 52 seconds, got ${seconds}`)
   console.log("gemini-rate-limit self-check OK")

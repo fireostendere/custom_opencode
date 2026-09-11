@@ -27,3 +27,10 @@
 #projectSettingsDialog .workflow-modal{max-height:calc(100dvh - 36px);overflow:auto}
 #projectSettingsDialog .workflow-grid .workflow-note{display:block;margin-top:6px}
 #projectSettingsStatus{min-height:2em}
+
+/* Desktop split panels share a viewport, irrespective of content length. */
+@media(min-width:701px){
+  .orchestration-panels{align-items:stretch}
+  .orchestration-panel[open]>.plan-panel-body,
+  .orchestration-panel[open]>.orchestration-nodes{height:300px;max-height:300px;box-sizing:border-box;min-height:0;overflow-y:auto}
+}

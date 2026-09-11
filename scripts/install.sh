@@ -383,7 +383,9 @@ config = json.loads(text)
 config.pop("plugins", None)
 # Runtime V3 relies on native durable compaction and Code Mode. Code Mode keeps
 # MCP schemas out of the provider tool list until the namespace is actually used.
-config["compaction"] = {"auto": True, "keep": {"tokens": 12000}, "buffer": 24000}
+# Keep one compaction owner. These are margins, not a context-window cap.
+# Native itself reserves max(min(model.output, 32000), buffer) from context.
+config["compaction"] = {"auto": True, "keep": {"tokens": 4096}, "buffer": 2048}
 config["tool_output"] = {"max_lines": 1600, "max_bytes": 48000}
 kb = (((config.get("mcp") or {}).get("servers") or {}).get("kb"))
 if isinstance(kb, dict):
@@ -466,6 +468,22 @@ if auth:
     os.replace(temporary, target)
 PY
 
+# Private policy has its own lifecycle; disabling the public web listener must
+# not disable native permissions, budgets or context assembly.
+export OPENCODE_POLICY_PORT="${OPENCODE_POLICY_PORT:-4099}"
+export OPENCODE_POLICY_COMMAND="$BIN_DIR/custom-opencode-policy"
+cat >"$BIN_DIR/custom-opencode-policy" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+export CUSTOM_OPENCODE_ROOT="$ROOT"
+set -a
+source "$ROOT/.env"
+set +a
+export OPENCODE_POLICY_PORT="\${OPENCODE_POLICY_PORT:-$OPENCODE_POLICY_PORT}"
+exec "$PYTHON3" "$ROOT/app/policy_server.py" "\$@"
+EOF
+chmod 0755 "$BIN_DIR/custom-opencode-policy"
+
 cat >"$BIN_DIR/custom-opencode" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -546,6 +564,8 @@ SERVICE_ENV=(
   BAILIAN_CONFIG_PATH QWEN_QUOTA_PROBE_ENABLED OPENCODE_WEB_PORT
   OPENCODE_SERVER_PASSWORD OPENCODE_RUNTIME_PLUGIN_TOKEN
   OPENCODE_RUNTIME_PLUGIN_HOST OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS
+  OPENCODE_POLICY_PORT OPENCODE_POLICY_COMMAND CUSTOM_OPENCODE_ROOT
+  OPENCODE_ROOT_BUDGET_JSON OPENCODE_REPO_EMBEDDINGS OPENCODE_REPO_EMBED_MODEL OPENCODE_VISIBLE_PLAN
   OPENCODE_SECRET_PREFIXES OPENCODE_PLANNER_MODEL OPENCODE_BUILDER_MODEL
   OPENCODE_READER_MODEL OPENCODE_REVIEW_MODEL OPENCODE_LONG_HORIZON_MODEL
   OPENCODE_ORCHESTRATED_MODEL OPENCODE_SOL_ORCHESTRATED_MODEL
