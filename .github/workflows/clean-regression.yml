@@ -2,7 +2,7 @@ name: Clean Regression
 on:
   pull_request:
   push:
-    branches: [main, 'astra/**']
+    branches: [main, astra2, 'astra/**']
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,17 +21,34 @@ jobs:
         with: {node-version: '22'}
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
+      - name: Validate workflow and CLI harness consistency
+        run: python scripts/workflow-cli-consistency.py
       - name: Install browser harness dependencies
         run: |
+          set -euo pipefail
           python -m pip install playwright==1.57.0
           python -m pip install -r scripts/tool-fabric-requirements.txt
           python -m playwright install --with-deps chromium
           sudo apt-get update
           sudo apt-get install -y bubblewrap
       - name: Install pinned native OpenCode
-        run: npm install -g @opencode-ai/cli@0.0.0-beta-18743
+        run: |
+          set -euo pipefail
+          npm install -g @opencode-ai/cli@0.0.0-beta-18743
+          # Regression guard: a broken npm postinstall can leave the placeholder
+          # bin/opencode2.exe that dies with "Exec format error" mid-suite. Validate the
+          # real binary and force exactly one clean reinstall before anything depends on it.
+          if ! opencode2 --version; then
+            echo "pinned opencode2 failed validation; reinstalling once" >&2
+            npm uninstall -g @opencode-ai/cli || true
+            npm install -g @opencode-ai/cli@0.0.0-beta-18743
+            opencode2 --version
+          fi
       - name: Run clean model-free regression matrix
-        run: python scripts/audit-regression.py --output "$RUNNER_TEMP/regression"
+        run: |
+          set -euo pipefail
+          python scripts/audit-regression.py --output "$RUNNER_TEMP/regression"
+          test -s "$RUNNER_TEMP/regression/report.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -49,10 +66,14 @@ jobs:
         with: {python-version: '3.12'}
       - name: Install runtime test dependencies
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y bubblewrap
       - name: Install native runtime from scratch and exercise TUI
-        run: python scripts/install-native-regression.py --workdir "$RUNNER_TEMP/native-install"
+        run: |
+          set -euo pipefail
+          python scripts/install-native-regression.py --output "$RUNNER_TEMP/native-install/reports"
+          test -s "$RUNNER_TEMP/native-install/reports/report.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -69,14 +90,26 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
       - name: Install pinned native OpenCode
-        run: npm install -g @opencode-ai/cli@0.0.0-beta-18743
+        run: |
+          set -euo pipefail
+          npm install -g @opencode-ai/cli@0.0.0-beta-18743
+          # Same postinstall-placeholder guard as model-free-matrix.
+          if ! opencode2 --version; then
+            echo "pinned opencode2 failed validation; reinstalling once" >&2
+            npm uninstall -g @opencode-ai/cli || true
+            npm install -g @opencode-ai/cli@0.0.0-beta-18743
+            opencode2 --version
+          fi
       - name: Real native inference, retry, turn boundary and MCP wire contracts
-        run: python scripts/native-budget-regression.py --retry-once --output "$RUNNER_TEMP/native-budget"
+        run: |
+          set -euo pipefail
+          python scripts/native-budget-regression.py --retry-once --output "$RUNNER_TEMP/native-budget"
+          test -n "$(ls -A "$RUNNER_TEMP/native-budget")"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: native-budget-wire
-          path: ${{ runner.temp }}/native-budget/evidence/
+          path: ${{ runner.temp }}/native-budget/
   kernel-sandbox:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
@@ -87,15 +120,19 @@ jobs:
         with: {python-version: '3.12'}
       - name: Install real isolation dependencies
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y bubblewrap
           python -m pip install -r scripts/tool-fabric-requirements.txt
       - name: Require kernel isolation and execute Tool Fabric acceptance
         run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/kernel-sandbox"
           uname -a > "$RUNNER_TEMP/kernel-sandbox/kernel.txt"
           python scripts/sandbox-preflight.py --json | tee "$RUNNER_TEMP/kernel-sandbox/preflight.json"
           python scripts/tool-fabric-smoke.py | tee "$RUNNER_TEMP/kernel-sandbox/tool-fabric.log"
+          test -s "$RUNNER_TEMP/kernel-sandbox/preflight.json"
+          test -s "$RUNNER_TEMP/kernel-sandbox/tool-fabric.log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

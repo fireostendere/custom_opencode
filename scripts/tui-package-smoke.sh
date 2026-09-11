@@ -6,11 +6,46 @@ OPENCODE2_BIN=${OPENCODE2_BIN:-}
 if [[ -z "$OPENCODE2_BIN" ]]; then
   OPENCODE2_BIN=$(command -v opencode2 || true)
 fi
-if [[ -z "$OPENCODE2_BIN" || ! -x "$OPENCODE2_BIN" ]]; then
-  echo "opencode2 is required for packaged TUI smoke (set OPENCODE2_BIN or add it to PATH)" >&2
-  exit 2
+if [[ -n "$OPENCODE2_BIN" ]]; then
+  OPENCODE2_BIN=$(readlink -f "$OPENCODE2_BIN")
 fi
-OPENCODE2_BIN=$(readlink -f "$OPENCODE2_BIN")
+
+# npm postinstall can leave the packaged placeholder behind (CI regression:
+# "Exec format error ... @opencode-ai/cli/bin/opencode2.exe"), so require that the
+# binary actually executes and otherwise fall back to the real platform-package
+# binary that postinstall.mjs copies from.
+opencode2_runs() { [[ -n "${1:-}" && -x "$1" ]] && timeout 30 "$1" --version >/dev/null 2>&1; }
+if ! opencode2_runs "${OPENCODE2_BIN:-}"; then
+  arch=$(uname -m)
+  case "$arch" in
+    x86_64) arch=x64 ;;
+    aarch64 | arm64) arch=arm64 ;;
+  esac
+  platform=$(uname -s | tr '[:upper:]' '[:lower:]')
+  candidates=()
+  if [[ -n "${OPENCODE2_BIN:-}" ]]; then
+    cli_dir=$(dirname "$(dirname "$OPENCODE2_BIN")")
+    candidates+=("$cli_dir"/node_modules/@opencode-ai/cli-"$platform"-"$arch"*/bin/opencode2)
+  fi
+  global_root=$(npm root -g 2>/dev/null || true)
+  if [[ -n "$global_root" ]]; then
+    # ponytail: the glob covers baseline/musl variants; --version rejects a wrong ABI.
+    candidates+=("$global_root"/@opencode-ai/cli/node_modules/@opencode-ai/cli-"$platform"-"$arch"*/bin/opencode2)
+    candidates+=("$global_root"/@opencode-ai/cli-"$platform"-"$arch"*/bin/opencode2)
+  fi
+  resolved=""
+  for candidate in "${candidates[@]}"; do
+    if opencode2_runs "$candidate"; then
+      resolved=$(readlink -f "$candidate")
+      break
+    fi
+  done
+  if [[ -z "$resolved" ]]; then
+    echo "opencode2 is required for packaged TUI smoke (set OPENCODE2_BIN or add it to PATH)" >&2
+    exit 2
+  fi
+  OPENCODE2_BIN="$resolved"
+fi
 
 TMP=$(mktemp -d)
 trap 'HOME="$TMP/home" "$OPENCODE2_BIN" service stop >/dev/null 2>&1 || true; rm -rf "$TMP"' EXIT

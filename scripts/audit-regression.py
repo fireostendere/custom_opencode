@@ -44,6 +44,7 @@ SUITES = [
     ("web-critical-controls", [sys.executable, "scripts/web-critical-controls-e2e.py"]),
     ("packaged-tui-pty", ["bash", "scripts/tui-package-smoke.sh"]),
     ("integration-contract", [sys.executable, "scripts/integration-preflight.py"]),
+    ("workflow-cli-consistency", [sys.executable, "scripts/workflow-cli-consistency.py"]),
 ]
 
 
