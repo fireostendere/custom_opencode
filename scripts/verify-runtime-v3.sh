@@ -10,11 +10,12 @@ NODE=$(command -v node || true)
   "$ROOT/app/runtime_v3.py" "$ROOT/app/runtime_v3_ext.py" "$ROOT/app/runtime_completion.py" \
   "$ROOT/app/server_workflow.py" "$ROOT/scripts/runtime-v3-smoke.py" \
   "$ROOT/scripts/runtime-v3-worktree-smoke.py" "$ROOT/scripts/runtime-completion-smoke.py" \
-  "$ROOT/scripts/install-runtime-v3-selftest.py"
+  "$ROOT/scripts/install-runtime-v3-selftest.py" "$ROOT/scripts/context-budget-regression.py"
 "$NODE" --check "$ROOT/config/plugins/server-runtime-guard.js"
 "$NODE" --check "$ROOT/app/runtime-v3-dashboard.js"
 "$NODE" --check "$ROOT/app/control-plane.js"
 "$PYTHON3" "$ROOT/scripts/runtime-v3-smoke.py"
+"$PYTHON3" "$ROOT/scripts/context-budget-regression.py"
 "$PYTHON3" "$ROOT/scripts/runtime-v3-worktree-smoke.py"
 "$PYTHON3" "$ROOT/scripts/runtime-completion-smoke.py"
 

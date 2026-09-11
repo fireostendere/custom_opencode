@@ -106,7 +106,7 @@ await check("MCP filter preserves all message bytes", async () => {
 process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN = "fixture-not-real"
 const guard = (await import("../config/plugins/server-runtime-guard.js")).default
 const gh = {}
-let read
+const guardTools = []
 const fetch = globalThis.fetch
 try {
   globalThis.fetch = async (url, init) =>
@@ -122,7 +122,7 @@ try {
       transform: async (f) =>
         f({
           add: (t) => {
-            read = t
+            guardTools.push(t)
           },
         }),
       hook: async (n, f) => (gh[n] = f),
@@ -146,7 +146,10 @@ try {
       sent = JSON.parse(init.body)
       return new Response('{"content":"OK"}')
     }
-    assert.equal(read.name, "runtime_artifact_read")
+    // The merged guard plugin registers several tools (runtime_artifact_read,
+    // context_budget); registration order is not part of the contract.
+    const read = guardTools.find((t) => t.name === "runtime_artifact_read")
+    assert.ok(read, "runtime_artifact_read is registered")
     await read.execute({ artifactID: "a", sessionID: "forged" }, { sessionID: "owner" })
     assert.equal(sent.sessionID, "owner")
   })
