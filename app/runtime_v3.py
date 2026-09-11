@@ -826,9 +826,44 @@ class DynamicContextManager:
         rows = value if isinstance(value, list) else []
         return max(1, int(len(json.dumps(rows, ensure_ascii=False, default=str)) / 2.2)), rows
 
-    def _budget(
-        self, runtime: Any, task: dict[str, Any] | None
-    ) -> tuple[int, int, int, str | None, int]:
+    BUDGET_NAMESPACE = "context-budget"
+
+    @staticmethod
+    def _token_int(value: Any) -> int:
+        try:
+            number = int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, number)
+
+    @staticmethod
+    def _env_flag(name: str) -> bool:
+        return str(os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _env_int(name: str) -> int | None:
+        try:
+            value = int(str(os.environ.get(name) or "").strip())
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
+    @staticmethod
+    def _policy_int(policy: dict[str, Any], key: str) -> int | None:
+        try:
+            value = int(policy.get(key) or 0)
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
+    def _budget_detail(self, runtime: Any, task: dict[str, Any] | None) -> dict[str, Any]:
+        """Per-request provider/model budget facts plus the adaptive-expansion policy.
+
+        ``base`` is the default working budget; ``ceiling`` is the hard limit it
+        may expand toward (real model limit minus output reserve, clamped by the
+        model input limit and by any user policy maximum). Grants persist per
+        session and never switch the selected model.
+        """
         profiles = runtime.REGISTRY.profiles()
         profile = profiles.get(str((task or {}).get("profile") or "direct"), profiles["direct"])
         policy = (
@@ -871,10 +906,208 @@ class DynamicContextManager:
         cap = int(number(policy.get("maxInputTokens"), 0))
         if cap > 0:
             budget = min(budget, cap)
+        # A user policy maximum only ever lowers the real model ceiling.
+        policy_caps = [
+            value
+            for value in (
+                self._env_int("OPENCODE_CONTEXT_BUDGET_MAX"),
+                self._policy_int(policy, "maxBudgetTokens"),
+            )
+            if value
+        ]
+        policy_max = min(policy_caps) if policy_caps else None
+        ceiling = max(1, min(hard, policy_max)) if policy_max else max(1, hard)
+        base = max(1, min(budget, ceiling))
         growth = max(
-            1, min(budget, int(number(policy.get("minGrowthBeforeRecompact"), limit * 0.03)))
+            1, min(base, int(number(policy.get("minGrowthBeforeRecompact"), limit * 0.03)))
         )
-        return budget, reserve, limit, candidate or None, growth
+        step = self._policy_int(policy, "expansionStepTokens") or max(
+            4000, min(64000, int(limit * 0.05))
+        )
+        max_steps = (
+            self._env_int("OPENCODE_CONTEXT_MAX_STEPS")
+            or self._policy_int(policy, "maxExpansionSteps")
+            or 4
+        )
+        if "autoExpand" in policy:
+            auto_expand = bool(policy.get("autoExpand"))
+        else:
+            auto_expand = self._env_flag("OPENCODE_CONTEXT_AUTO_EXPAND")
+        return {
+            "base": base,
+            "ceiling": ceiling,
+            "reserve": reserve,
+            "limit": limit,
+            "model": candidate or None,
+            "minGrowth": growth,
+            "policyMax": policy_max,
+            "step": max(1, min(step, ceiling)),
+            "maxSteps": max(1, min(12, max_steps)),
+            "autoExpand": auto_expand,
+        }
+
+    def _budget(
+        self, runtime: Any, task: dict[str, Any] | None
+    ) -> tuple[int, int, int, str | None, int]:
+        detail = self._budget_detail(runtime, task)
+        return (
+            detail["base"],
+            detail["reserve"],
+            detail["limit"],
+            detail["model"],
+            detail["minGrowth"],
+        )
+
+    def _budget_state(self, sid: str) -> dict[str, Any]:
+        state = self.store.cache_get(self.BUDGET_NAMESPACE, sid)
+        if not isinstance(state, dict):
+            state = {}
+        return {
+            "workingTokens": self._token_int(state.get("workingTokens")),
+            "requestedTokens": self._token_int(state.get("requestedTokens")) or None,
+            "steps": self._token_int(state.get("steps")),
+            "grantedAt": int(state.get("grantedAt") or 0),
+            "reason": str(state.get("reason") or "")[:200],
+        }
+
+    def _save_budget_state(self, sid: str, state: dict[str, Any]) -> None:
+        self.store.cache_set(self.BUDGET_NAMESPACE, sid, state, ttl_seconds=604800)
+
+    def _working(self, detail: dict[str, Any], state: dict[str, Any]) -> int:
+        """Effective working budget: persisted grant, clamped to the real ceiling."""
+        granted = min(self._token_int(state.get("workingTokens")), detail["ceiling"])
+        return max(detail["base"], granted)
+
+    def _session_budget_task(
+        self, features: Any, runtime: Any, sid: str, task: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Resolve the caller's active task (if any), then refine with native session state."""
+        if not isinstance(task, dict):
+            tasks = self.store.list_tasks(
+                session_id=sid,
+                states=[
+                    "submitted",
+                    "running",
+                    "waiting_permission",
+                    "verifying",
+                    "recovering",
+                    "queued",
+                ],
+                limit=10,
+            )
+            task = tasks[0] if tasks else None
+        return self._session_task(features, runtime, sid, task)
+
+    def budget_status(
+        self, features: Any, runtime: Any, sid: str, task: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        session_task = self._session_budget_task(features, runtime, sid, task)
+        detail = self._budget_detail(runtime, session_task)
+        state = self._budget_state(sid)
+        working = self._working(detail, state)
+        active, _ = self._active_tokens(features, sid)
+        native = bool(getattr(features, "native_compaction_owned", False))
+        return {
+            "sessionID": sid,
+            "usedTokens": active,
+            "usedSource": "native" if native else "estimate",
+            "workingTokens": working,
+            "baseTokens": detail["base"],
+            "ceilingTokens": detail["ceiling"],
+            "modelLimitTokens": detail["limit"],
+            "reserveTokens": detail["reserve"],
+            "policyMaxTokens": detail["policyMax"],
+            "model": detail["model"],
+            "autoExpand": detail["autoExpand"],
+            "stepsTaken": state["steps"],
+            "maxSteps": detail["maxSteps"],
+            "expandable": working < detail["ceiling"] and state["steps"] < detail["maxSteps"],
+            "headroomTokens": max(0, working - active),
+            "requestedTokens": state["requestedTokens"],
+            "grantedAt": state["grantedAt"],
+        }
+
+    def budget_request(
+        self,
+        features: Any,
+        runtime: Any,
+        sid: str,
+        tokens: Any,
+        reason: str = "",
+        task: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        session_task = self._session_budget_task(features, runtime, sid, task)
+        detail = self._budget_detail(runtime, session_task)
+        state = self._budget_state(sid)
+        previous = self._working(detail, state)
+        steps = state["steps"]
+        try:
+            want = int(tokens)
+        except (TypeError, ValueError):
+            raise ValueError("tokens must be a positive integer")
+        if want <= 0:
+            raise ValueError("tokens must be a positive integer")
+        granted = True
+        denied = None
+        if want <= previous:
+            pass
+        elif steps >= detail["maxSteps"]:
+            granted = False
+            denied = f"expansion steps exhausted ({steps}/{detail['maxSteps']})"
+        elif previous >= detail["ceiling"]:
+            granted = False
+            denied = (
+                f"ceiling reached ({previous} of {detail['ceiling']} tokens; "
+                f"real model limit {detail['limit']} minus reserve, policy max {detail['policyMax']})"
+            )
+        else:
+            working = min(want, detail["ceiling"])
+            steps += 1
+            state.update(
+                {
+                    "workingTokens": working,
+                    "requestedTokens": want,
+                    "steps": steps,
+                    "grantedAt": now_ms(),
+                    "reason": str(reason)[:200],
+                }
+            )
+            self._save_budget_state(sid, state)
+            self.store.event(
+                kind="context.budget_granted",
+                task_id=(session_task or {}).get("id"),
+                session_id=sid,
+                project_dir=(session_task or {}).get("project_dir"),
+                data={
+                    "mode": "request",
+                    "requestedTokens": want,
+                    "workingTokens": working,
+                    "baseTokens": detail["base"],
+                    "ceilingTokens": detail["ceiling"],
+                    "stepsTaken": steps,
+                    "maxSteps": detail["maxSteps"],
+                    "model": detail["model"],
+                    "reason": str(reason)[:200],
+                },
+            )
+        if not granted:
+            self.store.event(
+                kind="context.budget_denied",
+                task_id=(session_task or {}).get("id"),
+                session_id=sid,
+                project_dir=(session_task or {}).get("project_dir"),
+                data={
+                    "requestedTokens": want,
+                    "workingTokens": previous,
+                    "ceilingTokens": detail["ceiling"],
+                    "stepsTaken": steps,
+                    "maxSteps": detail["maxSteps"],
+                    "reason": denied,
+                },
+            )
+        result = self.budget_status(features, runtime, sid, task=session_task)
+        result.update({"granted": granted, "requestedTokens": want, "deniedReason": denied})
+        return result
 
     def _session_task(self, features: Any, runtime: Any, sid: str, task: dict[str, Any] | None):
         # The native session is authoritative after model changes, not a queued route.
@@ -909,9 +1142,57 @@ class DynamicContextManager:
         self, features: Any, runtime: Any, sid: str, task: dict[str, Any] | None
     ) -> dict[str, Any]:
         active, rows = self._active_tokens(features, sid)
+        used_source = (
+            "native" if getattr(features, "native_compaction_owned", False) else "estimate"
+        )
         session_task = self._session_task(features, runtime, sid, task)
-        budget, reserve, limit, model_ref, min_growth = self._budget(runtime, session_task)
+        detail = self._budget_detail(runtime, session_task)
+        reserve = detail["reserve"]
+        limit = detail["limit"]
+        model_ref = detail["model"]
+        min_growth = detail["minGrowth"]
+        # Adaptive working budget: a persisted grant or one bounded auto-expand
+        # step raises the compaction trigger toward the real model ceiling.
+        budget_state = self._budget_state(sid)
+        budget = self._working(detail, budget_state)
+        steps = budget_state["steps"]
         triggered = False
+        expanded = False
+        if (
+            active > budget
+            and detail["autoExpand"]
+            and steps < detail["maxSteps"]
+            and budget < detail["ceiling"]
+        ):
+            budget = min(detail["ceiling"], budget + detail["step"])
+            steps += 1
+            expanded = True
+            budget_state.update(
+                {
+                    "workingTokens": budget,
+                    "steps": steps,
+                    "grantedAt": now_ms(),
+                    "reason": str(budget_state.get("reason") or "auto-expand")[:200],
+                }
+            )
+            self._save_budget_state(sid, budget_state)
+            self.store.event(
+                kind="context.budget_expanded",
+                task_id=(task or {}).get("id"),
+                session_id=sid,
+                project_dir=(task or {}).get("project_dir"),
+                data={
+                    "mode": "auto",
+                    "activeTokens": active,
+                    "workingTokens": budget,
+                    "baseTokens": detail["base"],
+                    "ceilingTokens": detail["ceiling"],
+                    "stepTokens": detail["step"],
+                    "stepsTaken": steps,
+                    "maxSteps": detail["maxSteps"],
+                    "model": model_ref,
+                },
+            )
         completed = [
             r
             for r in rows
@@ -1000,6 +1281,8 @@ class DynamicContextManager:
                 data={
                     "activeTokens": active,
                     "budgetTokens": budget,
+                    "workingTokens": budget,
+                    "ceilingTokens": detail["ceiling"],
                     "reserveTokens": reserve,
                     "contextLimit": limit,
                     "model": model_ref,
@@ -1013,7 +1296,15 @@ class DynamicContextManager:
             self.store.cache_set("context-compaction-state", key, state, ttl_seconds=21600)
         return {
             "activeTokens": active,
+            "usedSource": used_source,
             "budgetTokens": budget,
+            "workingTokens": budget,
+            "baseTokens": detail["base"],
+            "ceilingTokens": detail["ceiling"],
+            "policyMaxTokens": detail["policyMax"],
+            "autoExpanded": expanded,
+            "stepsTaken": steps,
+            "maxSteps": detail["maxSteps"],
             "reserveTokens": reserve,
             "contextLimit": limit,
             "model": model_ref,
@@ -1032,7 +1323,7 @@ class DynamicContextManager:
                 if model_ref
                 else False
             ),
-            "tokenEstimate": True,
+            "tokenEstimate": used_source != "native",
         }
 
     def envelope(
@@ -1653,6 +1944,7 @@ def runtime_snapshot(runtime: Any, features: Any, directory: str | None = None) 
     base["services"].update(
         {
             "nativeDynamicCompaction": True,
+            "adaptiveContextBudget": True,
             "astIndex": True,
             "astLanguages": ["python"],
             "otherLanguageIndex": "lexical",
@@ -1728,6 +2020,7 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
         "/internal/runtime/tool-after",
         "/internal/runtime/shell",
         "/internal/runtime/context",
+        "/internal/runtime/context-budget",
         "/internal/runtime/artifact",
         "/internal/runtime/bind",
         "/internal/runtime/request-before",
@@ -1815,6 +2108,29 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
                 str(settings.get("instructions") or ""),
                 str(settings.get("rag") or "auto"),
             )
+        elif parsed.path == "/internal/runtime/context-budget":
+            sid = str(payload.get("sessionID") or "")
+            if not sid:
+                raise ValueError("sessionID required")
+            native = runtime.STORE.cache_get("native-context-binding", sid)
+            view = features
+            if native:
+                from native_context import NativeContextFeatures
+
+                view = NativeContextFeatures(features, native)
+            action = str(payload.get("action") or "status").strip().lower()
+            if action == "status":
+                result = v3.context.budget_status(view, runtime, sid)
+            elif action == "request":
+                result = v3.context.budget_request(
+                    view,
+                    runtime,
+                    sid,
+                    payload.get("tokens"),
+                    str(payload.get("reason") or ""),
+                )
+            else:
+                raise ValueError("action must be status or request")
         elif parsed.path == "/client-session-branch.json":
             result = v3.branches.branch(
                 features,

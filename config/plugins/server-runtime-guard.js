@@ -211,7 +211,7 @@ export default {
     })
 
     if (ctx.tool.transform)
-      await ctx.tool.transform((tools) =>
+      await ctx.tool.transform((tools) => {
         tools.add({
           name: "runtime_artifact_read",
           description:
@@ -235,8 +235,46 @@ export default {
             })
             return { content: JSON.stringify(result), metadata: { artifactID: input.artifactID } }
           },
-        }),
-      )
+        })
+        // Adaptive context budget: the model can inspect and request expansion of
+        // its session working budget, bounded by the real model limit and user policy.
+        tools.add({
+          name: "context_budget",
+          description:
+            "Inspect or expand this session's working context budget. action=status returns used/working/base/ceiling/model-limit/policy-max tokens; action=request asks the runtime to grant a larger working budget (bounded by the real model limit and user policy; never switches model or tariff).",
+          input: {
+            type: "object",
+            required: ["action"],
+            properties: {
+              action: {
+                type: "string",
+                enum: ["status", "request"],
+                description: "status = inspect the budget, request = ask for more working context",
+              },
+              tokens: {
+                type: "number",
+                description: "Desired total working context in tokens (action=request)",
+              },
+              reason: {
+                type: "string",
+                description: "Why more working context is needed (action=request)",
+              },
+            },
+          },
+          options: { pinned: true, codemode: false },
+          execute: async (input, context) => {
+            const result = await call("/internal/runtime/context-budget", {
+              sessionID: String(context?.sessionID || ""),
+              action: String(input?.action || "status"),
+              tokens: input?.tokens,
+              reason: input?.reason,
+            })
+            if (!result || result.ok === false)
+              throw new Error(String(result?.error || "context budget unavailable"))
+            return { content: JSON.stringify(result, null, 1), metadata: result }
+          },
+        })
+      })
 
     await ctx.tool.hook("execute.before", async (event) => {
       const c = contextOf(event)

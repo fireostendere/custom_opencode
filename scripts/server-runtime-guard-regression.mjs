@@ -36,6 +36,7 @@ try {
     await import(pathToFileURL(resolve(root, "config/plugins/server-runtime-guard.js")).href)
   ).default
   const hooks = {}
+  const tools = []
   const ctx = {
     session: {
       hook: async (name, callback) => {
@@ -46,6 +47,11 @@ try {
       hook: async (name, callback) => {
         hooks[`tool:${name}`] = callback
       },
+      transform: async (fn) => {
+        await fn({
+          add: (tool) => tools.push(tool),
+        })
+      },
     },
     shell: {
       hook: async (name, callback) => {
@@ -54,6 +60,15 @@ try {
     },
   }
   await plugin.setup(ctx)
+  const budgetTool = tools.find((tool) => tool.name === 'context_budget')
+  assert.ok(budgetTool, 'context_budget tool registered')
+  assert.deepEqual(budgetTool.input.properties.action.enum, ['status', 'request'])
+  const budgetOutput = await budgetTool.execute({ action: 'request', tokens: 120000, reason: 'large refactor' }, { sessionID: 'ses_budget' })
+  const budgetCall = calls.find((entry) => entry.url.endsWith('/internal/runtime/context-budget'))
+  assert.equal(budgetCall.payload.sessionID, 'ses_budget')
+  assert.equal(budgetCall.payload.action, 'request')
+  assert.equal(budgetCall.payload.tokens, 120000)
+  assert.ok(budgetOutput.content && typeof budgetOutput.content === 'string')
   const event = {
     sessionID: "ses_shell_owner",
     cwd: "/repo",
@@ -74,7 +89,9 @@ try {
     },
   }
   await hooks["shell:create.before"](event)
-  assert.equal(calls[0].payload.sessionID, "ses_shell_owner")
+  const shellCall = calls.find((entry) => entry.url.endsWith("/internal/runtime/shell"))
+  assert.ok(shellCall, "shell policy call recorded")
+  assert.equal(shellCall.payload.sessionID, "ses_shell_owner")
   assert.equal(event.env.SAFE_VALUE, "ok")
   assert.ok(
     !Object.hasOwn(event.env, "GEMINI_API_KEY") && !Object.hasOwn(event.env, "GOOGLE_API_KEY"),
