@@ -200,6 +200,9 @@ def main():
             OPENCODE_PROJECT_ROOTS=str(home),
             OPENCODE_SCRATCH_DIRECTORY=str(project),
             OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS="5000",
+            # The strip above drops OPENCODE_*; re-add the updater gate so no bare CLI
+            # launch detaches `npm install --global` against the pinned tree mid-run.
+            OPENCODE_DISABLE_AUTOUPDATE="1",
             MCP_RAG_ENABLED="0",
         )
         launcher = home / "policy-launcher"

@@ -6,6 +6,15 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  # Bare opencode2 invocations (--version validation, any launch without the rendered
+  # config) detach the CLI's own updater: `npm install --global @opencode-ai/cli@latest`.
+  # On runners npm's global prefix IS the pinned tree, and a mid-job reify once replaced
+  # opencode2.exe (packaged-tui-pty "Exec format error"; the runner orphan-tracker killed
+  # `npm install @op...` at Complete job). The pinned CLI honors this env gate. The audit
+  # matrix strips OPENCODE_* for suites, so scripts/tui-package-smoke.sh,
+  # scripts/audit-regression.py and scripts/native-budget-regression.py re-export it.
+  OPENCODE_DISABLE_AUTOUPDATE: "1"
 concurrency:
   group: clean-regression-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -38,16 +47,9 @@ jobs:
           # Regression guard: a broken npm postinstall can leave the placeholder
           # bin/opencode2.exe that dies with "Exec format error" mid-suite. Validate the
           # real binary and force exactly one clean reinstall before anything depends on it.
-          # A bare `opencode2 --version` with updates enabled detaches OpenCode's own
-          # updater (`npm install --global`, see scripts/install.sh); on runners npm's
-          # global prefix IS this pinned tree, and its reify replaced the binary mid-job
-          # (orphan-tracker killed `npm install @op...` at job end) — that produced the
-          # packaged-tui-pty "Exec format error". Validate with "update": "disable" so
-          # no updater is ever spawned.
-          oc_cfg="$RUNNER_TEMP/opencode2-validate"
-          mkdir -p "$oc_cfg/opencode"
-          printf '{\n  "update": "disable"\n}\n' > "$oc_cfg/opencode/opencode.json"
-          export XDG_CONFIG_HOME="$oc_cfg"
+          # The workflow-level OPENCODE_DISABLE_AUTOUPDATE keeps this bare validation from
+          # detaching the CLI's own updater, whose `npm install --global` reify once
+          # replaced this pinned tree mid-job (see scripts/install.sh).
           if ! opencode2 --version; then
             echo "pinned opencode2 failed validation; reinstalling once" >&2
             npm uninstall -g @opencode-ai/cli || true
@@ -103,13 +105,9 @@ jobs:
         run: |
           set -euo pipefail
           npm install -g @opencode-ai/cli@0.0.0-beta-18743
-          # Same postinstall-placeholder guard as model-free-matrix, and the same
-          # update-disable validation config: a bare --version with updates enabled
-          # detaches `npm install --global` against this very tree (see scripts/install.sh).
-          oc_cfg="$RUNNER_TEMP/opencode2-validate"
-          mkdir -p "$oc_cfg/opencode"
-          printf '{\n  "update": "disable"\n}\n' > "$oc_cfg/opencode/opencode.json"
-          export XDG_CONFIG_HOME="$oc_cfg"
+          # Same postinstall-placeholder guard as model-free-matrix; the workflow-level
+          # OPENCODE_DISABLE_AUTOUPDATE keeps the bare validation from spawning the CLI's
+          # own updater against this pinned tree.
           if ! opencode2 --version; then
             echo "pinned opencode2 failed validation; reinstalling once" >&2
             npm uninstall -g @opencode-ai/cli || true

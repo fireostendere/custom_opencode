@@ -2,6 +2,12 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# Bare opencode2 invocations (the --version validation below, any probe launch before the
+# rendered config is in place) detach the CLI's own updater: a bare `npm install --global
+# @opencode-ai/cli@latest` against the pinned global tree — a mid-run reify once replaced
+# opencode2.exe and produced "Exec format error" (see scripts/install.sh). The audit matrix
+# strips OPENCODE_*, so this is exported here instead of relying on workflow env alone.
+export OPENCODE_DISABLE_AUTOUPDATE=1
 OPENCODE2_BIN=${OPENCODE2_BIN:-}
 if [[ -z "$OPENCODE2_BIN" ]]; then
   OPENCODE2_BIN=$(command -v opencode2 || true)
@@ -151,8 +157,8 @@ while time.time() < deadline:
                 settle(.5)
                 with open(os.environ['TUI_KEYBOARD_PROBE']) as handle:
                     assert json.load(handle) == [{'sessionID':'ses_keyboard_probe','continue':False}, 'dialog-closed']
-                os.write(master, b'\x1b[15~')  # F5 injects one native location sync failure.
-                recovery_deadline = time.monotonic() + 28
+                os.write(master, b'\x1b[15~')  # F5 injects native location sync failures until the 15s retry window elapses.
+                recovery_deadline = time.monotonic() + 55
                 recovery = None
                 while time.monotonic() < recovery_deadline:
                     settle(.1)

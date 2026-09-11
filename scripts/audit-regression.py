@@ -107,6 +107,10 @@ def main() -> int:
             )
             if os.environ.get("OPENCODE2_BIN"):
                 env["OPENCODE2_BIN"] = os.environ["OPENCODE2_BIN"]
+            # Safety valve, not harness contamination: keep the pinned CLI's own updater
+            # detached from any bare invocation inside suites (the OPENCODE_* strip above
+            # would otherwise drop the workflow-level gate).
+            env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
             started = time.monotonic()
             with (output / f"{name}.log").open("w") as log:
                 process = subprocess.Popen(

@@ -10,8 +10,14 @@ export default {
     let probeSession, failedAt, recoveredAt
     context.data.location.sync = async function (ref) {
       if (probeSession && context.ui.router.current()?.sessionID === probeSession) {
-        if (!failedAt) {
-          failedAt = Date.now()
+        // Keep failing every sync until 15s have passed since the first failure. If the
+        // app's periodic location sync arrives mid-recovery with a canonicalized ref, the
+        // recovery library cancels the pending 15s retry and restarts a run; a
+        // pass-through success would stamp recoveredAt early and break the real-15s-retry
+        // contract (flaky elapsed ~14.7s < 15000). Whichever run retries last is thus
+        // guaranteed to have actually waited the window.
+        if (!failedAt) failedAt = Date.now()
+        if (Date.now() - failedAt < 15_000) {
           throw new Error('Injected location sync failure')
         }
         const result = await nativeSync.call(this, ref)
@@ -38,7 +44,8 @@ export default {
         await context.data.session.sync(session.id)
         context.ui.router.navigate({ type: 'session', sessionID: session.id })
         let seen = false
-        const deadline = Date.now() + 25_000
+        // Worst case two full 15s retry windows: a cancelled run restarts the clock.
+        const deadline = Date.now() + 50_000
         while (Date.now() < deadline) {
           const visible = hasNode('custom.location-recovery')
           if (visible && !seen) {

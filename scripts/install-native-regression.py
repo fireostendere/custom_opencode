@@ -137,6 +137,9 @@ def main() -> int:
             XDG_CACHE_HOME=str(home / ".cache"),
             PATH=str(home / ".local/bin") + os.pathsep + env.get("PATH", ""),
             PYTHONUNBUFFERED="1",
+            # The strip above drops OPENCODE_*; keep the CLI's own updater detached from
+            # any bare invocation so it cannot rewrite the tree under test mid-run.
+            OPENCODE_DISABLE_AUTOUPDATE="1",
         )
 
         def run(name, command, timeout=600):
