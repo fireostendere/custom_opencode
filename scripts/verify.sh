@@ -74,6 +74,7 @@ for file in "$ROOT/app/"*.js "$ROOT/config/events.js" "$ROOT/config/plugins/"*.j
 done
 "$NODE" "$ROOT/scripts/web-smoke.mjs"
 "$NODE" "$ROOT/scripts/project-settings-smoke.mjs"
+"$NODE" "$ROOT/scripts/compaction-recovery-regression.mjs"
 "$NODE" "$ROOT/scripts/wizard-validation-smoke.mjs"
 "$NODE" "$ROOT/scripts/config-manager-regression.mjs"
 "$NODE" "$ROOT/scripts/visible-plan-regression.mjs"

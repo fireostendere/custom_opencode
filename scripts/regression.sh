@@ -65,8 +65,9 @@ node scripts/tui-server-wizard-regression.mjs
 step "TUI limits regression"
 node scripts/tui-regression.mjs
 
-step "TUI session location recovery regression"
+step "TUI session recovery regression"
 node scripts/location-recovery-regression.mjs
+node scripts/compaction-recovery-regression.mjs
 
 step "TUI WSL clipboard regression"
 node scripts/tui-clipboard-regression.mjs
