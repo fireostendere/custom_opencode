@@ -314,13 +314,48 @@ class SharedRAGService:
 
 class DynamicContextManager:
     def __init__(self,store:RuntimeStore,indexer:SemanticRepoIndexer,rag:SharedRAGService): self.store=store; self.indexer=indexer; self.rag=rag
-    def _active_tokens(self,features:Any,sid:str)->tuple[int,list[Any]]:
+    BUDGET_NAMESPACE="context-budget"
+    @staticmethod
+    def _token_int(value:Any)->int:
+        try: number=int(value or 0)
+        except (TypeError,ValueError): return 0
+        return max(0,number)
+    @staticmethod
+    def _env_flag(name:str)->bool: return str(os.environ.get(name) or "").strip().lower() in {"1","true","yes","on"}
+    @staticmethod
+    def _env_int(name:str)->int|None:
+        try: value=int(str(os.environ.get(name) or "").strip())
+        except (TypeError,ValueError): return None
+        return value if value>0 else None
+    @staticmethod
+    def _policy_int(policy:dict[str,Any],key:str)->int|None:
+        try: value=int(policy.get(key) or 0)
+        except (TypeError,ValueError): return None
+        return value if value>0 else None
+    def _provider_usage_tokens(self,features:Any,sid:str)->int:
+        """Provider-reported usage from the newest assistant message; preferred over length estimates."""
+        try: value=features._data(features._backend_request_json("GET",f"/api/session/{quote(sid,safe='')}/message",timeout=10.))
+        except Exception: return 0
+        rows=value if isinstance(value,list) else []
+        for row in reversed(rows):
+            info=row.get("info") if isinstance(row,dict) else None
+            tokens=info.get("tokens") if isinstance(info,dict) else None
+            if not isinstance(tokens,dict): continue
+            cache=tokens.get("cache") if isinstance(tokens.get("cache"),dict) else {}
+            total=sum(self._token_int(tokens.get(key)) for key in ("input","output","reasoning"))+sum(self._token_int(cache.get(key)) for key in ("read","write"))
+            if total>0: return total
+        return 0
+    def _active_tokens(self,features:Any,sid:str)->tuple[int,list[Any],str]:
         try: value=features._data(features._backend_request_json("GET",f"/api/session/{quote(sid,safe='')}/context",timeout=10.))
-        except Exception: return 0,[]
-        rows=value if isinstance(value,list) else []; return max(1,int(len(json.dumps(rows,ensure_ascii=False,default=str))/2.2)),rows
-    def _budget(self,runtime:Any,task:dict[str,Any]|None)->tuple[int,int,int,str|None,int]:
+        except Exception: value=[]
+        rows=value if isinstance(value,list) else []
+        provider=self._provider_usage_tokens(features,sid)
+        if provider>0: return provider,rows,"provider"
+        # Conservative fallback: chars/2.0 overestimates vs legacy /2.2 and the source stays explicit.
+        return max(1,int(len(json.dumps(rows,ensure_ascii=False,default=str))/2.0)),rows,"estimate"
+    def _budget(self,runtime:Any,task:dict[str,Any]|None)->dict[str,Any]:
         profiles=runtime.REGISTRY.profiles(); profile=profiles.get(str(task.get("profile")) if task else "direct",profiles["direct"])
-        policy=profile.get("contextPolicy") if isinstance(policy_raw:=profile.get("contextPolicy"),dict) else {}
+        policy=profile.get("contextPolicy") if isinstance(profile.get("contextPolicy"),dict) else {}
         try: ratio=float(policy.get("targetRatio") or .42)
         except (TypeError,ValueError): ratio=.42
         ratio=max(.30,min(.75,ratio))
@@ -331,12 +366,35 @@ class DynamicContextManager:
         limit=int((model or {}).get("context") or 128000)
         reserve=max(16000,min(131072,int(limit*.12)))
         hard=max(16000,limit-reserve)
-        budget=max(16000,min(hard,min(48000,int(limit*ratio))))
+        # Three distinct limits: real model ceiling (hard), user policy max (policyMax), session working budget (persisted separately).
+        caps=[value for value in (self._env_int("OPENCODE_CONTEXT_BUDGET_MAX"),self._policy_int(policy,"maxBudgetTokens")) if value]; policy_max=min(caps) if caps else None
+        ceiling=max(16000,min(hard,policy_max)) if policy_max else hard
+        base=max(16000,min(ceiling,int(limit*ratio)))
         default_growth=max(8000,min(40000,int(limit*.03)))
         min_growth=max(1000,int(policy.get("minGrowthBeforeRecompact") or default_growth))
-        return budget,reserve,limit,candidate or None,min_growth
+        step=max(1000,int(self._policy_int(policy,"expansionStepTokens") or max(4000,min(64000,int(limit*.05)))))
+        max_steps=max(1,min(12,self._env_int("OPENCODE_CONTEXT_MAX_STEPS") or self._policy_int(policy,"maxExpansionSteps") or 4))
+        auto_expand=bool(policy.get("autoExpand")) if "autoExpand" in policy else self._env_flag("OPENCODE_CONTEXT_AUTO_EXPAND")
+        return {"base":base,"ceiling":ceiling,"reserve":reserve,"limit":limit,"model":candidate or None,"minGrowth":min_growth,"step":step,"maxSteps":max_steps,"autoExpand":auto_expand,"policyMax":policy_max}
+    def _budget_state(self,sid:str)->dict[str,Any]:
+        state=self.store.cache_get(self.BUDGET_NAMESPACE,sid)
+        return dict(state) if isinstance(state,dict) else {"workingTokens":0,"requestedTokens":None,"steps":0,"grantedAt":0,"reason":""}
+    def _save_budget_state(self,sid:str,state:dict[str,Any])->None: self.store.cache_set(self.BUDGET_NAMESPACE,sid,state,ttl_seconds=604800)
+    def _working(self,sid:str,b:dict[str,Any])->tuple[int,dict[str,Any]]:
+        state=self._budget_state(sid); working=max(min(int(state.get("workingTokens") or 0),b["ceiling"]),b["base"]); state["workingTokens"]=working
+        return working,state
+    def _session_task(self,sid:str)->dict[str,Any]|None:
+        tasks=self.store.list_tasks(session_id=sid,states=["submitted","running","waiting_permission","verifying","recovering","queued"],limit=10)
+        return tasks[0] if tasks else None
     def maybe_compact(self,features:Any,runtime:Any,sid:str,task:dict[str,Any]|None)->dict[str,Any]:
-        active,rows=self._active_tokens(features,sid); budget,reserve,limit,model_ref,min_growth=self._budget(runtime,task); triggered=False
+        active,rows,source=self._active_tokens(features,sid); b=self._budget(runtime,task); triggered=False; expanded=False
+        working,budget_state=self._working(sid,b); steps=int(budget_state.get("steps") or 0)
+        if active>working and b["autoExpand"] and steps<b["maxSteps"] and working<b["ceiling"]:
+            working=min(b["ceiling"],working+b["step"]); steps+=1; expanded=True
+            budget_state.update({"workingTokens":working,"steps":steps,"grantedAt":now_ms(),"reason":str(budget_state.get("reason") or "auto-expand")[:200]})
+            self._save_budget_state(sid,budget_state)
+            self.store.event(kind="context.budget_expanded",task_id=task.get("id") if task else None,session_id=sid,project_dir=task.get("project_dir") if task else None,data={"mode":"auto","activeTokens":active,"workingTokens":working,"baseTokens":b["base"],"ceilingTokens":b["ceiling"],"stepTokens":b["step"],"stepsTaken":steps,"maxSteps":b["maxSteps"],"model":b["model"]})
+        budget=working; reserve=b["reserve"]; limit=b["limit"]; model_ref=b["model"]; min_growth=b["minGrowth"]
         completed=[r for r in rows if isinstance(r,dict) and r.get("type")=="compaction" and r.get("status")=="completed"]
         pending=[r for r in rows if isinstance(r,dict) and r.get("type")=="compaction" and str(r.get("status") or "").lower() in {"pending","running","in_progress","requested"}]
         key=sid; state=self.store.cache_get("context-compaction-state",key) or {}; completed_count=len(completed); now=now_ms()
@@ -353,10 +411,35 @@ class DynamicContextManager:
                 except Exception: continue
             state.update({"completedCount":completed_count,"baselineTokens":baseline or active,"lastRequestTokens":active,"lastRequestAt":now})
             self.store.cache_set("context-compaction-state",key,state,ttl_seconds=21600)
-            self.store.event(kind="context.compaction_requested",task_id=task.get("id") if task else None,session_id=sid,project_dir=task.get("project_dir") if task else None,data={"activeTokens":active,"budgetTokens":budget,"reserveTokens":reserve,"contextLimit":limit,"model":model_ref,"minGrowthTokens":min_growth,"growthTokens":growth,"triggered":triggered,"reason":"model-aware-budget"})
+            self.store.event(kind="context.compaction_requested",task_id=task.get("id") if task else None,session_id=sid,project_dir=task.get("project_dir") if task else None,data={"activeTokens":active,"budgetTokens":budget,"workingTokens":working,"ceilingTokens":b["ceiling"],"reserveTokens":reserve,"contextLimit":limit,"model":model_ref,"minGrowthTokens":min_growth,"growthTokens":growth,"triggered":triggered,"reason":"model-aware-budget"})
         elif state:
             state["completedCount"]=completed_count; self.store.cache_set("context-compaction-state",key,state,ttl_seconds=21600)
-        return {"activeTokens":active,"budgetTokens":budget,"reserveTokens":reserve,"contextLimit":limit,"model":model_ref,"minGrowthTokens":min_growth,"growthTokens":growth,"compactionRequested":triggered,"compactionPending":bool(pending),"hasCompaction":bool(completed)}
+        return {"activeTokens":active,"usedSource":source,"budgetTokens":budget,"workingTokens":working,"baseTokens":b["base"],"ceilingTokens":b["ceiling"],"policyMaxTokens":b["policyMax"],"autoExpanded":expanded,"stepsTaken":steps,"maxSteps":b["maxSteps"],"reserveTokens":reserve,"contextLimit":limit,"model":model_ref,"minGrowthTokens":min_growth,"growthTokens":growth,"compactionRequested":triggered,"compactionPending":bool(pending),"hasCompaction":bool(completed)}
+    def budget_status(self,features:Any,runtime:Any,sid:str,task:dict[str,Any]|None=None)->dict[str,Any]:
+        task=task if isinstance(task,dict) else self._session_task(sid)
+        active,_,source=self._active_tokens(features,sid); b=self._budget(runtime,task)
+        working,state=self._working(sid,b); steps=int(state.get("steps") or 0)
+        return {"sessionID":sid,"usedTokens":active,"usedSource":source,"workingTokens":working,"baseTokens":b["base"],"ceilingTokens":b["ceiling"],"modelLimitTokens":b["limit"],"reserveTokens":b["reserve"],"policyMaxTokens":b["policyMax"],"model":b["model"],"autoExpand":b["autoExpand"],"stepsTaken":steps,"maxSteps":b["maxSteps"],"expandable":working<b["ceiling"] and steps<b["maxSteps"],"headroomTokens":max(0,working-active),"requestedTokens":state.get("requestedTokens"),"grantedAt":int(state.get("grantedAt") or 0)}
+    def budget_request(self,features:Any,runtime:Any,sid:str,tokens:Any,reason:str="",task:dict[str,Any]|None=None)->dict[str,Any]:
+        task=task if isinstance(task,dict) else self._session_task(sid)
+        b=self._budget(runtime,task); previous,state=self._working(sid,b); steps=int(state.get("steps") or 0)
+        try: want=int(tokens)
+        except (TypeError,ValueError): raise ValueError("tokens must be a positive integer")
+        if want<=0: raise ValueError("tokens must be a positive integer")
+        granted=True; denied=None
+        if want<=previous: pass
+        elif steps>=b["maxSteps"]: granted=False; denied=f"expansion steps exhausted ({steps}/{b['maxSteps']})"
+        elif previous>=b["ceiling"]: granted=False; denied=f"ceiling reached ({previous} of {b['ceiling']} tokens; real model limit {b['limit']} minus reserve, policy max {b['policyMax']})"
+        else:
+            working=min(want,b["ceiling"]); steps+=1
+            state.update({"workingTokens":working,"requestedTokens":want,"steps":steps,"grantedAt":now_ms(),"reason":str(reason)[:200]})
+            self._save_budget_state(sid,state)
+            self.store.event(kind="context.budget_granted",task_id=task.get("id") if task else None,session_id=sid,project_dir=task.get("project_dir") if task else None,data={"mode":"request","requestedTokens":want,"workingTokens":working,"baseTokens":b["base"],"ceilingTokens":b["ceiling"],"stepsTaken":steps,"maxSteps":b["maxSteps"],"model":b["model"],"reason":str(reason)[:200]})
+        if not granted:
+            self.store.event(kind="context.budget_denied",task_id=task.get("id") if task else None,session_id=sid,project_dir=task.get("project_dir") if task else None,data={"requestedTokens":want,"workingTokens":previous,"ceilingTokens":b["ceiling"],"stepsTaken":steps,"maxSteps":b["maxSteps"],"reason":denied})
+        result=self.budget_status(features,runtime,sid,task=task)
+        result.update({"granted":granted,"requestedTokens":want,"deniedReason":denied})
+        return result
     def envelope(self,features:Any,runtime:Any,sid:str,project_instructions:str,rag_mode:str="auto")->dict[str,Any]:
         tasks=self.store.list_tasks(session_id=sid,states=["submitted","running","waiting_permission","verifying","recovering","queued"],limit=10); task=tasks[0] if tasks else None; compact=self.maybe_compact(features,runtime,sid,task); directory=features._session_directory(sid); budget_chars=max(6000,min(24000,compact["budgetTokens"]*2)); base=runtime.CONTEXT.envelope(project_dir=directory,task=task,project_instructions=project_instructions,budget_chars=min(24000,budget_chars)); parts=[str(base.get("text") or "")]; query=str(task.get("text") or "") if task else ""
         if query:
@@ -550,7 +633,7 @@ def _internal_auth(handler:Any)->bool:
 
 def runtime_snapshot(runtime:Any,features:Any,directory:str|None=None)->dict[str,Any]:
     v3=instance(runtime,features); base=runtime.runtime_snapshot(features,directory); base["version"]=3
-    base["services"].update({"nativeDynamicCompaction":True,"astIndex":True,"repoEmbeddings":True,"gitGraph":True,"dependencyGraph":True,"semanticSymbolDiff":True,"mcpCodeMode":True,"mcpPolicyGateway":True,"scopedSecretBroker":True,"sandboxEnforcement":True,"sharedNativeRAG":True,"sessionStateBranching":True,"zeroTokenReplay":True,"providerLockedRoleRouter":True,"remoteNotificationAPI":True})
+    base["services"].update({"nativeDynamicCompaction":True,"adaptiveContextBudget":True,"astIndex":True,"repoEmbeddings":True,"gitGraph":True,"dependencyGraph":True,"semanticSymbolDiff":True,"mcpCodeMode":True,"mcpPolicyGateway":True,"scopedSecretBroker":True,"sandboxEnforcement":True,"sharedNativeRAG":True,"sessionStateBranching":True,"zeroTokenReplay":True,"providerLockedRoleRouter":True,"remoteNotificationAPI":True})
     base["resources"]=runtime.resource_snapshot(); base["secretBroker"]=v3.secrets.snapshot(); return base
 
 
@@ -576,7 +659,7 @@ def handle_get(handler:Any,parsed:Any,runtime:Any,features:Any)->bool:
 
 
 def handle_post(handler:Any,parsed:Any,runtime:Any,features:Any)->bool:
-    internal={"/internal/runtime/tool-before","/internal/runtime/tool-after","/internal/runtime/shell","/internal/runtime/context"}; public={"/client-session-branch.json","/client-session-merge.json","/client-replay-capture.json","/client-notify-test.json"}
+    internal={"/internal/runtime/tool-before","/internal/runtime/tool-after","/internal/runtime/shell","/internal/runtime/context","/internal/runtime/context-budget"}; public={"/client-session-branch.json","/client-session-merge.json","/client-replay-capture.json","/client-notify-test.json"}
     if parsed.path not in internal|public: return False
     if parsed.path in internal:
         if not _internal_auth(handler): handler.json_response({"ok":False,"error":"forbidden"},status=403); return True
@@ -588,6 +671,13 @@ def handle_post(handler:Any,parsed:Any,runtime:Any,features:Any)->bool:
         elif parsed.path=="/internal/runtime/shell": result=v3.gateway.shell(payload)
         elif parsed.path=="/internal/runtime/context":
             sid=str(payload.get("sessionID") or ""); directory=features._session_directory(sid); settings=features.project_settings(directory); result=v3.context.envelope(features,runtime,sid,str(settings.get("instructions") or ""),str(settings.get("rag") or "auto"))
+        elif parsed.path=="/internal/runtime/context-budget":
+            sid=str(payload.get("sessionID") or "")
+            if not sid: raise ValueError("sessionID required")
+            action=str(payload.get("action") or "status").strip().lower()
+            if action=="status": result=v3.context.budget_status(features,runtime,sid)
+            elif action=="request": result=v3.context.budget_request(features,runtime,sid,payload.get("tokens"),str(payload.get("reason") or ""))
+            else: raise ValueError("action must be status or request")
         elif parsed.path=="/client-session-branch.json": result=v3.branches.branch(features,str(payload.get("sessionID") or ""),str(payload.get("title") or "Runtime branch"))
         elif parsed.path=="/client-session-merge.json": result=v3.branches.merge(features,str(payload.get("sourceSessionID") or ""),str(payload.get("targetSessionID") or ""),include_state=bool(payload.get("includeState",True)))
         elif parsed.path=="/client-replay-capture.json":
