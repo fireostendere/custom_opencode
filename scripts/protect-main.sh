@@ -12,12 +12,27 @@ trap 'rm -f "$checks"' EXIT
 sha=$(gh api "repos/$repo/branches/main" --jq '.commit.sha')
 # Pagination and the latest run for each check matter: a historical success
 # must never override a newer failed or still-running attempt on this commit.
-gh api "repos/$repo/commits/$sha/check-runs" --paginate --slurp > "$checks"
+# gh older than 2.59 has no --slurp; --paginate emits one JSON document per
+# page back-to-back, so the reader below decodes documents sequentially.
+gh api "repos/$repo/commits/$sha/check-runs" --paginate > "$checks"
 python3 - "$checks" "$sha" <<'PY'
 import json
 import sys
 
-pages = json.load(open(sys.argv[1], encoding="utf-8"))
+raw = open(sys.argv[1], encoding="utf-8").read()
+decoder = json.JSONDecoder()
+pages = []
+idx = 0
+while idx < len(raw):
+    while idx < len(raw) and raw[idx].isspace():
+        idx += 1
+    if idx >= len(raw):
+        break
+    obj, idx = decoder.raw_decode(raw, idx)
+    if isinstance(obj, list):
+        pages.extend(obj)  # --slurp-style array of pages (offline fixtures)
+    else:
+        pages.append(obj)  # gh < 2.59 --paginate: concatenated documents
 latest = {}
 for page in pages:
     for check in page.get("check_runs", []):
