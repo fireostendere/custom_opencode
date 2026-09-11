@@ -127,7 +127,7 @@ Path containment is also enforced for file-mutation tools.
 
 Large tool outputs are stored in `ArtifactStore` and exposed by ID plus bounded preview/range/search. Native OpenCode output is additionally bounded with `tool_output.max_lines` and `tool_output.max_bytes`. Server context sections are content-hash deduplicated before injection.
 
-Per-task usage records planning, implementation, research, review and `wasted_retries`. Verification repair/recovery/retry work is separated from successful implementation usage.
+Per-task usage records planning, implementation, research, review, repair and recovery separately. `wasted_retries` requires an explicit avoidable-waste reason; a successful repair is not automatically waste. Provider-request reservations and observed usage live in the shared execution ledger and must not be added to overlapping native session statistics. See [the audit remediation contracts](audit-remediation-2026-09-11.md) for context ownership, private policy, shared budgets and evidence limits.
 
 ## Mailbox and typed handoff
 

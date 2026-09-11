@@ -66,15 +66,11 @@ def _send_with_project_context(session_id: str, text: str, files: list[object]) 
     directory = features._session_directory(session_id)
     settings = features.project_settings(directory)
     instructions = str(settings.get("instructions") or "").strip()
-    envelope = runtime_v3.context_envelope(
-        features,
-        runtime,
-        session_id,
-        instructions,
-        str(settings.get("rag") or "auto"),
+    # Context is compiled in the native request hook. Do not persist its snapshot
+    # as another user message or duplicate project policy in the request body.
+    effective_text, effective_files, resume = runtime_resume.continuation_payload(
+        runtime.STORE, session_id, text, list(files)
     )
-    context = str(envelope.get("text") or "").strip()
-    effective_text, effective_files, resume = runtime_resume.continuation_payload(runtime.STORE, session_id, text, list(files))
     if resume:
         runtime.STORE.event(
             kind="task.resume_continuation",
@@ -89,21 +85,13 @@ def _send_with_project_context(session_id: str, text: str, files: list[object]) 
         parts.append({"type": "text", "text": effective_text})
     parts.extend(_file_parts(effective_files))
     body: dict[str, object] = {"parts": parts}
-    body["system"] = (
-        "Server runtime context policy (deduplicated, budgeted, checkpoint/RAG/repo aware). "
-        "Operate as an engineering pair-programmer. Respect project instructions, durable decisions, "
-        "repository standards, and safety boundaries."
-    ) + (f"\n\n{instructions}" if instructions else "")
-    if context:
-        parts.insert(0, {
-            "type": "text",
-            "text": f"--- Dynamic Session Context ---\n{context}\n--- End Dynamic Session Context ---",
-        })
     try:
         return features._backend_request_json("POST", target, body, timeout=30.0)
     except features.BackendHTTPError as exc:
-        if exc.status not in (400, 404, 405, 422):
+        if exc.status not in (404, 405):
             raise
+    # Both paths pass through the same native context/policy hook. Validation,
+    # authentication failures and ambiguous timeouts must never be resubmitted.
     return _ORIGINAL_SEND(session_id, effective_text, effective_files)
 
 
@@ -209,8 +197,10 @@ class Handler(rag.Handler, features.Handler):
             self.send_header("Connection", "close")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        try: self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError): pass
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def local_bypass(self) -> bool:
         """Allow passwordless loopback only for a direct localhost request.
@@ -251,6 +241,7 @@ class Handler(rag.Handler, features.Handler):
             # Parse Basic auth
             try:
                 import base64
+
                 scheme, _, encoded = supplied.partition(" ")
                 if scheme.lower() != "basic":
                     return False
@@ -366,10 +357,14 @@ class Handler(rag.Handler, features.Handler):
 
 def main() -> None:
     rag.plus.ext.base.SCRATCH_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
-    server = rag.plus.ext.base.ThreadingHTTPServer((rag.plus.ext.base.WEB_HOST, rag.plus.ext.base.WEB_PORT), Handler)
+    server = rag.plus.ext.base.ThreadingHTTPServer(
+        (rag.plus.ext.base.WEB_HOST, rag.plus.ext.base.WEB_PORT), Handler
+    )
     server.daemon_threads = True
     features._ensure_worker()
-    print(f"OpenCode web client started on configured port {rag.plus.ext.base.WEB_PORT}", flush=True)
+    print(
+        f"OpenCode web client started on configured port {rag.plus.ext.base.WEB_PORT}", flush=True
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

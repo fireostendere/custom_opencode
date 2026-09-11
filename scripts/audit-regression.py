@@ -19,6 +19,11 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = [
+    ("audit-model-context", [sys.executable, "scripts/audit-fixes-regression.py"]),
+    ("audit-mcp-payload", ["node", "scripts/audit-fixes-regression.mjs"]),
+    ("execution-ledger", [sys.executable, "scripts/execution-ledger-regression.py"]),
+    ("request-budget-protocol", ["node", "scripts/request-budget-regression.mjs"]),
+    ("tool-fabric-contracts", [sys.executable, "scripts/tool-fabric-smoke.py", "--contracts-only"]),
     ("core", ["bash", "scripts/verify.sh"]),
     ("runtime-v3", ["bash", "scripts/verify-runtime-v3.sh"]),
     ("routing-effort", [sys.executable, "scripts/model-routing-effort-smoke.py"]),
@@ -55,26 +60,62 @@ def main() -> int:
     # Resolve the real browser cache before replacing HOME/XDG for each suite.
     # Isolation must not hide the browser installed by the calling CI job.
     browser_cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or str(
-        (Path(os.environ.get("XDG_CACHE_HOME") or Path.home()/".cache") / "ms-playwright").resolve())
+        (
+            Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ms-playwright"
+        ).resolve()
+    )
     rows = []
-    report = {"startedAt": datetime.now(timezone.utc).isoformat(), "suites": rows,
-              "externalGates": ["paid provider inference", "live RAG corpus", "live DipTrace",
-                                "kernel sandbox execution", "real install/service supervision"]}
+    report = {
+        "startedAt": datetime.now(timezone.utc).isoformat(),
+        "suites": rows,
+        "externalGates": [
+            "paid provider inference",
+            "live RAG corpus",
+            "live DipTrace",
+            "kernel sandbox execution",
+            "real install/service supervision",
+        ],
+    }
     for name, command in SUITES:
         if args.suite and name not in args.suite:
             continue
         with tempfile.TemporaryDirectory(prefix="opencode-audit-") as temporary:
-            env = {k: v for k, v in os.environ.items() if not k.startswith(
-                ("OPENCODE_", "CUSTOM_OPENCODE_", "TOKEN_PLAN_", "MCP_RAG_", "DIPTRACE_MCP_", "GEMINI_", "GOOGLE_"))}
-            env.update(HOME=temporary, XDG_CONFIG_HOME=temporary+"/.config",
-                       XDG_DATA_HOME=temporary+"/.local/share", XDG_STATE_HOME=temporary+"/.local/state",
-                       XDG_CACHE_HOME=temporary+"/.cache", PYTHONUNBUFFERED="1",
-                       PLAYWRIGHT_BROWSERS_PATH=browser_cache)
+            env = {
+                k: v
+                for k, v in os.environ.items()
+                if not k.startswith(
+                    (
+                        "OPENCODE_",
+                        "CUSTOM_OPENCODE_",
+                        "TOKEN_PLAN_",
+                        "MCP_RAG_",
+                        "DIPTRACE_MCP_",
+                        "GEMINI_",
+                        "GOOGLE_",
+                    )
+                )
+            }
+            env.update(
+                HOME=temporary,
+                XDG_CONFIG_HOME=temporary + "/.config",
+                XDG_DATA_HOME=temporary + "/.local/share",
+                XDG_STATE_HOME=temporary + "/.local/state",
+                XDG_CACHE_HOME=temporary + "/.cache",
+                PYTHONUNBUFFERED="1",
+                PLAYWRIGHT_BROWSERS_PATH=browser_cache,
+            )
             if os.environ.get("OPENCODE2_BIN"):
                 env["OPENCODE2_BIN"] = os.environ["OPENCODE2_BIN"]
             started = time.monotonic()
-            with (output/f"{name}.log").open("w") as log:
-                process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+            with (output / f"{name}.log").open("w") as log:
+                process = subprocess.Popen(
+                    command,
+                    cwd=ROOT,
+                    env=env,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
                 try:
                     code = process.wait(timeout=args.timeout)
                     status = "PASS" if code == 0 else "FAIL"
@@ -86,13 +127,19 @@ def main() -> int:
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait()
                     code, status = 124, "TIMEOUT"
-            row = {"name": name, "status": status, "exitCode": code,
-                   "seconds": round(time.monotonic()-started, 3), "log": f"{name}.log", "command": command}
+            row = {
+                "name": name,
+                "status": status,
+                "exitCode": code,
+                "seconds": round(time.monotonic() - started, 3),
+                "log": f"{name}.log",
+                "command": command,
+            }
             rows.append(row)
             report["ok"] = all(row["status"] == "PASS" for row in rows)
-            temporary_report = output/"report.json.tmp"
-            temporary_report.write_text(json.dumps(report, ensure_ascii=False, indent=2)+"\n")
-            temporary_report.replace(output/"report.json")
+            temporary_report = output / "report.json.tmp"
+            temporary_report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+            temporary_report.replace(output / "report.json")
             print(f"{status:7} {name} ({row['seconds']}s)", flush=True)
     return 0 if report.get("ok") else 1
 

@@ -2,10 +2,8 @@ name: Clean Regression
 
 on:
   pull_request:
-    paths: ['app/**', 'config/**', 'scripts/**', '.env.example', '.github/workflows/clean-regression.yml']
   push:
     branches: [main, 'astra/**']
-    paths: ['app/**', 'config/**', 'scripts/**', '.env.example', '.github/workflows/clean-regression.yml']
   workflow_dispatch:
 
 permissions:
@@ -27,13 +25,13 @@ jobs:
           node-version: '22'
       - name: Install pinned browser, real CLI and policy dependencies
         run: |
-          python -m pip install --disable-pip-version-check playwright==1.57.0
+          python -m pip install --disable-pip-version-check playwright==1.57.0 -r scripts/tool-fabric-requirements.txt
           python -m playwright install --with-deps chromium --only-shell
           sudo apt-get update -qq
           sudo apt-get install -y bubblewrap
           npm install --global --prefix "$RUNNER_TEMP/opencode-v2" @opencode-ai/cli@0.0.0-beta-18743
           echo "OPENCODE2_BIN=$RUNNER_TEMP/opencode-v2/bin/opencode2" >> "$GITHUB_ENV"
-      - name: Run all 20 independent regression suites
+      - name: Run deterministic context, MCP, ledger, UI and runtime suites
         run: python scripts/audit-regression.py --output "$RUNNER_TEMP/regression"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -68,3 +66,37 @@ jobs:
           path: ${{ runner.temp }}/native-install/
           retention-days: 7
           if-no-files-found: warn
+
+  native-budget-wire:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: |
+          npm install --global --prefix "$RUNNER_TEMP/native" @opencode-ai/cli@0.0.0-beta-18743
+          OPENCODE2_BIN="$RUNNER_TEMP/native/bin/opencode2" python scripts/native-budget-regression.py --retry-once --output "$RUNNER_TEMP/native-budget"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-budget-${{ github.sha }}
+          path: ${{ runner.temp }}/native-budget/
+          retention-days: 7
+  kernel-sandbox:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+          python -m pip install -r scripts/tool-fabric-requirements.txt
+          python scripts/sandbox-preflight.py
+          python scripts/tool-fabric-smoke.py

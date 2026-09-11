@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -172,7 +173,11 @@ for marker in (
     "PASSWORD=literal",
     "Authorization: literal",
 ):
-    assert marker in config_manager_js, marker
+    # This is a static wiring sentinel; behavioral mutation/rollback contracts
+    # run in config-manager-regression.mjs. Formatting and trailing commas do
+    # not change these token sequences and must not fail clean installations.
+    signature = lambda value: re.sub(r",(?=[\]}])", "", re.sub(r"\s+", "", value))
+    assert signature(marker) in signature(config_manager_js), marker
 
 assert '#taskCenterButton:not([data-attention="true"]){display:none!important}' in workspace_css
 assert "@media(prefers-reduced-motion:reduce)" in workspace_css

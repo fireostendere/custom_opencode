@@ -232,7 +232,7 @@ assert diptrace.get('environment') == {
 assert diptrace.get('command') == ['diptrace-mcp']
 assert diptrace.get('cwd') == str(root)
 assert config.get('model') == 'bailian-cli/qwen3.8-max'
-assert config.get('compaction') == {'auto': True, 'keep': {'tokens': 12000}, 'buffer': 24000}
+assert config.get('compaction') == {'auto': True, 'keep': {'tokens': 4096}, 'buffer': 2048}
 assert config.get('tool_output') == {'max_lines': 1600, 'max_bytes': 48000}
 assert str(root / 'scripts' / 'rag-mcp.sh') in (kb.get('command') or [])
 # When PONYTAIL_ENABLED=0, the V2 plugins field should be absent or empty.

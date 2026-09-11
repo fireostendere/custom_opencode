@@ -21,12 +21,14 @@ with tempfile.TemporaryDirectory() as temp:
     projects = Path(temp) / "projects"
     project = projects / "alpha"
     project.mkdir(parents=True)
-    subprocess.run(["git","init","-q",str(project)],check=True)
-    subprocess.run(["git","-C",str(project),"config","user.email","smoke@example.invalid"],check=True)
-    subprocess.run(["git","-C",str(project),"config","user.name","Web Smoke"],check=True)
-    (project/"main.py").write_text("def runtime_symbol():\n    return 1\n",encoding="utf-8")
-    subprocess.run(["git","-C",str(project),"add","."],check=True)
-    subprocess.run(["git","-C",str(project),"commit","-qm","base"],check=True)
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
+    subprocess.run(
+        ["git", "-C", str(project), "config", "user.email", "smoke@example.invalid"], check=True
+    )
+    subprocess.run(["git", "-C", str(project), "config", "user.name", "Web Smoke"], check=True)
+    (project / "main.py").write_text("def runtime_symbol():\n    return 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(project), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(project), "commit", "-qm", "base"], check=True)
     os.environ["OPENCODE_SERVER_USERNAME"] = "opencode"
     os.environ["OPENCODE_SERVER_PASSWORD"] = "test"
     os.environ["OPENCODE_RUNTIME_PLUGIN_TOKEN"] = "runtime-test-token"
@@ -40,7 +42,11 @@ with tempfile.TemporaryDirectory() as temp:
 
     class _StubBackend(BaseHTTPRequestHandler):
         def _reply(self):
-            value = {"data": {"id": "ses_web_plan", "location": {"directory": str(project)}}} if self.path == "/api/session/ses_web_plan" else {"data": []}
+            value = (
+                {"data": {"id": "ses_web_plan", "location": {"directory": str(project)}}}
+                if self.path == "/api/session/ses_web_plan"
+                else {"data": []}
+            )
             body = json.dumps(value).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -85,56 +91,88 @@ with tempfile.TemporaryDirectory() as temp:
     host, port = server.server_address[:2]
     auth = "Basic " + base64.b64encode(b"opencode:test").decode("ascii")
 
-    def request(method: str, path: str, body=None, *, authenticated: bool = True, internal: bool = False):
+    def request(
+        method: str, path: str, body=None, *, authenticated: bool = True, internal: bool = False
+    ):
         connection = http.client.HTTPConnection(host, port, timeout=8)
         try:
-            headers={}
-            if authenticated: headers["Authorization"]=auth
-            if internal: headers["X-OpenCode-Runtime"]="runtime-test-token"
-            data=None
+            headers = {}
+            if authenticated:
+                headers["Authorization"] = auth
+            if internal:
+                headers["X-OpenCode-Runtime"] = "runtime-test-token"
+            data = None
             if body is not None:
-                data=json.dumps(body).encode(); headers["Content-Type"]="application/json"
-            connection.request(method,path,body=data,headers=headers)
-            response=connection.getresponse(); payload=response.read()
-            return response.status,response.getheader("Content-Type") or "",payload
-        finally: connection.close()
+                data = json.dumps(body).encode()
+                headers["Content-Type"] = "application/json"
+            connection.request(method, path, body=data, headers=headers)
+            response = connection.getresponse()
+            payload = response.read()
+            return response.status, response.getheader("Content-Type") or "", payload
+        finally:
+            connection.close()
 
     try:
-        status, content_type, body = request("GET","/")
+        status, content_type, body = request("GET", "/")
         assert status == 200, status
         assert "text/html" in content_type
-        assert b"OpenCode" in body and b"runtime-dashboard.js" in body and b"runtime-v3-dashboard.js" in body
+        assert (
+            b"OpenCode" in body
+            and b"runtime-dashboard.js" in body
+            and b"runtime-v3-dashboard.js" in body
+        )
 
-        denied, _, _ = request("GET","/client-runtime-v3.json",authenticated=False)
+        denied, _, _ = request("GET", "/client-runtime-v3.json", authenticated=False)
         assert denied == 401, denied
-        plan_denied, _, _ = request("GET", "/client-plan.json?sessionID=ses_web_plan", authenticated=False)
+        plan_denied, _, _ = request(
+            "GET", "/client-plan.json?sessionID=ses_web_plan", authenticated=False
+        )
         assert plan_denied == 401, plan_denied
-        remote_denied,_,_=request("GET","/client-remote-status.json",authenticated=False)
-        assert remote_denied==401,remote_denied
-        create_denied,_,_=request("POST","/client-directories.json",{"parent":str(project),"name":"denied"},authenticated=False)
-        assert create_denied==401,create_denied
+        remote_denied, _, _ = request("GET", "/client-remote-status.json", authenticated=False)
+        assert remote_denied == 401, remote_denied
+        create_denied, _, _ = request(
+            "POST",
+            "/client-directories.json",
+            {"parent": str(project), "name": "denied"},
+            authenticated=False,
+        )
+        assert create_denied == 401, create_denied
 
-        status, _, body = request("POST", "/client-directories.json", {"parent":str(project), "name":"created"})
+        status, _, body = request(
+            "POST", "/client-directories.json", {"parent": str(project), "name": "created"}
+        )
         created = json.loads(body)
-        assert status == 201 and created == {"ok":True,"directory":str(project / "created"),"name":"created"}
-        duplicate, _, _ = request("POST", "/client-directories.json", {"parent":str(project), "name":"created"})
+        assert status == 201 and created == {
+            "ok": True,
+            "directory": str(project / "created"),
+            "name": "created",
+        }
+        duplicate, _, _ = request(
+            "POST", "/client-directories.json", {"parent": str(project), "name": "created"}
+        )
         assert duplicate == 409, duplicate
         for invalid in ("", ".", "..", "../escape", "a/b", "a\\b", "bad\x00name", "bad\nname"):
-            bad, _, _ = request("POST", "/client-directories.json", {"parent":str(project), "name":invalid})
+            bad, _, _ = request(
+                "POST", "/client-directories.json", {"parent": str(project), "name": invalid}
+            )
             assert bad == 400, (invalid, bad)
         outside = Path(temp) / "outside"
         outside.mkdir()
-        forbidden, _, _ = request("POST", "/client-directories.json", {"parent":str(outside), "name":"nope"})
+        forbidden, _, _ = request(
+            "POST", "/client-directories.json", {"parent": str(outside), "name": "nope"}
+        )
         assert forbidden == 403, forbidden
         try:
             link = project / "outside-link"
             link.symlink_to(outside, target_is_directory=True)
-            forbidden, _, _ = request("POST", "/client-directories.json", {"parent":str(link), "name":"nope"})
+            forbidden, _, _ = request(
+                "POST", "/client-directories.json", {"parent": str(link), "name": "nope"}
+            )
             assert forbidden == 403, forbidden
         except (NotImplementedError, OSError):
             pass
 
-        status, content_type, body = request("GET","/client-runtime.json")
+        status, content_type, body = request("GET", "/client-runtime.json")
         assert status == 200, status
         payload = json.loads(body)
         assert payload["version"] == 2
@@ -153,44 +191,85 @@ with tempfile.TemporaryDirectory() as temp:
         assert status == 200 and json.loads(body)["plan"]["title"] == "Second web plan"
         status, _, body = request("GET", "/client-plan.json")
         assert status == 200 and json.loads(body)["plan"]["title"] == "Second web plan"
-        plain = server_workflow.runtime._parse_plan_document("# Plain\n\n- First\n- Second\n\n```\n- ignored\n```", "fallback")
-        assert plain["title"] == "Plain" and [item["content"] for item in plain["todos"]] == ["First", "Second"]
+        plain = server_workflow.runtime._parse_plan_document(
+            "# Plain\n\n- First\n- Second\n\n```\n- ignored\n```", "fallback"
+        )
+        assert plain["title"] == "Plain" and [item["content"] for item in plain["todos"]] == [
+            "First",
+            "Second",
+        ]
 
-        status, content_type, body = request("GET","/client-runtime-v3.json")
+        status, content_type, body = request("GET", "/client-runtime-v3.json")
         assert status == 200, status
         assert "application/json" in content_type
         payload = json.loads(body)
         assert payload["version"] == 3
-        for key in ("nativeDynamicCompaction","astIndex","repoEmbeddings","semanticSymbolDiff","mcpCodeMode","sandboxEnforcement","sharedNativeRAG","zeroTokenReplay","remoteNotificationAPI"):
+        assert payload["services"]["astLanguages"] == ["python"]
+        assert payload["services"]["otherLanguageIndex"] == "lexical"
+        for key in (
+            "nativeDynamicCompaction",
+            "astIndex",
+            "repoEmbeddings",
+            "semanticSymbolDiff",
+            "mcpCodeMode",
+            "sandboxEnforcement",
+            "sharedNativeRAG",
+            "zeroTokenReplay",
+            "remoteNotificationAPI",
+        ):
             assert payload["services"][key] is True, key
 
-        q=quote(str(project),safe='')
-        status, _, body=request("GET",f"/client-repo-index-v3.json?directory={q}&query=runtime_symbol")
-        assert status==200
-        index=json.loads(body)
-        assert any(hit.get("qualified")=="runtime_symbol" for hit in index.get("hits") or [])
+        q = quote(str(project), safe="")
+        status, _, body = request(
+            "GET", f"/client-repo-index-v3.json?directory={q}&query=runtime_symbol"
+        )
+        assert status == 200
+        index = json.loads(body)
+        assert any(hit.get("qualified") == "runtime_symbol" for hit in index.get("hits") or [])
 
-        status, _, body=request("GET",f"/client-mcp-gateway-v3.json?directory={q}")
-        assert status==200
-        mcp=json.loads(body)
-        assert mcp["codeMode"] is True and mcp["lazyLoading"] is True and mcp["credentialsExposed"] is False
+        status, _, body = request("GET", f"/client-mcp-gateway-v3.json?directory={q}")
+        assert status == 200
+        mcp = json.loads(body)
+        assert (
+            mcp["codeMode"] is True
+            and mcp["lazyLoading"] is True
+            and mcp["credentialsExposed"] is False
+        )
 
-        forbidden,_,_=request("POST","/internal/runtime/tool-before",{"cwd":str(project),"tool":"read","input":{"path":"main.py"}},authenticated=False,internal=False)
-        assert forbidden==403
-        allowed,_,body=request("POST","/internal/runtime/tool-before",{"cwd":str(project),"tool":"read","input":{"path":"main.py"}},authenticated=False,internal=True)
-        assert allowed==200
+        forbidden, _, _ = request(
+            "POST",
+            "/internal/runtime/tool-before",
+            {"cwd": str(project), "tool": "read", "input": {"path": "main.py"}},
+            authenticated=False,
+            internal=False,
+        )
+        assert forbidden == 403
+        allowed, _, body = request(
+            "POST",
+            "/internal/runtime/tool-before",
+            {"cwd": str(project), "tool": "read", "input": {"path": "main.py"}},
+            authenticated=False,
+            internal=True,
+        )
+        assert allowed == 200
         assert json.loads(body).get("allow") is True
 
-        retired_cache,_,_=request("POST","/internal/runtime/tool-cache",{"op":"get"},authenticated=False,internal=True)
-        assert retired_cache==401
+        retired_cache, _, _ = request(
+            "POST",
+            "/internal/runtime/tool-cache",
+            {"op": "get"},
+            authenticated=False,
+            internal=True,
+        )
+        assert retired_cache == 401
 
-        remote,_,body=request("GET","/client-remote-status.json")
-        assert remote==200
-        remote_payload=json.loads(body)
-        assert remote_payload["actions"]["task"]==["cancel","pause","resume"]
-        assert remote_payload["actions"]["permission"]==["once","reject"]
+        remote, _, body = request("GET", "/client-remote-status.json")
+        assert remote == 200
+        remote_payload = json.loads(body)
+        assert remote_payload["actions"]["task"] == ["cancel", "pause", "resume"]
+        assert remote_payload["actions"]["permission"] == ["once", "reject"]
 
-        status, _, body = request("GET","/client-resource-status.json")
+        status, _, body = request("GET", "/client-resource-status.json")
         assert status == 200
         resources = json.loads(body)
         assert resources["mode"] == "provider-pinned"
@@ -203,4 +282,6 @@ with tempfile.TemporaryDirectory() as temp:
         stub_backend.server_close()
         thread.join(timeout=5)
 
-print("Composed web-server smoke passed: auth + Runtime V2/V3 + semantic index + MCP + pre-exec cache + remote actions")
+print(
+    "Composed web-server smoke passed: auth + Runtime V2/V3 + semantic index + MCP + pre-exec cache + remote actions"
+)

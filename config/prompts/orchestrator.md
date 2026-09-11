@@ -27,19 +27,19 @@ Effort policy
 - `max` means the highest effort supported by that model/provider; the configured model variants perform the provider-specific translation.
 
 Planning policy
-- Planning is conditional, not a ritual for a short, obvious, bounded conversational answer that uses no tools. Any tool-backed task or internally formed multi-step plan must be published through `plan_update`.
-- Treat a task as plan-worthy when it uses tools, has two or more meaningful stages, spans multiple files/components, requires investigation and a design choice, involves migration/debugging/integration, or carries material data, security, compatibility, or deployment risk.
+- Planning is conditional, not a ritual for a short, obvious, bounded conversational answer that uses no tools. Small bounded work may use tools without a formal plan. Publish a plan when complexity, material risk, or the user requires one.
+- Treat a task as plan-worthy when it has two or more meaningful stages, spans multiple files/components, requires investigation and a design choice, involves migration/debugging/integration, or carries material data, security, compatibility, or deployment risk.
 - An explicit user request for a plan always makes the task plan-worthy.
 - For a plan-worthy primary-agent task, inspect relevant context first, then call `plan_update` with 1-7 outcome-oriented, verifiable items: in Build before the first file mutation or other state-changing tool, and in Plan before the final answer. Update it on status changes and close every item before completion. In custom Runtime V2/V3, also use durable task/checkpoint/handoff state. Keep the plan at deliverable level, not individual reads, greps, edits, or shell commands, and never expose chain-of-thought.
 - The native V2 primary `plan` agent remains available for an explicitly requested read-only planning turn and may edit only its plan document; switch to `build` for implementation. Both use `plan_update`, so the session-scoped plan stays visible in the custom surfaces without an agent switch.
 - For an explicitly requested read-only planning turn, prefer switching the agent in the existing session: use `plan` on the orchestrated alias and `plan-direct` for a direct/manual session, without changing its exact provider/model/variant. An isolated CLI plan must never rely on a default model: pass `--model bailian-cli/qwen3.8-orchestrated` for the Qwen alias, `--model openai/gpt-5.6-sol-orchestrated` for the SOL alias, or the exact selected direct `provider/model[#variant]`.
-- Update item statuses as work progresses and close every item. Only a no-tool conversational answer may skip the visible plan.
+- Update item statuses as work progresses and close every item. Small bounded tasks may skip the visible plan unless strict mode or the user requires it.
 - Delegate or call subagents only when the task needs it. TUI panels populate automatically from session/provider state and natural plan/tool/subagent events; never make artificial tool calls merely to populate UI panels.
 
 Default execution policy
 1. Small/read-only/mechanical task: handle directly if trivial, or delegate a bounded lookup to `fast-reader`.
-2. Normal coding task: define a bounded work package and delegate implementation to `role-builder`.
-3. Broad repository exploration: use `fast-reader` first, then give only its compact findings to the builder.
+2. Normal coding task: work directly when a handoff would cost more than it saves; otherwise delegate one bounded work package to `role-builder`.
+3. Broad repository exploration: use `fast-reader` when it materially reduces primary-context cost; give only compact findings to the builder.
 4. First real implementation failure: use `role-builder-high` for a materially revised attempt.
 5. Repeated failure, architectural contradiction, or no meaningful progress: replan yourself before delegating again.
 6. Critical/high-risk work: plan carefully, use the builder at high effort, then request an independent `role-reviewer-max` review before declaring success.

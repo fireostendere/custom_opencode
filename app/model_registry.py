@@ -100,7 +100,9 @@ def sol_role_models() -> dict[str, str]:
             raise ValueError(f"{SOL_ROLE_ENV[role]}: {error}")
         _, model, _ = _split_ref(value)
         if model.casefold() in SOL_FORBIDDEN_MODEL_IDS:
-            raise ValueError(f"{SOL_ROLE_ENV[role]}: gpt-5.6-sol-fast is disabled; use GPT-5.6 Luna")
+            raise ValueError(
+                f"{SOL_ROLE_ENV[role]}: gpt-5.6-sol-fast is disabled; use GPT-5.6 Luna"
+            )
         result[role] = value
     return result
 
@@ -168,7 +170,11 @@ def effort_plan(ref: str, requested: str = "auto") -> dict[str, Any]:
         )
         return result
 
-    if low.startswith("deepseek-v4-pro") or low.startswith("deepseek-v4-flash") or low.startswith("glm-5"):
+    if (
+        low.startswith("deepseek-v4-pro")
+        or low.startswith("deepseek-v4-flash")
+        or low.startswith("glm-5")
+    ):
         effective = "max" if requested == "max" else "high"
         result.update(
             effectiveEffort=effective,
@@ -210,9 +216,9 @@ def _quality_hints(ref: str) -> dict[str, Any]:
     codeish = any(token in low for token in ("qwen", "deepseek", "codex", "gpt", "glm"))
     return {
         "fastPath": flash,
-        "coding": .92 if qwen_max else .84 if codeish else .65,
-        "review": .94 if qwen_max else .84 if "deepseek-v4" in low else .78 if codeish else .62,
-        "planning": .95 if qwen_max else .76 if flash else .74 if codeish else .62,
+        "coding": 0.92 if qwen_max else 0.84 if codeish else 0.65,
+        "review": 0.94 if qwen_max else 0.84 if "deepseek-v4" in low else 0.78 if codeish else 0.62,
+        "planning": 0.95 if qwen_max else 0.76 if flash else 0.74 if codeish else 0.62,
     }
 
 
@@ -230,7 +236,11 @@ class CapabilityRegistry:
             if not ref:
                 continue
             caps = item.get("capabilities") if isinstance(item.get("capabilities"), dict) else {}
-            inputs = caps.get("input") if isinstance(caps.get("input"), list) else item.get("input") if isinstance(item.get("input"), list) else []
+            inputs = (
+                caps.get("input")
+                if isinstance(caps.get("input"), list)
+                else item.get("input") if isinstance(item.get("input"), list) else []
+            )
             limit = item.get("limit") if isinstance(item.get("limit"), dict) else {}
             context = limit.get("context") or item.get("contextWindow") or item.get("context") or 0
             try:
@@ -249,18 +259,32 @@ class CapabilityRegistry:
                 "tools": caps.get("tools") is True or item.get("tool_call") is True,
                 "input": inputs,
                 "context": context,
-                "contextClass": "huge" if context >= 500_000 else "large" if context >= 180_000 else "medium" if context >= 64_000 else "small",
+                "inputLimit": limit.get("input") or 0,
+                "outputLimit": limit.get("output") or 0,
+                "contextClass": (
+                    "huge"
+                    if context >= 500_000
+                    else (
+                        "large"
+                        if context >= 180_000
+                        else "medium" if context >= 64_000 else "small"
+                    )
+                ),
                 "costClass": _cost_class(item, ref),
                 "providerLock": provider_lock_for_ref(ref),
                 "effortSupported": bool(probe.get("effortSupported")),
                 "effortMapping": probe.get("effortMapping"),
-                "variants": [str(v.get("id")) for v in variants if isinstance(v, dict) and v.get("id")],
+                "variants": [
+                    str(v.get("id")) for v in variants if isinstance(v, dict) and v.get("id")
+                ],
                 **_quality_hints(ref),
             }
         self._models = models
 
     def models(self) -> list[dict[str, Any]]:
-        return sorted(self._models.values(), key=lambda item: (item["providerID"], item["name"].casefold()))
+        return sorted(
+            self._models.values(), key=lambda item: (item["providerID"], item["name"].casefold())
+        )
 
     def get(self, ref: str) -> dict[str, Any] | None:
         provider, model, _ = _split_ref(ref)
@@ -275,121 +299,245 @@ class CapabilityRegistry:
     def profiles(self) -> dict[str, dict[str, Any]]:
         roles = role_models()
         sol_roles = sol_role_models()
-        orchestrated = os.environ.get("OPENCODE_ORCHESTRATED_MODEL", "bailian-cli/qwen3.8-orchestrated").strip() or "bailian-cli/qwen3.8-orchestrated"
+        orchestrated = (
+            os.environ.get(
+                "OPENCODE_ORCHESTRATED_MODEL", "bailian-cli/qwen3.8-orchestrated"
+            ).strip()
+            or "bailian-cli/qwen3.8-orchestrated"
+        )
         ok, error = validate_provider_ref(orchestrated, ALIBABA_PROVIDER)
         if not ok:
             raise ValueError(f"OPENCODE_ORCHESTRATED_MODEL: {error}")
-        sol_orchestrated = os.environ.get("OPENCODE_SOL_ORCHESTRATED_MODEL", "openai/gpt-5.6-sol-orchestrated").strip() or "openai/gpt-5.6-sol-orchestrated"
+        sol_orchestrated = (
+            os.environ.get(
+                "OPENCODE_SOL_ORCHESTRATED_MODEL", "openai/gpt-5.6-sol-orchestrated"
+            ).strip()
+            or "openai/gpt-5.6-sol-orchestrated"
+        )
         ok, error = validate_provider_ref(sol_orchestrated, "openai")
         if not ok:
             raise ValueError(f"OPENCODE_SOL_ORCHESTRATED_MODEL: {error}")
 
         direct = {
-            "id": "direct", "label": "Selected model", "route": "selected",
-            "agentBuild": "build-direct", "agentPlan": "plan-direct", "orchestrated": False,
-            "contextPolicy": {"mode": "model-aware", "targetRatio": .72},
-            "sandbox": "repo-write", "autoReview": False,
+            "id": "direct",
+            "label": "Selected model",
+            "route": "selected",
+            "agentBuild": "build-direct",
+            "agentPlan": "plan-direct",
+            "orchestrated": False,
+            "contextPolicy": {"mode": "model-aware", "targetRatio": 0.72},
+            "sandbox": "repo-write",
+            "autoReview": False,
         }
         sol_profile = {
-            "id": "sol-orchestrated", "label": "GPT-5.6 Sol · Orchestrated", "route": "cloud",
-            "cloudModel": sol_orchestrated, "plannerModel": sol_orchestrated, "builderModel": sol_roles["builder"],
-            "readerModel": sol_roles["reader"], "reviewerModel": sol_roles["reviewer"],
-            "agentBuild": "build", "agentPlan": "plan", "orchestrated": True,
-            "planningPolicy": "required", "readerPolicy": "smart", "reviewPolicy": "planner-checkpoint",
+            "id": "sol-orchestrated",
+            "label": "GPT-5.6 Sol · Orchestrated",
+            "route": "cloud",
+            "cloudModel": sol_orchestrated,
+            "plannerModel": sol_orchestrated,
+            "builderModel": sol_roles["builder"],
+            "readerModel": sol_roles["reader"],
+            "reviewerModel": sol_roles["reviewer"],
+            "agentBuild": "build",
+            "agentPlan": "plan",
+            "orchestrated": True,
+            "planningPolicy": "required",
+            "readerPolicy": "smart",
+            "reviewPolicy": "planner-checkpoint",
             "effortPolicy": {
                 "planner": {"default": "high", "critical": "max"},
                 "reader": {"default": "high", "maximum": "max"},
                 "builder": {"default": "medium", "afterFailure": "high", "maximum": "max"},
                 "reviewer": {"default": "high", "critical": "max"},
             },
-            "contextPolicy": {"mode": "model-aware", "targetRatio": .72, "minGrowthBeforeRecompact": 32000},
-            "sandbox": "repo-write", "autoReview": "smart", "requires": {"tools": True, "coding": .80, "planning": .85},
+            "contextPolicy": {
+                "mode": "model-aware",
+                "targetRatio": 0.72,
+                "minGrowthBeforeRecompact": 32000,
+            },
+            "sandbox": "repo-write",
+            "autoReview": "smart",
+            "requires": {"tools": True, "coding": 0.80, "planning": 0.85},
         }
         sol_review = {
-            "id": "sol-review", "label": "SOL Review", "route": "cloud",
-            "cloudModel": sol_roles["reviewer"], "reviewerModel": sol_roles["reviewer"],
-            "agentBuild": "plan-direct", "agentPlan": "plan-direct", "orchestrated": False,
-            "reviewPolicy": "independent", "effortPolicy": {"reviewer": {"default": "high", "critical": "max", "maximum": "max"}},
-            "contextPolicy": {"mode": "model-aware", "targetRatio": .70}, "sandbox": "safe",
-            "autoReview": False, "requires": {"tools": True, "review": .80}, "hidden": True,
+            "id": "sol-review",
+            "label": "SOL Review",
+            "route": "cloud",
+            "cloudModel": sol_roles["reviewer"],
+            "reviewerModel": sol_roles["reviewer"],
+            "agentBuild": "plan-direct",
+            "agentPlan": "plan-direct",
+            "orchestrated": False,
+            "reviewPolicy": "independent",
+            "effortPolicy": {"reviewer": {"default": "high", "critical": "max", "maximum": "max"}},
+            "contextPolicy": {"mode": "model-aware", "targetRatio": 0.70},
+            "sandbox": "safe",
+            "autoReview": False,
+            "requires": {"tools": True, "review": 0.80},
+            "hidden": True,
         }
         fast = {
-            "id": "fast", "label": "Fast", "route": "cloud",
-            "cloudModel": roles["reader"], "builderModel": roles["reader"],
-            "agentBuild": "build", "agentPlan": "plan", "orchestrated": False,
+            "id": "fast",
+            "label": "Fast",
+            "route": "cloud",
+            "cloudModel": roles["reader"],
+            "builderModel": roles["reader"],
+            "agentBuild": "build",
+            "agentPlan": "plan",
+            "orchestrated": False,
             "effortPolicy": {"builder": {"default": "low", "maximum": "medium"}},
-            "contextPolicy": {"mode": "model-aware", "targetRatio": .70},
-            "sandbox": "repo-write", "autoReview": False,
+            "contextPolicy": {"mode": "model-aware", "targetRatio": 0.70},
+            "sandbox": "repo-write",
+            "autoReview": False,
             "requires": {"tools": True, "fastPath": True},
         }
         build = {
-            "id": "build", "label": "Build", "route": "cloud",
-            "cloudModel": roles["builder"], "builderModel": roles["builder"],
-            "readerModel": roles["reader"], "plannerModel": roles["planner"],
-            "agentBuild": "build", "agentPlan": "plan", "orchestrated": False,
-            "readerPolicy": "smart", "planningPolicy": "on-escalation", "reviewPolicy": "self",
+            "id": "build",
+            "label": "Build",
+            "route": "cloud",
+            "cloudModel": roles["builder"],
+            "builderModel": roles["builder"],
+            "readerModel": roles["reader"],
+            "plannerModel": roles["planner"],
+            "agentBuild": "build",
+            "agentPlan": "plan",
+            "orchestrated": False,
+            "readerPolicy": "smart",
+            "planningPolicy": "on-escalation",
+            "reviewPolicy": "self",
             "effortPolicy": {
                 "reader": {"default": "low", "maximum": "medium"},
                 "builder": {"default": "medium", "afterFailure": "high", "maximum": "max"},
                 "planner": {"default": "high", "critical": "max"},
             },
-            "contextPolicy": {"mode": "model-aware", "targetRatio": .72},
-            "sandbox": "repo-write", "autoReview": "smart", "requires": {"tools": True, "coding": .75},
+            "contextPolicy": {"mode": "model-aware", "targetRatio": 0.72},
+            "sandbox": "repo-write",
+            "autoReview": "smart",
+            "requires": {"tools": True, "coding": 0.75},
         }
         architect = {
-            "id": "architect", "label": "Architect", "route": "cloud",
-            "cloudModel": orchestrated, "plannerModel": roles["planner"], "builderModel": roles["builder"], "readerModel": roles["reader"],
-            "agentBuild": "build", "agentPlan": "plan", "orchestrated": True,
-            "planningPolicy": "required", "readerPolicy": "smart", "reviewPolicy": "planner-checkpoint",
+            "id": "architect",
+            "label": "Architect",
+            "route": "cloud",
+            "cloudModel": orchestrated,
+            "plannerModel": roles["planner"],
+            "builderModel": roles["builder"],
+            "readerModel": roles["reader"],
+            "agentBuild": "build",
+            "agentPlan": "plan",
+            "orchestrated": True,
+            "planningPolicy": "required",
+            "readerPolicy": "smart",
+            "reviewPolicy": "planner-checkpoint",
             "effortPolicy": {
                 "planner": {"default": "high", "critical": "max"},
                 "reader": {"default": "low", "maximum": "medium"},
                 "builder": {"default": "medium", "afterFailure": "high", "maximum": "max"},
             },
-            "contextPolicy": {"mode": "model-aware", "targetRatio": .72, "minGrowthBeforeRecompact": 32000},
-            "sandbox": "repo-write", "autoReview": "smart", "requires": {"tools": True, "coding": .80, "planning": .85},
+            "contextPolicy": {
+                "mode": "model-aware",
+                "targetRatio": 0.72,
+                "minGrowthBeforeRecompact": 32000,
+            },
+            "sandbox": "repo-write",
+            "autoReview": "smart",
+            "requires": {"tools": True, "coding": 0.80, "planning": 0.85},
         }
         critical = {
-            "id": "critical", "label": "Critical", "route": "cloud",
-            "cloudModel": orchestrated, "plannerModel": roles["planner"], "builderModel": roles["builder"], "readerModel": roles["reader"], "reviewerModel": roles["reviewer"],
-            "agentBuild": "build", "agentPlan": "plan", "orchestrated": True,
-            "planningPolicy": "required", "readerPolicy": "smart", "reviewPolicy": "required",
+            "id": "critical",
+            "label": "Critical",
+            "route": "cloud",
+            "cloudModel": orchestrated,
+            "plannerModel": roles["planner"],
+            "builderModel": roles["builder"],
+            "readerModel": roles["reader"],
+            "reviewerModel": roles["reviewer"],
+            "agentBuild": "build",
+            "agentPlan": "plan",
+            "orchestrated": True,
+            "planningPolicy": "required",
+            "readerPolicy": "smart",
+            "reviewPolicy": "required",
             "effortPolicy": {
                 "planner": {"default": "max"},
                 "reader": {"default": "low", "maximum": "medium"},
                 "builder": {"default": "high", "maximum": "max"},
                 "reviewer": {"default": "max"},
             },
-            "contextPolicy": {"mode": "model-aware", "targetRatio": .72, "minGrowthBeforeRecompact": 32000},
-            "sandbox": "repo-write", "autoReview": True, "requires": {"tools": True, "coding": .80, "planning": .85, "review": .80},
+            "contextPolicy": {
+                "mode": "model-aware",
+                "targetRatio": 0.72,
+                "minGrowthBeforeRecompact": 32000,
+            },
+            "sandbox": "repo-write",
+            "autoReview": True,
+            "requires": {"tools": True, "coding": 0.80, "planning": 0.85, "review": 0.80},
         }
         review = {
-            "id": "review", "label": "Independent Review", "route": "cloud",
-            "cloudModel": roles["reviewer"], "reviewerModel": roles["reviewer"],
-            "agentBuild": "plan", "agentPlan": "plan", "orchestrated": False,
+            "id": "review",
+            "label": "Independent Review",
+            "route": "cloud",
+            "cloudModel": roles["reviewer"],
+            "reviewerModel": roles["reviewer"],
+            "agentBuild": "plan",
+            "agentPlan": "plan",
+            "orchestrated": False,
             "reviewPolicy": "independent",
             "effortPolicy": {"reviewer": {"default": "high", "critical": "max", "maximum": "max"}},
-            "contextPolicy": {"mode": "model-aware", "targetRatio": .70},
-            "sandbox": "safe", "autoReview": False, "requires": {"tools": True, "review": .80},
+            "contextPolicy": {"mode": "model-aware", "targetRatio": 0.70},
+            "sandbox": "safe",
+            "autoReview": False,
+            "requires": {"tools": True, "review": 0.80},
             "hidden": True,
         }
         research = {
-            "id": "research", "label": "Research", "route": "cloud",
-            "cloudModel": orchestrated, "plannerModel": roles["planner"], "readerModel": roles["reader"], "reviewerModel": roles["reviewer"], "builderModel": None,
-            "agentBuild": "plan", "agentPlan": "plan", "orchestrated": True,
-            "planningPolicy": "required", "readerPolicy": "parallel", "reviewPolicy": "adversarial",
-            "effortPolicy": {"planner": {"default": "high", "critical": "max"}, "reader": {"default": "low"}, "reviewer": {"default": "high", "critical": "max"}},
-            "contextPolicy": {"mode": "model-aware", "targetRatio": .72},
-            "sandbox": "safe", "autoReview": False,
+            "id": "research",
+            "label": "Research",
+            "route": "cloud",
+            "cloudModel": orchestrated,
+            "plannerModel": roles["planner"],
+            "readerModel": roles["reader"],
+            "reviewerModel": roles["reviewer"],
+            "builderModel": None,
+            "agentBuild": "plan",
+            "agentPlan": "plan",
+            "orchestrated": True,
+            "planningPolicy": "required",
+            "readerPolicy": "parallel",
+            "reviewPolicy": "adversarial",
+            "effortPolicy": {
+                "planner": {"default": "high", "critical": "max"},
+                "reader": {"default": "low"},
+                "reviewer": {"default": "high", "critical": "max"},
+            },
+            "contextPolicy": {"mode": "model-aware", "targetRatio": 0.72},
+            "sandbox": "safe",
+            "autoReview": False,
         }
         long_horizon = {
-            "id": "long-horizon", "label": "Long Horizon", "route": "cloud",
-            "cloudModel": orchestrated, "plannerModel": roles["planner"], "builderModel": roles["long_horizon"], "readerModel": roles["reader"], "reviewerModel": roles["reviewer"],
-            "agentBuild": "build", "agentPlan": "plan", "orchestrated": True,
-            "planningPolicy": "required", "readerPolicy": "smart", "reviewPolicy": "final",
-            "effortPolicy": {"planner": {"default": "high", "critical": "max"}, "builder": {"default": "medium", "hard": "high", "maximum": "max"}, "reader": {"default": "low"}, "reviewer": {"default": "high", "critical": "max"}},
-            "contextPolicy": {"mode": "model-aware", "targetRatio": .72},
-            "sandbox": "repo-write", "autoReview": "smart",
+            "id": "long-horizon",
+            "label": "Long Horizon",
+            "route": "cloud",
+            "cloudModel": orchestrated,
+            "plannerModel": roles["planner"],
+            "builderModel": roles["long_horizon"],
+            "readerModel": roles["reader"],
+            "reviewerModel": roles["reviewer"],
+            "agentBuild": "build",
+            "agentPlan": "plan",
+            "orchestrated": True,
+            "planningPolicy": "required",
+            "readerPolicy": "smart",
+            "reviewPolicy": "final",
+            "effortPolicy": {
+                "planner": {"default": "high", "critical": "max"},
+                "builder": {"default": "medium", "hard": "high", "maximum": "max"},
+                "reader": {"default": "low"},
+                "reviewer": {"default": "high", "critical": "max"},
+            },
+            "contextPolicy": {"mode": "model-aware", "targetRatio": 0.72},
+            "sandbox": "repo-write",
+            "autoReview": "smart",
         }
         return {
             "direct": direct,
@@ -409,10 +557,18 @@ class CapabilityRegistry:
         for item in self.models():
             row = dict(item)
             if stats_getter:
-                try: row["telemetry"] = stats_getter(item["ref"])
-                except Exception: row["telemetry"] = {"samples": 0}
+                try:
+                    row["telemetry"] = stats_getter(item["ref"])
+                except Exception:
+                    row["telemetry"] = {"samples": 0}
             rows.append(row)
-        return {"version": 3,"models": rows,"roles": self.role_models(),"canonicalEfforts": list(CANONICAL_EFFORTS),"profiles": list(self.profiles().values())}
+        return {
+            "version": 3,
+            "models": rows,
+            "roles": self.role_models(),
+            "canonicalEfforts": list(CANONICAL_EFFORTS),
+            "profiles": list(self.profiles().values()),
+        }
 
 
 @dataclass
@@ -421,21 +577,58 @@ class ResourceDecision:
     profile: str
     selected_model: str | None
     reason: str
+
     def as_dict(self) -> dict[str, Any]:
         provider, _, _ = _split_ref(self.selected_model or "")
-        return {"mode": self.mode,"profile": self.profile,"selectedModel": self.selected_model,"provider": provider or None,"reason": self.reason}
+        return {
+            "mode": self.mode,
+            "profile": self.profile,
+            "selectedModel": self.selected_model,
+            "provider": provider or None,
+            "reason": self.reason,
+        }
 
 
 class ResourceScheduler:
     """Deterministic provider-pinned profile router."""
-    def decide(self, profile: dict[str, Any], *, selected_model: str | None = None) -> ResourceDecision:
-        profile_id = str(profile.get("id") or "direct"); route = str(profile.get("route") or "selected")
-        if route == "selected": return ResourceDecision("direct", profile_id, selected_model, "explicit selected model is preserved")
-        if route != "cloud": raise ValueError(f"unsupported routing mode: {route}")
-        target = str(profile.get("cloudModel") or profile.get("builderModel") or profile.get("plannerModel") or profile.get("readerModel") or profile.get("reviewerModel") or "") or None
-        if not target: raise ValueError(f"profile {profile_id} has no routed model")
+
+    def decide(
+        self, profile: dict[str, Any], *, selected_model: str | None = None
+    ) -> ResourceDecision:
+        profile_id = str(profile.get("id") or "direct")
+        route = str(profile.get("route") or "selected")
+        if route == "selected":
+            return ResourceDecision(
+                "direct", profile_id, selected_model, "explicit selected model is preserved"
+            )
+        if route != "cloud":
+            raise ValueError(f"unsupported routing mode: {route}")
+        target = (
+            str(
+                profile.get("cloudModel")
+                or profile.get("builderModel")
+                or profile.get("plannerModel")
+                or profile.get("readerModel")
+                or profile.get("reviewerModel")
+                or ""
+            )
+            or None
+        )
+        if not target:
+            raise ValueError(f"profile {profile_id} has no routed model")
         ok, error = validate_provider_ref(target)
-        if not ok: raise ValueError(error)
-        return ResourceDecision("provider-pinned", profile_id, target, "profile role is provider-pinned")
+        if not ok:
+            raise ValueError(error)
+        return ResourceDecision(
+            "provider-pinned", profile_id, target, "profile role is provider-pinned"
+        )
+
     def snapshot(self, profiles: dict[str, dict[str, Any]]) -> dict[str, Any]:
-        return {"mode": "provider-pinned","decisions": {key: self.decide(value).as_dict() for key, value in profiles.items() if value.get("route") == "cloud"}}
+        return {
+            "mode": "provider-pinned",
+            "decisions": {
+                key: self.decide(value).as_dict()
+                for key, value in profiles.items()
+                if value.get("route") == "cloud"
+            },
+        }

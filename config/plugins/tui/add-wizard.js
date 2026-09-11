@@ -6,12 +6,14 @@ import { installPanelSubmitRouter } from "./lib/panel-submit-router.js"
 import { ADD_KINDS, nativeAddCommand, parseAddCommand } from "./lib/add-command.js"
 import { readConfigReceipt } from "./lib/config-receipt.js"
 import { profileTemplates } from "./lib/mcp-profiles.js"
+import { parseSkill } from "./lib/skill-frontmatter.js"
 
 const ID_RE = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/
 const MODEL_ID_RE = /^(?!.*#).{1,200}$/
 const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/
 const ENV_REF_RE = /^\{env:[A-Z_][A-Z0-9_]*\}$/
-const SENSITIVE_NAME_RE = /(?:^|[-_])(?:api[-_]?key|key|token|access[-_]?token|secret|password|passphrase|authorization|auth|credential)(?:$|[-_])/i
+const SENSITIVE_NAME_RE =
+  /(?:^|[-_])(?:api[-_]?key|key|token|access[-_]?token|secret|password|passphrase|authorization|auth|credential)(?:$|[-_])/i
 
 const TITLES = {
   catalog: "Каталог моделей",
@@ -48,7 +50,13 @@ function clearPromptEditor(editor) {
 
 function isOpenCodePrompt(editor) {
   const traits = editor?.traits ?? {}
-  return Boolean(editor && !editor.isDestroyed && traits.owner === "opencode" && traits.role === "prompt" && traits.status !== "SHELL")
+  return Boolean(
+    editor &&
+      !editor.isDestroyed &&
+      traits.owner === "opencode" &&
+      traits.role === "prompt" &&
+      traits.status !== "SHELL",
+  )
 }
 
 function sessionID(context) {
@@ -68,7 +76,11 @@ async function alert(context, message) {
 
 async function ask(context, title, placeholder, validate, optional = false, initial) {
   while (true) {
-    const answer = await context.ui.dialog.prompt({ title, placeholder, ...(initial !== undefined ? { value: String(initial) } : {}) })
+    const answer = await context.ui.dialog.prompt({
+      title,
+      placeholder,
+      ...(initial !== undefined ? { value: String(initial) } : {}),
+    })
     if (answer == null) return null
     const value = String(answer).trim()
     if (optional && !value) return ""
@@ -80,14 +92,20 @@ async function ask(context, title, placeholder, validate, optional = false, init
 
 async function choose(context, title, options) {
   const result = await context.ui.dialog.select({ title, options })
-  return result && typeof result === "object" && Object.hasOwn(result, "value") ? result.value : result ?? null
+  return result && typeof result === "object" && Object.hasOwn(result, "value")
+    ? result.value
+    : (result ?? null)
 }
 
 // Read via the native command/receipt API; no TUI copy of the durable registry.
 async function managed(context) {
   const current = sessionID(context)
   const requestID = globalThis.crypto.randomUUID()
-  await context.client.session.command({ sessionID: current, command: "managed", text: JSON.stringify({ requestID }) })
+  await context.client.session.command({
+    sessionID: current,
+    command: "managed",
+    text: JSON.stringify({ requestID }),
+  })
   return readConfigReceipt(context.client, current, requestID)
 }
 
@@ -96,7 +114,10 @@ async function multiple(context, title, options, initial = []) {
   while (true) {
     const choice = await choose(context, `${title} · ${selected.size} selected`, [
       { title: "Done — continue", value: "__done" },
-      ...options.map((option) => ({ ...option, title: `[${selected.has(option.value) ? "x" : " "}] ${option.title}` })),
+      ...options.map((option) => ({
+        ...option,
+        title: `[${selected.has(option.value) ? "x" : " "}] ${option.title}`,
+      })),
     ])
     if (choice == null) return null
     if (choice === "__done") return [...selected]
@@ -108,47 +129,114 @@ async function multiple(context, title, options, initial = []) {
 async function profileInput(context) {
   const { registry, installed } = await managed(context)
   const profiles = registry.mcpProfiles
-  const existing = Object.keys(profiles).length ? await choose(context, "MCP profile", [
-    { title: "Create profile", value: "__new" },
-    ...Object.values(profiles).map((p) => ({ title: `${p.name} (${p.id})`, value: p.id, description: `${p.mcp.length} MCP · ${p.risk}` })),
-  ]) : "__new"
+  const existing = Object.keys(profiles).length
+    ? await choose(context, "MCP profile", [
+        { title: "Create profile", value: "__new" },
+        ...Object.values(profiles).map((p) => ({
+          title: `${p.name} (${p.id})`,
+          value: p.id,
+          description: `${p.mcp.length} MCP · ${p.risk}`,
+        })),
+      ])
+    : "__new"
   if (existing == null) return null
-  const id = existing !== "__new" ? existing : await ask(context, "Profile ID", "core / frontend / custom", (value) => requiredID(value, "Profile ID") || (["auto", "all"].includes(value.toLowerCase()) ? "Auto and All are reserved." : ""))
+  const id =
+    existing !== "__new"
+      ? existing
+      : await ask(
+          context,
+          "Profile ID",
+          "core / frontend / custom",
+          (value) =>
+            requiredID(value, "Profile ID") ||
+            (["auto", "all"].includes(value.toLowerCase()) ? "Auto and All are reserved." : ""),
+        )
   if (id == null) return null
   const previous = profiles[id] || profileTemplates[id] || {}
   const name = await ask(context, "Profile display name", id, null, true, previous.name)
   if (name == null) return null
   const names = [...new Set([...Object.keys(installed), ...(previous.mcp || [])])].sort()
-  const mcp = await multiple(context, "MCP servers", names.map((id) => ({ title: id, value: id, description: !installed[id] ? "Missing — retained until unchecked" : installed[id].disabled ? "Disabled" : installed[id].type })), previous.mcp)
+  const mcp = await multiple(
+    context,
+    "MCP servers",
+    names.map((id) => ({
+      title: id,
+      value: id,
+      description: !installed[id]
+        ? "Missing — retained until unchecked"
+        : installed[id].disabled
+          ? "Disabled"
+          : installed[id].type,
+    })),
+    previous.mcp,
+  )
   if (mcp == null) return null
   const risk = await choose(context, "Profile risk", [
-    { title: `${previous.risk === "elevated" ? "Elevated" : "Normal"} (current)`, value: previous.risk || "normal" },
-    { title: previous.risk === "elevated" ? "Normal" : "Elevated — hardware / debugger", value: previous.risk === "elevated" ? "normal" : "elevated" },
+    {
+      title: `${previous.risk === "elevated" ? "Elevated" : "Normal"} (current)`,
+      value: previous.risk || "normal",
+    },
+    {
+      title: previous.risk === "elevated" ? "Normal" : "Elevated — hardware / debugger",
+      value: previous.risk === "elevated" ? "normal" : "elevated",
+    },
   ])
   if (risk == null) return null
-  const keywords = await ask(context, "Auto: task keywords (comma separated)", "frontend, css", null, true, previous.keywords?.join(", ") || "")
+  const keywords = await ask(
+    context,
+    "Auto: task keywords (comma separated)",
+    "frontend, css",
+    null,
+    true,
+    previous.keywords?.join(", ") || "",
+  )
   if (keywords == null) return null
-  const agents = await ask(context, "Auto: worker IDs (comma separated)", "frontend-builder", null, true, previous.agents?.join(", ") || "")
+  const agents = await ask(
+    context,
+    "Auto: worker IDs (comma separated)",
+    "frontend-builder",
+    null,
+    true,
+    previous.agents?.join(", ") || "",
+  )
   if (agents == null) return null
-  const split = (value) => value.split(",").map((s) => s.trim()).filter(Boolean)
+  const split = (value) =>
+    value
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
   return { id, name: name || id, mcp, risk, keywords: split(keywords), agents: split(agents) }
 }
 
 async function selectProfile(context) {
   const state = await managed(context)
   const mode = await choose(context, `MCP profile: ${state.mode}`, [
-    { title: "Auto", value: "auto", description: "Worker assignment → task keywords → core fallback" },
-    ...Object.values(state.registry.mcpProfiles).map((p) => ({ title: `${p.name} (${p.id})`, value: p.id, description: `${p.mcp.join(", ") || "Empty"} · ${p.risk}` })),
+    {
+      title: "Auto",
+      value: "auto",
+      description: "Worker assignment → task keywords → core fallback",
+    },
+    ...Object.values(state.registry.mcpProfiles).map((p) => ({
+      title: `${p.name} (${p.id})`,
+      value: p.id,
+      description: `${p.mcp.join(", ") || "Empty"} · ${p.risk}`,
+    })),
     { title: "All", value: "all", description: "All enabled MCP tools" },
   ])
   if (mode == null) return
   const scope = await choose(context, "Apply MCP profile", [
     { title: "This session and its workers", value: "session" },
     { title: "Default for new sessions", value: "default" },
-    ...(mode !== "auto" && state.registry.mcpProfiles[mode]?.risk !== "elevated" ? [{ title: "Auto fallback for ambiguous tasks", value: "fallback" }] : []),
+    ...(mode !== "auto" && state.registry.mcpProfiles[mode]?.risk !== "elevated"
+      ? [{ title: "Auto fallback for ambiguous tasks", value: "fallback" }]
+      : []),
   ])
   if (scope == null) return
-  await context.client.session.command({ sessionID: sessionID(context), command: "mcp-profile", text: JSON.stringify({ mode, scope }) })
+  await context.client.session.command({
+    sessionID: sessionID(context),
+    command: "mcp-profile",
+    text: JSON.stringify({ mode, scope }),
+  })
   toast(context, `MCP profile: ${mode} · ${scope}`, "success")
 }
 
@@ -166,19 +254,49 @@ async function configure(context) {
     const state = await managed(context)
     const report = state.exposure
     const connections = await context.client.mcp.list({ location: context.location })
-    return context.ui.dialog.alert({ title: `MCP profile: ${state.mode}`, message: [
-      `Installed MCP: ${Object.keys(state.installed).length}`,
-      ...(report ? [`Last request: ${report.id} · ${report.agent}`, `Active MCP: ${report.active.length} (${report.active.join(", ")})`, `Exposed MCP tools: ${report.exposed.length}`, `Inactive tools excluded: ${report.excluded.length}`, ...report.warnings] : ["No model request observed yet. Send a prompt to measure exposure."]),
-      ...connections.map((server) => `${server.name}: ${server.status.status}`),
-      "Profiles use native tool definitions; stored Code Mode resumes when no profiles exist.",
-    ].join("\n") })
+    return context.ui.dialog.alert({
+      title: `MCP profile: ${state.mode}`,
+      message: [
+        `Installed MCP: ${Object.keys(state.installed).length}`,
+        ...(report
+          ? [
+              `Last request: ${report.id} · ${report.agent}`,
+              `Active MCP: ${report.active.length} (${report.active.join(", ")})`,
+              `Exposed MCP tools: ${report.exposed.length}`,
+              `Inactive tools excluded: ${report.excluded.length}`,
+              ...report.warnings,
+            ]
+          : ["No model request observed yet. Send a prompt to measure exposure."]),
+        ...connections.map((server) => `${server.name}: ${server.status.status}`),
+        "Profiles use native tool definitions; stored Code Mode resumes when no profiles exist.",
+      ].join("\n"),
+    })
   }
   if (action === "remove") {
     const { registry } = await managed(context)
-    const options = ["providers", "models", "mcp", "mcpProfiles", "skills", "orchestrations"].flatMap((type) => Object.keys(registry[type]).map((id) => ({ title: `${type}: ${id}`, value: JSON.stringify({ type, id }) })))
+    const options = [
+      "providers",
+      "models",
+      "mcp",
+      "mcpProfiles",
+      "skills",
+      "orchestrations",
+    ].flatMap((type) =>
+      Object.keys(registry[type]).map((id) => ({
+        title: `${type}: ${id}`,
+        value: JSON.stringify({ type, id }),
+      })),
+    )
     const item = await choose(context, "Remove managed item", options)
-    if (item && await context.ui.dialog.confirm({ title: "Remove configuration?", message: item })) {
-      await context.client.session.command({ sessionID: sessionID(context), command: "remove-managed", text: item })
+    if (
+      item &&
+      (await context.ui.dialog.confirm({ title: "Remove configuration?", message: item }))
+    ) {
+      await context.client.session.command({
+        sessionID: sessionID(context),
+        command: "remove-managed",
+        text: item,
+      })
       toast(context, "Configuration removed", "success")
     }
   }
@@ -194,11 +312,20 @@ function requiredModelID(value, label) {
 
 function envNames(value) {
   if (!value) return []
-  return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))]
+  return [
+    ...new Set(
+      value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ]
 }
 
 function validateEnvNames(value) {
-  return envNames(value).every((item) => ENV_NAME_RE.test(item)) ? "" : "Use comma-separated uppercase environment variable names."
+  return envNames(value).every((item) => ENV_NAME_RE.test(item))
+    ? ""
+    : "Use comma-separated uppercase environment variable names."
 }
 
 async function providerInput(context) {
@@ -206,13 +333,31 @@ async function providerInput(context) {
   if (id == null) return null
   const name = await ask(context, "Provider name", id, null, true)
   if (name == null) return null
-  const packageName = await ask(context, "Provider package", "@opencode-ai/ai/providers/openai-compatible", null, true)
+  const packageName = await ask(
+    context,
+    "Provider package",
+    "@opencode-ai/ai/providers/openai-compatible",
+    null,
+    true,
+  )
   if (packageName == null) return null
   const baseURL = await ask(context, "Base URL (optional)", "https://llm.example/v1", null, true)
   if (baseURL == null) return null
-  const apiKeyName = await ask(context, "API key environment variable (optional)", "ACME_API_KEY", (value) => ENV_NAME_RE.test(value) ? "" : "Use an uppercase environment variable name.", true)
+  const apiKeyName = await ask(
+    context,
+    "API key environment variable (optional)",
+    "ACME_API_KEY",
+    (value) => (ENV_NAME_RE.test(value) ? "" : "Use an uppercase environment variable name."),
+    true,
+  )
   if (apiKeyName == null) return null
-  const extraEnv = await ask(context, "Additional environment variables (optional)", "REGION, TENANT_ID", validateEnvNames, true)
+  const extraEnv = await ask(
+    context,
+    "Additional environment variables (optional)",
+    "REGION, TENANT_ID",
+    validateEnvNames,
+    true,
+  )
   if (extraEnv == null) return null
 
   const env = [...new Set([...envNames(extraEnv), ...(apiKeyName ? [apiKeyName] : [])])]
@@ -230,11 +375,21 @@ async function providerInput(context) {
 }
 
 async function modelInput(context) {
-  const providerID = await ask(context, "Provider ID", "acme", (value) => requiredID(value, "Provider ID"))
+  const providerID = await ask(context, "Provider ID", "acme", (value) =>
+    requiredID(value, "Provider ID"),
+  )
   if (providerID == null) return null
-  const id = await ask(context, "Model alias", "coder", (value) => requiredModelID(value, "Model alias"))
+  const id = await ask(context, "Model alias", "coder", (value) =>
+    requiredModelID(value, "Model alias"),
+  )
   if (id == null) return null
-  const modelID = await ask(context, "Upstream model ID", id, (value) => requiredModelID(value, "Upstream model ID"), true)
+  const modelID = await ask(
+    context,
+    "Upstream model ID",
+    id,
+    (value) => requiredModelID(value, "Upstream model ID"),
+    true,
+  )
   if (modelID == null) return null
   const name = await ask(context, "Model name", id, null, true)
   if (name == null) return null
@@ -254,34 +409,78 @@ async function mcpInput(context) {
 
   let config = previous.type === type ? { ...previous, type } : { type }
   if (type === "remote") {
-    const url = await ask(context, "Remote MCP URL", "https://mcp.example.com", (value) => {
-      let parsed
-      try { parsed = new URL(value) } catch { return "Remote MCP requires an http(s) URL." }
-      if (!["http:", "https:"].includes(parsed.protocol)) return "Remote MCP requires an http(s) URL."
-      if (parsed.username || parsed.password) return "Remote MCP URL must not include credentials."
-      for (const [key, item] of parsed.searchParams) if (isSensitiveName(key) && !credentialReference(item)) return `${key} must use {env:VAR}.`
-      return ""
-    }, false, previous.url)
+    const url = await ask(
+      context,
+      "Remote MCP URL",
+      "https://mcp.example.com",
+      (value) => {
+        let parsed
+        try {
+          parsed = new URL(value)
+        } catch {
+          return "Remote MCP requires an http(s) URL."
+        }
+        if (!["http:", "https:"].includes(parsed.protocol))
+          return "Remote MCP requires an http(s) URL."
+        if (parsed.username || parsed.password)
+          return "Remote MCP URL must not include credentials."
+        for (const [key, item] of parsed.searchParams)
+          if (isSensitiveName(key) && !credentialReference(item))
+            return `${key} must use {env:VAR}.`
+        return ""
+      },
+      false,
+      previous.url,
+    )
     if (url == null) return null
     config.url = url
   } else {
-    const command = await ask(context, "Local command (JSON array)", '["npx", "-y", "example-mcp"]', (value) => {
-      let parsed
-      try { parsed = JSON.parse(value) } catch { return "Local command must be a JSON array of strings." }
-      if (!Array.isArray(parsed) || !parsed.length || parsed.some((item) => typeof item !== "string" || !item.trim())) return "Local command must be a non-empty JSON array of strings."
-      for (let index = 0; index < parsed.length; index += 1) {
-        const argument = parsed[index]
-        const flag = /^--([^=]+)(?:=(.*))?$/i.exec(argument)
-        const valueToCheck = flag && (isSensitiveName(flag[1]) || /^(?:env|header)$/i.test(flag[1]))
-          ? flag[2] === undefined ? parsed[index + 1] : flag[2]
-          : /^-[eH]$/.test(argument) ? parsed[index + 1] : argument
-        const assignment = /^([A-Za-z_][A-Za-z0-9_-]*)=(.*)$/.exec(String(valueToCheck || ""))
-        const header = /^([^:]+):\s*(.*)$/.exec(String(valueToCheck || ""))
-        const sensitive = flag && isSensitiveName(flag[1]) ? [flag[1], valueToCheck] : assignment ? [assignment[1], assignment[2]] : header ? [header[1], header[2]] : null
-        if (sensitive && isSensitiveName(sensitive[0]) && !credentialReference(sensitive[1])) return `${sensitive[0]} must use {env:VAR}.`
-      }
-      return ""
-    }, false, previous.command ? JSON.stringify(previous.command) : undefined)
+    const command = await ask(
+      context,
+      "Local command (JSON array)",
+      '["npx", "-y", "example-mcp"]',
+      (value) => {
+        let parsed
+        try {
+          parsed = JSON.parse(value)
+        } catch {
+          return "Local command must be a JSON array of strings."
+        }
+        if (
+          !Array.isArray(parsed) ||
+          !parsed.length ||
+          parsed.some((item) => typeof item !== "string" || !item.trim())
+        )
+          return "Local command must be a non-empty JSON array of strings."
+        for (let index = 0; index < parsed.length; index += 1) {
+          const argument = parsed[index]
+          const flag = /^--([^=]+)(?:=(.*))?$/i.exec(argument)
+          const valueToCheck =
+            flag && (isSensitiveName(flag[1]) || /^(?:env|header)$/i.test(flag[1]))
+              ? flag[2] === undefined
+                ? parsed[index + 1]
+                : flag[2]
+              : /^-[eH]$/.test(argument)
+                ? parsed[index + 1]
+                : argument
+          const assignment = /^([A-Za-z_][A-Za-z0-9_-]*)=(.*)$/.exec(String(valueToCheck || ""))
+          const header = /^([^:]+):\s*(.*)$/.exec(String(valueToCheck || ""))
+          const sensitive =
+            flag && isSensitiveName(flag[1])
+              ? [flag[1], valueToCheck]
+              : assignment
+                ? [assignment[1], assignment[2]]
+                : header
+                  ? [header[1], header[2]]
+                  : null
+          if (sensitive && isSensitiveName(sensitive[0]) && !credentialReference(sensitive[1]))
+            return `${sensitive[0]} must use {env:VAR}.`
+        }
+        return ""
+      },
+      false,
+      previous.command ? JSON.stringify(previous.command) : undefined,
+    )
     if (command == null) return null
     config.command = JSON.parse(command)
   }
@@ -296,14 +495,25 @@ async function mcpInput(context) {
   ])
   if (disabled == null) return null
   const profiles = Object.values(state.registry.mcpProfiles)
-  const selected = profiles.length ? await multiple(context, "Profiles", profiles.map((p) => ({ title: `${p.name} (${p.id})`, value: p.id })), profiles.filter((p) => p.mcp.includes(name)).map((p) => p.id)) : []
+  const selected = profiles.length
+    ? await multiple(
+        context,
+        "Profiles",
+        profiles.map((p) => ({ title: `${p.name} (${p.id})`, value: p.id })),
+        profiles.filter((p) => p.mcp.includes(name)).map((p) => p.id),
+      )
+    : []
   if (selected == null) return null
   return { name, config: { ...config, codemode, disabled }, profiles: selected }
 }
 
 async function skillInput(context) {
   const source = await choose(context, "Skill source", [
-    { title: "Import local SKILL.md", value: "import", description: "Reuse an existing skill file or directory." },
+    {
+      title: "Import local SKILL.md",
+      value: "import",
+      description: "Reuse an existing skill file or directory.",
+    },
     { title: "Enter instructions manually", value: "manual" },
   ])
   if (source == null) return null
@@ -313,26 +523,27 @@ async function skillInput(context) {
   let defaultDescription = ""
   if (source === "import") {
     while (true) {
-      const inputPath = await ask(context, "Skill path", "/path/to/skill or /path/to/SKILL.md", (value) => value ? "" : "Skill path is required.")
+      const inputPath = await ask(
+        context,
+        "Skill path",
+        "/path/to/skill or /path/to/SKILL.md",
+        (value) => (value ? "" : "Skill path is required."),
+      )
       if (inputPath == null) return null
-      const expanded = inputPath === "~" ? homedir() : inputPath.startsWith("~/") ? join(homedir(), inputPath.slice(2)) : inputPath
-      const path = basename(expanded).toLowerCase() === "skill.md" ? expanded : join(expanded, "SKILL.md")
+      const expanded =
+        inputPath === "~"
+          ? homedir()
+          : inputPath.startsWith("~/")
+            ? join(homedir(), inputPath.slice(2))
+            : inputPath
+      const path =
+        basename(expanded).toLowerCase() === "skill.md" ? expanded : join(expanded, "SKILL.md")
       try {
         const sourceText = await readFile(path, "utf8")
-        const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(sourceText)
-        if (!match) throw new Error("SKILL.md must start with YAML frontmatter")
-        const frontmatter = match[1]
-        const scalar = (key) => {
-          const value = new RegExp(`^${key}:\\s*(.+)$`, "mi").exec(frontmatter)?.[1]?.trim() || ""
-          if (!value || value === ">" || value === "|") return ""
-          return value.replace(/^(['"])(.*)\1$/, "$2")
-        }
-        defaultName = scalar("name")
-        defaultDescription = scalar("description")
-        if (!ID_RE.test(defaultName)) throw new Error("frontmatter name must be a valid Skill ID")
-        if (!defaultDescription) throw new Error("frontmatter description is required")
-        content = sourceText.slice(match[0].length).trim()
-        if (!content) throw new Error("skill instructions are required")
+        const parsed = parseSkill(sourceText)
+        defaultName = parsed.name
+        defaultDescription = parsed.description
+        content = parsed.content
         defaultID = defaultName
         break
       } catch (error) {
@@ -350,7 +561,9 @@ async function skillInput(context) {
     if (name == null) return null
     description = await ask(context, "Skill description", "Review current changes")
     if (description == null) return null
-    content = await ask(context, "Skill content", "Paste the skill instructions", (value) => value ? "" : "Skill content is required.")
+    content = await ask(context, "Skill content", "Paste the skill instructions", (value) =>
+      value ? "" : "Skill content is required.",
+    )
     if (content == null) return null
   }
   const autoinvoke = await choose(context, "Enable autoinvoke?", [
@@ -362,11 +575,17 @@ async function skillInput(context) {
 }
 
 async function orchestrationInput(context) {
-  const providerID = await ask(context, "Provider ID", "acme", (value) => requiredID(value, "Provider ID"))
+  const providerID = await ask(context, "Provider ID", "acme", (value) =>
+    requiredID(value, "Provider ID"),
+  )
   if (providerID == null) return null
-  const id = await ask(context, "Orchestration alias", "coder-orchestrated", (value) => requiredModelID(value, "Orchestration alias"))
+  const id = await ask(context, "Orchestration alias", "coder-orchestrated", (value) =>
+    requiredModelID(value, "Orchestration alias"),
+  )
   if (id == null) return null
-  const baseModelID = await ask(context, "Base model ID", "coder", (value) => requiredModelID(value, "Base model ID"))
+  const baseModelID = await ask(context, "Base model ID", "coder", (value) =>
+    requiredModelID(value, "Base model ID"),
+  )
   if (baseModelID == null) return null
   const name = await ask(context, "Orchestration name", `${id} · Orchestrated`, null, true)
   if (name == null) return null
@@ -392,7 +611,11 @@ async function saveNative(context, parsed) {
     return
   }
   try {
-    await context.client.session.command({ sessionID: current, command: parsed.command, text: parsed.arguments })
+    await context.client.session.command({
+      sessionID: current,
+      command: parsed.command,
+      text: parsed.arguments,
+    })
     toast(context, `${TITLES[parsed.kind]} сохранён`, "success")
   } catch (error) {
     toast(context, `Не удалось сохранить: ${error.message}`)
@@ -406,10 +629,26 @@ async function openWizard(context, kind) {
     return
   }
   try {
-    if (!kind) kind = await choose(context, "Add / update configuration", ADD_KINDS.map((value) => ({ title: TITLES[value], value })))
+    if (!kind)
+      kind = await choose(
+        context,
+        "Add / update configuration",
+        ADD_KINDS.map((value) => ({ title: TITLES[value], value })),
+      )
     if (!kind) return
     const input = await inputFor(context, kind)
-    if (input && await context.ui.dialog.confirm({ title: "Save configuration?", message: JSON.stringify(input, null, 2) })) await saveNative(context, { kind, command: nativeAddCommand(kind), arguments: JSON.stringify(input) })
+    if (
+      input &&
+      (await context.ui.dialog.confirm({
+        title: "Save configuration?",
+        message: JSON.stringify(input, null, 2),
+      }))
+    )
+      await saveNative(context, {
+        kind,
+        command: nativeAddCommand(kind),
+        arguments: JSON.stringify(input),
+      })
   } catch (error) {
     toast(context, `Wizard failed: ${error.message}`)
   }
@@ -485,8 +724,27 @@ function commandRows(context, process) {
         run: (input) => process(parseAddCommand(slashInput(command, input))),
       }
     }),
-    { id: "custom.add-wizard.configure", title: "Configuration: manage", group: "Configuration", palette: true, slash: { name: "configure" }, run: () => { void configure(context).catch((error) => toast(context, error.message)); return true } },
-    { id: "custom.add-wizard.profile", title: "MCP profile: select", group: "Configuration", palette: true, run: () => { void selectProfile(context).catch((error) => toast(context, error.message)); return true } },
+    {
+      id: "custom.add-wizard.configure",
+      title: "Configuration: manage",
+      group: "Configuration",
+      palette: true,
+      slash: { name: "configure" },
+      run: () => {
+        void configure(context).catch((error) => toast(context, error.message))
+        return true
+      },
+    },
+    {
+      id: "custom.add-wizard.profile",
+      title: "MCP profile: select",
+      group: "Configuration",
+      palette: true,
+      run: () => {
+        void selectProfile(context).catch((error) => toast(context, error.message))
+        return true
+      },
+    },
   ]
 }
 
@@ -498,17 +756,24 @@ export default Plugin.define({
       if (busy) return true
       if (parsed?.type !== "wizard") return processParsed(context, parsed)
       busy = true
-      void openWizard(context, parsed.kind).finally(() => { busy = false })
+      void openWizard(context, parsed.kind).finally(() => {
+        busy = false
+      })
       return true
     }
     const submitRouter = installPanelSubmitRouter(context, () => {
-      const editor = context.renderer?.currentFocusedEditor ?? context.renderer?.currentFocusedRenderable
+      const editor =
+        context.renderer?.currentFocusedEditor ?? context.renderer?.currentFocusedRenderable
       if (!isOpenCodePrompt(editor)) return false
       const text = promptText(editor)
       if (/^\/accounts(?:\s|$)/i.test(text.trim())) {
         clearPromptEditor(editor)
         if (text.trim().toLowerCase() === "/accounts") openAccounts(context)
-        else toast(context, "Используйте /accounts без аргументов; данные аккаунта вводятся в визарде.")
+        else
+          toast(
+            context,
+            "Используйте /accounts без аргументов; данные аккаунта вводятся в визарде.",
+          )
         return true
       }
       if (text.trim() === "/mcp-profile") {
@@ -525,12 +790,17 @@ export default Plugin.define({
     const unslot = context.ui.slot({
       append: "app",
       render: () => {
-        context.keymap.layer(() => ({ mode: "global", priority: 950, commands: commandRows(context, run) }))
+        context.keymap.layer(() => ({
+          mode: "global",
+          priority: 950,
+          commands: commandRows(context, run),
+        }))
         return null
       },
     })
 
-    if (submitRouter.transport === "none") toast(context, "Add wizard: local submit interception is unavailable.")
+    if (submitRouter.transport === "none")
+      toast(context, "Add wizard: local submit interception is unavailable.")
     return () => {
       submitRouter.dispose?.()
       unslot?.()

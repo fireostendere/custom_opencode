@@ -74,9 +74,16 @@ assert effort_plan("bailian-cli/qwen3.8-max", "medium")["settings"] == {"effort"
 assert effort_plan("bailian-cli/qwen3.8-max", "high")["settings"] == {"effort": "xhigh"}
 assert effort_plan("bailian-cli/qwen3.8-max", "max")["settings"] == {"effort": "xhigh"}
 assert effort_plan("bailian-cli/qwen3.8-flash", "low")["effectiveEffort"] == "low"
-assert effort_plan("bailian-cli/qwen3.7-plus", "medium")["settings"]["thinking"]["budgetTokens"] == 16384
-assert effort_plan("bailian-cli/qwen3.7-plus", "high")["settings"]["thinking"]["budgetTokens"] == 65536
-assert effort_plan("bailian-cli/qwen3.7-plus", "max")["settings"]["thinking"]["budgetTokens"] == 262144
+assert (
+    effort_plan("bailian-cli/qwen3.7-plus", "medium")["settings"]["thinking"]["budgetTokens"]
+    == 16384
+)
+assert (
+    effort_plan("bailian-cli/qwen3.7-plus", "high")["settings"]["thinking"]["budgetTokens"] == 65536
+)
+assert (
+    effort_plan("bailian-cli/qwen3.7-plus", "max")["settings"]["thinking"]["budgetTokens"] == 262144
+)
 assert effort_plan("bailian-cli/deepseek-v4-pro-0813", "high")["settings"] == {"effort": "high"}
 assert effort_plan("bailian-cli/deepseek-v4-pro-0813", "max")["settings"] == {"effort": "max"}
 assert effort_plan("bailian-cli/glm-5.2", "max")["settings"] == {"effort": "max"}
@@ -123,7 +130,9 @@ alibaba = config["providers"][ALIBABA_PROVIDER]
 models = alibaba["models"]
 agents = config["agents"]
 assert alibaba["name"] == "Alibaba Cloud"
-assert config["providers"]["openai"]["models"]["gpt-5.6-sol-orchestrated"]["modelID"] == "gpt-5.6-sol"
+assert (
+    config["providers"]["openai"]["models"]["gpt-5.6-sol-orchestrated"]["modelID"] == "gpt-5.6-sol"
+)
 assert sol_role_models() == {
     "builder": "openai/gpt-5.6-terra",
     "reader": "openai/gpt-5.6-luna",
@@ -142,6 +151,7 @@ finally:
 
 def variants(model: str) -> dict[str, dict]:
     return {str(row["id"]): row for row in models[model].get("variants", [])}
+
 
 q38max = variants("qwen3.8-max")
 q38flash = variants("qwen3.8-flash")
@@ -163,11 +173,30 @@ assert glm["max"]["settings"]["effort"] == "max"
 assert agents["title"]["model"] == "bailian-cli/qwen3.8-flash#low"
 assert agents["fast-reader"]["model"] == "bailian-cli/qwen3.8-flash#low"
 for direct_agent, denied_actions in {
-    "build-direct": {"subagent", "kb_knowledge_search", "kb_knowledge_get", "kb_knowledge_sources", "kb_knowledge_status", "kb_knowledge_ingest"},
-    "plan-direct": {"edit", "shell", "subagent", "kb_knowledge_search", "kb_knowledge_get", "kb_knowledge_sources", "kb_knowledge_status", "kb_knowledge_ingest"},
+    "build-direct": {
+        "subagent",
+        "kb_knowledge_search",
+        "kb_knowledge_get",
+        "kb_knowledge_sources",
+        "kb_knowledge_status",
+        "kb_knowledge_ingest",
+    },
+    "plan-direct": {
+        "edit",
+        "shell",
+        "subagent",
+        "kb_knowledge_search",
+        "kb_knowledge_get",
+        "kb_knowledge_sources",
+        "kb_knowledge_status",
+        "kb_knowledge_ingest",
+    },
 }.items():
     rules = agents[direct_agent]["permissions"]
-    assert all(any(rule.get("action") == action and rule.get("effect") == "deny" for rule in rules) for action in denied_actions)
+    assert all(
+        any(rule.get("action") == action and rule.get("effect") == "deny" for rule in rules)
+        for action in denied_actions
+    )
 assert agents["role-builder"]["model"] == "bailian-cli/qwen3.7-plus#medium"
 assert agents["role-builder-high"]["model"] == "bailian-cli/qwen3.7-plus#high"
 assert agents["role-builder-max"]["model"] == "bailian-cli/qwen3.7-plus#max"
@@ -185,16 +214,47 @@ assert "local-reader" not in agents
 assert "qwen3.6-flash" not in agents["fast-reader"]["model"]
 
 prompt = (ROOT / "config" / "prompts" / "orchestrator.md").read_text(encoding="utf-8")
-for token in ("role-builder", "role-builder-high", "fast-reader", "role-reviewer-max", "Plus", "maximum effort", "provider"):
+for token in (
+    "role-builder",
+    "role-builder-high",
+    "fast-reader",
+    "role-reviewer-max",
+    "Plus",
+    "maximum effort",
+    "provider",
+):
     assert token.casefold() in prompt.casefold(), token
 sol_prompt = (ROOT / "config" / "prompts" / "orchestrator-sol.md").read_text(encoding="utf-8")
-for token in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "sol-role-builder", "sol-role-reviewer", "direct/manual"):
+for token in (
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "sol-role-builder",
+    "sol-role-reviewer",
+    "direct/manual",
+):
     assert token.casefold() in sol_prompt.casefold(), token
-for token in ("Planning policy", "conditional, not a ritual", "native", "primary `plan` agent", "short, obvious, bounded", "two or more meaningful stages", "before the first file mutation"):
+for token in (
+    "Planning policy",
+    "conditional, not a ritual",
+    "native",
+    "primary `plan` agent",
+    "short, obvious, bounded",
+    "two or more meaningful stages",
+    "before the first file mutation",
+):
     assert token.casefold() in prompt.casefold(), token
 
 agents_policy = (ROOT / "config" / "AGENTS.md").read_text(encoding="utf-8")
-for token in ("Планирование задач", "OpenCode V2", "plan", "plan_update", "1-7", "До первой shell/edit/write/patch", "не создавай инструменты или подагентов только ради UI"):
+for token in (
+    "Планирование задач",
+    "plan",
+    "plan_update",
+    "1–7",
+    "OPENCODE_VISIBLE_PLAN=strict",
+    "Скрытые рассуждения не публикуй",
+    "только ради UI",
+):
     assert token in agents_policy, token
 
 forbidden = (
@@ -227,6 +287,10 @@ checked_paths = (
 for path in checked_paths:
     text = path.read_text(encoding="utf-8")
     for token in forbidden:
-        assert token not in text, f"retired routing token {token!r} remains in {path.relative_to(ROOT)}"
+        assert (
+            token not in text
+        ), f"retired routing token {token!r} remains in {path.relative_to(ROOT)}"
 
-print("Model routing/effort smoke passed: provider lock + role models + effort variants + retired router removed")
+print(
+    "Model routing/effort smoke passed: provider lock + role models + effort variants + retired router removed"
+)

@@ -41,7 +41,7 @@ text=text.replace('__CUSTOM_OPENCODE_ROOT__',root)
 text=text.replace('__RAG_DISABLED__','true')
 config=json.loads(text)
 config.pop('plugins', None)
-config['compaction']={'auto':True,'keep':{'tokens':12000},'buffer':24000}
+config['compaction']={'auto':True,'keep':{'tokens':4096},'buffer':2048}
 config['tool_output']={'max_lines':1600,'max_bytes':48000}
 kb=(((config.get('mcp') or {}).get('servers') or {}).get('kb'))
 if isinstance(kb,dict): kb['codemode']=True
