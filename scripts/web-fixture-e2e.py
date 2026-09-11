@@ -560,6 +560,27 @@ def clear_non_terminal_tasks(server_workflow) -> None:
     assert not remaining, remaining
 
 
+def measure_scroll_to_bottom(page):
+    """Measure #scrollToBottom against .messages-frame as a pair.
+
+    The live fixture stream can re-render the list and re-pin it to the bottom
+    between wait_for(visible) and bounding_box(); the button hides and
+    bounding_box() returns None (CI flake in web-fixtures-browser mobile()
+    while the push run of the same SHA was green). Re-scroll and re-measure,
+    bounded; the callers' geometry assertion stays exactly as strict.
+    """
+    deadline = time.monotonic() + 5
+    while True:
+        page.locator("#scrollToBottom").wait_for(state="visible")
+        box = page.locator("#scrollToBottom").bounding_box()
+        frame = page.locator(".messages-frame").bounding_box()
+        if box and frame:
+            return box, frame
+        if time.monotonic() >= deadline:
+            return box, frame
+        page.locator("#messages").evaluate("el => el.scrollTop = 0")
+
+
 def desktop(browser, base_url: str, server_workflow) -> None:
     FixtureState.reset()
     context = browser.new_context(viewport={"width": 1366, "height": 850})
@@ -742,9 +763,7 @@ def desktop(browser, base_url: str, server_workflow) -> None:
     page.fill("#input", "")
     # The scroll affordance appears at the top and remains within its frame.
     page.locator("#messages").evaluate("el => el.scrollTop = 0")
-    page.locator("#scrollToBottom").wait_for(state="visible")
-    box = page.locator("#scrollToBottom").bounding_box()
-    frame = page.locator(".messages-frame").bounding_box()
+    box, frame = measure_scroll_to_bottom(page)
     assert box and frame and frame["y"] <= box["y"] and box["y"] + box["height"] <= frame["y"] + frame["height"], (box, frame)
     page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] - 2)
     page.wait_for_function("el => el.scrollTop + el.clientHeight >= el.scrollHeight - 2", arg=page.locator("#messages").element_handle())
@@ -1004,9 +1023,7 @@ def mobile(browser, base_url: str) -> None:
     assert page.locator("#composerAction").is_visible()
     page.fill("#input", "")
     page.locator("#messages").evaluate("el => el.scrollTop = 0")
-    page.locator("#scrollToBottom").wait_for(state="visible")
-    box = page.locator("#scrollToBottom").bounding_box()
-    frame = page.locator(".messages-frame").bounding_box()
+    box, frame = measure_scroll_to_bottom(page)
     assert box and frame and frame["y"] <= box["y"] and box["y"] + box["height"] <= frame["y"] + frame["height"], (box, frame)
     page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] - 2)
     page.wait_for_function("el => el.scrollTop + el.clientHeight >= el.scrollHeight - 2", arg=page.locator("#messages").element_handle())
