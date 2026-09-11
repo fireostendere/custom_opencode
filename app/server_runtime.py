@@ -1372,7 +1372,8 @@ def task_control(features: Any, payload: dict[str, Any]) -> dict[str, Any]:
 def _fork(features: Any, sid: str) -> dict[str, Any]:
     value = features._data(
         features._backend_request_json(
-            "POST", f"/api/session/{quote(sid,safe='')}/fork", {}, timeout=20.0
+            "POST", f"/api/session/{quote(sid,safe='')}/fork",
+            {"boundary": {"type": "through"}}, timeout=20.0
         )
     )
     if not isinstance(value, dict) or not value.get("id"):

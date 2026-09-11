@@ -78,6 +78,7 @@ with tempfile.TemporaryDirectory() as temp:
         @staticmethod
         def _backend_request_json(method, target, payload=None, timeout=20.0):
             if method == "POST" and target.endswith("/fork"):
+                assert (payload or {}).get("boundary", {}).get("type") in ("before", "through"), payload
                 return {"id": "forked"}
             raise RuntimeError((method, target, payload))
 

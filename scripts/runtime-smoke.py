@@ -323,6 +323,7 @@ with tempfile.TemporaryDirectory() as temp:
 
         def _backend_request_json(self, method, target, payload=None, timeout=20.0):
             if target.endswith("/fork") and method == "POST":
+                assert (payload or {}).get("boundary", {}).get("type") in ("before", "through"), payload
                 self.forks += 1
                 return {"id": f"ses_fork_{self.forks}"}
             if target.endswith("/agent") and method == "POST":

@@ -291,6 +291,7 @@ with tempfile.TemporaryDirectory() as temp:
             if target.endswith("/summarize") and method == "POST":
                 return {"ok": True}
             if target.endswith("/fork") and method == "POST":
+                assert (payload or {}).get("boundary", {}).get("type") in ("before", "through"), payload
                 self.forks += 1
                 return {"id": f"fork-{self.forks}"}
             if "/message" in target and method == "GET":
