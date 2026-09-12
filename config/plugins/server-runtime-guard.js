@@ -161,6 +161,7 @@ export default {
         allocation.maxOutputTokens,
         finishOnly,
         event.model?.providerID,
+        original.url,
       )
       const headers = new Headers(original.headers)
       headers.delete("content-length")
