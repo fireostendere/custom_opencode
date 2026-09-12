@@ -96,9 +96,14 @@ export default {
       const sessionID = event.sessionID
       if (!sessionID) throw new Error("Native request lacks session identity")
       const session = ctx.session.get ? await ctx.session.get({ sessionID }) : {}
-      if (ctx.catalog?.model?.list && (event.messages || Date.now() - catalogAt > 30000)) {
-        const value = await ctx.catalog.model.list({})
-        catalog = Array.isArray(value) ? value : value?.data || []
+      if (ctx.catalog?.model?.list && Date.now() - catalogAt > 30000) {
+        try {
+          const value = await ctx.catalog.model.list({})
+          catalog = Array.isArray(value) ? value : value?.data || []
+        } catch {
+          // Catalog refresh is metadata only. Keep the last snapshot so a
+          // provider catalog hiccup cannot block an otherwise valid request.
+        }
         catalogAt = Date.now()
       }
       const model = event.model || session.model
@@ -191,23 +196,23 @@ export default {
       // the pinned native runtime always supports catalog and session.get.
       if (ctx.catalog?.model?.list) await bindNative(event, turn?.id || "")
       event.system ||= []
-      // Replace our own previous snapshot, never user text or unrelated policy.
-      event.system = event.system.filter(
-        (part) =>
-          !systemText(part).startsWith(
-            `${CONTEXT_MARKER} (deduplicated, budgeted, checkpoint/RAG/repo aware):\n`,
-          ),
-      )
+      const managedPrefix =
+        `${CONTEXT_MARKER} (deduplicated, budgeted, checkpoint/RAG/repo aware):\n`
       try {
         const managed = await call("/internal/runtime/context", { sessionID, model: event.model })
         const text = managed?.text || ""
+        // Replace our own previous snapshot only after a successful refresh,
+        // never user text or unrelated policy.
+        event.system = event.system.filter((part) => !systemText(part).startsWith(managedPrefix))
         if (text)
           event.system.push({
             type: "text",
-            text: `${CONTEXT_MARKER} (deduplicated, budgeted, checkpoint/RAG/repo aware):\n${text}`,
+            text: `${managedPrefix}${text}`,
           })
-      } catch (error) {
-        throw new Error(`Runtime context unavailable; request was not sent: ${error.message}`)
+      } catch {
+        // Context enrichment is additive. Budget admission still happens in
+        // http.request, so a slow index/RAG refresh must not suppress the
+        // provider request. Keep the previous snapshot when one exists.
       }
     })
 

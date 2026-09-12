@@ -11,8 +11,12 @@ const source = readFileSync(resolve(root, "config/plugins/server-runtime-guard.j
 assert.ok(!source.includes("/internal/runtime/tool-cache"))
 
 const calls = []
+let contextFailure = false
+let catalogCalls = 0
 const originalFetch = globalThis.fetch
 globalThis.fetch = async (url, init) => {
+  if (contextFailure && String(url).endsWith('/internal/runtime/context'))
+    throw new DOMException('The operation timed out.', 'TimeoutError')
   calls.push({ url: String(url), payload: JSON.parse(init.body) })
   return new Response(
     JSON.stringify({
@@ -49,6 +53,14 @@ try {
         hooks[`session:${name}`] = callback
       },
     },
+    catalog: {
+      model: {
+        list: async () => {
+          catalogCalls += 1
+          throw new Error('catalog unavailable')
+        },
+      },
+    },
     tool: {
       hook: async (name, callback) => {
         hooks[`tool:${name}`] = callback
@@ -81,6 +93,7 @@ try {
     await hooks["session:http.request"](requestEvent)
     assert.equal((await requestEvent.request.json()).max_output_tokens, expected)
   }
+  assert.equal(catalogCalls, 1, 'catalog refresh must be cached across hooks')
   const budgetTool = tools.find((tool) => tool.name === 'context_budget')
   assert.ok(budgetTool, 'context_budget tool registered')
   assert.deepEqual(budgetTool.input.properties.action.enum, ['status', 'request'])
@@ -129,8 +142,30 @@ try {
     assert.ok(!Object.hasOwn(event.env, name), `${name} leaked to shell`)
   assert.equal(event.env.OPENCODE_WEB_PORT, "4098")
   assert.equal(event.command, "wrapped")
+
+  // Runtime context is an additive enrichment. A slow index/RAG refresh must
+  // leave native context and the provider request usable.
+  contextFailure = true
+  const contextEvent = {
+    sessionID: 'ses_context_timeout',
+    model: { providerID: 'openai', id: 'gpt-5.6-luna' },
+    system: [{ type: 'text', text: 'Server runtime context (deduplicated, budgeted, checkpoint/RAG/repo aware):\nprevious snapshot' }],
+  }
+  await hooks['session:context'](contextEvent)
+  assert.equal(contextEvent.system[0].text, 'Server runtime context (deduplicated, budgeted, checkpoint/RAG/repo aware):\nprevious snapshot')
+  const requestAfterContextTimeout = {
+    sessionID: 'ses_context_timeout',
+    model: contextEvent.model,
+    request: new Request('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      body: JSON.stringify({ input: [], max_output_tokens: 4096 }),
+    }),
+  }
+  await hooks['session:http.request'](requestAfterContextTimeout)
+  assert.equal((await requestAfterContextTimeout.request.json()).max_output_tokens, 1024)
+  contextFailure = false
   console.log(
-    "Server runtime guard regression OK: session-scoped shell policy, secret scrub, no stale pre-exec cache",
+    "Server runtime guard regression OK: session-scoped shell policy, secret scrub, additive context timeout",
   )
 } finally {
   globalThis.fetch = originalFetch
