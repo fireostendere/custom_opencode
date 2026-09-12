@@ -16,6 +16,12 @@ globalThis.fetch = async (url, init) => {
   calls.push({ url: String(url), payload: JSON.parse(init.body) })
   return new Response(
     JSON.stringify({
+      maxOutputTokens: 1024,
+      tools: 0,
+      calls: 0,
+      output_reserved: 0,
+      started_at: Date.now(),
+      limits: { toolAttempts: 10, calls: 10, outputTokens: 4096, finishTokens: 256, seconds: 60 },
       command: "wrapped",
       cwd: "/repo",
       shell: "/bin/sh",
@@ -60,6 +66,21 @@ try {
     },
   }
   await plugin.setup(ctx)
+  for (const [url, expected] of [
+    ["https://chatgpt.com/backend-api/codex/responses", undefined],
+    ["https://api.openai.com/v1/responses", 1024],
+  ]) {
+    const requestEvent = {
+      sessionID: "ses_request_budget",
+      model: { providerID: "openai", id: "gpt-5.6-luna" },
+      request: new Request(url, {
+        method: "POST",
+        body: JSON.stringify({ input: [], max_output_tokens: 4096 }),
+      }),
+    }
+    await hooks["session:http.request"](requestEvent)
+    assert.equal((await requestEvent.request.json()).max_output_tokens, expected)
+  }
   const budgetTool = tools.find((tool) => tool.name === 'context_budget')
   assert.ok(budgetTool, 'context_budget tool registered')
   assert.deepEqual(budgetTool.input.properties.action.enum, ['status', 'request'])

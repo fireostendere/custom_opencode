@@ -21,6 +21,23 @@ assert.equal(
   1024,
 )
 assert.equal(capRequestBody({ messages: [], max_tokens: 500 }, 1024).max_tokens, 500)
+// ChatGPT rejects the field even when the client already supplied it.
+const codexURL = "https://chatgpt.com/backend-api/codex/responses"
+const bare = capRequestBody({ input: [] }, 1024, false, "openai", codexURL)
+assert.equal("max_output_tokens" in bare, false)
+const codexBody = { input: [], max_output_tokens: 4096, tools: [{}], tool_choice: "auto" }
+const codexCapped = capRequestBody(codexBody, 1024, true, "openai", codexURL)
+assert.equal("max_output_tokens" in codexCapped, false)
+assert.equal(codexCapped.tools, undefined)
+assert.equal(codexCapped.tool_choice, undefined)
+assert.equal(codexBody.max_output_tokens, 4096)
+for (const url of [
+  "",
+  "https://api.openai.com/v1/responses",
+  "https://chatgpt.com.example/backend-api/codex/responses",
+  "https://chatgpt.com/other/responses",
+])
+  assert.equal(capRequestBody({ input: [] }, 1024, false, "openai", url).max_output_tokens, 1024)
 assert.throws(() => capRequestBody({ opaque: true }, 1024), /Unsupported/)
 assert.equal(
   capRequestBody({ messages: [], tools: [{}], tool_choice: "auto" }, 1024, true).tools,

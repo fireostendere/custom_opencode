@@ -1,6 +1,6 @@
 // Protocol-aware output ceilings and streaming usage extraction. No credentials,
 // message contents or provider response text enter the usage ledger.
-export function capRequestBody(body, maximum, finishOnly = false, providerID = "") {
+export function capRequestBody(body, maximum, finishOnly = false, providerID = "", requestURL = "") {
   const result = structuredClone(body)
   const cap = (old) => Math.max(1, Math.min(maximum, Number(old) > 0 ? Number(old) : maximum))
   if (Array.isArray(result.messages)) {
@@ -22,7 +22,11 @@ export function capRequestBody(body, maximum, finishOnly = false, providerID = "
       result.thinking.budget_tokens = Math.max(1, result[key] - 1)
     }
   } else if ("input" in result) {
-    result.max_output_tokens = cap(result.max_output_tokens)
+    // ponytail: ChatGPT rejects wire caps; the ledger accounts actual output
+    // after completion. Add an in-flight cap if that endpoint supports one.
+    if (requestURL.startsWith("https://chatgpt.com/backend-api/codex/"))
+      delete result.max_output_tokens
+    else result.max_output_tokens = cap(result.max_output_tokens)
   } else if (Array.isArray(result.contents)) {
     result.generationConfig ||= {}
     result.generationConfig.maxOutputTokens = cap(result.generationConfig.maxOutputTokens)
