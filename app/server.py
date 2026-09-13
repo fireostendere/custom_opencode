@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -28,6 +29,7 @@ import server_users
 
 
 ROOT = Path(__file__).resolve().parent
+CUSTOM_ENV_FILE = ROOT.parent / ".env"
 DEFAULT_SERVICE_FILE = Path.home() / ".local/state/opencode/service.json"
 DEFAULT_LEGACY_AUTH_FILE = Path.home() / ".config/opencode/mobile-server.env"
 SCRATCH_PROJECT_ID = "__custom_opencode_quick__"
@@ -63,6 +65,50 @@ def read_env_file(path: Path) -> dict[str, str]:
             value = value[1:-1]
         result[key.strip()] = value
     return result
+
+
+def write_env_value(path: Path, name: str, value: str) -> None:
+    """Update one private env value without echoing or logging the secret."""
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    replacement = f"{name}={value}"
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith(f"{name}="):
+            lines[index] = replacement
+            break
+    else:
+        if lines and lines[-1] != "":
+            lines.append("")
+        lines.append(replacement)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+
+
+def configure_qwen_token_plan(api_key: str, model: str) -> None:
+    """Persist the Token Plan key and ask OpenCode's service manager to reload it."""
+    write_env_value(CUSTOM_ENV_FILE, "TOKEN_PLAN_API_KEY", api_key)
+    write_env_value(CUSTOM_ENV_FILE, "TOKEN_PLAN_PROBE_MODEL", model)
+    env = os.environ.copy()
+    env.pop("OPENCODE_CONFIG_DIR", None)
+    binary = shutil.which("opencode2")
+    if not binary:
+        raise RuntimeError("opencode2 не найден в PATH")
+    try:
+        subprocess.run(
+            [binary, "service", "set", "env", "TOKEN_PLAN_API_KEY", api_key],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=45,
+            env=env,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("перезапуск backend ещё не завершён") from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError("OpenCode не принял обновление ключа") from exc
 
 
 BASE_ENV = {
@@ -698,6 +744,57 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def provider_config(self) -> None:
+        values = read_env_file(CUSTOM_ENV_FILE)
+        self.json_response(
+            {
+                "ok": True,
+                "provider": "qwen-token-plan",
+                "baseUrl": values.get(
+                    "TOKEN_PLAN_OPENAI_BASE_URL",
+                    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+                ),
+                "model": values.get("TOKEN_PLAN_PROBE_MODEL", "qwen3.8-max"),
+                "keySet": bool(values.get("TOKEN_PLAN_API_KEY", "").strip()),
+            }
+        )
+
+    def update_provider_config(self) -> None:
+        payload = self.read_json_body()
+        if payload is None:
+            self.json_response({"ok": False, "error": "Некорректный запрос"}, status=400)
+            return
+        if payload.get("provider") != "qwen-token-plan":
+            self.json_response({"ok": False, "error": "Неизвестный провайдер"}, status=400)
+            return
+
+        values = read_env_file(CUSTOM_ENV_FILE)
+        raw_key = payload.get("apiKey")
+        api_key = raw_key.strip() if isinstance(raw_key, str) else ""
+        if not api_key:
+            api_key = values.get("TOKEN_PLAN_API_KEY", "").strip()
+        if not re.fullmatch(r"sk-[A-Za-z0-9._-]{16,397}", api_key):
+            self.json_response(
+                {"ok": False, "error": "Нужен рабочий ключ Alibaba Token Plan формата sk-..."},
+                status=400,
+            )
+            return
+
+        model = str(payload.get("model") or values.get("TOKEN_PLAN_PROBE_MODEL") or "qwen3.8-max").strip()
+        if not re.fullmatch(r"[A-Za-z0-9._:/-]{1,200}", model):
+            self.json_response({"ok": False, "error": "Некорректное имя модели"}, status=400)
+            return
+
+        try:
+            configure_qwen_token_plan(api_key, model)
+        except (OSError, RuntimeError):
+            self.json_response(
+                {"ok": False, "error": "Ключ сохранён локально, но backend не удалось перезапустить"},
+                status=502,
+            )
+            return
+        self.json_response({"ok": True, "provider": "qwen-token-plan", "model": model, "keySet": True})
+
     def do_OPTIONS(self) -> None:
         path = urlsplit(self.path).path
         if path == "/auth/login":
@@ -758,6 +855,9 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             self.json_response(data)
             return
+        if path == "/client-provider-config.json":
+            self.provider_config()
+            return
         self.static_file(path)
 
     def do_HEAD(self) -> None:
@@ -783,6 +883,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not self.authenticated():
             self.unauthorized()
+            return
+        if path == "/client-provider-config.json":
+            self.update_provider_config()
             return
         self.proxy()
 

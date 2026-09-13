@@ -1,0 +1,7 @@
+.wizard-link{background:transparent;color:var(--accent,#10a37f);padding:6px 8px;font-size:12px}
+.provider-wizard{width:min(520px,calc(100% - 24px));display:grid;gap:11px}
+.provider-wizard>label{display:grid;gap:5px;font-size:13px}
+.provider-wizard input,.provider-wizard select{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;background:var(--panel2);padding:9px 10px;outline:0}
+.provider-wizard input:focus,.provider-wizard select:focus{border-color:var(--accent)}
+.wizard-note{margin:0;color:var(--muted);font-size:12px}
+.wizard-error{color:#ef8d8d}
