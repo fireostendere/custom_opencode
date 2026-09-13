@@ -67,6 +67,7 @@ const models = [
   { providerID: 'bailian-cli', id: 'qwen-flash', name: 'Qwen Flash', enabled: true, status: 'active', cost: [{ input: 0.01 }], variants: [{ id: 'low' }, { id: 'medium' }] },
   { providerID: 'bailian-cli', id: 'qwen3.7-plus', name: 'Qwen Plus', enabled: true, status: 'active', cost: [{ input: 0.04 }] },
   { providerID: 'openai', id: 'gpt-test', name: 'GPT Test', enabled: true, status: 'active', cost: [{ input: 0.2 }] },
+  { providerID: 'openai', id: 'gpt-5.6-sol-orchestrated', name: 'GPT-5.6 Sol · Orchestrated', enabled: true, status: 'active', cost: [{ input: 1 }] },
   { providerID: 'opencode', id: 'free-model', name: 'Free Model', enabled: true, status: 'active', cost: [{ input: 0 }] },
   { providerID: 'other', id: 'z-model', name: 'Z Model', enabled: true, status: 'active', cost: [{ input: 1 }] },
   { providerID: 'other', id: 'old-model', name: 'Old Model', enabled: false, status: 'deprecated', cost: [{ input: 0.5 }] },
@@ -116,7 +117,7 @@ const context = {
           return undefined
         }
         if (simulateJump && selectCalls === 1) {
-          // Simulate Shift+Down while the dialog is open: the jump command
+          // Simulate Alt+Down while the dialog is open: the jump command
           // records a reopen target and closes the dialog via clear(), so
           // select() resolves with undefined just like a cancel would.
           const jumpNext = commands.find((item) => item.id === 'model-selector.group-next')
@@ -171,21 +172,21 @@ assert.ok(command, 'model.list command was not registered')
 assert.deepEqual(command.slash, { name: 'models', aliases: ['mo'] })
 const groupPrev = commands.find((item) => item.id === 'model-selector.group-prev')
 assert.ok(groupPrev, 'group-prev command was not registered')
-assert.equal(groupPrev.bind, 'shift+up')
+assert.equal(groupPrev.bind, 'alt+up')
 assert.equal(groupPrev.run(), false, 'jump keys must pass through while the dialog is closed')
 const favoriteToggle = commands.find((item) => item.id === 'model-selector.favorite-toggle')
 assert.ok(favoriteToggle, 'favorite-toggle command was not registered')
 assert.equal(favoriteToggle.bind, 'ctrl+f')
 assert.equal(favoriteToggle.run(), false, 'favorite key must pass through while the dialog is closed')
 
-// ── Scenario 1: session + Shift+Down category jump, then selection ──
+// ── Scenario 1: session + Alt+Down category jump, then selection ──
 simulateJump = true
 command.run()
 await poll(() => switched !== null)
 assert.equal(selectCalls, 2, 'jump must reopen the select dialog once')
 assert.equal(cleared, 1, 'jump must close the dialog via ui.dialog.clear()')
 assert.deepEqual(dialogCurrents[0], current)
-// Current category is the single-item anchor, so Shift+Down lands on the
+// Current category is the single-item anchor, so Alt+Down lands on the
 // first item of the next section (Recent → openai/gpt-test).
 assert.deepEqual(dialogCurrents[1], { providerID: 'openai', modelID: 'gpt-test' })
 assert.deepEqual(switched, {
@@ -197,6 +198,7 @@ assert.equal(persisted.filter((item) => item.providerID === 'bailian-cli' && ite
 
 assert.equal(new Set(dialogOptions.map((item) => `${item.category}:${item.value.providerID}/${item.value.modelID}`)).size, dialogOptions.length, 'model list contains duplicates inside a category')
 assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'qwen3.8-max').map((item) => item.category), ['Current', 'Orchestrated'])
+assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'gpt-5.6-sol-orchestrated').map((item) => item.category), ['Orchestrated'])
 assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'qwen-flash').map((item) => item.category), ['Alibaba'])
 assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'gpt-test').map((item) => item.category), ['Recent', 'OpenAI'])
 assert.deepEqual(
@@ -221,7 +223,7 @@ assert.deepEqual(
   dialogOptions
     .filter((item) => item.category === 'Orchestrated')
     .map((item) => item.value.modelID),
-  ['qwen3.8-max', 'qwen3.7-plus'],
+  ['gpt-5.6-sol-orchestrated', 'qwen3.8-max', 'qwen3.7-plus'],
 )
 assert.deepEqual(
   dialogOptions
@@ -256,7 +258,7 @@ assert.deepEqual(created, {
 })
 assert.deepEqual(navigated, { type: 'session', sessionID: 'ses_home' })
 
-// ── Scenario 3: Shift+Up from an unknown category lands on the last section ──
+// ── Scenario 3: Alt+Up from an unknown category lands on the last section ──
 route = { type: 'session', sessionID: 'ses_test' }
 simulateJump = false
 switched = null
@@ -276,7 +278,7 @@ context.ui.dialog.select = async function (value) {
 }
 command.run()
 await poll(() => switched !== null)
-assert.equal(cleared, 2, 'Shift+Up must also reopen via ui.dialog.clear()')
+assert.equal(cleared, 2, 'Alt+Up must also reopen via ui.dialog.clear()')
 assert.deepEqual(dialogCurrents[1], { providerID: 'other', modelID: 'z-model' })
 context.ui.dialog.select = originalSelect
 

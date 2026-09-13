@@ -8,7 +8,7 @@
  * "Orchestrated" is the provider-pinned role routing stack (see
  * ORCHESTRATED_MODELS), kept separate from the remaining Alibaba models.
  *
- * Category jumps (Shift+Down / Shift+Up) are layered on top without
+ * Category jumps (Alt+Down / Alt+Up) are layered on top without
  * mirroring any dialog key events. The public TUI API does not expose the
  * dialog filter or cursor state, so instead of tracking the cursor the
  * jump closes the dialog (`ui.dialog.clear`) and reopens it with
@@ -195,7 +195,10 @@ function buildOptions(models, providerNames, recentEntries, current, favoriteEnt
       model.providerID === "bailian-cli" &&
       !ORCHESTRATED_MODELS.has(key(model)),
   )
-  takeSorted("OpenAI", (model) => OPENAI_PROVIDERS.has(model.providerID))
+  takeSorted(
+    "OpenAI",
+    (model) => OPENAI_PROVIDERS.has(model.providerID) && !ORCHESTRATED_MODELS.has(key(model)),
+  )
   takeSorted("Orchestrated", (model) => ORCHESTRATED_MODELS.has(key(model)))
   takeSorted("Google", (model) => isRelevantGoogleModel(model))
   takeSorted(
@@ -431,7 +434,7 @@ export default Plugin.define({
           })
           if (!result) {
             if (jump.request?.type === "jump") {
-              // Shift+Down / Shift+Up: the dialog was cleared by
+              // Alt+Down / Alt+Up: the dialog was cleared by
               // requestJump(); reopen it on the target category.
               current = jump.request.value
               continue
@@ -581,7 +584,7 @@ export default Plugin.define({
               id: "model.list",
               title: "Select Model",
               description:
-                "Sorted list: Current → Favorites → Recent → Alibaba → OpenAI → Orchestrated → Google → Free → Others; Ctrl+F toggles a favorite; Shift+Down/Up jumps categories",
+                "Sorted list: Current → Favorites → Recent → Alibaba → OpenAI → Orchestrated → Google → Free → Others; Ctrl+F toggles a favorite; Alt+Down/Up jumps categories",
               group: "Model",
               slash: { name: "models", aliases: ["mo"] },
               palette: true,
@@ -611,7 +614,7 @@ export default Plugin.define({
             {
               id: "model-selector.group-next",
               title: "Model Selector: Next Category",
-              bind: "shift+down",
+              bind: "alt+down",
               group: "Model",
               run: () => {
                 if (!jump.active) return false
@@ -621,7 +624,7 @@ export default Plugin.define({
             {
               id: "model-selector.group-prev",
               title: "Model Selector: Previous Category",
-              bind: "shift+up",
+              bind: "alt+up",
               group: "Model",
               run: () => {
                 if (!jump.active) return false
