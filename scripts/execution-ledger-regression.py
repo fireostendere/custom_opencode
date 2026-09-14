@@ -149,6 +149,151 @@ class LedgerTests(unittest.TestCase):
             with self.assertRaises(BudgetExceeded):
                 self.ledger.reserve("root", "late", output_limit=100)
 
+    def test_extension_requires_fresh_native_form_and_is_idempotent(self):
+        class Forms:
+            def __init__(self): self.states = {}; self.posts = 0
+            def _data(self, value): return value.get("data", value)
+            def _backend_request_json(self, method, path, payload=None, timeout=10):
+                if method == "POST":
+                    self.posts += 1; fid=payload["id"]
+                    assert fid.startswith("frm_")
+                    with self_outer.store.connect() as db:
+                        row = db.execute("SELECT form_id,state FROM budget_approvals WHERE form_id=?", (fid,)).fetchone()
+                    assert tuple(row) == (fid, "posting"), row
+                    self.states[fid]={"status":"pending"}; return {"data":{"id":fid,"sessionID":"root"}}
+                return {"data": self.states[path.split("/")[-2]]}
+        self_outer = self
+        forms = Forms()
+        for n in range(3): self.ledger.reserve("root", f"full{n}", output_limit=100)
+        before = self.ledger.snapshot("root")["limits"]
+        self.assertFalse(self.ledger.extension_request(forms, "root", "extension-one")["granted"])
+        self.assertEqual(forms.posts, 1)
+        form_id = next(iter(forms.states))
+        forms.states[form_id] = {"status": "answered", "answer": {"decision": "approve"}}
+        self.assertTrue(self.ledger.extension_check(forms, "root", "extension-one")["granted"])
+        self.assertTrue(self.ledger.extension_apply("root", "extension-one")["granted"])
+        # Every retry of the same request/proposal observes the already-applied
+        # root grant; it never consumes a second tranche.
+        self.assertTrue(self.ledger.extension_apply("root", "extension-one")["granted"])
+        self.assertTrue(self.ledger.extension_check(forms, "root", "extension-one")["granted"])
+        self.assertTrue(self.ledger.extension_request(forms, "root", "extension-one")["granted"])
+        after = self.ledger.snapshot("root")["limits"]
+        self.assertEqual(after["calls"], before["calls"] + 128)
+        self.assertEqual(after["finishTokens"], before["finishTokens"])
+        self.assertEqual(self.ledger.reserve("root", "resumed", output_limit=100)["maxOutputTokens"], 100)
+
+    def test_concurrent_approval_creates_one_informed_native_form(self):
+        class Forms:
+            def __init__(self):
+                self.posts = 0
+                self.payloads = []
+            def _data(self, value): return value.get("data", value)
+            def _backend_request_json(self, method, path, payload=None, timeout=10):
+                if method == "POST":
+                    self.posts += 1
+                    self.payloads.append(payload)
+                    return {"data": {"id": payload["id"], "sessionID": "root"}}
+                return {"data": {"status": "pending"}}
+        forms = Forms()
+        proposal = {"increment": {"calls": 3, "toolAttempts": 3, "outputTokens": 1000, "seconds": 60}, "revision": 1}
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            results = list(pool.map(lambda _: self.ledger.approval(forms, session_id="root", subject=self.root["rootID"], kind="execution", proposal=proposal), range(12)))
+        self.assertEqual(forms.posts, 1)
+        self.assertTrue(all(item["state"] in {"pending", "creating"} for item in results), results)
+        description = forms.payloads[0]["fields"][0]["description"]
+        self.assertIn("calls", description)
+        self.assertIn("1000", description)
+        self.assertIn("at least", description)
+        self.assertTrue(forms.payloads[0]["id"].startswith("frm_"))
+
+    def test_execution_request_id_is_one_shot_and_status_is_pure(self):
+        class Forms:
+            def __init__(self): self.posts = self.gets = 0; self.state = {"status": "pending"}
+            def _data(self, value): return value.get("data", value)
+            def _backend_request_json(self, method, path, payload=None, timeout=10):
+                if method == "POST": self.posts += 1; return {"data": {"id": payload["id"], "sessionID": "root"}}
+                self.gets += 1; return {"data": self.state}
+        forms = Forms()
+        before = self.ledger.snapshot("root")["limits"]["calls"]
+        self.assertEqual(self.ledger.extension_status("root")["state"], "status")
+        self.assertEqual(forms.posts + forms.gets, 0)
+        self.ledger.extension_request(forms, "root", "request-one")
+        self.assertEqual(forms.posts, 1)
+        self.assertEqual(self.ledger.extension_status("root")["state"], "status")
+        self.assertEqual(forms.gets, 1, "status must not poll or consume")
+        forms.state = {"status": "answered", "answer": {"decision": "approve"}}
+        self.assertTrue(self.ledger.extension_check(forms, "root", "request-one")["granted"])
+        self.assertTrue(self.ledger.extension_apply("root", "request-one")["granted"])
+        self.assertTrue(self.ledger.extension_apply("root", "request-one")["granted"])
+        self.assertEqual(self.ledger.snapshot("root")["limits"]["calls"], before + 128)
+        self.assertTrue(self.ledger.extension_request(forms, "root", "request-one")["granted"])
+        self.assertEqual(forms.posts, 1)
+
+    def test_rejected_automatic_request_reuses_until_explicit_retry(self):
+        class Forms:
+            def __init__(self): self.posts = 0; self.states = {}
+            def _data(self, value): return value.get("data", value)
+            def _backend_request_json(self, method, path, payload=None, timeout=10):
+                if method == "POST":
+                    self.posts += 1; fid = payload["id"]
+                    self.states[fid] = {"status": "pending"}
+                    return {"data": {"id": fid, "sessionID": "root"}}
+                return {"data": self.states[path.split("/")[-2]]}
+        forms = Forms()
+        self.ledger.extension_request(forms, "root", "automatic-one")
+        forms.states[next(iter(forms.states))] = {"status": "answered", "answer": {"decision": "reject"}}
+        self.assertEqual(self.ledger.extension_check(forms, "root", "automatic-one")["state"], "denied")
+        self.assertEqual(self.ledger.extension_request(forms, "root", "automatic-two")["state"], "denied")
+        self.assertEqual(forms.posts, 1, "automatic recovery must not re-prompt after rejection")
+        self.assertFalse(self.ledger.extension_request(forms, "root", "explicit-one", explicit=True)["granted"])
+        self.assertEqual(forms.posts, 2, "an explicit model request receives a fresh form")
+
+    def test_request_id_cannot_cross_execution_root(self):
+        class Forms:
+            def _data(self, value): return value.get("data", value)
+            def _backend_request_json(self, method, path, payload=None, timeout=10):
+                return {"data": {"id": payload["id"], "sessionID": "root"}} if method == "POST" else {"data": {"status": "pending"}}
+        self.ledger.extension_request(Forms(), "root", "shared-request")
+        self.ledger.bind(session_id="other", turn_id="other-turn", parent_id=None, directory=self.tmp.name, model_ref="provider/model")
+        with self.assertRaises(PermissionError):
+            self.ledger.extension_request(Forms(), "other", "shared-request")
+
+    def test_expired_approved_extension_cannot_apply_later(self):
+        from execution_ledger import APPROVAL_TTL_MS
+        class Forms:
+            def __init__(self): self.state = {"status": "pending"}
+            def _data(self, value): return value.get("data", value)
+            def _backend_request_json(self, method, path, payload=None, timeout=10):
+                return {"data": {"id": payload["id"], "sessionID": "root"}} if method == "POST" else {"data": self.state}
+        forms = Forms()
+        with patch("execution_ledger.now_ms", return_value=1000):
+            self.ledger.extension_request(forms, "root", "old-approval")
+            forms.state = {"status": "answered", "answer": {"decision": "approve"}}
+            self.assertTrue(self.ledger.extension_check(forms, "root", "old-approval")["granted"])
+        with patch("execution_ledger.now_ms", return_value=1000 + APPROVAL_TTL_MS + 1):
+            result = self.ledger.extension_apply("root", "old-approval")
+        self.assertFalse(result["granted"])
+        self.assertEqual(result["state"], "expired")
+
+    def test_child_cannot_grant_stale_parent_root(self):
+        self.bind("child")
+        self.ledger.bind(session_id="root", turn_id="turn2", parent_id=None, directory=self.tmp.name, model_ref="provider/model")
+        class Forms:
+            def _data(self, value): return value
+            def _backend_request_json(self, *args, **kwargs): raise AssertionError("stale child must not create a form")
+        self.assertEqual(self.ledger.extension_request(Forms(), "child", "stale-request")["state"], "stale")
+
+    def test_unrelated_or_rejected_form_cannot_grant(self):
+        class Forms:
+            def __init__(self): self.state={"status":"answered","answer":{"decision":"reject"}}
+            def _data(self, value): return value.get("data", value)
+            def _backend_request_json(self, method, path, payload=None, timeout=10):
+                return {"data":{"id":payload["id"],"sessionID":"root"}} if method == "POST" else {"data":self.state}
+        forms=Forms()
+        self.ledger.extension_request(forms,"root", "rejected")
+        # Neither a caller-provided boolean nor an unrelated receipt is a grant.
+        self.assertFalse(self.ledger.extension_check(forms,"root", "rejected")["granted"])
+
     def test_review_same_change_has_one_owner(self):
         self.assertTrue(self.ledger.claim_review(self.root["rootID"], "diff", "orchestrator"))
         self.assertFalse(self.ledger.claim_review(self.root["rootID"], "diff", "server"))

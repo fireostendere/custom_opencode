@@ -35,6 +35,11 @@ with tempfile.TemporaryDirectory() as temp:
     with patch.object(base.time, "time", return_value=2_000_000_000):
         assert base.issue_session_token(300) != base.issue_session_token(300)
     server = base.ThreadingHTTPServer(("127.0.0.1", 0), server_workflow.Handler)
+    original_proxy = server_workflow.Handler.proxy
+    def proxy_ok(self):
+        self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        self.json_response({"proxied": True})
+    server_workflow.Handler.proxy = proxy_ok
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address[:2]
@@ -152,6 +157,27 @@ with tempfile.TemporaryDirectory() as temp:
         status, _, _ = request("GET", "/auth/session", headers={**remote_headers, "Cookie": fresh_cookie})
         assert status == 200, status
 
+        # Budget forms are an explicit human-consent boundary. Loopback,
+        # Basic/internal headers and path spelling tricks cannot submit them.
+        with server_workflow.runtime.STORE.transaction() as db:
+            db.execute("INSERT INTO budget_approvals VALUES(?,?,?,?,?,?,?,?)", ("root", "ses budget", "execution", "{}", "frm_budget", "pending", 1, 1))
+        protected = "/api/session/ses%20budget/form/frm_budget/reply/"
+        for protected_path in (protected, "/api/session/ses%20budget/%66orm/frm_budget/%72eply", "/api/session/ses%20budget/%66orm/frm_budget/%72eply/"):
+            status, _, _ = request("POST", protected_path, body={"decision":"approve"}, headers={"Host": f"127.0.0.1:{port}"})
+            assert status == 401, (protected_path, status)
+        status, _, _ = request("POST", protected, body={"decision":"approve"}, headers={"Host": f"127.0.0.1:{port}", "Authorization":"Basic b3BlbmNvZGU6dGVzdC1wYXNzd29yZA==", "X-OpenCode-Runtime":"ignored"})
+        assert status == 401, status
+        status, _, _ = request("POST", protected, body={"decision":"approve"}, headers={**remote_headers, "Cookie": fresh_cookie})
+        assert status != 401, status
+        status, _, _ = request("POST", protected, body={"decision":"approve"}, headers={**remote_headers, "Cookie": cookie})
+        assert status == 401, status
+        expired_cookie = "opencode_session=" + base.issue_session_token(-1)
+        status, _, _ = request("POST", protected, body={"decision":"approve"}, headers={**remote_headers, "Cookie": expired_cookie})
+        assert status == 401, status
+        ordinary = "/api/session/ses%20budget/form/ordinary/reply/"
+        status, _, _ = request("POST", ordinary, body={"answer":"ok"}, headers={"Host": f"127.0.0.1:{port}"})
+        assert status != 401, status
+
         # Eight failures in a minute are bounded; the next attempt is 429.
         brute_headers = {
             "Host": "custom-opencode.example.invalid",
@@ -174,6 +200,7 @@ with tempfile.TemporaryDirectory() as temp:
         )
         assert status == 429, status
     finally:
+        server_workflow.Handler.proxy = original_proxy
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)

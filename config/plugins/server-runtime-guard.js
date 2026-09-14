@@ -28,6 +28,10 @@ const RESERVED_SECRETS = new Set([
   "OPENCODE_GO_KEY",
 ])
 const CONTEXT_MARKER = "Server runtime context"
+const APPROVAL_WAIT_MS = 45000
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const isBudgetExceeded = (error) => String(error?.message || error).includes("BudgetExceeded")
 
 let ensureFlight
 let lastHealth = 0
@@ -49,11 +53,15 @@ async function ensurePolicy() {
 async function call(path, payload) {
   await ensurePolicy()
   if (!TOKEN) throw new Error("Runtime plugin token is not configured")
+  const contextBudgetRequest =
+    path.endsWith("/context-budget") && payload?.action === "request"
   const response = await fetch(`${BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-OpenCode-Runtime": TOKEN },
     body: JSON.stringify(payload || {}),
-    signal: AbortSignal.timeout(path.endsWith("/context") ? Math.max(15000, TIMEOUT) : TIMEOUT),
+    signal: AbortSignal.timeout(
+      contextBudgetRequest ? Math.max(90000, TIMEOUT) : path.endsWith("/context") ? Math.max(15000, TIMEOUT) : TIMEOUT,
+    ),
   })
   if (!response.ok)
     throw new Error(`runtime control ${response.status}: ${(await response.text()).slice(0, 300)}`)
@@ -145,26 +153,40 @@ export default {
       if (nativeBindings.size > 1000) nativeBindings.delete(nativeBindings.keys().next().value)
       return { binding, budget }
     }
+    async function recoverExecutionBudget(sessionID, explicit = false) {
+      const requestID = randomUUID()
+      let result = await call("/internal/runtime/execution-budget", { sessionID, action: "request", requestID, explicit })
+      const until = Date.now() + APPROVAL_WAIT_MS
+      while (!result?.granted && ["pending", "creating"].includes(result?.state) && Date.now() < until) {
+        await delay(400)
+        result = await call("/internal/runtime/execution-budget", { sessionID, action: "check", requestID })
+      }
+      if (result?.granted) result = await call("/internal/runtime/execution-budget", { sessionID, action: "apply", requestID })
+      return result
+    }
     await ctx.session.hook("http.request", async (event) => {
       const { binding, budget } = await bindNative(event)
       const requestID = randomUUID()
       const finishOnly =
+        budget.finish_used >= 1 ||
         budget.tools >= budget.limits.toolAttempts ||
         budget.calls >= budget.limits.calls ||
         budget.output_reserved >= budget.limits.outputTokens - budget.limits.finishTokens ||
         Date.now() - budget.started_at > budget.limits.seconds * 1000
+      const recovered = finishOnly ? await recoverExecutionBudget(event.sessionID) : null
+      const effectiveFinishOnly = finishOnly && !recovered?.granted
       const allocation = await call("/internal/runtime/request-before", {
         sessionID: event.sessionID,
         requestID,
         outputLimit: binding.outputLimit,
-        finishOnly,
+        finishOnly: effectiveFinishOnly,
       })
       const original = event.request
       const body = await original.clone().json()
       const capped = capRequestBody(
         body,
         allocation.maxOutputTokens,
-        finishOnly,
+        effectiveFinishOnly,
         event.model?.providerID,
         original.url,
       )
@@ -242,12 +264,25 @@ export default {
             return { content: JSON.stringify(result), metadata: { artifactID: input.artifactID } }
           },
         })
+        tools.add({
+          name: "execution_budget",
+          description: "Inspect or explicitly request one bounded execution-budget extension. Every grant requires a fresh native human approval form.",
+          input: { type: "object", required: ["action"], properties: { action: { type: "string", enum: ["status", "request"] } } },
+          options: { pinned: true, codemode: false },
+          execute: async (input, context) => {
+            const sessionID = String(context?.sessionID || "")
+            const result = input?.action === "request"
+              ? await recoverExecutionBudget(sessionID, true)
+              : await call("/internal/runtime/execution-budget", { sessionID, action: "status" })
+            return { content: JSON.stringify(result, null, 1), metadata: result }
+          },
+        })
         // Adaptive context budget: the model can inspect and request expansion of
         // its session working budget, bounded by the real model limit and user policy.
         tools.add({
           name: "context_budget",
           description:
-            "Inspect or expand this session's working context budget. action=status returns used/working/base/ceiling/model-limit/policy-max tokens; action=request asks the runtime to grant a larger working budget (bounded by the real model limit and user policy; never switches model or tariff).",
+            "Inspect or request a larger session working-context budget. action=status returns used/working/base/ceiling/model-limit/policy-max tokens; action=request waits only for a fresh human approval of this exact bounded target, never switches model or tariff.",
           input: {
             type: "object",
             required: ["action"],
@@ -284,8 +319,17 @@ export default {
 
     await ctx.tool.hook("execute.before", async (event) => {
       const c = contextOf(event)
-      if (ctx.catalog?.model?.list)
-        await call("/internal/runtime/budget-tool", { sessionID: c.sessionID })
+      const controlTool = ["context_budget", "execution_budget"].includes(event.tool?.name || event.tool)
+      if (ctx.catalog?.model?.list && !controlTool) {
+        try {
+          await call("/internal/runtime/budget-tool", { sessionID: c.sessionID })
+        } catch (error) {
+          if (!isBudgetExceeded(error)) throw error
+          const recovered = await recoverExecutionBudget(c.sessionID)
+          if (!recovered?.granted) throw error
+          await call("/internal/runtime/budget-tool", { sessionID: c.sessionID })
+        }
+      }
       const decision = await call("/internal/runtime/tool-before", {
         ...c,
         tool: event.tool,

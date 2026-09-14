@@ -2,6 +2,14 @@
 
 Runtime V3 turns the custom OpenCode web server into a durable control plane around the native OpenCode V2 service. OpenCode remains the model/tool execution engine; the custom server owns task lifecycle, provider-locked routing policy, context planning, shared repository/RAG state, policy enforcement and observability.
 
+## Budget extensions
+
+`execution_budget` and `context_budget` only request a bounded, one-time extension. A native Form visibly states the exact execution increment or context target; `status` is read-only. Every execution form lists its exact call/tool/output tranche and says that the deadline becomes at least two hours after approval. The completion reserve is internal and is not added as a public tranche. An approved Form does not change the provider's real context window or model limits.
+
+Automatic exhaustion recovery reuses a denied or expired proposal and never opens another form. The model's explicit `execution_budget.request` may ask again, but only through a fresh Form. Context grants are bound atomically to the current root, requesting native model, ceiling and step count; stale, expired and unbound state grants nothing. A child can use its own model while its current parent root owns the visible Form. Budget-form replies require an unrevoked web-session cookie, not Basic auth or localhost bypass. Form IDs are generated and recorded before the native Form is posted; the server normalizes encoded reply routes before this guard. Same-UID native/browser automation is outside this trusted-client boundary.
+
+Approval is manual in the trusted native client/UI. It protects against accidental or unauthenticated web replies (including localhost bypass), not against an unrestricted same-UID process that can automate the user's browser or native client. Activation is not performed by this repository change; operators must deploy/restart deliberately.
+
 ## Design rules
 
 - The UI exposes model profiles rather than provider capability trivia or a separate orchestrator mode.

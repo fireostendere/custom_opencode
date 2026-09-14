@@ -7,7 +7,7 @@ import json
 import secrets
 import threading
 import time
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import github_workflow
 import integration_contract
@@ -255,6 +255,25 @@ class Handler(rag.Handler, features.Handler):
             except (ValueError, UnicodeDecodeError):
                 return False
         return False
+
+    def authenticated_human(self) -> bool:
+        """Cookie auth with revocation check; no Basic or loopback substitute."""
+        base = rag.plus.ext.base
+        token = self.cookie_token()
+        return bool(token and not _token_revoked(token) and base.valid_session_token(token))
+
+    def form_reply_requires_human(self, path: str) -> bool:
+        parts = path.rstrip("/").split("/")
+        if len(parts) != 7 or parts[:3] != ["", "api", "session"] or parts[4] != "form" or parts[6] != "reply":
+            return False
+        try:
+            sid, form_id = unquote(parts[3]), unquote(parts[5])
+            with runtime.STORE.connect() as db:
+                row = db.execute("SELECT 1 FROM budget_approvals WHERE session_id=? AND form_id=?", (sid, form_id)).fetchone()
+            return bool(row)
+        except Exception:
+            # Fail closed for a form we cannot prove ordinary.
+            return True
 
     def login(self) -> None:
         base = rag.plus.ext.base
