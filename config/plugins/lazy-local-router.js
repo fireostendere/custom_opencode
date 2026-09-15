@@ -31,12 +31,12 @@ async function ensureRouter() {
       stdout: "ignore",
       stderr: "ignore",
     })
-    if (await child.exited !== 0) {
-      throw new Error(`Failed to start local model router${LOG_PATH ? `. See ${LOG_PATH}` : ""}`)
-    }
 
-    for (let attempt = 0; attempt < 20; attempt++) {
+    for (let attempt = 0; attempt < 120; attempt++) {
       if (await healthy()) return
+      if (child.exitCode !== null && child.exitCode !== 0) {
+        throw new Error(`Failed to start local model router${LOG_PATH ? `. See ${LOG_PATH}` : ""}`)
+      }
       await Bun.sleep(500)
     }
     throw new Error(`Local model router did not become healthy${LOG_PATH ? `. See ${LOG_PATH}` : ""}`)
