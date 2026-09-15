@@ -501,6 +501,9 @@ export CUSTOM_OPENCODE_ROOT="$ROOT"
 set -a
 source "$ROOT/.env"
 set +a
+# Native standalone servers remove OPENCODE_SERVER_PASSWORD before plugins load.
+export OPENCODE_RUNTIME_PLUGIN_TOKEN="\${OPENCODE_RUNTIME_PLUGIN_TOKEN:-\${OPENCODE_SERVER_PASSWORD:-}}"
+export OPENCODE_POLICY_COMMAND="\${OPENCODE_POLICY_COMMAND:-$BIN_DIR/custom-opencode-policy}"
 # OpenTUI gives Wayland priority over X11. Some WSLg sessions expose a
 # seat-less Wayland socket even though the X11 clipboard is fully usable.
 # Keep Wayland available as an explicit opt-in for sessions where it works.
@@ -514,7 +517,7 @@ if [[ "\${1:-}" == "run" ]]; then
   plan_agent=0
   explicit_model=0
   invalid_plan_model=0
-  # Scan a copy by index. Do not shift the caller arguments: with `set -e`,
+  # Scan a copy by index. Do not shift the caller arguments: with set -e,
   # consuming a final --agent/--model used to exit before our diagnostic.
   for ((index=1; index<\${#args[@]}; index++)); do
     arg="\${args[index]}"

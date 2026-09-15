@@ -123,6 +123,26 @@ try {
   await hooks['session:http.request'](recoveredRequest)
   assert.deepEqual((await recoveredRequest.request.json()).tools, [{ type: 'function', name: 'ordinary_tool' }], 'approved extension must restore ordinary tools')
   recoveredBudget = false
+  // Compaction consumes final text; Qwen can otherwise finish in reasoning only.
+  for (const [agent, providerID, id, expected] of [
+    ['compaction', 'ollama', 'qwen3.8-heretic:27b', 'none'],
+    ['compaction', 'ollama', 'qwen3.8:27b', 'none'],
+    ['build', 'ollama', 'qwen3.8-heretic:27b', 'high'],
+    ['compaction', 'ollama', 'gpt-oss:20b', 'high'],
+    ['compaction', 'other', 'qwen3.8:27b', 'high'],
+  ]) {
+    const event = {
+      sessionID: 'ses_compaction', agent, model: { providerID, id },
+      request: new Request('http://localhost:11434/v1/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'Summarize the Cedar project.' }], max_tokens: 8192, reasoning_effort: 'high' }),
+      }),
+    }
+    await hooks['session:http.request'](event)
+    const body = await event.request.json()
+    assert.equal(body.reasoning_effort, expected, `${agent}/${providerID}/${id}`)
+    assert.equal(body.max_tokens, 1024, 'compaction must retain the output budget cap')
+  }
   const budgetTool = tools.find((tool) => tool.name === 'context_budget')
   assert.ok(budgetTool, 'context_budget tool registered')
   assert.deepEqual(budgetTool.input.properties.action.enum, ['status', 'request'])

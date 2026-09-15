@@ -190,6 +190,9 @@ export default {
         event.model?.providerID,
         original.url,
       )
+      // Qwen can put the entire summary in reasoning, which native compaction ignores.
+      if (event.agent === "compaction" && event.model?.providerID === "ollama" && event.model?.id?.startsWith("qwen"))
+        capped.reasoning_effort = "none"
       const headers = new Headers(original.headers)
       headers.delete("content-length")
       const request = new Request(original, { headers, body: JSON.stringify(capped) })
