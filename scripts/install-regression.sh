@@ -71,12 +71,19 @@ chmod +x "$FAKE_BIN/systemctl"
 
 cat >"$FAKE_BIN/opencode2" <<'EOF'
 #!/usr/bin/env bash
+set -euo pipefail
 printf 'opencode2 %s\n' "$*" >>"${CUSTOM_OPENCODE_REGRESSION_LOG:?}"
 if [[ "${1:-}" == "--version" ]]; then
   printf 'opencode2 v0.0.0-beta-18743\n'
   printf 'runtime-env WSL_DISTRO_NAME=%s DISPLAY=%s WAYLAND_DISPLAY=%s WAYLAND_SOCKET=%s\n' \
     "${WSL_DISTRO_NAME-}" "${DISPLAY-}" "${WAYLAND_DISPLAY-}" "${WAYLAND_SOCKET-}" \
     >>"${CUSTOM_OPENCODE_REGRESSION_LOG:?}"
+fi
+if [[ "${1:-}" == "run" && "${2:-}" == "--standalone" ]]; then
+  # Native stdio servers remove the CLI password before loading plugins.
+  unset OPENCODE_SERVER_PASSWORD
+  [[ "${OPENCODE_RUNTIME_PLUGIN_TOKEN:-}" == "${EXPECTED_RUNTIME_TOKEN:?}" ]]
+  [[ -x "${OPENCODE_POLICY_COMMAND:-}" ]]
 fi
 exit 0
 EOF
@@ -198,6 +205,14 @@ fi
 grep -Fq 'invalid auth file' "$TMP/broken-auth.out"
 grep -Fxq '{broken' "$AUTH"
 rm -f "$AUTH"
+
+# Standalone must keep private policy authentication after native password cleanup.
+env -u OPENCODE_RUNTIME_PLUGIN_TOKEN -u OPENCODE_POLICY_COMMAND \
+  CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+  EXPECTED_RUNTIME_TOKEN=test "$WRAPPER" run --standalone --model ollama/qwen3.8:27b probe
+CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+  OPENCODE_RUNTIME_PLUGIN_TOKEN=dedicated EXPECTED_RUNTIME_TOKEN=dedicated \
+  "$WRAPPER" run --standalone --model ollama/qwen3.8:27b probe
 
 # Isolated plan runs cannot infer their parent session model.  The wrapper must
 # reject the bare form while preserving every explicit reference byte-for-byte.
