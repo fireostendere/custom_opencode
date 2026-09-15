@@ -9,7 +9,7 @@ let currentStart = null
 async function healthy() {
   if (!ROUTER_URL) return false
   try {
-    return (await fetch(`${ROUTER_URL.replace(/\/$/, "")}/health`, {
+    return (await fetch(ROUTER_URL, {
       signal: AbortSignal.timeout(2_000),
     })).ok
   } catch {
