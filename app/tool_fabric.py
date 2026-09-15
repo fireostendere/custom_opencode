@@ -159,18 +159,33 @@ def load_config(path, workspace):
 def fingerprint(root: Path):
     """Bounded metadata-only walk, no dependency installs or executable probes."""
     names, truncated = [], False
-    for directory, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if d not in SKIP and not (Path(directory) / d).is_symlink())
-        for name in sorted(files):
-            path = Path(directory) / name
-            if path.is_symlink():
+    prefix = f"{root}{os.sep}"
+    def visit(directory):
+        nonlocal truncated
+        try:
+            entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
+        except OSError:
+            return
+        if any(entry.name == "pyvenv.cfg" and not entry.is_symlink() for entry in entries):
+            return
+        directories = []
+        for entry in entries:
+            if entry.is_symlink():
                 continue
-            names.append(path.relative_to(root).as_posix())
+            if entry.is_dir(follow_symlinks=False):
+                if entry.name not in SKIP:
+                    directories.append(entry.path)
+                continue
+            names.append(entry.path.removeprefix(prefix).replace(os.sep, "/"))
             if len(names) >= 6000:
                 truncated = True
-                break
-        if truncated:
-            break
+                return
+        for child in directories:
+            visit(child)
+            if truncated:
+                return
+
+    visit(root)
     return {"digest": digest(names), "files": names, "truncated": truncated}
 
 
@@ -321,14 +336,14 @@ class Fabric:
         results = []
         # ponytail: bounded lexical ranking; replace only with a measured routing dataset.
         for row in self.rows.values():
-            reason = self._reason(row)
             if target and row.get("targets") and target not in row["targets"]:
                 continue
             hay = " ".join([row["id"], row["name"], *row["categories"], *row["operations"]]).casefold()
             task_fit = sum(t in hay for t in set(terms))
-            evidence = [p for p in fp["files"] if any(fnmatch.fnmatch(p, m) or fnmatch.fnmatch(Path(p).name, m) for m in row["markers"])][:3]
             if terms and not task_fit:
                 continue
+            reason = self._reason(row)
+            evidence = [p for p in fp["files"] if any(fnmatch.fnmatch(p, m) or fnmatch.fnmatch(Path(p).name, m) for m in row["markers"])][:3]
             if reason and not include_unavailable:
                 continue
             key = digest(row)
