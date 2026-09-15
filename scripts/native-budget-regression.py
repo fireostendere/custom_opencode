@@ -21,6 +21,7 @@ import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +41,7 @@ def main():
     parser.add_argument(
         "--retry-once", action="store_true", help="Return one real HTTP 503 before succeeding"
     )
+    parser.add_argument("--budget-recovery", action="store_true", help="Exercise a real native one-time budget Form with a labeled local operator fixture")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -74,7 +76,7 @@ def main():
                     "type": "function",
                     "function": {"name": "diagnostic_read", "arguments": "{}"},
                 }
-            elif "runtime_artifact_read" not in serialized or "call_artifact" not in serialized:
+            elif not args.budget_recovery and ("runtime_artifact_read" not in serialized or "call_artifact" not in serialized):
                 import re
 
                 unescaped = serialized.replace('\\"', '"')
@@ -200,11 +202,14 @@ def main():
             OPENCODE_PROJECT_ROOTS=str(home),
             OPENCODE_SCRATCH_DIRECTORY=str(project),
             OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS="5000",
+            CUSTOM_OPENCODE_RUNTIME_DB=str(home / "runtime.sqlite3"),
             # The strip above drops OPENCODE_*; re-add the updater gate so no bare CLI
             # launch detaches `npm install --global` against the pinned tree mid-run.
             OPENCODE_DISABLE_AUTOUPDATE="1",
             MCP_RAG_ENABLED="0",
         )
+        if args.budget_recovery:
+            env["OPENCODE_ROOT_BUDGET_JSON"] = json.dumps({"calls": 1, "outputTokens": 2048, "toolAttempts": 1, "seconds": 120, "finishTokens": 128})
         launcher = home / "policy-launcher"
         launcher.write_text(
             "#!/bin/sh\nexec "
@@ -295,7 +300,7 @@ for line in sys.stdin:
             """export default {id:'fixture.tools',async setup(ctx){await ctx.tool.transform(t=>t.add({name:'diagnostic_read',description:'Read the deterministic diagnostic fixture.',input:{type:'object',properties:{},additionalProperties:false},options:{pinned:true,codemode:false},execute:async()=>({content:'HEAD\\n'+'x'.repeat(30000)+'\\nFINAL_ERROR_SENTINEL_219'})}));}};"""
         )
 
-        def run(name, cmd, timeout=180):
+        def run(name, cmd, timeout=180, allow_failure=False):
             with (output / (name + ".log")).open("w") as log:
                 p = subprocess.Popen(
                     cmd,
@@ -311,8 +316,9 @@ for line in sys.stdin:
                     os.killpg(p.pid, signal.SIGTERM)
                     p.wait(timeout=5)
                     raise
-            if code:
+            if code and not allow_failure:
                 raise RuntimeError(f"{name}: exit {code}")
+            return code
 
         try:
             run("service-start", [binary, "service", "start"], 180)
@@ -337,6 +343,96 @@ for line in sys.stdin:
                 timeout=30,
             ) as response:
                 sid = json.load(response)["data"]["id"]
+            if args.budget_recovery:
+                def make_session(title):
+                    body["title"] = title
+                    with urlopen(Request(service["url"].rstrip("/") + "/api/session", data=json.dumps(body).encode(), headers=headers), timeout=30) as response:
+                        return json.load(response)["data"]["id"]
+
+                def fixture_operator(session_id, decision, observation):
+                    """Clearly labeled local test operator, never a production approval path."""
+                    deadline = time.time() + 45
+                    while time.time() < deadline:
+                        try:
+                            with sqlite3.connect(env["CUSTOM_OPENCODE_RUNTIME_DB"]) as db:
+                                form = db.execute("SELECT form_id FROM budget_approvals WHERE session_id=? AND kind='execution'", (session_id,)).fetchone()
+                                root = db.execute("SELECT calls,tools FROM execution_roots WHERE session_id=?", (session_id,)).fetchone()
+                                forms = db.execute("SELECT COUNT(*) FROM budget_approvals WHERE session_id=?", (session_id,)).fetchone()[0]
+                            if form and form[0] and root:
+                                observation.update(formID=form[0], before=tuple(root), forms=forms, requests=len(requests))
+                                time.sleep(.3)
+                                with sqlite3.connect(env["CUSTOM_OPENCODE_RUNTIME_DB"]) as db:
+                                    unchanged = db.execute("SELECT calls,tools FROM execution_roots WHERE session_id=?", (session_id,)).fetchone()
+                                    prompt_count = db.execute("SELECT COUNT(*) FROM budget_approvals WHERE session_id=?", (session_id,)).fetchone()[0]
+                                assert tuple(unchanged) == observation["before"] and prompt_count == forms, (observation, unchanged, prompt_count)
+                                observation["requestsAfterWait"] = len(requests)
+                                request = Request(service["url"].rstrip("/") + f"/api/session/{session_id}/form/{form[0]}/reply", data=json.dumps({"answer": {"decision": decision}}).encode(), headers=headers)
+                                try:
+                                    with urlopen(request, timeout=15) as response:
+                                        response.read()
+                                except HTTPError as error:
+                                    raise RuntimeError(f"native Form reply {error.code}: {error.read().decode(errors='replace')}") from error
+                                return
+                        except (sqlite3.OperationalError, FileNotFoundError):
+                            pass
+                        time.sleep(.1)
+                    raise RuntimeError("test operator did not observe a pending native budget Form")
+
+                def exercise(decision):
+                    session_id = sid if decision == "approve" else make_session("Deterministic native budget refusal")
+                    observed = {}
+                    operator = threading.Thread(target=fixture_operator, args=(session_id, decision, observed), name="TEST-ONLY-native-budget-form-operator", daemon=True)
+                    operator.start()
+                    before_requests = len(requests)
+                    prompt_error = []
+                    def send_prompt():
+                        try:
+                            prompt = Request(service["url"].rstrip("/") + f"/api/session/{session_id}/prompt", data=json.dumps({"text": "Use diagnostic_read then finish.", "files": [], "resume": True}).encode(), headers=headers)
+                            with urlopen(prompt, timeout=90) as response:
+                                response.read()
+                        except Exception as error:
+                            prompt_error.append(error)
+                    sender = threading.Thread(target=send_prompt, name="native-budget-prompt", daemon=True)
+                    sender.start()
+                    operator.join(50)
+                    assert not operator.is_alive(), "test operator did not finish"
+                    sender.join(35)
+                    assert not sender.is_alive() and not prompt_error, prompt_error
+                    assert observed["forms"] == 1 and observed["requests"] >= before_requests + 1, observed
+                    with sqlite3.connect(env["CUSTOM_OPENCODE_RUNTIME_DB"]) as db:
+                        root = db.execute("SELECT id,calls,tools FROM execution_roots WHERE session_id=?", (session_id,)).fetchone()
+                        forms = db.execute("SELECT COUNT(*) FROM budget_approvals WHERE session_id=?", (session_id,)).fetchone()[0]
+                    assert forms == 1, forms
+                    if decision == "approve":
+                        deadline = time.time() + 30
+                        while root[1] < 2 and time.time() < deadline:
+                            time.sleep(.1)
+                            with sqlite3.connect(env["CUSTOM_OPENCODE_RUNTIME_DB"]) as db:
+                                root = db.execute("SELECT id,calls,tools FROM execution_roots WHERE session_id=?", (session_id,)).fetchone()
+                        assert root[1] >= 2 and root[2] >= 1, root
+                        followup = requests[before_requests + 1:]
+                        assert any(any(t.get("function", {}).get("name") == "diagnostic_read" for t in item.get("tools", [])) for item in followup), "ordinary tool missing after approval"
+                    else:
+                        deadline = time.time() + 10
+                        while len(requests) < observed["requestsAfterWait"] + 1 and time.time() < deadline:
+                            time.sleep(.1)
+                        with sqlite3.connect(env["CUSTOM_OPENCODE_RUNTIME_DB"]) as db:
+                            root = db.execute("SELECT id,calls,tools FROM execution_roots WHERE session_id=?", (session_id,)).fetchone()
+                        rejected = requests[observed["requestsAfterWait"]:]
+                        assert len(rejected) == 1, (len(requests), root, observed)
+                        finish = rejected[0]
+                        assert not finish.get("tools") and not finish.get("tool_choice"), finish
+                        assert finish.get("max_tokens", finish.get("max_completion_tokens", 0)) <= 256, finish
+                        assert root[1] == observed["before"][0] + 1 and root[2] == observed["before"][1], (root, observed)
+                    return session_id
+
+                approved_sid = exercise("approve")
+                exercise("reject")
+                report.update(ok=True, requests=len(requests), budgetSession=approved_sid)
+                report["checks"] = ["test-only native Form approval leaves pending counters unchanged", "approved same root/session runs an ordinary tool without duplicate Form", "rejected Form permits exactly one capped finish-only request with tools removed", "zero paid model calls"]
+                (output / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+                print(json.dumps(report, ensure_ascii=False))
+                return 0
             run(
                 "native-run",
                 [
@@ -409,10 +505,13 @@ for line in sys.stdin:
                 "no public custom web listener",
             ]
             state = home / ".local/state"
+            dbpath = Path(env["CUSTOM_OPENCODE_RUNTIME_DB"])
             dbs = list(state.rglob("*.sqlite3"))
-            dbpath = next((p for p in dbs if "custom-opencode" in str(p)), None)
+            if not dbpath.is_file():
+                dbpath = next((p for p in dbs if "custom-opencode" in str(p)), None)
             if not dbpath:
-                dbpath = next(p for p in state.rglob("*.sqlite") if "custom-opencode" in str(p))
+                dbpath = next((p for p in state.rglob("*.sqlite") if "custom-opencode" in str(p)), None)
+            assert dbpath and dbpath.is_file(), "runtime ledger database not found"
             with sqlite3.connect(dbpath) as db:
                 rows = db.execute(
                     "SELECT state,usage_json,reserved FROM execution_requests"

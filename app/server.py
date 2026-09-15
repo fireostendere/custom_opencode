@@ -22,7 +22,7 @@ import subprocess
 import sys
 import threading
 import time
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 from urllib.parse import SplitResult
 
 import server_users
@@ -628,6 +628,10 @@ class Handler(BaseHTTPRequestHandler):
     def authenticated(self) -> bool:
         if self.local_bypass():
             return True
+        return self.authenticated_human()
+
+    def authenticated_human(self) -> bool:
+        """Authentication that cannot be satisfied by the loopback bypass."""
         token = self.cookie_token()
         if token and valid_session_token(token):
             return True
@@ -646,6 +650,24 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, UnicodeDecodeError):
                 return False
         return False
+
+    def form_reply_requires_human(self, path: str) -> bool:
+        """Subclass hook for forms that carry a security-sensitive decision."""
+        return False
+
+    @staticmethod
+    def normalized_route(path: str) -> str:
+        """Decode every path segment before a security route comparison."""
+        try:
+            decoded = unquote(urlsplit(path).path)
+        except (TypeError, ValueError):
+            return ""
+        if not decoded.startswith("/") or "\x00" in decoded:
+            return ""
+        parts = decoded.split("/")
+        if any(part in {".", ".."} for part in parts):
+            return ""
+        return "/" + "/".join(part for part in parts if part)
 
     def request_is_secure(self) -> bool:
         if AUTH_COOKIE_SECURE in ("1", "true", "yes"):
@@ -881,7 +903,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/auth/logout":
             self.logout()
             return
-        if not self.authenticated():
+        # Sensitive native forms opt out of the convenience loopback bypass.
+        # Ordinary native questions retain their existing local UX.
+        protected_form_reply = self.form_reply_requires_human(self.normalized_route(self.path))
+        if not (self.authenticated_human() if protected_form_reply else self.authenticated()):
             self.unauthorized()
             return
         if path == "/client-provider-config.json":

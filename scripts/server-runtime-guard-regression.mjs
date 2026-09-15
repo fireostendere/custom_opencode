@@ -13,16 +13,34 @@ assert.ok(!source.includes("/internal/runtime/tool-cache"))
 const calls = []
 let contextFailure = false
 let catalogCalls = 0
+let recoveredBudget = false
+let delayedContextBudget = false
+let contextBudgetAborted = false
 const originalFetch = globalThis.fetch
 globalThis.fetch = async (url, init) => {
   if (contextFailure && String(url).endsWith('/internal/runtime/context'))
     throw new DOMException('The operation timed out.', 'TimeoutError')
   calls.push({ url: String(url), payload: JSON.parse(init.body) })
+  if (delayedContextBudget && String(url).endsWith('/internal/runtime/context-budget'))
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => resolve(new Response(JSON.stringify({ granted: false, state: 'pending' }), { status: 200, headers: { 'content-type': 'application/json' } })),
+        2100,
+      )
+      init.signal.addEventListener('abort', () => {
+        contextBudgetAborted = true
+        clearTimeout(timer)
+        reject(init.signal.reason)
+      }, { once: true })
+    })
+  if (String(url).endsWith('/internal/runtime/execution-budget'))
+    return new Response(JSON.stringify({ granted: recoveredBudget, state: recoveredBudget ? 'granted' : 'pending' }), { status: 200, headers: { 'content-type': 'application/json' } })
+  const exhausted = recoveredBudget && String(url).endsWith('/internal/runtime/bind')
   return new Response(
     JSON.stringify({
       maxOutputTokens: 1024,
-      tools: 0,
-      calls: 0,
+      tools: exhausted ? 10 : 0,
+      calls: exhausted ? 10 : 0,
       output_reserved: 0,
       started_at: Date.now(),
       limits: { toolAttempts: 10, calls: 10, outputTokens: 4096, finishTokens: 256, seconds: 60 },
@@ -94,6 +112,17 @@ try {
     assert.equal((await requestEvent.request.json()).max_output_tokens, expected)
   }
   assert.equal(catalogCalls, 1, 'catalog refresh must be cached across hooks')
+  recoveredBudget = true
+  const recoveredRequest = {
+    sessionID: 'ses_recovered_budget',
+    model: { providerID: 'openai', id: 'gpt-5.6-luna' },
+    request: new Request('https://api.openai.com/v1/responses', {
+      method: 'POST', body: JSON.stringify({ input: [], tools: [{ type: 'function', name: 'ordinary_tool' }], max_output_tokens: 4096 }),
+    }),
+  }
+  await hooks['session:http.request'](recoveredRequest)
+  assert.deepEqual((await recoveredRequest.request.json()).tools, [{ type: 'function', name: 'ordinary_tool' }], 'approved extension must restore ordinary tools')
+  recoveredBudget = false
   const budgetTool = tools.find((tool) => tool.name === 'context_budget')
   assert.ok(budgetTool, 'context_budget tool registered')
   assert.deepEqual(budgetTool.input.properties.action.enum, ['status', 'request'])
@@ -103,6 +132,12 @@ try {
   assert.equal(budgetCall.payload.action, 'request')
   assert.equal(budgetCall.payload.tokens, 120000)
   assert.ok(budgetOutput.content && typeof budgetOutput.content === 'string')
+  delayedContextBudget = true
+  const waitedAt = Date.now()
+  await budgetTool.execute({ action: 'request', tokens: 121000, reason: 'wait for human' }, { sessionID: 'ses_budget_wait' })
+  assert.ok(Date.now() - waitedAt >= 2000, 'context request must outlive the normal 1.8s control timeout')
+  assert.equal(contextBudgetAborted, false, 'fresh human approval wait must not be aborted early')
+  delayedContextBudget = false
   const event = {
     sessionID: "ses_shell_owner",
     cwd: "/repo",

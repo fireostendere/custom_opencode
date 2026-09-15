@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory() as temp:
     os.environ["CUSTOM_OPENCODE_RUNTIME_DB"]=str(db)
     os.environ["OPENCODE_REPO_EMBEDDINGS"]="hash"
     for name in ("OPENCODE_CONTEXT_BUDGET_MAX","OPENCODE_CONTEXT_AUTO_EXPAND","OPENCODE_CONTEXT_MAX_STEPS",
-                 "OPENCODE_CONTEXT_BUDGET_STEP","OPENCODE_RUNTIME_PLUGIN_TOKEN"):
+                 "OPENCODE_CONTEXT_BUDGET_STEP","OPENCODE_CONTEXT_APPROVAL_WAIT_MS","OPENCODE_RUNTIME_PLUGIN_TOKEN"):
         os.environ.pop(name,None)
 
     from model_registry import CapabilityRegistry
@@ -39,6 +39,7 @@ with tempfile.TemporaryDirectory() as temp:
     from repo_services import ArtifactStore
     import runtime_v3
     from runtime_v3 import DynamicContextManager, SemanticRepoIndexer, SharedRAGService
+    from execution_ledger import ExecutionLedger
 
     store=RuntimeStore(db); store.initialize(); project=root/"project"; project.mkdir()
     registry=CapabilityRegistry([
@@ -52,6 +53,7 @@ with tempfile.TemporaryDirectory() as temp:
             self.calls=[]
             self.context_rows=context_rows if context_rows is not None else [{"type":"message","text":"z"*44000}]
             self.snapshot={}
+            self.forms={}; self.next_form=0
             if native:
                 self.native_compaction_owned=True
                 self.native_context_tokens=native_tokens
@@ -64,6 +66,10 @@ with tempfile.TemporaryDirectory() as temp:
             if target.endswith("/context") and method=="GET": return self.context_rows
             if target.endswith("/compact") and method=="POST": return {"ok":True}
             if target.endswith("/summarize") and method=="POST": return {"ok":True}
+            if method=="POST" and "/form" in target:
+                self.next_form+=1; fid=str((payload or {}).get("id") or f"frm_{self.next_form}"); self.forms[fid]={"status":"pending"}; return {"data":{"id":fid}}
+            if method=="GET" and target.endswith("/state"):
+                return {"data":self.forms[target.split("/")[-2]]}
             raise RuntimeError((method,target,payload))
 
     def make_runtime(policy=None,st=None):
@@ -79,6 +85,9 @@ with tempfile.TemporaryDirectory() as temp:
     def rows_for(tokens): return [{"type":"message","text":"z"*int(2.2*tokens)}]
 
     rt=make_runtime()
+    rt.budget_ledger=ExecutionLedger(store)
+    def bind_budget(sid, model=REF):
+        return rt.budget_ledger.bind(session_id=sid, turn_id=f"turn-{sid}", parent_id=None, directory=str(project), model_ref=model)
     manager=DynamicContextManager(store,SemanticRepoIndexer(store),SharedRAGService(store))
     LIMIT=983616; RESERVE=int(LIMIT*.12); HARD=LIMIT-RESERVE; BASE=int(LIMIT*.72)
     STATUS_SURFACE={"sessionID","usedTokens","usedSource","workingTokens","baseTokens","ceilingTokens",
@@ -123,44 +132,39 @@ with tempfile.TemporaryDirectory() as temp:
     st=manager.budget_status(FakeFeatures(native=True,native_tokens=3650),rt,"s-cap")
     assert st["usedSource"]=="native" and st["usedTokens"]==3650, st
 
-    # 5. Requests: bounded by max steps and ceiling, idempotent below working budget, strict on garbage.
+    # 5. Requests never grow before a separately answered native form.
     os.environ["OPENCODE_CONTEXT_MAX_STEPS"]="2"
+    os.environ["OPENCODE_CONTEXT_APPROVAL_WAIT_MS"]="1"
     make_task("s-req")
+    bind_budget("s-req")
     base=manager.budget_status(FakeFeatures(),rt,"s-req")["baseTokens"]
     assert base==BASE, base
-    r=manager.budget_request(FakeFeatures(),rt,"s-req",base+5000,"deeper analysis")
+    forms=FakeFeatures(); r=manager.budget_request(forms,rt,"s-req",base+5000,"deeper analysis")
     assert {"granted","requestedTokens","deniedReason"}<=set(r), r
+    assert r["granted"] is False and r["workingTokens"]==base and "waiting" in r["deniedReason"], r
+    # A changed explanation is not a new consent identity or a new prompt.
+    r2=manager.budget_request(forms,rt,"s-req",base+5000,"different wording")
+    assert r2["granted"] is False and forms.next_form==1, (r2, forms.calls)
+    forms.forms[next(iter(forms.forms))]={"status":"answered","answer":{"decision":"approve"}}
+    r=manager.budget_request(forms,rt,"s-req",base+5000,"deeper analysis")
     assert r["granted"] is True and r["workingTokens"]==base+5000 and r["stepsTaken"]==1, r
-    assert r["requestedTokens"]==base+5000 and r["deniedReason"] is None, r
-    r=manager.budget_request(FakeFeatures(),rt,"s-req",base+9000,"long file")
-    assert r["granted"] is True and r["workingTokens"]==base+9000 and r["stepsTaken"]==2, r
-    r=manager.budget_request(FakeFeatures(),rt,"s-req",base+20000,"again")
-    assert r["granted"] is False and r["workingTokens"]==base+9000 and "steps" in r["deniedReason"], r
-    r=manager.budget_request(FakeFeatures(),rt,"s-req",base,"already covered")
-    assert r["granted"] is True and r["workingTokens"]==base+9000 and r["stepsTaken"]==2, r
-    kinds={e["kind"] for e in store.events(session_id="s-req")}
-    assert {"context.budget_granted","context.budget_denied"}<=kinds, kinds
-    make_task("s-clamp")
-    r=manager.budget_request(FakeFeatures(),rt,"s-clamp",10**9,"everything")
-    assert r["granted"] is True and r["workingTokens"]==r["ceilingTokens"]==HARD, r
-    r=manager.budget_request(FakeFeatures(),rt,"s-clamp",10**9,"more")
-    assert r["granted"] is False and "ceiling" in r["deniedReason"], r
-    for bad in (0,-5,"abc",None):
+    for bad in (0,-5,True,1.0,"abc",None):
         try: manager.budget_request(FakeFeatures(),rt,"s-req",bad,"x"); raise AssertionError(f"tokens={bad!r} accepted")
         except ValueError: pass
-    os.environ.pop("OPENCODE_CONTEXT_MAX_STEPS")
+    os.environ.pop("OPENCODE_CONTEXT_MAX_STEPS"); os.environ.pop("OPENCODE_CONTEXT_APPROVAL_WAIT_MS")
 
     # 6. Persistence across restarts and strict session isolation.
     store2=RuntimeStore(db); store2.initialize()
     mgr2=DynamicContextManager(store2,SemanticRepoIndexer(store2),SharedRAGService(store2))
     rt2=make_runtime(st=store2)
+    rt2.budget_ledger=ExecutionLedger(store2)
     st=mgr2.budget_status(FakeFeatures(),rt2,"s-req")
-    assert st["workingTokens"]==base+9000 and st["stepsTaken"]==2, st
+    assert st["workingTokens"]==base+5000 and st["stepsTaken"]==1, st
     make_task("s-fresh")
     st=mgr2.budget_status(FakeFeatures(),rt2,"s-fresh")
     assert st["workingTokens"]==st["baseTokens"]==base and st["stepsTaken"]==0, st
 
-    # 7. Auto-expansion: only when allowed, bounded steps, compaction remains the fallback.
+    # 7. Auto-expansion is disabled; compaction remains the fallback.
     COMPACT_SURFACE={"activeTokens","usedSource","budgetTokens","workingTokens","baseTokens","ceilingTokens",
                      "policyMaxTokens","autoExpanded","stepsTaken","maxSteps","reserveTokens","contextLimit",
                      "model","minGrowthTokens","growthTokens","compactionRequested","compactionPending",
@@ -171,16 +175,15 @@ with tempfile.TemporaryDirectory() as temp:
     task_auto=make_task("s-auto")
     res=manager.maybe_compact(FakeFeatures(context_rows=rows_for(auto_base+500)),rt_auto,"s-auto",task_auto)
     assert COMPACT_SURFACE<=set(res), COMPACT_SURFACE-set(res)
-    assert res["autoExpanded"] is True and res["workingTokens"]==res["budgetTokens"]==auto_base+step, res
-    assert res["compactionRequested"] is False and res["stepsTaken"]==1, res
+    assert res["autoExpanded"] is False and res["workingTokens"]==res["budgetTokens"]==auto_base, res
+    assert res["compactionRequested"] is True and res["stepsTaken"]==0, res
     assert res["baseTokens"]==auto_base and res["ceilingTokens"]==400000 and res["policyMaxTokens"]==400000, res
     assert res["usedSource"]=="estimate" and res["tokenEstimate"] is True, res
     assert res["compactionOwner"]=="runtime-monitor" and res["modelKnown"] is True, res
-    assert "context.budget_expanded" in {e["kind"] for e in store.events(session_id="s-auto")}
     os.environ["OPENCODE_CONTEXT_MAX_STEPS"]="1"
-    res=manager.maybe_compact(FakeFeatures(context_rows=rows_for(auto_base+step+5000)),rt_auto,"s-auto",task_auto)
-    assert res["autoExpanded"] is False and res["workingTokens"]==auto_base+step, res
-    assert res["compactionRequested"] is True, "steps exhausted -> compaction must still protect the real limit"
+    res=manager.maybe_compact(FakeFeatures(context_rows=rows_for(auto_base+step*2)),rt_auto,"s-auto",task_auto)
+    assert res["autoExpanded"] is False and res["workingTokens"]==auto_base, res
+    assert res["compactionRequested"] is False, "recent compaction request is rate limited"
     assert "context.compaction_requested" in {e["kind"] for e in store.events(session_id="s-auto")}
     os.environ.pop("OPENCODE_CONTEXT_AUTO_EXPAND"); os.environ.pop("OPENCODE_CONTEXT_MAX_STEPS")
     os.environ["OPENCODE_CONTEXT_BUDGET_MAX"]="200000"
@@ -192,14 +195,37 @@ with tempfile.TemporaryDirectory() as temp:
 
     # 8. Budget operations never switch the selected model and only read session data.
     fake=FakeFeatures(); make_task("s-model")
+    bind_budget("s-model")
     st=manager.budget_status(fake,rt,"s-model")
     r=manager.budget_request(fake,rt,"s-model",st["baseTokens"]+1000,"need more")
     st2=manager.budget_status(fake,rt,"s-model")
     assert st["model"]==REF and r["model"]==REF and st2["model"]==REF, (st["model"],r["model"],st2["model"])
-    assert st2["workingTokens"]==st["baseTokens"]+1000, st2
-    assert fake.calls and all(method=="GET" and target.endswith("/context") for method,target,_ in fake.calls), fake.calls
+    assert st2["workingTokens"]==st["baseTokens"], st2
+    assert any("/form" in target for _,target,_ in fake.calls), fake.calls
 
-    # 9. Internal endpoint wiring: auth required, status/request/validation paths.
+    # 9. A child may use its own selected model while the native parent owns the
+    # visible Form. The parent root must still be current; its model need not
+    # equal the child's model.
+    REF2="bailian-cli/qwen3.7-plus"
+    parent_task=make_task("s-parent",REF)
+    bind_budget("s-parent",REF)
+    rt.budget_ledger.bind(session_id="s-child",turn_id="turn-s-child",parent_id="s-parent",directory=str(project),model_ref=REF2)
+    child_task=make_task("s-child",REF2)
+    child_forms=FakeFeatures()
+    os.environ["OPENCODE_CONTEXT_APPROVAL_WAIT_MS"]="1"
+    child_base=manager.budget_status(child_forms,rt,"s-child",task=child_task)["baseTokens"]
+    pending=manager.budget_request(child_forms,rt,"s-child",child_base+1000,"child analysis",task=child_task)
+    assert pending["granted"] is False and child_forms.forms, pending
+    child_forms.forms[next(iter(child_forms.forms))]={"status":"answered","answer":{"decision":"approve"}}
+    granted=manager.budget_request(child_forms,rt,"s-child",child_base+1000,"child analysis",task=child_task)
+    assert granted["granted"] is True and granted["workingTokens"]==child_base+1000, granted
+    rt.budget_ledger.bind(session_id="s-parent",turn_id="turn-s-parent-next",parent_id=None,directory=str(project),model_ref=REF)
+    forms_before=len(child_forms.forms)
+    stale=manager.budget_request(child_forms,rt,"s-child",child_base+2000,"stale parent",task=child_task)
+    assert stale["granted"] is False and len(child_forms.forms)==forms_before, stale
+    os.environ.pop("OPENCODE_CONTEXT_APPROVAL_WAIT_MS")
+
+    # 10. Internal endpoint wiring: auth required, status/request/validation paths.
     os.environ["OPENCODE_RUNTIME_PLUGIN_TOKEN"]="test-runtime-token"
     rt_ep=make_runtime()
     class FakeHandler:
@@ -223,7 +249,7 @@ with tempfile.TemporaryDirectory() as temp:
     assert payload["workingTokens"]==payload["baseTokens"]==BASE, payload
     handler=post({"sessionID":"s-ep","action":"request","tokens":750000,"reason":"long file analysis"})
     status,payload=handler.responses[-1]
-    assert status==200 and payload["granted"] is True and payload["workingTokens"]==750000, payload
+    assert status==200 and payload["granted"] is False and payload["workingTokens"]==BASE, payload
     handler=post({"sessionID":"s-ep","action":"bogus"})
     assert handler.responses[-1][0]==400 and handler.errors, handler.responses
     handler=post({"action":"status"})

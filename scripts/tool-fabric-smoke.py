@@ -80,7 +80,26 @@ async def main():
         project.mkdir()
         (project / "input.txt").write_text("test input\n")
         (project / "secret-link").symlink_to("/etc/passwd")
-        assert "secret-link" not in fingerprint(project)["files"]
+        (project / "arbitrary-env-name").mkdir()
+        (project / "arbitrary-env-name" / "pyvenv.cfg").write_text("home = /usr/bin\n")
+        (project / "arbitrary-env-name" / "site-package.py").write_text("ignored\n")
+        (project / "source").mkdir()
+        (project / "source" / "z.py").write_text("z\n")
+        (project / "source" / "a.py").write_text("a\n")
+        (project / "source-link").symlink_to(project / "source", target_is_directory=True)
+        files = fingerprint(project)["files"]
+        assert files == ["input.txt", "source/a.py", "source/z.py"]
+        assert files == fingerprint(project)["files"]
+        assert "secret-link" not in files and not any(
+            path.startswith(("arbitrary-env-name/", "source-link/")) for path in files
+        )
+        (project / "source-link").unlink()
+        bounded = base / "bounded"
+        bounded.mkdir()
+        for index in range(6001):
+            (bounded / f"{index:04}.txt").write_text("\n")
+        capped = fingerprint(bounded)
+        assert len(capped["files"]) == 6000 and capped["truncated"]
         engine = ROOT / "scripts/fixtures/tool-fabric-engine.py"
         fixture = {
             "schemaVersion": 1,

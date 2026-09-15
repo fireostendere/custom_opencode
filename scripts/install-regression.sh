@@ -135,6 +135,58 @@ if grep -Fq 'service set env' "$LOG"; then
 fi
 
 AUTH="$HOME_DIR/.local/share/opencode/auth.json"
+run_with_auth_backups() {
+  local expires=$1 output=$2
+  env -u OPENCODE_CONFIG_DIR \
+    CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+    OPENCODE_OPENAI_ACCESS=backup-access OPENCODE_OPENAI_REFRESH=backup-refresh \
+    OPENCODE_OPENAI_EXPIRES="$expires" OPENCODE_OPENAI_ACCOUNT_ID=backup-account \
+    OPENCODE_ZEN_KEY=backup-zen OPENCODE_GO_KEY=backup-go GEMINI_API_KEY=backup-google \
+    bash "$COPY/scripts/install.sh" >"$output"
+}
+
+# Environment credentials are restore-only: updates must preserve every live
+# provider entry instead of replacing it with a stale backup.
+mkdir -p "$(dirname "$AUTH")"
+cat >"$AUTH" <<'EOF'
+{"openai":{"type":"oauth","access":"live-access","refresh":"live-refresh","expires":4102444801000,"accountId":"live-account"},"opencode":{"type":"api","key":"live-zen"},"opencode-go":{"type":"api","key":"live-go"},"google":{"type":"api","key":"live-google"}}
+EOF
+chmod 0600 "$AUTH"
+cp "$AUTH" "$TMP/auth-before-update.json"
+run_with_auth_backups 4102444800000 "$TMP/preserve-auth.out"
+cmp -s "$TMP/auth-before-update.json" "$AUTH" || { echo "installer overwrote live provider credentials" >&2; exit 1; }
+
+# Missing API credentials may be restored, but an expired OAuth backup may not.
+printf '%s\n' '{"unmanaged":{"type":"api","key":"keep-me"}}' >"$AUTH"
+run_with_auth_backups 1 "$TMP/restore-auth.out"
+python3 - "$AUTH" <<'PY'
+import json, sys
+auth = json.load(open(sys.argv[1], encoding="utf-8"))
+assert "openai" not in auth, auth
+assert auth["opencode"]["key"] == "backup-zen", auth
+assert auth["opencode-go"]["key"] == "backup-go", auth
+assert auth["google"]["key"] == "backup-google", auth
+assert auth["unmanaged"]["key"] == "keep-me", auth
+PY
+
+# A complete, unexpired OAuth backup still restores a missing provider.
+run_with_auth_backups 4102444800000 "$TMP/restore-openai.out"
+python3 - "$AUTH" <<'PY'
+import json, sys
+auth = json.load(open(sys.argv[1], encoding="utf-8"))
+assert auth["openai"] == {
+    "type": "oauth",
+    "access": "backup-access",
+    "refresh": "backup-refresh",
+    "expires": 4102444800000,
+    "accountId": "backup-account",
+}, auth
+PY
+
+# Remove the temporary Google credential from the rendered service fixture.
+env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+  bash "$COPY/scripts/install.sh" >"$TMP/auth-cleanup.out"
+
 printf '%s\n' '{broken' >"$AUTH"
 if env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" bash "$COPY/scripts/install.sh" >"$TMP/broken-auth.out" 2>&1; then
   echo "installer replaced malformed auth state" >&2

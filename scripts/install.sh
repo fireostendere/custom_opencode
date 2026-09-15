@@ -424,7 +424,7 @@ os.replace(temporary, target)
 PY
 fi
 "$PYTHON3" - "$AUTH_FILE" <<'PY'
-import json, os, sys
+import json, os, sys, time
 from pathlib import Path
 target = Path(sys.argv[1])
 if target.is_symlink():
@@ -444,6 +444,7 @@ except json.JSONDecodeError as exc:
     raise SystemExit(f"invalid auth file: {exc}") from exc
 if not isinstance(auth, dict):
     raise SystemExit("auth file must be a JSON object")
+changed = False
 for provider, fields in mapping.items():
     values = {}
     for key, env in fields.items():
@@ -457,9 +458,17 @@ for provider, fields in mapping.items():
                 values[key] = val
     if "expires" in values:
         values["expires"] = int(values["expires"])
-    if len(values) > 1:
-        auth[provider] = values
-if auth:
+    if provider in auth:
+        continue
+    if values["type"] == "oauth":
+        required = ("access", "refresh", "accountId")
+        if not all(values.get(key) for key in required) or values.get("expires", 0) <= time.time_ns() // 1_000_000:
+            continue
+    elif not values.get("key"):
+        continue
+    auth[provider] = values
+    changed = True
+if changed:
     temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
     with temporary.open("x", encoding="utf-8") as handle:
         json.dump(auth, handle, ensure_ascii=False, indent=2)

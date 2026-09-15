@@ -830,11 +830,7 @@ class DynamicContextManager:
 
     @staticmethod
     def _token_int(value: Any) -> int:
-        try:
-            number = int(value or 0)
-        except (TypeError, ValueError):
-            return 0
-        return max(0, number)
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
     @staticmethod
     def _env_flag(name: str) -> bool:
@@ -847,6 +843,14 @@ class DynamicContextManager:
         except (TypeError, ValueError):
             return None
         return value if value > 0 else None
+
+    @staticmethod
+    def _approval_wait_ms() -> int:
+        try:
+            value = int(str(os.environ.get("OPENCODE_CONTEXT_APPROVAL_WAIT_MS") or "45000").strip())
+        except (TypeError, ValueError):
+            value = 45000
+        return max(0, min(45000, value))
 
     @staticmethod
     def _policy_int(policy: dict[str, Any], key: str) -> int | None:
@@ -929,10 +933,9 @@ class DynamicContextManager:
             or self._policy_int(policy, "maxExpansionSteps")
             or 4
         )
-        if "autoExpand" in policy:
-            auto_expand = bool(policy.get("autoExpand"))
-        else:
-            auto_expand = self._env_flag("OPENCODE_CONTEXT_AUTO_EXPAND")
+        # Working context may grow only after a fresh native-form approval.
+        # Native compaction remains the fallback at the physical model ceiling.
+        auto_expand = False
         return {
             "base": base,
             "ceiling": ceiling,
@@ -958,20 +961,31 @@ class DynamicContextManager:
             detail["minGrowth"],
         )
 
-    def _budget_state(self, sid: str) -> dict[str, Any]:
+    def _budget_state(self, sid: str, *, ledger: Any = None, model: str | None = None) -> dict[str, Any]:
         state = self.store.cache_get(self.BUDGET_NAMESPACE, sid)
         if not isinstance(state, dict):
             state = {}
-        return {
+        resolved = {
             "workingTokens": self._token_int(state.get("workingTokens")),
             "requestedTokens": self._token_int(state.get("requestedTokens")) or None,
             "steps": self._token_int(state.get("steps")),
-            "grantedAt": int(state.get("grantedAt") or 0),
+            "grantedAt": self._token_int(state.get("grantedAt")),
             "reason": str(state.get("reason") or "")[:200],
+            "rootID": str(state.get("rootID") or ""),
+            "model": str(state.get("model") or ""),
         }
-
-    def _save_budget_state(self, sid: str, state: dict[str, Any]) -> None:
-        self.store.cache_set(self.BUDGET_NAMESPACE, sid, state, ttl_seconds=604800)
+        binding = ledger.binding(sid) if ledger and sid else None
+        if not binding or not model or resolved["rootID"] != binding["root_id"] or resolved["model"] != model:
+            return {
+                "workingTokens": 0,
+                "requestedTokens": None,
+                "steps": 0,
+                "grantedAt": 0,
+                "reason": "",
+                "rootID": "",
+                "model": "",
+            }
+        return resolved
 
     def _working(self, detail: dict[str, Any], state: dict[str, Any]) -> int:
         """Effective working budget: persisted grant, clamped to the real ceiling."""
@@ -1003,7 +1017,8 @@ class DynamicContextManager:
     ) -> dict[str, Any]:
         session_task = self._session_budget_task(features, runtime, sid, task)
         detail = self._budget_detail(runtime, session_task)
-        state = self._budget_state(sid)
+        ledger = getattr(runtime, "budget_ledger", None)
+        state = self._budget_state(sid, ledger=ledger, model=detail["model"])
         working = self._working(detail, state)
         active, _ = self._active_tokens(features, sid)
         native = bool(getattr(features, "native_compaction_owned", False))
@@ -1038,15 +1053,13 @@ class DynamicContextManager:
     ) -> dict[str, Any]:
         session_task = self._session_budget_task(features, runtime, sid, task)
         detail = self._budget_detail(runtime, session_task)
-        state = self._budget_state(sid)
+        ledger = getattr(runtime, "budget_ledger", None)
+        state = self._budget_state(sid, ledger=ledger, model=detail["model"])
         previous = self._working(detail, state)
         steps = state["steps"]
-        try:
-            want = int(tokens)
-        except (TypeError, ValueError):
+        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens <= 0:
             raise ValueError("tokens must be a positive integer")
-        if want <= 0:
-            raise ValueError("tokens must be a positive integer")
+        want = tokens
         granted = True
         denied = None
         if want <= previous:
@@ -1062,34 +1075,43 @@ class DynamicContextManager:
             )
         else:
             working = min(want, detail["ceiling"])
-            steps += 1
-            state.update(
-                {
-                    "workingTokens": working,
-                    "requestedTokens": want,
-                    "steps": steps,
-                    "grantedAt": now_ms(),
-                    "reason": str(reason)[:200],
-                }
-            )
-            self._save_budget_state(sid, state)
-            self.store.event(
-                kind="context.budget_granted",
-                task_id=(session_task or {}).get("id"),
-                session_id=sid,
-                project_dir=(session_task or {}).get("project_dir"),
-                data={
-                    "mode": "request",
-                    "requestedTokens": want,
-                    "workingTokens": working,
-                    "baseTokens": detail["base"],
-                    "ceilingTokens": detail["ceiling"],
-                    "stepsTaken": steps,
-                    "maxSteps": detail["maxSteps"],
-                    "model": detail["model"],
-                    "reason": str(reason)[:200],
-                },
-            )
+            if not ledger:
+                granted, denied = False, "native approval service unavailable"
+            else:
+                approval_session = ledger.approval_owner(sid)
+                binding = ledger.binding(sid)
+                if not approval_session or not binding or not detail["model"]:
+                    granted, denied = False, "approval root is stale"
+                    approval = {"state": "stale", "granted": False}
+                else:
+                    proposal = {
+                        "rootID": binding["root_id"],
+                        "sessionID": sid,
+                        "model": str(detail["model"]),
+                        "workingTokens": working,
+                        "ceilingTokens": detail["ceiling"],
+                        "maxSteps": detail["maxSteps"],
+                    }
+                    subject = f"context:{sid}"
+                    approval = ledger.approval(features, session_id=approval_session, subject=subject, kind="context", proposal=proposal, reason=str(reason)[:200])
+                    deadline = now_ms() + self._approval_wait_ms()
+                    while approval["state"] in {"pending", "creating"} and now_ms() < deadline:
+                        time.sleep(min(0.4, max(0.001, (deadline - now_ms()) / 1000)))
+                        approval = ledger.approval(features, session_id=approval_session, subject=subject, kind="context", proposal=proposal, reason=str(reason)[:200])
+                if approval["granted"] and ledger.consume_context_approval(
+                    session_id=approval_session,
+                    subject=f"context:{sid}",
+                    proposal=proposal,
+                    state={"reason": str(reason)[:200]},
+                    ceiling=detail["ceiling"],
+                    max_steps=detail["maxSteps"],
+                    model=str(detail["model"]),
+                ):
+                    state = self._budget_state(sid, ledger=ledger, model=detail["model"])
+                    steps = state["steps"]
+                else:
+                    granted = False
+                    denied = "waiting for fresh human approval" if approval["state"] == "pending" else f"approval {approval['state']}"
         if not granted:
             self.store.event(
                 kind="context.budget_denied",
@@ -1145,54 +1167,24 @@ class DynamicContextManager:
         used_source = (
             "native" if getattr(features, "native_compaction_owned", False) else "estimate"
         )
-        session_task = self._session_task(features, runtime, sid, task)
+        session_task = self._session_budget_task(features, runtime, sid, task)
         detail = self._budget_detail(runtime, session_task)
         reserve = detail["reserve"]
         limit = detail["limit"]
         model_ref = detail["model"]
         min_growth = detail["minGrowth"]
-        # Adaptive working budget: a persisted grant or one bounded auto-expand
-        # step raises the compaction trigger toward the real model ceiling.
-        budget_state = self._budget_state(sid)
+        # Only a persisted, human-approved grant raises this trigger. The
+        # compatibility autoExpand field stays false; no automatic mutation path
+        # is retained here.
+        budget_state = self._budget_state(
+            sid,
+            ledger=getattr(runtime, "budget_ledger", None),
+            model=detail["model"],
+        )
         budget = self._working(detail, budget_state)
         steps = budget_state["steps"]
         triggered = False
         expanded = False
-        if (
-            active > budget
-            and detail["autoExpand"]
-            and steps < detail["maxSteps"]
-            and budget < detail["ceiling"]
-        ):
-            budget = min(detail["ceiling"], budget + detail["step"])
-            steps += 1
-            expanded = True
-            budget_state.update(
-                {
-                    "workingTokens": budget,
-                    "steps": steps,
-                    "grantedAt": now_ms(),
-                    "reason": str(budget_state.get("reason") or "auto-expand")[:200],
-                }
-            )
-            self._save_budget_state(sid, budget_state)
-            self.store.event(
-                kind="context.budget_expanded",
-                task_id=(task or {}).get("id"),
-                session_id=sid,
-                project_dir=(task or {}).get("project_dir"),
-                data={
-                    "mode": "auto",
-                    "activeTokens": active,
-                    "workingTokens": budget,
-                    "baseTokens": detail["base"],
-                    "ceilingTokens": detail["ceiling"],
-                    "stepTokens": detail["step"],
-                    "stepsTaken": steps,
-                    "maxSteps": detail["maxSteps"],
-                    "model": model_ref,
-                },
-            )
         completed = [
             r
             for r in rows
@@ -1880,6 +1872,7 @@ def install(runtime: Any, features: Any) -> RuntimeV3:
     from execution_ledger import ExecutionLedger
 
     _INSTANCE.ledger = ExecutionLedger(runtime.STORE)
+    runtime.budget_ledger = _INSTANCE.ledger
     runtime.STORE.event(
         kind="runtime.v3_installed",
         data={
@@ -2028,6 +2021,7 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
         "/internal/runtime/request-after",
         "/internal/runtime/budget-tool",
         "/internal/runtime/budget-status",
+        "/internal/runtime/execution-budget",
     }
     public = {
         "/client-session-branch.json",
@@ -2084,6 +2078,26 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
             result = {"ok": True}
         elif parsed.path == "/internal/runtime/budget-status":
             result = v3.ledger.snapshot(str(payload.get("sessionID") or ""))
+        elif parsed.path == "/internal/runtime/execution-budget":
+            sid = str(payload.get("sessionID") or "")
+            if not sid:
+                raise ValueError("sessionID required")
+            action = str(payload.get("action") or "status")
+            if action == "status":
+                result = v3.ledger.extension_status(sid)
+            elif action == "request":
+                result = v3.ledger.extension_request(
+                    features,
+                    sid,
+                    str(payload.get("requestID") or ""),
+                    explicit=payload.get("explicit") is True,
+                )
+            elif action == "check":
+                result = v3.ledger.extension_check(features, sid, str(payload.get("requestID") or ""))
+            elif action == "apply":
+                result = v3.ledger.extension_apply(sid, str(payload.get("requestID") or ""))
+            else:
+                raise ValueError("action must be status, request, check or apply")
         elif parsed.path == "/internal/runtime/tool-before":
             result = v3.gateway.before(payload)
         elif parsed.path == "/internal/runtime/tool-after":
