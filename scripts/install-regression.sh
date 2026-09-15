@@ -49,6 +49,9 @@ QWEN_QUOTA_PROBE_ENABLED=0
 OLLAMA_BASE_URL=http://localhost:11434/v1
 OPENCODE_LOCAL_AUTO_START=0
 OPENCODE_LOCAL_PROVIDER=ollama
+OPENCODE_LOCAL_ROUTER_URL=http://127.0.0.1:11434
+OPENCODE_LOCAL_ROUTER_START=/tmp/ollama-start.sh
+OPENCODE_LOCAL_ROUTER_LOG=/tmp/ollama.log
 PONYTAIL_ENABLED=0
 PONYTAIL_DEFAULT_MODE=full
 EOF
@@ -299,6 +302,11 @@ env = json.loads(path.read_text(encoding='utf-8'))['env']
 assert env['OPENCODE_CONFIG_DIR'] == str(config_dir.parent)
 assert env['MCP_RAG_ROOT'] == str(tmp / 'rag-root')
 assert env['MCP_RAG_BIN'] == str(tmp / 'rag-bin/knowledge-mcp')
+assert env['OPENCODE_LOCAL_AUTO_START'] == '0'
+assert env['OPENCODE_LOCAL_PROVIDER'] == 'ollama'
+assert env['OPENCODE_LOCAL_ROUTER_URL'] == 'http://127.0.0.1:11434'
+assert env['OPENCODE_LOCAL_ROUTER_START'] == '/tmp/ollama-start.sh'
+assert env['OPENCODE_LOCAL_ROUTER_LOG'] == '/tmp/ollama.log'
 assert env['UNMANAGED_SETTING'] == 'preserve-me'
 for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY'):
     assert name not in env, (name, env)

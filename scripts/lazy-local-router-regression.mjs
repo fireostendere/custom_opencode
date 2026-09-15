@@ -7,9 +7,13 @@ process.env.OPENCODE_LOCAL_ROUTER_START = "/tmp/start-router.sh"
 
 let callback
 let fetches = 0
+const fetchedURLs = []
 let spawned = 0
 let exitAwaited = false
-globalThis.fetch = async () => ({ ok: ++fetches > 1 })
+globalThis.fetch = async (url) => {
+  fetchedURLs.push(url)
+  return { ok: ++fetches > 1 }
+}
 globalThis.Bun = {
   spawn() {
     spawned++
@@ -37,4 +41,5 @@ await Promise.race([
 assert.equal(spawned, 1)
 assert.equal(exitAwaited, false)
 assert.equal(fetches, 2)
+assert.deepEqual(fetchedURLs, ["http://router.test", "http://router.test"])
 console.log("Lazy local router startup regression passed")
