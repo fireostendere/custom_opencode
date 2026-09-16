@@ -293,7 +293,7 @@ diptrace = ((config.get('mcp') or {}).get('servers') or {}).get('diptrace') or {
 assert diptrace.get('disabled') is True
 assert 'enabled' not in diptrace
 assert diptrace.get('codemode') is True
-assert diptrace.get('timeout') == {'startup': 10000, 'catalog': 10000, 'execution': 60000}
+assert diptrace.get('timeout') == {'startup': 60000, 'catalog': 10000, 'execution': 60000}
 assert diptrace.get('environment') == {
     'DIPTRACE_MCP_WORKSPACE': str(root),
     'DIPTRACE_MCP_ALLOWED_ROOTS': str(root),
@@ -358,7 +358,7 @@ assert 'enabled' not in server
 assert server['command'] == [root + '/.venv/bin/diptrace-mcp']
 assert server['cwd'] == root
 assert server['codemode'] is True
-assert server['timeout']['execution'] == 60000
+assert server['timeout'] == {'startup': 60000, 'catalog': 10000, 'execution': 60000}
 assert server['environment'] == {
     'DIPTRACE_MCP_WORKSPACE': workspace,
     'DIPTRACE_MCP_ALLOWED_ROOTS': workspace,
