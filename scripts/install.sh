@@ -404,7 +404,7 @@ servers["diptrace"] = {
     "cwd": diptrace_root,
     "disabled": diptrace_disabled == "true",
     "codemode": True,
-    "timeout": {"startup": 10000, "catalog": 10000, "execution": 60000},
+    "timeout": {"startup": 60000, "catalog": 10000, "execution": 60000},
     "environment": diptrace_environment,
 }
 target = Path(target)
