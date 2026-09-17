@@ -145,18 +145,52 @@ while time.time() < deadline:
                     while time.monotonic() < until:
                         if select.select([master], [], [], .05)[0]:
                             buffer += os.read(master, 65536)
+                def probe_events():
+                    try:
+                        with open(os.environ['TUI_KEYBOARD_PROBE']) as handle:
+                            return json.load(handle)
+                    except (FileNotFoundError, json.JSONDecodeError):
+                        return []
+                def wait_for_events(expected, timeout=8):
+                    deadline = time.monotonic() + timeout
+                    while time.monotonic() < deadline:
+                        settle(.05)
+                        events = probe_events()
+                        if events == expected:
+                            return events
+                    raise AssertionError(f'Native keyboard probe timed out: {expected!r}; got {probe_events()!r}')
                 os.write(master, b'\x1b')
                 settle(.15)
                 os.write(master, b'\x1b')
-                settle(.8)
-                with open(os.environ['TUI_KEYBOARD_PROBE']) as handle:
-                    assert json.load(handle) == [{'sessionID':'ses_keyboard_probe','continue':False}]
+                wait_for_events([{'sessionID':'ses_keyboard_probe','continue':False}])
                 os.write(master, b'\x1bOS')  # F4 opens a real native dialog.
                 settle(.5)
                 os.write(master, b'\x1b')
-                settle(.5)
-                with open(os.environ['TUI_KEYBOARD_PROBE']) as handle:
-                    assert json.load(handle) == [{'sessionID':'ses_keyboard_probe','continue':False}, 'dialog-closed']
+                wait_for_events([{'sessionID':'ses_keyboard_probe','continue':False}, 'dialog-closed'])
+                def wait_for_select(name, timeout=8):
+                    deadline = time.monotonic() + timeout
+                    while time.monotonic() < deadline:
+                        settle(.05)
+                        events = probe_events()
+                        event = next((item for item in events if isinstance(item, dict) and item.get('select') == name), None)
+                        if event is not None:
+                            return event
+                    raise AssertionError(f'Native select probe timed out: {name}')
+                os.write(master, b'\x1b[17~')  # F6 opens a short native select.
+                short = wait_for_select('short')
+                assert short['search'] and all(not item['visible'] and not item['focusable'] for item in short['search']), short
+                assert short['scrollbars'] and all(not item['overflow'] and not item['visible'] for item in short['scrollbars']), short
+                os.write(master, b'\r')
+                short_result = wait_for_select('short-result')
+                assert short_result.get('result') == 'short-first' and not short_result['closed'], short_result
+                os.write(master, b'\x1b[18~')  # F7 opens a long native select.
+                long = wait_for_select('long')
+                assert any(item['visible'] and item['focusable'] for item in long['search']), long
+                assert any(item['overflow'] and item['visible'] for item in long['scrollbars']), long
+                os.write(master, b'\x1b')
+                long_result = wait_for_select('long-result')
+                assert long_result['closed'], long_result
+                print('Native select overflow: short hidden + selectable; long Search/scrollbar shown', flush=True)
                 os.write(master, b'\x1b[15~')  # F5 injects native location sync failures until the 15s retry window elapses.
                 recovery_deadline = time.monotonic() + 55
                 recovery = None
@@ -226,4 +260,4 @@ PY
   fi
 done
 
-echo "Packaged TUI smoke passed: native PTY at 80x24/120x30/160x40; Escape, dialog Escape and automatic location recovery; model selection is gated by model-selector-smoke.mjs"
+echo "Packaged TUI smoke passed: native PTY at 80x24/120x30/160x40; Escape, dialogs, select overflow and automatic location recovery; model selection is gated by model-selector-smoke.mjs"

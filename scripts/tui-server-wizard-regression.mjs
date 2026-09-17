@@ -154,8 +154,8 @@ function createFakeContext(initialState) {
       router: { current: () => ({ type: "session", sessionID: "ses_server_wizard" }) },
       dialog: {
         async select(input) {
-          selects.push(input.title)
-          return { value: selectQueue.shift() }
+          selects.push(input)
+          return selectQueue.shift()
         },
         async prompt(input) {
           prompts.push(input.title)
@@ -276,7 +276,7 @@ const wizardModule = await import(`${new URL("config/plugins/tui/server-wizard.j
   const cleanup = wizardModule.default.setup(fake.context)
   fake.renderSlot()
   const row = fake.layers[0].commands.find((item) => item.id === "custom.server-wizard.open")
-  fake.selectQueue.push("toggle", false, "exit")
+  fake.selectQueue.push("toggle", false)
   assert.equal(row.run(""), true)
   await waitFor(() => fake.state.running === false)
   await waitFor(() => fake.toasts.at(-1)?.message.includes("остановлен"))
@@ -285,6 +285,9 @@ const wizardModule = await import(`${new URL("config/plugins/tui/server-wizard.j
     ["apply", "--running", "off", "--default", "on"],
     ["status"],
   ])
+  const menus = fake.selects.filter((input) => input.title.startsWith("Web server —"))
+  assert.equal(menus.length, 2, "menu should reopen until Escape")
+  assert.ok(menus.every((input) => input.options.every((option) => option.value !== "exit")), "Escape should be the only exit")
   await new Promise((resolve) => setTimeout(resolve, 10))
   cleanup()
 }
@@ -295,7 +298,7 @@ const wizardModule = await import(`${new URL("config/plugins/tui/server-wizard.j
   const cleanup = wizardModule.default.setup(fake.context)
   fake.renderSlot()
   const row = fake.layers[0].commands.find((item) => item.id === "custom.server-wizard.open")
-  fake.selectQueue.push("autostart", false, "exit")
+  fake.selectQueue.push("autostart", false)
   assert.equal(row.run(""), true)
   await waitFor(() => fake.state.defaultEnabled === false)
   await waitFor(() => fake.toasts.at(-1)?.message.includes("автозапуск выключен"))
@@ -314,7 +317,7 @@ const wizardModule = await import(`${new URL("config/plugins/tui/server-wizard.j
   const cleanup = wizardModule.default.setup(fake.context)
   fake.renderSlot()
   const row = fake.layers[0].commands.find((item) => item.id === "custom.server-wizard.open")
-  fake.selectQueue.push("port", "exit")
+  fake.selectQueue.push("port")
   fake.promptQueue.push("abc", "0", "5000", "127.0.0.1")
   fake.confirmQueue.push(true)
   assert.equal(row.run(""), true)
@@ -337,7 +340,7 @@ const wizardModule = await import(`${new URL("config/plugins/tui/server-wizard.j
   const cleanup = wizardModule.default.setup(fake.context)
   fake.renderSlot()
   const row = fake.layers[0].commands.find((item) => item.id === "custom.server-wizard.open")
-  fake.selectQueue.push("add-user", "manual", "exit")
+  fake.selectQueue.push("add-user", "manual")
   fake.promptQueue.push("bad user!", "bob", "short", "password123", "password123")
   assert.equal(row.run(""), true)
   await waitFor(() => fake.state.users.length === 1)
@@ -359,7 +362,7 @@ const wizardModule = await import(`${new URL("config/plugins/tui/server-wizard.j
   const cleanup = wizardModule.default.setup(fake.context)
   fake.renderSlot()
   const row = fake.layers[0].commands.find((item) => item.id === "custom.server-wizard.open")
-  fake.selectQueue.push("add-user", "generate", "exit")
+  fake.selectQueue.push("add-user", "generate")
   fake.promptQueue.push("charlie")
   assert.equal(row.run(""), true)
   await waitFor(() => fake.state.users.length === 1)
@@ -388,7 +391,7 @@ const wizardModule = await import(`${new URL("config/plugins/tui/server-wizard.j
   const cleanup = wizardModule.default.setup(fake.context)
   fake.renderSlot()
   const row = fake.layers[0].commands.find((item) => item.id === "custom.server-wizard.open")
-  fake.selectQueue.push("remove-user", "alice", "exit")
+  fake.selectQueue.push("remove-user", "alice")
   fake.confirmQueue.push(true)
   assert.equal(row.run(""), true)
   await waitFor(() => fake.state.users.length === 1)
@@ -413,7 +416,7 @@ const wizardModule = await import(`${new URL("config/plugins/tui/server-wizard.j
   const cleanup = wizardModule.default.setup(fake.context)
   fake.renderSlot()
   const row = fake.layers[0].commands.find((item) => item.id === "custom.server-wizard.open")
-  fake.selectQueue.push("remove-user", "exit")
+  fake.selectQueue.push("remove-user")
   assert.equal(row.run(""), true)
   await waitFor(() => fake.alerts.length === 1)
   assert.ok(fake.alerts[0].message.includes("В хранилище нет пользователей"))
@@ -432,7 +435,7 @@ const wizardModule = await import(`${new URL("config/plugins/tui/server-wizard.j
   const cleanup = wizardModule.default.setup(fake.context)
   fake.renderSlot()
   const row = fake.layers[0].commands.find((item) => item.id === "custom.server-wizard.open")
-  fake.selectQueue.push("add-user", "exit")
+  fake.selectQueue.push("add-user")
   fake.promptQueue.push(null)
   assert.equal(row.run(""), true)
   await waitFor(() => fake.calls.length >= 2)

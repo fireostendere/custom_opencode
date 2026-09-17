@@ -35,6 +35,66 @@ export default {
     function hasNode(id, node = context.renderer.root) {
       return node?.id === id || (node?.getChildren?.() ?? []).some(child => hasNode(id, child))
     }
+    function renderTree(root = context.renderer.root) {
+      const nodes = new Set(), pending = [root]
+      while (pending.length) {
+        const node = pending.pop()
+        if (!node || nodes.has(node)) continue
+        nodes.add(node)
+        pending.push(...(node.getChildren?.() ?? []))
+      }
+      return nodes
+    }
+    function dialogNodes(existing, placeholder) {
+      const groups = new Map()
+      for (const node of renderTree()) {
+        if (existing.has(node)) continue
+        let root = node
+        while (root.parent && !existing.has(root.parent)) root = root.parent
+        const group = groups.get(root) ?? []
+        group.push(node)
+        groups.set(root, group)
+      }
+      return [...groups.values()].find(nodes =>
+        nodes.some(node => node.placeholder === placeholder) && nodes.some(node => node.verticalScrollBar),
+      ) ?? []
+    }
+    async function selectProbe(kind, options) {
+      const existing = renderTree()
+      const pending = context.ui.dialog.select({ title: `Select probe: ${kind}`, options })
+      const placeholder = "Search"
+      const deadline = Date.now() + 2_500
+      let nodes = [], search = [], scrollbars = [], ready = false
+      do {
+        nodes = dialogNodes(existing, placeholder)
+        search = nodes.filter(node => node.placeholder === placeholder)
+        scrollbars = nodes.filter(node => node.verticalScrollBar)
+        const metricsReady = scrollbars.some(node => {
+          const bar = node.verticalScrollBar
+          return kind === "long" ? bar.scrollSize > bar.viewportSize : bar.scrollSize || bar.viewportSize
+        })
+        if (search.length && scrollbars.length && metricsReady) {
+          ready = true
+          break
+        }
+        await new Promise(resolve => setTimeout(resolve, 25))
+      } while (Date.now() < deadline)
+      if (!ready) throw new Error(`Select probe ${kind} layout timed out`)
+      await record({
+        select: kind,
+        search: search.map(node => ({
+          visible: node.visible, focusable: node.focusable, focused: node.focused,
+        })),
+        scrollbars: scrollbars.map(node => ({
+          visible: node.verticalScrollBar.visible,
+          scrollSize: node.verticalScrollBar.scrollSize,
+          viewportSize: node.verticalScrollBar.viewportSize,
+          overflow: node.verticalScrollBar.scrollSize > node.verticalScrollBar.viewportSize,
+        })),
+      })
+      const result = await pending
+      await record({ select: `${kind}-result`, result, closed: result == null })
+    }
     async function recoveryProbe() {
       try {
         const session = await context.client.session.create({
@@ -77,7 +137,18 @@ export default {
           await context.ui.dialog.alert({ title:'Keyboard probe', message:'Escape must close this dialog, not interrupt.' })
           await record('dialog-closed')
         },
-      }, { bind:'f5', title:'Location recovery probe', run: recoveryProbe }] }))
+      }, { bind:'f5', title:'Location recovery probe', run: recoveryProbe }, {
+        bind:'f6', title:'Short select probe',
+        run: () => selectProbe('short', [
+          { title: 'First option', value: 'short-first' },
+          { title: 'Second option', value: 'short-second' },
+        ]),
+      }, {
+        bind:'f7', title:'Long select probe',
+        run: () => selectProbe('long', Array.from({ length: 80 }, (_, index) => ({
+          title: `Option ${index + 1}`, value: `long-${index + 1}`,
+        }))),
+      }] }))
       return null
     } })
     return () => { unslot(); cleanup?.(); context.data.location.sync = nativeSync }

@@ -221,10 +221,9 @@ async function menuLoop(context, initial) {
         { title: "Порт и адрес", value: "port" },
         { title: "Добавить пользователя", value: "add-user" },
         { title: "Удалить пользователя", value: "remove-user" },
-        { title: "Выход", value: "exit" },
       ],
-    }).then((result) => result?.value !== undefined ? result.value : null)
-    if (choice == null || choice === "exit") return
+    })
+    if (choice == null) return
     try {
       if (choice === "status") await doStatus(context, current)
       else if (choice === "toggle") await doToggle(context, current)
