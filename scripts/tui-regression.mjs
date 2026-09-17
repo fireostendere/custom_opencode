@@ -98,30 +98,49 @@ const { installDialogScrollbars } = await import(
   `${dialogScrollbarUrl.href}?contract=${Date.now()}`
 )
 
-const backgroundScroll = {
-  verticalScrollBar: { visible: false },
-  getChildren() {
-    return []
-  },
+function scrollNode(scrollSize, viewportSize) {
+  return {
+    verticalScrollBar: { visible: false, scrollSize, viewportSize },
+    set verticalScrollbarOptions(options) {
+      Object.assign(this.verticalScrollBar, options)
+    },
+    getChildren() {
+      return []
+    },
+  }
 }
-const dialogScroll = {
-  verticalScrollBar: { visible: false },
-  set verticalScrollbarOptions(options) {
-    Object.assign(this.verticalScrollBar, options)
-  },
-  getChildren() {
-    return []
-  },
+function searchNode() {
+  return {
+    placeholder: "Search",
+    visible: true,
+    focusable: true,
+    focused: true,
+    focus() {
+      this.focused = true
+    },
+    blur() {
+      this.focused = false
+    },
+    getChildren() {
+      return []
+    },
+  }
 }
-const rootChildren = [backgroundScroll]
+function group(...children) {
+  const root = { getChildren: () => children }
+  for (const child of children) child.parent = root
+  return root
+}
+const backgroundScroll = scrollNode(20, 10)
+const backgroundSearch = searchNode()
+const rootChildren = [group(backgroundScroll, backgroundSearch)]
 const postProcesses = new Set()
-let resolveDialog
-const originalDialogSelect = () => {
-  rootChildren.push(dialogScroll)
+const dialogs = new Map()
+const originalDialogSelect = ({ title }) => {
+  const nodes = title === "long" ? [scrollNode(0, 0), searchNode()] : [scrollNode(2, 2), searchNode()]
+  rootChildren.push(group(...nodes))
   for (const process of postProcesses) process()
-  return new Promise((resolve) => {
-    resolveDialog = resolve
-  })
+  return new Promise(resolve => dialogs.set(title, { nodes, resolve }))
 }
 const dialogContext = {
   renderer: {
@@ -140,21 +159,58 @@ const dialogContext = {
   ui: { dialog: { select: originalDialogSelect } },
 }
 const removeDialogScrollbars = installDialogScrollbars(dialogContext)
-const dialogResult = dialogContext.ui.dialog.select({ options: [] })
+const shortResult = dialogContext.ui.dialog.select({ title: "short", options: [] })
 assert.equal(
   backgroundScroll.verticalScrollBar.visible,
   false,
   "Existing screen scrollbars must not be changed by a dialog",
 )
 assert.equal(
-  dialogScroll.verticalScrollBar.visible,
+  backgroundSearch.visible,
   true,
-  "Select dialogs must expose their native scrollbar",
+  "Existing screen search inputs must not be changed by a dialog",
 )
-resolveDialog("done")
-assert.equal(await dialogResult, "done")
+const short = dialogs.get("short")
+assert.equal(short.nodes[0].verticalScrollBar.visible, false, "Short select must hide its scrollbar")
+assert.equal(short.nodes[1].visible, false, "Short select must hide Search")
+assert.equal(short.nodes[1].focusable, false, "Hidden Search must not stay focusable")
+assert.equal(short.nodes[1].focused, false, "Hidden Search must blur")
+const lateBackgroundScroll = scrollNode(10, 2)
+const lateBackgroundSearch = searchNode()
+rootChildren.push(group(lateBackgroundScroll, lateBackgroundSearch))
+for (const process of postProcesses) process()
+assert.equal(short.nodes[1].visible, false, "Unrelated overflow must not reveal short dialog Search")
+assert.equal(lateBackgroundScroll.verticalScrollBar.visible, false, "Unrelated scrollbar must stay untouched")
+assert.equal(lateBackgroundSearch.visible, true, "Unrelated Search must stay untouched")
+short.resolve("short-result")
+assert.equal(await shortResult, "short-result")
+assert.equal(short.nodes[1].visible, true, "Closing must restore Search visibility")
+assert.equal(short.nodes[1].focusable, true, "Closing must restore Search focusability")
+assert.equal(short.nodes[1].focused, true, "Closing must restore Search focus state")
+
+const longResult = dialogContext.ui.dialog.select({ title: "long", options: [] })
+const long = dialogs.get("long")
+assert.equal(long.nodes[1].visible, false, "Unknown 0/0 layout must initially hide Search")
+long.nodes[0].verticalScrollBar.scrollSize = 3
+long.nodes[0].verticalScrollBar.viewportSize = 2
+for (const process of postProcesses) process()
+assert.equal(long.nodes[0].verticalScrollBar.visible, true, "Long select must show its scrollbar")
+assert.equal(long.nodes[1].visible, true, "Long select must show Search")
+assert.equal(long.nodes[1].focusable, true, "Shown Search must restore focusability")
+assert.equal(long.nodes[1].focused, true, "Shown Search must restore focus state")
+long.nodes[1].value = "x"
+long.nodes[0].verticalScrollBar.scrollSize = 2
+for (const process of postProcesses) process()
+assert.equal(long.nodes[0].verticalScrollBar.visible, false, "Filtered non-overflow select must hide its scrollbar")
+assert.equal(long.nodes[1].visible, true, "Active filter must keep Search visible")
+assert.equal(long.nodes[1].focusable, true, "Active filter must keep Search focusable")
+long.nodes[1].value = ""
+for (const process of postProcesses) process()
+assert.equal(long.nodes[1].visible, false, "Empty filtered non-overflow select must hide Search")
+long.resolve("long-result")
+assert.equal(await longResult, "long-result")
 assert.equal(
-  dialogScroll.verticalScrollBar.visible,
+  long.nodes[0].verticalScrollBar.visible,
   false,
   "Dialog scrollbar override must be released on close",
 )

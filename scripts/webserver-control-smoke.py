@@ -12,6 +12,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,7 +79,10 @@ elif command == 'start':
 elif command == 'stop':
     state['running'] = False
 elif command == 'restart':
+    state['running'] = True
     state['restarted'] = True
+elif command == 'status':
+    print('Active: active (running) fake web service' if state['running'] else 'Active: inactive (dead) fake web service')
 else:
     raise SystemExit(f'unsupported systemctl command: {command}')
 path.write_text(json.dumps(state))
@@ -99,6 +104,9 @@ path.write_text(json.dumps(state))
         (root / "app").mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / "app" / "server_users.py", root / "app" / "server_users.py")
 
+        ready_server = ThreadingHTTPServer(("127.0.0.1", 0), SimpleHTTPRequestHandler)
+        threading.Thread(target=ready_server.serve_forever, daemon=True).start()
+        ready_port = ready_server.server_address[1]
         env = {
             **os.environ,
             "HOME": str(home),
@@ -106,7 +114,7 @@ path.write_text(json.dumps(state))
             "FAKE_SYSTEMD_STATE": str(fake_state),
             "OPENCODE_WEBSERVER_STATE": str(state_path),
             "OPENCODE_WEB_HOST": "127.0.0.1",
-            "OPENCODE_WEB_PORT": "4098",
+            "OPENCODE_WEB_PORT": str(ready_port),
             "OPENCODE_SERVER_USERNAME": "envuser",
             "OPENCODE_SERVER_PASSWORD": "envpass123",
             "CUSTOM_OPENCODE_ROOT": str(root),
@@ -116,13 +124,29 @@ path.write_text(json.dumps(state))
         users_file = root / "users.json"
         env["OPENCODE_USERS_FILE"] = str(users_file)
 
+        # systemctl can accept start/restart while the web process is unusable;
+        # the controller must not emit a successful JSON response in that case.
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            failed_port = probe.getsockname()[1]
+        failed_ready_env = {**env, "OPENCODE_WEB_PORT": str(failed_port), "OPENCODE_WEBSERVER_READY_TIMEOUT": "0.1"}
+        code, value = run_control(["apply", "--running", "on", "--default", "off"], failed_ready_env)
+        assert code == 1 and value["ok"] is False, value
+        assert "HTTP-ready" in str(value["error"]) and "Active:" in str(value["error"]), value
+        fake_state.write_text(json.dumps({"running": True, "default": False}))
+        (root / ".env").write_text(f"OPENCODE_WEB_PORT={failed_port}\n")
+        code, value = run_control(["port", "--port", str(failed_port)], failed_ready_env)
+        assert code == 1 and value["ok"] is False, value
+        assert "HTTP-ready" in str(value["error"]) and "Active:" in str(value["error"]), value
+        fake_state.write_text(json.dumps({"running": False, "default": False}))
+
         # Test status includes address and users (initially empty store)
         code, value = run_control(["status"], env)
         assert code == 0, value
         assert value["deployed"] is True
         assert value["running"] is False and value["defaultEnabled"] is False
         assert "address" in value, "status missing address field"
-        assert value["address"] == "http://127.0.0.1:4098", value["address"]
+        assert value["address"] == f"http://127.0.0.1:{ready_port}", value["address"]
         assert "users" in value, "status missing users field"
         assert isinstance(value["users"], list), value["users"]
         # Should have env user
@@ -265,14 +289,20 @@ path.write_text(json.dumps(state))
         assert "OPENCODE_WEB_PORT=4098" not in env_content, "should replace old port"
 
         # Test port command when service IS active (should restart)
+        ready_server.shutdown()
+        ready_server.server_close()
+        ready_server = ThreadingHTTPServer(("127.0.0.1", 0), SimpleHTTPRequestHandler)
+        threading.Thread(target=ready_server.serve_forever, daemon=True).start()
+        next_ready_port = ready_server.server_address[1]
         fake_state.write_text(json.dumps({"running": True, "default": False}))
-        code, value = run_control(["port", "--port", "6000"], env)
+        code, value = run_control(["port", "--port", str(next_ready_port)], env)
         assert code == 0, value
         assert value["ok"] is True, value
         assert value["restarted"] is True, "should restart when active"
-        assert value["port"] == 6000, value["port"]
+        assert value["port"] == next_ready_port, value["port"]
         env_content = fixture_env.read_text()
-        assert "OPENCODE_WEB_PORT=6000" in env_content, env_content
+        assert f"OPENCODE_WEB_PORT={next_ready_port}" in env_content, env_content
+        env["OPENCODE_WEB_PORT"] = str(next_ready_port)
 
         # Test port with host parameter (append missing OPENCODE_WEB_HOST)
         fixture_env.write_text("# Test env\nOPENCODE_WEB_PORT=7000\n")
@@ -358,7 +388,9 @@ path.write_text(json.dumps(state))
         code, value = run_control(["stop"], manual_env)
         assert code == 0 and value["running"] is False, value
 
-    print("Webserver control smoke passed: systemd/manual lifecycle + state permissions + user management + port configuration + security validation")
+    ready_server.shutdown()
+    ready_server.server_close()
+    print("Webserver control smoke passed: systemd/manual lifecycle + readiness + state permissions + user management + port configuration + security validation")
     return 0
 
 

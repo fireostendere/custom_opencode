@@ -31,7 +31,7 @@ Wizard вызывает `custom-opencode-webserver` через stdout-last-line 
 - **Порт и адрес**: интерактивный ввод порта (1-65535) и host (без пробелов/слэшей), подтверждение, вызов `port --port --host`.
 - **Добавить пользователя**: ввод username (валидация `^[A-Za-z0-9._-]{1,64}$`), выбор "Ввести пароль" или "Сгенерировать пароль". При manual — ввод + повтор + валидация длины >= 8. При generate — показ сгенерированного пароля один раз через alert.
 - **Удалить пользователя**: список store-users (env-user управляется через `.env`), подтверждение, вызов `user-remove --username`.
-- **Выход**: возврат из меню.
+- **Escape**: выход из меню; после остальных действий wizard возвращается в главное меню.
 
 Если web server не развёрнут (`deployed:false`), wizard предлагает развернуть через `deploy --running --default`.
 
@@ -63,8 +63,8 @@ Regression проверяет:
 - Registration: slash name `server`, group `Services`, priority 961, palette/suggested true.
 - Status flow: toast содержит адрес и количество пользователей.
 - Not-deployed → deploy flow: вызовы `[["status"],["deploy","--running","on","--default","on"]]`.
-- Menu flows: toggle, autostart, port (с retry на невалидном вводе), add user manual (с retry на коротком пароле и mismatch), add user generate (alert с generatedPassword), remove user (с подтверждением), remove user empty store (alert path).
-- Cancel at username prompt → back to menu → exit, no user-add call.
+- Menu flows: toggle, autostart, port (с retry на невалидном вводе), add user manual (с retry на коротком пароле и mismatch), add user generate (alert с generatedPassword), remove user (с подтверждением), remove user empty store (alert path), возврат в меню и выход по Escape.
+- Cancel at username prompt → back to menu → Escape, no user-add call.
 - Submit-router interception: typed `/server` + enter → prevented/stopped true, editor cleared, wizard status flow ran.
 
 Дополнительные проверки loader и TUI submit transport:

@@ -99,11 +99,39 @@ def manual_ready() -> bool:
     connection = http.client.HTTPConnection(host, port, timeout=0.5)
     try:
         connection.request("GET", "/login.html")
-        return connection.getresponse().status < 500
+        response = connection.getresponse()
+        status = response.status
+        response.read()
+        return status < 500
     except OSError:
         return False
     finally:
         connection.close()
+
+
+def ready_timeout() -> float:
+    try:
+        return max(0.0, float(os.environ.get("OPENCODE_WEBSERVER_READY_TIMEOUT", "50")))
+    except ValueError as exc:
+        raise ControlError("OPENCODE_WEBSERVER_READY_TIMEOUT must be a number") from exc
+
+
+def systemctl_status_detail() -> str:
+    result = systemctl("status", "--no-pager", "--lines=10", UNIT)
+    detail = (result.stdout or result.stderr).strip()
+    return detail[-2000:] if detail else f"systemctl status exited {result.returncode}"
+
+
+def wait_systemd_ready() -> None:
+    deadline = time.monotonic() + ready_timeout()
+    while time.monotonic() < deadline:
+        active = probe("is-active", UNIT)
+        if active not in {"active", "activating"}:
+            raise ControlError(f"systemd web server is {active or 'inactive'}: {systemctl_status_detail()}")
+        if manual_ready():
+            return
+        time.sleep(0.1)
+    raise ControlError(f"systemd web server did not become HTTP-ready: {systemctl_status_detail()}")
 
 
 def manual_apply(running: bool, default_enabled: bool) -> dict[str, Any]:
@@ -129,7 +157,7 @@ def manual_apply(running: bool, default_enabled: bool) -> dict[str, Any]:
             raise ControlError(f"manual web start failed: {exc}") from exc
         finally:
             os.close(log_fd)
-        deadline = time.monotonic() + 50
+        deadline = time.monotonic() + ready_timeout()
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 raise ControlError(f"manual web server exited {process.returncode}; see {log_path}")
@@ -229,8 +257,6 @@ def probe(*arguments: str) -> str | None:
         result = systemctl(*arguments)
     except ControlError:
         return None
-    if result.returncode:
-        return ""
     return result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
 
 
@@ -294,6 +320,8 @@ def apply(running: bool, default_enabled: bool) -> dict[str, Any]:
     checked_systemctl("daemon-reload")
     checked_systemctl("enable" if default_enabled else "disable", UNIT)
     checked_systemctl("start" if running else "stop", UNIT)
+    if running:
+        wait_systemd_ready()
     previous = read_state()
     saved = {
         **previous,
@@ -443,23 +471,21 @@ def port_command(port: int, host: str | None) -> dict[str, Any]:
 
     manual_running = service_mode() == "manual" and manual_pid() is not None
     _rewrite_env_file(port, host)
+    os.environ["OPENCODE_WEB_PORT"] = str(port)
+    if host is not None:
+        os.environ["OPENCODE_WEB_HOST"] = host
 
     # Check if service is active and restart if needed
     restarted = False
     active = probe("is-active", UNIT) if service_mode() != "manual" else ""
     if manual_running:
         manual_apply(False, False)
-        os.environ["OPENCODE_WEB_PORT"] = str(port)
-        if host is not None:
-            os.environ["OPENCODE_WEB_HOST"] = host
         manual_apply(True, False)
         restarted = True
-    elif active == "active":
-        try:
-            checked_systemctl("restart", UNIT)
-            restarted = True
-        except ControlError:
-            pass
+    elif active in {"active", "activating"}:
+        checked_systemctl("restart", UNIT)
+        wait_systemd_ready()
+        restarted = True
 
     # Reload web config to get effective values
     # (the env vars in current process don't reflect the change)
