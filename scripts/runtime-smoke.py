@@ -198,6 +198,7 @@ with tempfile.TemporaryDirectory() as temp:
         "architect",
         "sol-orchestrated",
         "sol-review",
+        "dnd-edition",
         "critical",
         "review",
         "research",
@@ -354,6 +355,7 @@ with tempfile.TemporaryDirectory() as temp:
     assert server_runtime._profile_id("orchestrated") == "architect"
     assert server_runtime._profile_id("qwen3.8-orchestrated") == "architect"
     assert server_runtime._profile_id("gpt-5.6-sol-orchestrated") == "sol-orchestrated"
+    assert server_runtime._profile_id("gpt-5.6-dnd-edition") == "dnd-edition"
     try:
         server_runtime._profile_id("unknown-profile")
     except ValueError as error:
@@ -378,6 +380,7 @@ with tempfile.TemporaryDirectory() as temp:
     for profile, model, expected_agent in (
         ("architect", {"providerID": "bailian-cli", "id": "qwen3.8-orchestrated"}, "plan"),
         ("sol-orchestrated", {"providerID": "openai", "id": "gpt-5.6-sol-orchestrated"}, "plan"),
+        ("dnd-edition", {"providerID": "openai", "id": "gpt-5.6-dnd-edition"}, "dnd-narrator"),
         ("direct", {"providerID": "custom", "id": "manual", "variant": "precise"}, "plan-direct"),
     ):
         fake.session = {"agent": "build", "model": dict(model)}

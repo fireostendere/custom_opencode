@@ -9,16 +9,17 @@ function esc(value){return String(value??'').replace(/[&<>"']/g,(c)=>({'&':'&amp
 function sid(){const m=/^#\/session\/([^/?]+)/.exec(location.hash||'');return m?decodeURIComponent(m[1]):null}
 function key(){return `${PROFILE_KEY}${sid()||'draft'}`}
 function explicitProfile(){return localStorage.getItem(key())||'direct'}
-function canonicalProfile(id){return ({orchestrated:'architect','qwen3.8-orchestrated':'architect','gpt-5.6-sol-orchestrated':'sol-orchestrated'})[id]||id}
+function canonicalProfile(id){return ({orchestrated:'architect','qwen3.8-orchestrated':'architect','gpt-5.6-sol-orchestrated':'sol-orchestrated','gpt-5.6-dnd-edition':'dnd-edition'})[id]||id}
 function profile(){
   const selected=canonicalProfile(explicitProfile());if(selected!=='direct')return selected
   const model=window.CustomOpenCodeControls?.activeModel?.()
+  if(model?.providerID==='openai'&&model.id==='gpt-5.6-dnd-edition')return 'dnd-edition'
   if(model?.providerID==='openai'&&model.id==='gpt-5.6-sol-orchestrated')return 'sol-orchestrated'
   if(model?.providerID==='bailian-cli'&&model.id==='qwen3.8-orchestrated')return 'architect'
   return 'direct'
 }
 function profileRow(id){return state.capabilities?.profiles?.find((item)=>item.id===canonicalProfile(id))||null}
-const PROFILE_LABELS={direct:'Модель чата',architect:'Qwen · Оркестрация','sol-orchestrated':'Sol · Оркестрация','sol-review':'Sol · Ревью',fast:'Быстрая задача',build:'Разработка',critical:'Критическая задача',review:'Независимое ревью',research:'Исследование','long-horizon':'Длительная задача'}
+const PROFILE_LABELS={direct:'Модель чата',architect:'Qwen · Оркестрация','sol-orchestrated':'Sol · Оркестрация','dnd-edition':'DnD Edition · ODM','sol-review':'Sol · Ревью',fast:'Быстрая задача',build:'Разработка',critical:'Критическая задача',review:'Независимое ревью',research:'Исследование','long-horizon':'Длительная задача'}
 const STATE_LABELS={queued:'В очереди',blocked:'Ждёт зависимостей',paused:'Приостановлена',submitted:'Отправлена модели',running:'Выполняется',waiting_permission:'Ждёт разрешения',verifying:'Проверяется',recovering:'Восстанавливается',needs_attention:'Нужна помощь',completed:'Завершена',failed:'Ошибка',cancelled:'Отменена'}
 function profileLabel(id){return PROFILE_LABELS[canonicalProfile(id)]||profileRow(id)?.label||id}
 function stateLabel(id){return STATE_LABELS[id]||id}

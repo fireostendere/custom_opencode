@@ -52,13 +52,19 @@ OPENCODE_SOL_ORCHESTRATED_MODEL=openai/gpt-5.6-sol-orchestrated
 OPENCODE_SOL_BUILDER_MODEL=openai/gpt-5.6-terra
 OPENCODE_SOL_READER_MODEL=openai/gpt-5.6-luna
 OPENCODE_SOL_REVIEW_MODEL=openai/gpt-5.6-luna
+OPENCODE_DND_NARRATOR_MODEL=openai/gpt-5.6-sol#medium
+OPENCODE_DND_COMPLEX_MODEL=openai/gpt-5.6-sol#high
+OPENCODE_DND_EXCEPTIONAL_MODEL=openai/gpt-5.6-sol#max
+OPENCODE_DND_PLANNER_MODEL=openai/gpt-5.6-sol#high
+OPENCODE_DND_MEMORY_MODEL=openai/gpt-5.6-luna#low
+OPENCODE_DND_READER_MODEL=openai/gpt-5.6-luna#low
 ```
 
-Alibaba-роли provider-locked на Alibaba Cloud/Bailian, а SOL-роли provider-locked
+Alibaba-роли provider-locked на Alibaba Cloud/Bailian, а SOL и DnD-роли provider-locked
 на официальный OpenAI provider. Ни одна роль из orchestration stack не должна
 автоматически уходить на другой gateway/provider.
 
-`direct` сохраняет ровно выбранную пользователем модель. Managed profiles (`fast`, `build`, `architect`, `sol-orchestrated`, `critical`, `research`, `long-horizon`) используют только собственные role refs.
+`direct` сохраняет ровно выбранную пользователем модель. Managed profiles (`fast`, `build`, `architect`, `sol-orchestrated`, `dnd-edition`, `critical`, `research`, `long-horizon`) используют только собственные role refs. `dnd-edition` доступен в picker как `openai/gpt-5.6-dnd-edition` и выбирает restricted primary-agent `dnd-narrator`.
 
 Host load, GPU state, запущенные игры и доступность другого inference endpoint не участвуют в выборе model route.
 

@@ -61,6 +61,7 @@ PROFILE_IDS = {
     "architect",
     "sol-orchestrated",
     "sol-review",
+    "dnd-edition",
     "critical",
     "research",
     "review",
@@ -70,6 +71,7 @@ PROFILE_ALIASES = {
     "orchestrated": "architect",
     "qwen3.8-orchestrated": "architect",
     "gpt-5.6-sol-orchestrated": "sol-orchestrated",
+    "gpt-5.6-dnd-edition": "dnd-edition",
 }
 
 
