@@ -129,6 +129,7 @@ grep -Fq '"app.exit": "ctrl+shift+q"' "$CLI_CONFIG"
 [[ -f "$RUNTIME_GUARD" ]] || { echo "fresh install did not install runtime guard plugin" >&2; exit 1; }
 [[ -f "$VISIBLE_PLAN" ]] || { echo "fresh install did not install visible plan plugin" >&2; exit 1; }
 grep -Fq 'unset WAYLAND_DISPLAY WAYLAND_SOCKET' "$WRAPPER"
+grep -Fq 'restore-tui-model.py' "$WRAPPER"
 grep -Fq 'webserver-control.py' "$WEBSERVER_WRAPPER"
 grep -Fq 'export CUSTOM_OPENCODE_SERVICE_MODE="systemd"' "$WEBSERVER_WRAPPER"
 if grep -Fq 'pin-orchestrated-recent.py' "$WRAPPER"; then
@@ -143,6 +144,34 @@ if grep -Fq 'service set env' "$LOG"; then
   echo "installer exposed service environment through command arguments" >&2
   exit 1
 fi
+
+# TUI flags and an optional directory reconcile state; subcommands do not.
+TUI_STATE="$TMP/tui-state"
+TUI_ROOT="$TUI_STATE/opencode"
+mkdir -p "$TUI_ROOT/beta/tui"
+cat >"$TUI_ROOT/beta/tui/plugin.custom.tui-bundle.model-selector.recent.json" <<'EOF'
+{"models":[{"providerID":"openai","modelID":"astra"}]}
+EOF
+printf '%s\n' '{"recent":[{"providerID":"openai","modelID":"luna"}],"variant":{"openai/astra":"high"},"favorite":["keep"],"unknown":true}' >"$TUI_ROOT/model.json"
+cp "$TUI_ROOT/model.json" "$TMP/native-before-subcommand.json"
+: >"$LOG"
+XDG_STATE_HOME="$TUI_STATE" CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" --help
+cmp -s "$TMP/native-before-subcommand.json" "$TUI_ROOT/model.json" || { echo "TUI help changed model state" >&2; exit 1; }
+grep -Fxq 'opencode2 --help' "$LOG"
+: >"$LOG"
+XDG_STATE_HOME="$TUI_STATE" CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" service status
+cmp -s "$TMP/native-before-subcommand.json" "$TUI_ROOT/model.json" || { echo "non-TUI wrapper call changed model state" >&2; exit 1; }
+grep -Fxq 'opencode2 service status' "$LOG"
+: >"$LOG"
+XDG_STATE_HOME="$TUI_STATE" CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" --standalone "$TMP/projects"
+python3 - "$TUI_ROOT/model.json" <<'PY'
+import json, os, sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["recent"] == [{"providerID": "openai", "modelID": "astra"}, {"providerID": "openai", "modelID": "luna"}], state
+assert state["variant"] == {"openai/astra": "high"} and state["favorite"] == ["keep"] and state["unknown"] is True
+assert os.stat(sys.argv[1]).st_mode & 0o777 == 0o600
+PY
+grep -Fxq "opencode2 --standalone $TMP/projects" "$LOG"
 
 AUTH="$HOME_DIR/.local/share/opencode/auth.json"
 run_with_auth_backups() {

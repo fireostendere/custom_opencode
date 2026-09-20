@@ -508,25 +508,6 @@ export default Plugin.define({
             return // cancelled
           }
 
-          const next = [
-            result,
-            ...validRecent.filter(
-              (entry) =>
-                !(
-                  entry.providerID === result.providerID &&
-                  entry.modelID === result.modelID
-                ),
-            ),
-          ].slice(0, RECENT_LIMIT)
-
-          try {
-            await updateRecent((draft) => {
-              draft.models = next
-            })
-          } catch {
-            // Recent history is non-critical.
-          }
-
           const selected = models.find(
             (item) => item.providerID === result.providerID && item.id === result.modelID,
           )
@@ -555,6 +536,20 @@ export default Plugin.define({
                 sessionID,
                 model,
               })
+            }
+            try {
+              await updateRecent((draft) => {
+                const currentRecent = Array.isArray(draft.models) ? draft.models : []
+                draft.models = [
+                  result,
+                  ...currentRecent.filter(
+                    (entry) =>
+                      !(entry.providerID === result.providerID && entry.modelID === result.modelID),
+                  ),
+                ].slice(0, RECENT_LIMIT)
+              })
+            } catch {
+              // Recent history is non-critical.
             }
           } catch {
             context.ui.toast.show({

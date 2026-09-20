@@ -238,7 +238,7 @@ if [[ "$SELFTEST" != 0 ]]; then
     "$ROOT/scripts/rag-live-regression.py" \
     "$ROOT/scripts/runtime-invariants-smoke.py" \
     "$ROOT/scripts/model-routing-effort-smoke.py" \
-    "$ROOT/scripts/pin-orchestrated-recent.py" \
+    "$ROOT/scripts/restore-tui-model.py" \
     "$ROOT/app/runtime_invariants.py" \
     "$ROOT/app/model_registry.py"
   "$ROOT/scripts/verify.sh"
@@ -549,6 +549,7 @@ if [[ "\${1:-}" == "run" ]]; then
     exit 2
   fi
 fi
+"$PYTHON3" "$ROOT/scripts/restore-tui-model.py" "\${args[@]}" || true
 exec env -u OPENCODE_CONFIG_DIR opencode2 "\${args[@]}"
 EOF
 chmod 0755 "$BIN_DIR/custom-opencode"

@@ -15,6 +15,8 @@ if [[ -z "$NODE" ]]; then echo "node is required" >&2; exit 1; fi
   "$ROOT/scripts/rag-probe.py" "$ROOT/scripts/rag-probe-contract-regression.py" "$ROOT/scripts/rag-start-smoke.py" "$ROOT/scripts/runtime-smoke.py" \
   "$ROOT/scripts/runtime-resume-smoke.py" "$ROOT/scripts/webserver-control.py"
 
+"$PYTHON3" "$ROOT/scripts/tui-model-startup-regression.py"
+
 WORKSPACE_TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$WORKSPACE_TEST_ROOT"' EXIT
 # The verifier exercises fixtures, not the installer's private credentials or
