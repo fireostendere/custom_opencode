@@ -89,6 +89,20 @@ def main() -> None:
             assert second["statusHash"] == first["statusHash"]
             assert status_calls == 1
 
+            def diff_timeout_run(cwd, args, timeout=12.0, input_text=None):
+                if args[:2] == ["git", "diff"]:
+                    raise subprocess.TimeoutExpired(args, timeout)
+                return fast_run(cwd, args, timeout, input_text)
+
+            repo_services._run = diff_timeout_run
+            diff = repo_services.semantic_diff(
+                str(root),
+                {"head": "parent"},
+                snapshot={**first, "head": "child", "git": True, "changed": ["tracked.py"]},
+            )
+            assert diff["changedFiles"] == ["tracked.py"]
+            assert diff["stats"]["files"] == 1
+
             # Runtime V3 explicitly disables the legacy repo/index pipeline in
             # ContextService; otherwise one turn performs the same repo work twice.
             context = repo_services.ContextService(FakeStore(), BombIndexer())
