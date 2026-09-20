@@ -1351,7 +1351,11 @@ class DynamicContextManager:
         sid: str,
         project_instructions: str,
         rag_mode: str = "auto",
+        context_class: str = "full",
     ) -> dict[str, Any]:
+        context_class = str(context_class or "full").strip().lower()
+        if context_class not in {"bare", "lite", "normal", "full"}:
+            context_class = "full"
         tasks = self.store.list_tasks(
             session_id=sid,
             states=["submitted", "running", "waiting_permission", "verifying", "recovering"],
@@ -1359,16 +1363,29 @@ class DynamicContextManager:
         )
         task = tasks[0] if tasks else None
         compact = self.maybe_compact(features, runtime, sid, task)
+        if context_class == "bare":
+            return {
+                "text": "",
+                "usedChars": 0,
+                "budgetChars": 0,
+                "compaction": compact,
+                "semanticDiff": None,
+                "contextClass": context_class,
+            }
+
         directory = features._session_directory(sid)
         snapshot = git_snapshot(directory)
-        budget_chars = max(6000, min(24000, compact["budgetTokens"] * 2))
+        cap = {"lite": 4000, "normal": 12000, "full": 24000}[context_class]
+        floor = {"lite": 2000, "normal": 6000, "full": 6000}[context_class]
+        budget_chars = max(floor, min(cap, compact["budgetTokens"] * 2))
+        base_cap = {"lite": 2000, "normal": 4000, "full": 6000}[context_class]
         # Runtime V3 owns semantic repo context. Do not run the legacy
         # RepoIndexer/semantic_diff pipeline a second time for the same turn.
         base = runtime.CONTEXT.envelope(
             project_dir=directory,
             task=task,
             project_instructions="",
-            budget_chars=min(6000, budget_chars // 4),
+            budget_chars=min(base_cap, budget_chars),
             include_repo=False,
             snapshot=snapshot,
         )
@@ -1378,16 +1395,18 @@ class DynamicContextManager:
             if task
             else str(getattr(features, "snapshot", {}).get("query") or "")
         )
-        if query:
+        if query and context_class in {"normal", "full"}:
+            hit_limit = 20 if context_class == "full" else 8
+            diff_limit = 80 if context_class == "full" else 32
             try:
-                repo = self.indexer.search(directory, query, limit=20, snapshot=snapshot)
+                repo = self.indexer.search(directory, query, limit=hit_limit, snapshot=snapshot)
                 hits = repo.get("hits") or []
                 if hits:
                     parts.append(
                         "Semantic repository matches:\n"
                         + "\n".join(
                             f"- {h.get('type')}: {h.get('qualified') or h.get('path')} (score {h.get('score')})"
-                            for h in hits[:20]
+                            for h in hits[:hit_limit]
                         )
                     )
                 diff = self.indexer.semantic_diff(
@@ -1400,7 +1419,7 @@ class DynamicContextManager:
                         "Changed symbols since task baseline:\n"
                         + "\n".join(
                             f"- {s.get('qualified')} · {s.get('path')}:{s.get('line')}"
-                            for s in diff["changedSymbols"][:80]
+                            for s in diff["changedSymbols"][:diff_limit]
                         )
                     )
             except Exception as exc:
@@ -1413,18 +1432,20 @@ class DynamicContextManager:
             if rag_mode == "on" or (rag_mode == "auto" and bool(ENGINEERING_HINT.search(query))):
                 result = self.rag.search(features, query, 3)
                 if result is not None:
+                    rag_chars = 8000 if context_class == "full" else 4000
                     if isinstance(result, dict) and "context" in result:
                         ctx_text = str(result["context"]).strip()
                         if ctx_text:
                             parts.append(
-                                f"Shared engineering knowledge retrieval (server-managed RAG):\n{ctx_text[:8000]}"
+                                "Shared engineering knowledge retrieval (server-managed RAG):\n"
+                                + ctx_text[:rag_chars]
                             )
                     else:
                         parts.append(
                             "Shared engineering knowledge retrieval (server-managed RAG):\n"
-                            + json.dumps(result, ensure_ascii=False, default=str)[:8000]
+                            + json.dumps(result, ensure_ascii=False, default=str)[:rag_chars]
                         )
-        if project_instructions.strip():
+        if context_class in {"normal", "full"} and project_instructions.strip():
             if len(project_instructions) > budget_chars // 2:
                 raise ValueError(
                     "project instructions exceed half of context-envelope budget; shorten them explicitly"
@@ -1455,6 +1476,7 @@ class DynamicContextManager:
             "budgetChars": budget_chars,
             "compaction": compact,
             "semanticDiff": base.get("semanticDiff"),
+            "contextClass": context_class,
         }
 
 
@@ -2164,6 +2186,7 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
                 sid,
                 str(settings.get("instructions") or ""),
                 str(settings.get("rag") or "auto"),
+                str(payload.get("contextClass") or "full"),
             )
         elif parsed.path == "/internal/runtime/context-budget":
             sid = str(payload.get("sessionID") or "")
