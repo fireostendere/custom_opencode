@@ -158,6 +158,20 @@ with tempfile.TemporaryDirectory() as temp:
             assert bad == 400, (invalid, bad)
         outside = Path(temp) / "outside"
         outside.mkdir()
+        exact_status, _, exact_body = request(
+            "POST", "/client-directories.json", {"path": str(outside)}
+        )
+        exact = json.loads(exact_body)
+        assert exact_status == 200 and exact["ok"] is True, exact
+        assert exact["directory"] == str(outside) and exact["browsable"] is False, exact
+        missing_status, _, _ = request(
+            "POST", "/client-directories.json", {"path": str(outside / "missing")}
+        )
+        assert missing_status == 404, missing_status
+        invalid_status, _, _ = request(
+            "POST", "/client-directories.json", {"path": ""}
+        )
+        assert invalid_status == 400, invalid_status
         forbidden, _, _ = request(
             "POST", "/client-directories.json", {"parent": str(outside), "name": "nope"}
         )
