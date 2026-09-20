@@ -121,6 +121,7 @@ def safe_repo_file(root: Path, relative: str) -> Path | None:
 _GIT_SNAPSHOT_LOCK = threading.Lock()
 _GIT_SNAPSHOT_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _GIT_REFRESHING: set[str] = set()
+_GIT_REFRESH_RETRY_AT: dict[str, float] = {}
 
 
 def _git_snapshot_ttl() -> float:
@@ -233,12 +234,27 @@ def _capture_git_snapshot(root: Path, *, include_untracked: bool, timeout: float
 
 def _refresh_git_snapshot(key: str, root: Path) -> None:
     try:
+        try:
+            delay_seconds = max(
+                0.0,
+                float(os.environ.get("OPENCODE_GIT_BACKGROUND_DELAY_SECONDS", "0.75")),
+            )
+        except ValueError:
+            delay_seconds = 0.75
+        if delay_seconds:
+            time.sleep(delay_seconds)
         value = _capture_git_snapshot(root, include_untracked=True, timeout=12.0)
+        now = time.monotonic()
         with _GIT_SNAPSHOT_LOCK:
             previous = _GIT_SNAPSHOT_CACHE.get(key)
             # Never replace a usable snapshot with a timed-out background probe.
             if not value.get("partial") or previous is None:
-                _GIT_SNAPSHOT_CACHE[key] = (time.monotonic(), value)
+                _GIT_SNAPSHOT_CACHE[key] = (now, value)
+                _GIT_REFRESH_RETRY_AT[key] = now + _git_snapshot_ttl()
+            else:
+                # Large WSL/NTFS trees can exceed even the background budget.
+                # Back off instead of continuously rescanning them on each turn.
+                _GIT_REFRESH_RETRY_AT[key] = now + 30.0
     finally:
         with _GIT_SNAPSHOT_LOCK:
             _GIT_REFRESHING.discard(key)
@@ -246,7 +262,8 @@ def _refresh_git_snapshot(key: str, root: Path) -> None:
 
 def _schedule_git_refresh(key: str, root: Path) -> None:
     with _GIT_SNAPSHOT_LOCK:
-        if key in _GIT_REFRESHING:
+        now = time.monotonic()
+        if key in _GIT_REFRESHING or now < _GIT_REFRESH_RETRY_AT.get(key, 0.0):
             return
         _GIT_REFRESHING.add(key)
     threading.Thread(
@@ -261,9 +278,11 @@ def invalidate_git_snapshot(project_dir: str | None = None) -> None:
     with _GIT_SNAPSHOT_LOCK:
         if project_dir is None:
             _GIT_SNAPSHOT_CACHE.clear()
+            _GIT_REFRESH_RETRY_AT.clear()
             return
         key = str(Path(project_dir).resolve(strict=False))
         _GIT_SNAPSHOT_CACHE.pop(key, None)
+        _GIT_REFRESH_RETRY_AT.pop(key, None)
 
 
 def git_snapshot(project_dir: str, *, refresh: bool = False) -> dict[str, Any]:
