@@ -51,6 +51,9 @@ let contextReloadTimer = null
 let draftSaveTimer = null
 let gitTimer = null
 let eventSource = null
+const historyProbeQueue = []
+let historyProbeActive = 0
+const HISTORY_PROBE_LIMIT = 4
 let dragPayload = null
 let dragHandlersInstalled = false
 let promptHistory = { sessionID:null, entries:[], cursor:0, draft:'', value:'' }
@@ -358,6 +361,25 @@ function renderSessionNode(session,children,expanded,query='',depth=0) {
     </button><button class="session-more" data-session-more="${escapeHtml(session.id)}">•••</button>
   </div>${childBody}</div>`
 }
+function queueHistoryProbe(id, entry) {
+  historyProbeQueue.push({id,entry})
+  const pump=()=>{
+    while(historyProbeActive<HISTORY_PROBE_LIMIT&&historyProbeQueue.length){
+      const next=historyProbeQueue.shift()
+      historyProbeActive+=1
+      Promise.resolve(api.hasConversation(next.id)).then(value=>{
+        if(state.mirrorHistory.get(next.id)!==next.entry||!hasSession(next.id))return
+        next.entry.value=value
+        renderSessions()
+      }).catch(()=>{}).finally(()=>{
+        historyProbeActive-=1
+        pump()
+      })
+    }
+  }
+  pump()
+}
+
 function mirrorHasConversation(session) {
   const id=session.id
   if(Number(session.tokens?.input)>0||Number(session.tokens?.output)>0||contextMessages(state.contextCache.get(id)?.messages||[]).length||state.selected?.id===id&&contextMessages(state.context).length)return true
@@ -365,11 +387,7 @@ function mirrorHasConversation(session) {
   if(!previous||previous.updated!==updated){
     const entry={updated,value:previous?.value??null}
     state.mirrorHistory.set(id,entry)
-    void api.hasConversation(id).then(value=>{
-      if(state.mirrorHistory.get(id)!==entry||!hasSession(id))return
-      entry.value=value
-      renderSessions()
-    }).catch(()=>{})
+    queueHistoryProbe(id,entry)
   }
   return previous?.value!==false
 }
