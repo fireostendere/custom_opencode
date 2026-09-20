@@ -301,8 +301,9 @@ export default {
       let binding
       // Unit adapters without native introspection retain the legacy contract;
       // the pinned native runtime always supports catalog and session.get.
-      if (ctx.catalog?.model?.list)
+      if (ctx.catalog?.model?.list) {
         ;({ binding } = await bindNative(event, turn?.id || ""))
+      }
       event.system ||= []
       const managedPrefix =
         `${CONTEXT_MARKER} (deduplicated, budgeted, checkpoint/RAG/repo aware):\n`
