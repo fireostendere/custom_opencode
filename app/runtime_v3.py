@@ -320,9 +320,15 @@ class SemanticRepoIndexer:
                 )
         return rows
 
-    def refresh(self, project_dir: str, *, force: bool = False) -> dict[str, Any]:
+    def refresh(
+        self,
+        project_dir: str,
+        *,
+        force: bool = False,
+        snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         root = Path(project_dir).resolve(strict=True)
-        snap = git_snapshot(str(root))
+        snap = snapshot or git_snapshot(str(root))
         fingerprint = f"v{self.VERSION}:{snap.get('head')}:{snap.get('statusHash')}:{os.environ.get('OPENCODE_REPO_EMBEDDINGS','hash')}:{os.environ.get('OPENCODE_REPO_EMBED_MODEL','sentence-transformers/all-MiniLM-L6-v2')}"
         key = self._key(str(root))
         cached = self.store.cache_get("repo-index-v4", key)
@@ -451,8 +457,15 @@ class SemanticRepoIndexer:
         )
         return index
 
-    def search(self, project_dir: str, query: str, limit: int = 40) -> dict[str, Any]:
-        index = self.refresh(project_dir)
+    def search(
+        self,
+        project_dir: str,
+        query: str,
+        limit: int = 40,
+        *,
+        snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        index = self.refresh(project_dir, snapshot=snapshot)
         q = query.strip()
         terms = _tokenize(q)
         hits = []
@@ -499,11 +512,15 @@ class SemanticRepoIndexer:
         }
 
     def semantic_diff(
-        self, project_dir: str, baseline: dict[str, Any] | None = None
+        self,
+        project_dir: str,
+        baseline: dict[str, Any] | None = None,
+        *,
+        snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         root = Path(project_dir).resolve(strict=False)
         baseline = baseline or {}
-        current = git_snapshot(str(root))
+        current = snapshot or git_snapshot(str(root))
         base_head = baseline.get("head")
         args = ["git", "diff", "--unified=0", str(base_head or "HEAD"), "--"]
         proc = _run(root, args, 12.0)
@@ -522,7 +539,7 @@ class SemanticRepoIndexer:
         for relative in current.get("changed") or []:
             if relative not in changed_lines:
                 changed_lines[relative].append((1, 2**31 - 1))
-        index = self.refresh(str(root))
+        index = self.refresh(str(root), snapshot=current)
         impacted = []
         for symbol in index.get("symbols") or []:
             ranges = changed_lines.get(str(symbol.get("path"))) or []
@@ -1334,12 +1351,17 @@ class DynamicContextManager:
         task = tasks[0] if tasks else None
         compact = self.maybe_compact(features, runtime, sid, task)
         directory = features._session_directory(sid)
+        snapshot = git_snapshot(directory)
         budget_chars = max(6000, min(24000, compact["budgetTokens"] * 2))
+        # Runtime V3 owns semantic repo context. Do not run the legacy
+        # RepoIndexer/semantic_diff pipeline a second time for the same turn.
         base = runtime.CONTEXT.envelope(
             project_dir=directory,
             task=task,
             project_instructions="",
             budget_chars=min(6000, budget_chars // 4),
+            include_repo=False,
+            snapshot=snapshot,
         )
         parts = []
         query = (
@@ -1349,7 +1371,7 @@ class DynamicContextManager:
         )
         if query:
             try:
-                repo = self.indexer.search(directory, query, limit=20)
+                repo = self.indexer.search(directory, query, limit=20, snapshot=snapshot)
                 hits = repo.get("hits") or []
                 if hits:
                     parts.append(
@@ -1359,7 +1381,11 @@ class DynamicContextManager:
                             for h in hits[:20]
                         )
                     )
-                diff = self.indexer.semantic_diff(directory, task.get("baseline") if task else None)
+                diff = self.indexer.semantic_diff(
+                    directory,
+                    task.get("baseline") if task else None,
+                    snapshot=snapshot,
+                )
                 if diff.get("changedSymbols"):
                     parts.append(
                         "Changed symbols since task baseline:\n"
