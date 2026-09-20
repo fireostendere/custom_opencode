@@ -9,6 +9,12 @@ const AGENT_DEFAULTS = new Map([
   ["summary", "bare"],
   ["fast-reader", "lite"],
   ["sol-fast-reader", "lite"],
+  ["dnd-narrator", "bare"],
+  ["dnd-narrator-high", "bare"],
+  ["dnd-narrator-max", "bare"],
+  ["dnd-planner", "bare"],
+  ["dnd-memory", "bare"],
+  ["dnd-reader", "bare"],
 ])
 
 const MODEL_DEFAULTS = new Map([
