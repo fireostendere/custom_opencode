@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { register } from "node:module"
 
 register("./opencode-plugin-stub-hooks.mjs", import.meta.url)
@@ -13,9 +13,8 @@ process.env.OPENCODE_PLAN_DIRECTORY = planDirectory
 process.env.OPENCODE_VISIBLE_PLAN = "strict"
 
 try {
-  const source = readFileSync(resolve(root, "config/plugins/visible-plan.js"), "utf8")
   const plugin = (
-    await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`)
+    await import(pathToFileURL(resolve(root, "config/plugins/visible-plan.js")).href + `?t=${Date.now()}`)
   ).default
   assert.equal(plugin.id, "custom.visible-plan")
 
@@ -58,10 +57,9 @@ try {
     messages: [{ role: "user", content: [{ type: "text", text: "Измени проект" }] }],
   }
   await contextHook(context)
-  assert.equal(context.system.length, 1)
-  assert.match(context.system[0].text, /private reasoning/)
+  assert.equal(context.system.length, 0, "system policy injection belongs to context-lanes")
   await contextHook(context)
-  assert.equal(context.system.length, 1, "policy must not duplicate inside one context")
+  assert.equal(context.system.length, 0)
 
   await beforeHook({ sessionID: context.sessionID, messageID: "msg_1", tool: "read" })
   await assert.rejects(
@@ -113,7 +111,7 @@ try {
     messages: context.messages,
   }
   await contextHook(planContext)
-  assert.match(planContext.system[0].text, /complex or risky multi-step/)
+  assert.equal(planContext.system.length, 0)
   await beforeHook({ sessionID: planContext.sessionID, messageID: "msg_4", tool: "edit" })
   await beforeHook({
     sessionID: "ses_subagent",
@@ -121,6 +119,15 @@ try {
     messageID: "msg_5",
     tool: "edit",
   })
+  const policy = await import(pathToFileURL(resolve(root, "config/plugins/context-policy-lib.js")).href)
+  policy.setSessionContextClass("ses_bare_plan", "bare")
+  const bareContext = {
+    ...context,
+    sessionID: "ses_bare_plan",
+    system: [],
+  }
+  await contextHook(bareContext)
+  await beforeHook({ sessionID: bareContext.sessionID, messageID: "msg_bare", tool: "edit" })
   await assert.rejects(
     planTool.execute(
       { title: "Bad", todos: [] },
@@ -130,7 +137,7 @@ try {
   )
   await cleanup()
   console.log(
-    "Visible plan regression OK: pinned tool, system policy, mutation gate, atomic session plan",
+    "Visible plan regression OK: pinned tool, normal mutation gate, bare bypass, atomic session plan",
   )
 } finally {
   rmSync(planDirectory, { recursive: true, force: true })
