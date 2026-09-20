@@ -336,18 +336,24 @@ def semantic_diff(
     base_head = baseline.get("head")
     current_head = current.get("head")
     if current.get("git") and base_head and current_head and base_head != current_head:
-        proc = _run(
-            root, ["git", "diff", "--name-status", f"{base_head}..{current_head}"], timeout=8.0
-        )
-        if proc.returncode == 0:
+        try:
+            proc = _run(
+                root, ["git", "diff", "--name-status", f"{base_head}..{current_head}"], timeout=8.0
+            )
+        except subprocess.TimeoutExpired:
+            proc = None
+        if proc is not None and proc.returncode == 0:
             for line in proc.stdout.splitlines():
                 bits = line.split("\t")
                 if len(bits) >= 2:
                     files.append(bits[-1])
     stats = {"files": 0, "insertions": 0, "deletions": 0}
     if current.get("git"):
-        proc = _run(root, ["git", "diff", "--numstat", str(base_head or "HEAD"), "--"], timeout=8.0)
-        if proc.returncode == 0:
+        try:
+            proc = _run(root, ["git", "diff", "--numstat", str(base_head or "HEAD"), "--"], timeout=8.0)
+        except subprocess.TimeoutExpired:
+            proc = None
+        if proc is not None and proc.returncode == 0:
             for line in proc.stdout.splitlines():
                 bits = line.split("\t")
                 if len(bits) >= 3:
@@ -384,14 +390,23 @@ class RepoIndexer:
             cached["cacheHit"] = True
             return cached
         files = []
+        listing_timed_out = False
         if snapshot.get("git"):
-            proc = _run(
-                root,
-                ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-                timeout=12.0,
-            )
-            if proc.returncode == 0:
+            try:
+                proc = _run(
+                    root,
+                    ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+                    timeout=12.0,
+                )
+            except subprocess.TimeoutExpired:
+                proc = None
+                listing_timed_out = True
+            if proc is not None and proc.returncode == 0:
                 files = [item for item in proc.stdout.split("\0") if item][:6000]
+        if listing_timed_out and isinstance(cached, dict):
+            result = dict(cached)
+            result.update(cacheHit=True, stale=True, refreshError="git-ls-files-timeout")
+            return result
         if not files:
             for path in root.rglob("*"):
                 if not path.is_file() or any(
