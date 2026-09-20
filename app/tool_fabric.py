@@ -603,6 +603,8 @@ class Fabric:
             self.store.cache_set("fabric-negative", signature, f"last attempt failed ({category}); retry after 30 seconds", ttl_seconds=30)
             self.store.transition(job_id, "failed", event="fabric.failed", error=f"{category}; inspect bounded output/artifacts. No automatic retry.")
         finally:
+            if self._policy(row["id"]).get("workspaceWrite", False):
+                self._fingerprint_cache = None
             state = self.status(job_id)["state"]
             labels = {"fabric.tool_id": row["id"], "fabric.state": state}
             self.executions.add(1, labels)
