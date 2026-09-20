@@ -56,9 +56,10 @@ async function ensurePolicy(blocking = false) {
   if (!command.startsWith("/"))
     throw new Error("OPENCODE_POLICY_COMMAND must be an absolute installed launcher")
   const flight = startPolicyEnsure(command)
-  // First use must establish the sidecar. Periodic health refreshes are
-  // speculative: do not put a process spawn in every interactive hot path.
-  if (blocking || !lastHealth) return flight
+  // Health refreshes are speculative, including first use. Try the local
+  // runtime immediately; if it is actually down, call() awaits this same
+  // single-flight ensure and retries once.
+  if (blocking) return flight
   flight.catch(() => {})
 }
 
