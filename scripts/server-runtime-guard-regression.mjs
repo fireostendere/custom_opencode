@@ -160,7 +160,7 @@ try {
   await hooks['tool:execute.before']({
     sessionID: 'ses_tool_fast_path',
     cwd: '/repo',
-    tool: { name: 'read' },
+    tool: 'read',
     input: { path: 'README.md' },
   })
   const latestToolBefore = calls.filter((entry) => entry.url.endsWith('/internal/runtime/tool-before')).at(-1)
