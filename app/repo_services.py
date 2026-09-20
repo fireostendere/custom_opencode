@@ -171,6 +171,36 @@ def _changed_stat_stamp(root: Path, changed: Iterable[str]) -> str:
     return digest.hexdigest()[:16]
 
 
+def _cached_snapshot_valid(root: Path, snapshot: dict[str, Any]) -> bool:
+    if snapshot.get("changedStamp") != _changed_stat_stamp(root, snapshot.get("changed") or []):
+        return False
+    if not snapshot.get("git"):
+        return True
+    try:
+        validate_ms = max(
+            5.0,
+            min(200.0, float(os.environ.get("OPENCODE_GIT_CACHE_VALIDATE_MS", "40"))),
+        )
+    except ValueError:
+        validate_ms = 40.0
+    try:
+        proc = _run(
+            root,
+            ["git", "diff-files", "--name-only", "-z", "--ignore-submodules", "--"],
+            timeout=validate_ms / 1000.0,
+        )
+    except subprocess.TimeoutExpired:
+        # On very large/slow filesystems the validator must never become the
+        # new hot-path stall. Tool writes explicitly invalidate the cache and a
+        # full refresh is already scheduled in the background.
+        return True
+    if proc.returncode != 0:
+        return True
+    working_tree_dirty = {item for item in proc.stdout.split("\0") if item}
+    known = set(snapshot.get("changed") or [])
+    return working_tree_dirty.issubset(known)
+
+
 def _capture_git_snapshot(root: Path, *, include_untracked: bool, timeout: float) -> dict[str, Any]:
     """Capture repository state without letting Git latency abort an interactive request."""
     try:
@@ -286,6 +316,7 @@ def _refresh_git_snapshot(key: str, root: Path, generation: int) -> None:
         if delay_seconds:
             time.sleep(delay_seconds)
         value = _capture_git_snapshot(root, include_untracked=True, timeout=12.0)
+        value["generation"] = generation
         now = time.monotonic()
         with _GIT_SNAPSHOT_LOCK:
             if _GIT_GENERATION.get(key, 0) != generation:
@@ -358,8 +389,7 @@ def git_snapshot(
         and not refresh
         and not fresh
         and cached[1] == stamp
-        and cached[2].get("changedStamp")
-        == _changed_stat_stamp(root, cached[2].get("changed") or [])
+        and _cached_snapshot_valid(root, cached[2])
     ):
         age = now - cached[0]
         if age >= _git_snapshot_ttl():
@@ -380,6 +410,8 @@ def git_snapshot(
         timeout=12.0 if refresh else 1.25,
     )
     with _GIT_SNAPSHOT_LOCK:
+        generation = _GIT_GENERATION.get(key, 0)
+        value["generation"] = generation
         _GIT_SNAPSHOT_CACHE[key] = (time.monotonic(), _repo_quick_stamp(root), value)
     if not refresh:
         _schedule_git_refresh(key, root)
@@ -446,7 +478,7 @@ class RepoIndexer:
     ) -> dict[str, Any]:
         root = Path(project_dir).resolve(strict=True)
         snapshot = snapshot or git_snapshot(project_dir, fresh=force)
-        fingerprint = f"{snapshot.get('head')}:{snapshot.get('statusHash')}:{snapshot.get('treeStamp')}"
+        fingerprint = f"{snapshot.get('head')}:{snapshot.get('statusHash')}:{snapshot.get('treeStamp')}:{snapshot.get('generation')}"
         key = self._key(project_dir)
         cached = self.store.cache_get("repo-index", key)
         if not force and isinstance(cached, dict) and cached.get("fingerprint") == fingerprint:
