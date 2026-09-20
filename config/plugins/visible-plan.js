@@ -10,9 +10,9 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
+import { resolveContextClass } from "./context-policy-lib.js"
 
 const TOOL = "plan_update"
-const MARKER = "Custom visible plan policy"
 const PLAN_AGENTS = new Set(["build", "build-direct", "plan", "plan-direct"])
 const BUILD_AGENTS = new Set(["build", "build-direct"])
 const PLAN_FREE_TOOLS = new Set([
@@ -39,8 +39,6 @@ const PLAN_DIRECTORY = configuredDirectory
   : join(homedir(), ".opencode", "plan")
 
 const STRICT = process.env.OPENCODE_VISIBLE_PLAN === "strict"
-const POLICY = `Use ${TOOL} for complex or risky multi-step work. Keep 1-7 outcome-oriented items and update meaningful milestones. A small, bounded task can be completed directly without a plan tool call. Do not expose private reasoning.`
-
 const inputSchema = {
   type: "object",
   additionalProperties: false,
@@ -157,12 +155,9 @@ export default {
         turns.set(sessionID, {
           key,
           planned: previous?.key === key && previous.planned === true,
-          gated: STRICT && BUILD_AGENTS.has(agent),
+          gated: STRICT && BUILD_AGENTS.has(agent) && resolveContextClass(event) !== "bare",
         })
         if (turns.size > 512) turns.delete(turns.keys().next().value)
-        if (!event.system.some((item) => textOf(item).includes(MARKER))) {
-          event.system.push({ type: "text", text: `${MARKER}:\n${POLICY}` })
-        }
       }),
       ctx.tool.hook("execute.before", (event) => {
         const turn = turns.get(String(event.sessionID || ""))
