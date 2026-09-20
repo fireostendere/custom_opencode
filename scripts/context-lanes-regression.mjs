@@ -18,6 +18,7 @@ try {
   await writeFile(join(process.env.OPENCODE_CONFIG_DIR, "prompts", "engineering-lite.md"), "LITE KERNEL")
   await writeFile(join(process.env.OPENCODE_CONFIG_DIR, "prompts", "orchestrator.md"), "STATIC QWEN")
   await writeFile(join(process.env.OPENCODE_CONFIG_DIR, "prompts", "orchestrator-sol.md"), "STATIC SOL")
+  await writeFile(join(process.env.OPENCODE_CONFIG_DIR, "prompts", "dnd-edition.md"), "STATIC DND")
   await writeFile(
     join(process.env.PONYTAIL_CHECKOUT_DIR, "hooks", "ponytail-instructions.js"),
     "exports.getPonytailInstructions = mode => 'PONYTAIL ' + mode",
@@ -28,8 +29,7 @@ try {
   )
 
   const policy = await import(
-    pathToFileURL(new URL("../config/plugins/context-policy-lib.js", import.meta.url).pathname).href +
-      `?t=${Date.now()}`
+    pathToFileURL(new URL("../config/plugins/context-policy-lib.js", import.meta.url).pathname).href
   )
   policy.syncManagedOrchestrations({
     "game/dnd-orchestrated": {
@@ -42,8 +42,7 @@ try {
 
   const plugin = (
     await import(
-      pathToFileURL(new URL("../config/plugins/context-lanes.js", import.meta.url).pathname).href +
-        `?t=${Date.now()}`
+      pathToFileURL(new URL("../config/plugins/context-lanes.js", import.meta.url).pathname).href
     )
   ).default
   const hooks = {}
@@ -108,6 +107,23 @@ try {
   await hooks.context(staticFull)
   assert.ok(staticFull.system.some((x) => x.text === "Custom orchestrated SOL policy:\nSTATIC SOL"))
 
+  const dnd = {
+    sessionID: "dnd",
+    agent: "dnd-narrator",
+    model: { providerID: "openai", id: "gpt-5.6-dnd-edition" },
+    system: [
+      { type: "text", text: "NATIVE CODING" },
+      { type: "text", text: "Custom engineering policy:\nOLD" },
+      { type: "text", text: "Ponytail V2 engineering policy (ultra):\nOLD" },
+    ],
+  }
+  await hooks.context(dnd)
+  assert.deepEqual(
+    dnd.system.map((x) => x.text),
+    ["Custom DnD Edition policy:\nSTATIC DND"],
+    "DnD Edition must receive only its own policy",
+  )
+
   assert.equal(command.name, "contextclass")
   await command.execute({ sessionID: "normal", prompt: { text: "bare" } })
   normal.system = [{ type: "text", text: "NATIVE AGAIN" }]
@@ -118,7 +134,7 @@ try {
   await hooks.context(normal)
   assert.ok(normal.system.length > 1)
 
-  console.log("Context lanes regression passed: bare isolation, lite kernel, normal/full layering, override")
+  console.log("Context lanes regression passed: managed/static bare isolation, DnD-only policy, lite kernel, normal/full layering, override")
 } finally {
   for (const key of Object.keys(process.env)) if (!(key in original)) delete process.env[key]
   Object.assign(process.env, original)
