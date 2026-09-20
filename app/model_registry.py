@@ -32,6 +32,15 @@ SOL_ROLE_ENV = {
     "reader": "OPENCODE_SOL_READER_MODEL",
     "reviewer": "OPENCODE_SOL_REVIEW_MODEL",
 }
+DND_ROLE_DEFAULTS = {
+    "narrator": "openai/gpt-5.6-sol#medium",
+    "complex": "openai/gpt-5.6-sol#high",
+    "exceptional": "openai/gpt-5.6-sol#max",
+    "planner": "openai/gpt-5.6-sol#high",
+    "memory": "openai/gpt-5.6-luna#low",
+    "reader": "openai/gpt-5.6-luna#low",
+}
+DND_ROLE_ENV = {role: f"OPENCODE_DND_{role.upper()}_MODEL" for role in DND_ROLE_DEFAULTS}
 SOL_FORBIDDEN_MODEL_IDS = {"gpt-5.6-sol-fast"}
 ALIBABA_LOCKED_PREFIXES = (
     "qwen",
@@ -107,6 +116,17 @@ def sol_role_models() -> dict[str, str]:
     return result
 
 
+def dnd_role_models() -> dict[str, str]:
+    result = {}
+    for role, default in DND_ROLE_DEFAULTS.items():
+        value = os.environ.get(DND_ROLE_ENV[role], default).strip() or default
+        ok, error = validate_provider_ref(value, "openai")
+        if not ok:
+            raise ValueError(f"{DND_ROLE_ENV[role]}: {error}")
+        result[role] = value
+    return result
+
+
 def normalize_effort(value: Any, default: str = "auto") -> str:
     text = str(value or default).strip().lower()
     return text if text in CANONICAL_EFFORTS else default
@@ -131,6 +151,14 @@ def effort_plan(ref: str, requested: str = "auto") -> dict[str, Any]:
     }
     if requested == "auto":
         result.update(effortSupported=True, effortMapping="provider-default")
+        return result
+    if provider == "openai" and low.startswith("gpt-5.6-"):
+        result.update(
+            effectiveEffort=requested,
+            effortSupported=True,
+            effortMapping="openai-reasoning-effort",
+            settings={"reasoningEffort": requested},
+        )
         return result
     if provider != ALIBABA_PROVIDER:
         result["effortMapping"] = "provider-native"
@@ -299,6 +327,7 @@ class CapabilityRegistry:
     def profiles(self) -> dict[str, dict[str, Any]]:
         roles = role_models()
         sol_roles = sol_role_models()
+        dnd_roles = dnd_role_models()
         orchestrated = (
             os.environ.get(
                 "OPENCODE_ORCHESTRATED_MODEL", "bailian-cli/qwen3.8-orchestrated"
@@ -375,6 +404,29 @@ class CapabilityRegistry:
             "autoReview": False,
             "requires": {"tools": True, "review": 0.80},
             "hidden": True,
+        }
+        dnd_edition = {
+            "id": "dnd-edition",
+            "label": "GPT-5.6 · DnD Edition",
+            "route": "cloud",
+            "cloudModel": "openai/gpt-5.6-dnd-edition",
+            "narratorModel": dnd_roles["narrator"],
+            "complexModel": dnd_roles["complex"],
+            "exceptionalModel": dnd_roles["exceptional"],
+            "plannerModel": dnd_roles["planner"],
+            "memoryModel": dnd_roles["memory"],
+            "readerModel": dnd_roles["reader"],
+            "agentBuild": "dnd-narrator",
+            "agentPlan": "dnd-narrator",
+            "orchestrated": False,
+            "planningPolicy": "manual",
+            "readerPolicy": "manual",
+            "memoryPolicy": "manual",
+            "reviewPolicy": "manual",
+            "effortPolicy": {"narrator": {"default": "medium", "maximum": "max"}},
+            "contextPolicy": {"mode": "model-aware", "targetRatio": 0.55},
+            "sandbox": "restricted",
+            "autoReview": False,
         }
         fast = {
             "id": "fast",
@@ -543,6 +595,7 @@ class CapabilityRegistry:
             "direct": direct,
             "sol-orchestrated": sol_profile,
             "sol-review": sol_review,
+            "dnd-edition": dnd_edition,
             "fast": fast,
             "build": build,
             "architect": architect,

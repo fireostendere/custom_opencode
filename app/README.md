@@ -44,9 +44,11 @@ Runtime V2/V3 дополнительно предлагает server profiles:
 direct                 → выбранная модель, scheduler не меняет её
 qwen3.8-orchestrated   → cloud Max + bounded orchestration/fast-reader/RAG
 gpt-5.6-sol-orchestrated → SOL orchestration на официальном OpenAI provider
+gpt-5.6-dnd-edition    → restricted D&D narrator через authoritative ODM
 ```
 
 Provider-pinned orchestration доступна только через явные alias-профили. Ручная Ollama/Qwen/OpenAI model selection не должна быть незаметно заменена scheduler-ом.
+DnD Edition выбирает primary-agent `dnd-narrator`; ему доступны только `odm_narrator`, read-only knowledge tools и игровые skills `odm-dm-policy`, `odm-narrator`, `dnd-*`.
 
 ## Composer и task runtime
 

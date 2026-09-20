@@ -49,7 +49,8 @@ Current server profiles:
 
 - `direct` — preserve the exact provider/model/variant selected in OpenCode;
 - `qwen3.8-orchestrated` — cloud-pinned Qwen orchestration alias;
-- `gpt-5.6-sol-orchestrated` — cloud-pinned SOL orchestration alias.
+- `gpt-5.6-sol-orchestrated` — cloud-pinned SOL orchestration alias;
+- `gpt-5.6-dnd-edition` — OpenAI-only restricted narrator profile for authoritative ODM sessions.
 
 `CapabilityRegistry` merges the current OpenCode model catalog with server hints such as:
 
