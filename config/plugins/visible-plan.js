@@ -10,7 +10,7 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
-import { resolveContextPolicy } from "./context-policy-lib.js"
+import { resolveContextPolicy } from "./tui/lib/context-policy.js"
 
 const TOOL = "plan_update"
 const PLAN_AGENTS = new Set(["build", "build-direct", "plan", "plan-direct"])
