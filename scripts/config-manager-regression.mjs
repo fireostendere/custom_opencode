@@ -233,7 +233,7 @@ assert.ok(contextHook, 'context hook must remain registered for MCP exposure')
 const event = { model: { providerID: 'acme', id: 'coder-orchestrated' }, system: [] }
 await contextHook(event)
 assert.equal(event.system.length, 0, 'config-manager must not race context-lanes system injection')
-const policyModule = await import('../config/plugins/context-policy-lib.js')
+const policyModule = await import('../config/plugins/tui/lib/context-policy.js')
 assert.equal(policyModule.resolveContextClass({ sessionID: 'managed', model: event.model }), 'bare')
 assert.equal(policyModule.managedOrchestration(event).prompt, 'Verify before completion.')
 
