@@ -334,7 +334,7 @@ class SemanticRepoIndexer:
         snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         root = Path(project_dir).resolve(strict=True)
-        snap = snapshot or git_snapshot(str(root))
+        snap = snapshot or git_snapshot(str(root), fresh=force)
         fingerprint = f"v{self.VERSION}:{snap.get('head')}:{snap.get('statusHash')}:{os.environ.get('OPENCODE_REPO_EMBEDDINGS','hash')}:{os.environ.get('OPENCODE_REPO_EMBED_MODEL','sentence-transformers/all-MiniLM-L6-v2')}"
         key = self._key(str(root))
         cached = self.store.cache_get("repo-index-v4", key)
