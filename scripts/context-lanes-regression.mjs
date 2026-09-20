@@ -29,7 +29,7 @@ try {
   )
 
   const policy = await import(
-    pathToFileURL(new URL("../config/plugins/context-policy-lib.js", import.meta.url).pathname).href
+    pathToFileURL(new URL("../config/plugins/tui/lib/context-policy.js", import.meta.url).pathname).href
   )
   policy.syncManagedOrchestrations({
     "game/dnd-orchestrated": {
