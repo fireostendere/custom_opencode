@@ -88,7 +88,7 @@ assert.ok(
 )
 const envExample = await readFile(new URL(".env.example", root), "utf8")
 const updater = await readFile(new URL("scripts/update.sh", root), "utf8")
-const agentsPolicy = await readFile(new URL("config/AGENTS.md", root), "utf8")
+const agentsPolicy = await readFile(new URL("config/prompts/engineering.md", root), "utf8")
 const orchestratorPolicy = await readFile(new URL("config/prompts/orchestrator.md", root), "utf8")
 const solOrchestratorPolicy = await readFile(
   new URL("config/prompts/orchestrator-sol.md", root),
@@ -835,7 +835,7 @@ for (const marker of [
   "Обновляй существенные этапы",
   "только ради UI",
 ]) {
-  assert.ok(agentsPolicy.includes(marker), `Adaptive AGENTS planning contract missing: ${marker}`)
+  assert.ok(agentsPolicy.includes(marker), `Managed engineering planning contract missing: ${marker}`)
 }
 assert.ok(
   retiredPanel.includes('id: "custom.limits-panels-retired"'),
