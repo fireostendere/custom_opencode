@@ -119,7 +119,7 @@ Installer:
 
 ## Ponytail checkout
 
-Installer управляет отдельным checkout `DietrichGebert/ponytail` на reviewed commit `2ed6c52c9d7e5e56942508591085fd45dea277d3`. Путь по умолчанию — `$XDG_DATA_HOME/opencode/ponytail` или `~/.local/share/opencode/ponytail`. Native V2 bridge `plugins/ponytail-v2.js` загружает instruction builder из reviewed checkout. Старый upstream V1 callback-entrypoint в V2 не регистрируется; upstream `skills/`, `commands/` и `hooks/` не копируются в `~/.config/opencode`.
+Installer управляет отдельным checkout `DietrichGebert/ponytail` на reviewed commit `2ed6c52c9d7e5e56942508591085fd45dea277d3`. Путь по умолчанию — `$XDG_DATA_HOME/opencode/ponytail` или `~/.local/share/opencode/ponytail`. Native V2 bridge `plugins/ponytail-v2.js` управляет режимом/state, а `context-lanes.js` подмешивает reviewed instruction builder только для `normal/full`. В `lite/bare` Ponytail не попадает в model context. Старый upstream V1 callback-entrypoint в V2 не регистрируется; upstream `skills/`, `commands/` и `hooks/` не копируются в `~/.config/opencode`.
 
 Provisioning fail-closed проверяет origin, ветку `main`, чистоту checkout, наличие обязательных файлов, принадлежность pin к `origin/main` и fast-forward-only обновление. Неиспользуемые локальные коммиты и изменения не перезаписываются.
 
