@@ -169,7 +169,7 @@ class Backend(BaseHTTPRequestHandler):
         directory = location.get("directory") if isinstance(location.get("directory"), str) else ""
         return {
             "id": session_id, "title": str(payload.get("title") or "Новая сессия"),
-            "projectID": "proj_other" if directory == os.environ["FIXTURE_OTHER_PROJECT"] else "proj_fixture", "agent": payload.get("agent") or "build",
+            "projectID": ("proj_other" if directory == os.environ["FIXTURE_OTHER_PROJECT"] else "proj_arbitrary" if directory == os.environ.get("FIXTURE_ARBITRARY_PROJECT") else "proj_fixture"), "agent": payload.get("agent") or "build",
             "model": payload.get("model") or {"providerID":"bailian-cli", "id":"qwen3.8-max"},
             "location": {"directory": directory}, "time":{"created":2_000_000_001_000,"updated":2_000_000_001_000},
         }
@@ -616,6 +616,17 @@ def desktop(browser, base_url: str, server_workflow) -> None:
     child_directory = str(Path(os.environ["FIXTURE_PROJECT"]) / "child-created")
     assert_created_session(page, previous_hash, payload_count, child_directory)
     assert Path(child_directory).is_dir()
+
+    # An authenticated user can open an exact existing project path even when it
+    # is outside OPENCODE_PROJECT_ROOTS; the root still limits directory enumeration.
+    page.click("#newSession")
+    page.locator("#projectDialog[open]").wait_for(state="visible")
+    page.locator("#projectPathInput").fill(os.environ["FIXTURE_ARBITRARY_PROJECT"])
+    previous_hash = page.evaluate("location.hash")
+    payload_count = len(FixtureState.session_payload_snapshot())
+    page.locator("#projectPathForm button[type=submit]").click()
+    assert_created_session(page, previous_hash, payload_count, os.environ["FIXTURE_ARBITRARY_PROJECT"])
+
     fixture_group = page.locator('#sessions .project-group[data-project="proj_fixture"]')
     other_group = page.locator('#sessions .project-group[data-project="proj_other"]')
     assert fixture_group.get_attribute("open") is not None and other_group.get_attribute("open") is not None
@@ -1144,12 +1155,15 @@ def main() -> int:
         existing.mkdir()
         other_project = project / "other-known"
         other_project.mkdir()
+        arbitrary_project = root / "arbitrary-project"
+        arbitrary_project.mkdir()
         (root / "ses_fixture-plan.md").write_text("# Fixture plan\n" + "\n".join(f"- [ ] Fixture step {index:02d}" for index in range(48)), encoding="utf-8")
         (root / "ses_other-plan.md").write_text("# Other root plan\n\n- [ ] Other isolated step\n", encoding="utf-8")
         os.environ.update({
             "FIXTURE_PROJECT": str(project),
             "FIXTURE_EXISTING_PROJECT": str(existing),
             "FIXTURE_OTHER_PROJECT": str(other_project),
+            "FIXTURE_ARBITRARY_PROJECT": str(arbitrary_project),
             "OPENCODE_SERVER_USERNAME": "opencode",
             "OPENCODE_SERVER_PASSWORD": "fixture-password",
             "OPENCODE_WEB_ALLOW_LOCAL": "0",
