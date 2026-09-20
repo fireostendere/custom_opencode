@@ -119,7 +119,7 @@ def safe_repo_file(root: Path, relative: str) -> Path | None:
 
 
 _GIT_SNAPSHOT_LOCK = threading.Lock()
-_GIT_SNAPSHOT_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_GIT_SNAPSHOT_CACHE: dict[str, tuple[float, tuple[Any, ...], dict[str, Any]]] = {}
 _GIT_REFRESHING: set[str] = set()
 _GIT_REFRESH_RETRY_AT: dict[str, float] = {}
 
@@ -133,6 +133,18 @@ def _git_snapshot_ttl() -> float:
 
 def _snapshot_copy(value: dict[str, Any], **extra: Any) -> dict[str, Any]:
     return {**value, **extra}
+
+
+def _repo_quick_stamp(root: Path) -> tuple[Any, ...]:
+    """Cheap invalidation for structural/index changes without invoking Git."""
+    values: list[Any] = []
+    for path in (root, root / ".git", root / ".git" / "index", root / ".git" / "HEAD"):
+        try:
+            st = path.stat()
+            values.extend((st.st_mtime_ns, st.st_size))
+        except OSError:
+            values.extend((None, None))
+    return tuple(values)
 
 
 def _capture_git_snapshot(root: Path, *, include_untracked: bool, timeout: float) -> dict[str, Any]:
@@ -249,7 +261,7 @@ def _refresh_git_snapshot(key: str, root: Path) -> None:
             previous = _GIT_SNAPSHOT_CACHE.get(key)
             # Never replace a usable snapshot with a timed-out background probe.
             if not value.get("partial") or previous is None:
-                _GIT_SNAPSHOT_CACHE[key] = (now, value)
+                _GIT_SNAPSHOT_CACHE[key] = (now, _repo_quick_stamp(root), value)
                 _GIT_REFRESH_RETRY_AT[key] = now + _git_snapshot_ttl()
             else:
                 # Large WSL/NTFS trees can exceed even the background budget.
@@ -296,14 +308,15 @@ def git_snapshot(project_dir: str, *, refresh: bool = False) -> dict[str, Any]:
     root = Path(project_dir).resolve(strict=False)
     key = str(root)
     now = time.monotonic()
+    stamp = _repo_quick_stamp(root)
     with _GIT_SNAPSHOT_LOCK:
         cached = _GIT_SNAPSHOT_CACHE.get(key)
-    if cached and not refresh:
+    if cached and not refresh and cached[1] == stamp:
         age = now - cached[0]
         if age >= _git_snapshot_ttl():
             _schedule_git_refresh(key, root)
         return _snapshot_copy(
-            cached[1],
+            cached[2],
             cacheHit=True,
             stale=age >= _git_snapshot_ttl(),
             ageMs=round(age * 1000, 2),
@@ -317,7 +330,7 @@ def git_snapshot(project_dir: str, *, refresh: bool = False) -> dict[str, Any]:
         timeout=12.0 if refresh else 1.25,
     )
     with _GIT_SNAPSHOT_LOCK:
-        _GIT_SNAPSHOT_CACHE[key] = (time.monotonic(), value)
+        _GIT_SNAPSHOT_CACHE[key] = (time.monotonic(), _repo_quick_stamp(root), value)
     if not refresh:
         _schedule_git_refresh(key, root)
     return _snapshot_copy(value, cacheHit=False, stale=False, ageMs=0.0)
