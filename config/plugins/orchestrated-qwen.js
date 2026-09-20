@@ -12,6 +12,10 @@ export function isDndEdition(event) {
   return event?.model?.providerID === "openai" && event?.model?.id === "gpt-5.6-dnd-edition"
 }
 
+export function isDndContext(event) {
+  return isDndEdition(event) || String(event?.agent || "").startsWith("dnd-")
+}
+
 export function dndToolName(tool) {
   return typeof tool === "string" ? tool : tool?.name || tool?.id || tool?.tool || ""
 }
@@ -31,7 +35,7 @@ export default {
     // Context policy injection is centralized in context-lanes.js. Keep only
     // the DnD tool allowlist here so the Edition remains game-only even in bare mode.
     await ctx.session.hook("context", async (event) => {
-      if (isDndEdition(event) && event.tools) event.tools = filterDndTools(event.tools)
+      if (isDndContext(event) && event.tools) event.tools = filterDndTools(event.tools)
     })
   },
 }
@@ -43,6 +47,7 @@ if (process.env.OPENCODE_ORCHESTRATED_QWEN_SELF_CHECK) {
   if (isOrchestratedSol({ model: { providerID: "openai", id: "gpt-5.6-sol" } })) throw new Error("ordinary SOL must stay native")
   if (!isDndEdition({ model: { providerID: "openai", id: "gpt-5.6-dnd-edition" } })) throw new Error("DnD selector failed")
   if (isDndEdition({ model: { providerID: "openai", id: "gpt-5.6-sol-orchestrated" } })) throw new Error("SOL alias must stay SOL")
+  if (!isDndContext({ agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-5.6-sol" } })) throw new Error("DnD agent context selector failed")
   const filtered = filterDndTools(["odm_narrator", "shell", "kb_knowledge_search", "edit"])
   if (filtered.join(",") !== "odm_narrator,kb_knowledge_search") throw new Error("DnD tool filter failed")
   console.log("orchestrated-qwen self-check OK")
