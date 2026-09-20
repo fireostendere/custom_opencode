@@ -37,6 +37,10 @@ const STATIC_ORCHESTRATIONS = {
       process.env.OPENCODE_SOL_ORCHESTRATOR_PROMPT ||
       join(CONFIG_DIR, "prompts", "orchestrator-sol.md"),
   },
+  "openai/gpt-5.6-dnd-edition": {
+    marker: "Custom DnD Edition policy",
+    path: process.env.OPENCODE_DND_EDITION_PROMPT || join(CONFIG_DIR, "prompts", "dnd-edition.md"),
+  },
 }
 const staticPromptCache = new Map()
 
