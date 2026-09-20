@@ -9,7 +9,7 @@ import {
 } from "./tui/lib/mcp-profiles.js"
 import { McpDiscovery } from "./tui/lib/mcp-discovery.js"
 import { toolFabricConfig } from "./tui/lib/tool-fabric.js"
-import { syncManagedOrchestrations } from "./context-policy-lib.js"
+import { syncManagedOrchestrations } from "./tui/lib/context-policy.js"
 
 const STORAGE_KEY = "registry-v2"
 const CONFIG_DIR = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", "opencode")
