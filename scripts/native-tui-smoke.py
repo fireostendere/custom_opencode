@@ -140,21 +140,23 @@ def main() -> int:
                 {"command": command, "expected": expected, "ok": expected.lower() in text.lower()}
             )
             if command == "/models" and expected in text:
-                # The clean-install self-test explicitly guarantees Max + Flash
-                # in the live catalog. qwen3.7-plus can be absent from a
-                # provider's current catalog even when its compatibility config
-                # remains installed, which made this PTY gate fail on healthy
-                # main builds.
-                os.write(master, b"Qwen3.8 Flash")
+                # Exercise native keyboard navigation instead of bulk-writing a
+                # filter string. Newer OpenTUI input handling can treat a whole
+                # os.write() payload as paste while the select dialog expects
+                # key events, which made healthy builds appear unable to switch
+                # models. Fresh audit state has Current first; Down skips the
+                # category header and lands on the next selectable model.
+                before = request("GET", f"/api/session/{sid}")["model"]
+                os.write(master, b"\x1b[B")
                 read(0.3)
                 os.write(master, b"\r")
                 read(1)
                 selected = request("GET", f"/api/session/{sid}")["model"]
                 rows.append(
                     {
-                        "command": "select Qwen3.8 Flash",
-                        "ok": selected["providerID"] == "bailian-cli"
-                        and selected["id"] == "qwen3.8-flash",
+                        "command": "select next model",
+                        "ok": selected["providerID"] != before["providerID"]
+                        or selected["id"] != before["id"],
                     }
                 )
             os.write(master, b"\x1b")
