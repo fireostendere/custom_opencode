@@ -140,16 +140,21 @@ def main() -> int:
                 {"command": command, "expected": expected, "ok": expected.lower() in text.lower()}
             )
             if command == "/models" and expected in text:
-                os.write(master, b"Qwen3.7 Plus")
+                # The clean-install self-test explicitly guarantees Max + Flash
+                # in the live catalog. qwen3.7-plus can be absent from a
+                # provider's current catalog even when its compatibility config
+                # remains installed, which made this PTY gate fail on healthy
+                # main builds.
+                os.write(master, b"Qwen3.8 Flash")
                 read(0.3)
                 os.write(master, b"\r")
                 read(1)
                 selected = request("GET", f"/api/session/{sid}")["model"]
                 rows.append(
                     {
-                        "command": "select Qwen3.7 Plus",
+                        "command": "select Qwen3.8 Flash",
                         "ok": selected["providerID"] == "bailian-cli"
-                        and selected["id"] == "qwen3.7-plus",
+                        and selected["id"] == "qwen3.8-flash",
                     }
                 )
             os.write(master, b"\x1b")
