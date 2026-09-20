@@ -10,7 +10,7 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
-import { resolveContextClass } from "./context-policy-lib.js"
+import { resolveContextPolicy } from "./context-policy-lib.js"
 
 const TOOL = "plan_update"
 const PLAN_AGENTS = new Set(["build", "build-direct", "plan", "plan-direct"])
@@ -155,7 +155,7 @@ export default {
         turns.set(sessionID, {
           key,
           planned: previous?.key === key && previous.planned === true,
-          gated: STRICT && BUILD_AGENTS.has(agent) && resolveContextClass(event) !== "bare",
+          gated: STRICT && BUILD_AGENTS.has(agent) && resolveContextPolicy(event).planPrompt,
         })
         if (turns.size > 512) turns.delete(turns.keys().next().value)
       }),
