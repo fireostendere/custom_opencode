@@ -430,21 +430,21 @@ export default {
     await ctx.tool.hook("execute.before", async (event) => {
       const c = contextOf(event)
       const controlTool = ["context_budget", "execution_budget"].includes(event.tool?.name || event.tool)
-      if (ctx.catalog?.model?.list && !controlTool) {
-        try {
-          await call("/internal/runtime/budget-tool", { sessionID: c.sessionID })
-        } catch (error) {
-          if (!isBudgetExceeded(error)) throw error
-          const recovered = await recoverExecutionBudget(c.sessionID)
-          if (!recovered?.granted) throw error
-          await call("/internal/runtime/budget-tool", { sessionID: c.sessionID })
-        }
-      }
-      const decision = await call("/internal/runtime/tool-before", {
+      const payload = {
         ...c,
         tool: event.tool,
         input: event.input,
-      })
+        countBudget: Boolean(ctx.catalog?.model?.list && !controlTool),
+      }
+      let decision
+      try {
+        decision = await call("/internal/runtime/tool-before", payload)
+      } catch (error) {
+        if (!payload.countBudget || !isBudgetExceeded(error)) throw error
+        const recovered = await recoverExecutionBudget(c.sessionID)
+        if (!recovered?.granted) throw error
+        decision = await call("/internal/runtime/tool-before", payload)
+      }
       if (decision?.allow === false)
         throw new Error(decision.reason || "Tool denied by server runtime")
     })
