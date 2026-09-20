@@ -49,6 +49,9 @@ let cleared = 0
 let selectCalls = 0
 let simulateJump = false
 let simulateFavorite = false
+let failSwitch = false
+let createResponse = { id: 'ses_home' }
+let freshRecent = null
 const toasts = []
 let route = { type: 'session', sessionID: 'ses_test' }
 const current = { providerID: 'bailian-cli', modelID: 'qwen3.8-max' }
@@ -149,10 +152,14 @@ const context = {
     },
     provider: { list: async () => ({ data: providers }) },
     session: {
-      switchModel: async (value) => { switched = value },
+      switchModel: async (value) => {
+        if (failSwitch) throw new Error('switch failed')
+        if (freshRecent) recentState.models = freshRecent
+        switched = value
+      },
       create: async (value) => {
         created = value
-        return { id: 'ses_home' }
+        return createResponse
       },
     },
   },
@@ -407,8 +414,42 @@ assert.deepEqual(switched, {
   model: { id: 'qwen-flash', providerID: 'bailian-cli', variant: 'medium' },
 })
 
+// ── Scenario 9: failed choices must not become the next startup default ──
+route = { type: 'session', sessionID: 'ses_test' }
+failSwitch = true
+persisted = null
+toasts.length = 0
+command.run()
+await poll(() => toasts.length > 0)
+assert.equal(persisted, null, 'failed switch must not persist a recent model')
+assert.ok(toasts.some((item) => item.message === 'Failed to switch model'))
+failSwitch = false
+
+route = { type: 'home' }
+createResponse = {}
+persisted = null
+toasts.length = 0
+command.run()
+await poll(() => toasts.length > 0)
+assert.equal(persisted, null, 'session creation without an id must not persist a recent model')
+assert.ok(toasts.some((item) => item.message === 'Failed to create session with selected model'))
+
+// ── Scenario 10: persistence must retain history updated during switching ──
+route = { type: 'session', sessionID: 'ses_test' }
+createResponse = { id: 'ses_home' }
+freshRecent = [{ providerID: 'openai', modelID: 'gpt-test' }]
+persisted = null
+toasts.length = 0
+command.run()
+await poll(() => persisted !== null)
+assert.deepEqual(persisted, [
+  { providerID: 'bailian-cli', modelID: 'qwen-flash' },
+  { providerID: 'openai', modelID: 'gpt-test' },
+], 'recent persistence must start from the fresh storage draft')
+freshRecent = null
+
 cleanup()
-console.log('TUI model selector smoke passed: native dialog + favorites mirror + categories + recent + switchModel + jump reopen + home session creation + home favorite toggle + disabled favorite removal')
+console.log('TUI model selector smoke passed: native dialog + favorites mirror + fresh recent persistence + failed selection rejection')
 
 async function poll(check) {
   for (let i = 0; i < 200 && !check(); i++) {
