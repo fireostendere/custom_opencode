@@ -30,7 +30,7 @@ const RESERVED_SECRETS = new Set([
 const CONTEXT_MARKER = "Server runtime context"
 const APPROVAL_WAIT_MS = 45000
 const POLICY_HEALTH_TTL_MS = Number(process.env.OPENCODE_POLICY_HEALTH_TTL_MS || 30000)
-const CONTEXT_HOT_PATH_WAIT_MS = Number(process.env.OPENCODE_CONTEXT_HOT_PATH_WAIT_MS || 250)
+const CONTEXT_HOT_PATH_WAIT_MS = Number(process.env.OPENCODE_CONTEXT_HOT_PATH_WAIT_MS || 100)
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const isBudgetExceeded = (error) => String(error?.message || error).includes("BudgetExceeded")
