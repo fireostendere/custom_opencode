@@ -29,17 +29,16 @@ const RESERVED_SECRETS = new Set([
 ])
 const CONTEXT_MARKER = "Server runtime context"
 const APPROVAL_WAIT_MS = 45000
+const POLICY_HEALTH_TTL_MS = Number(process.env.OPENCODE_POLICY_HEALTH_TTL_MS || 30000)
+const CONTEXT_HOT_PATH_WAIT_MS = Number(process.env.OPENCODE_CONTEXT_HOT_PATH_WAIT_MS || 250)
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const isBudgetExceeded = (error) => String(error?.message || error).includes("BudgetExceeded")
 
 let ensureFlight
 let lastHealth = 0
-async function ensurePolicy() {
-  const command = process.env.OPENCODE_POLICY_COMMAND
-  if (!command || Date.now() - lastHealth < 5000) return
-  if (!command.startsWith("/"))
-    throw new Error("OPENCODE_POLICY_COMMAND must be an absolute installed launcher")
+
+function startPolicyEnsure(command) {
   if (!ensureFlight)
     ensureFlight = (async () => {
       await execFileAsync(command, ["ensure"], { timeout: 20000, maxBuffer: 16000 })
@@ -50,19 +49,49 @@ async function ensurePolicy() {
   return ensureFlight
 }
 
-async function call(path, payload) {
-  await ensurePolicy()
-  if (!TOKEN) throw new Error("Runtime plugin token is not configured")
-  const contextBudgetRequest =
-    path.endsWith("/context-budget") && payload?.action === "request"
-  const response = await fetch(`${BASE}${path}`, {
+async function ensurePolicy(blocking = false) {
+  const command = process.env.OPENCODE_POLICY_COMMAND
+  if (!command || Date.now() - lastHealth < POLICY_HEALTH_TTL_MS) return
+  if (!command.startsWith("/"))
+    throw new Error("OPENCODE_POLICY_COMMAND must be an absolute installed launcher")
+  const flight = startPolicyEnsure(command)
+  // First use must establish the sidecar. Periodic health refreshes are
+  // speculative: do not put a process spawn in every interactive hot path.
+  if (blocking || !lastHealth) return flight
+  flight.catch(() => {})
+}
+
+async function runtimeFetch(path, payload, timeoutMs) {
+  return fetch(`${BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-OpenCode-Runtime": TOKEN },
     body: JSON.stringify(payload || {}),
-    signal: AbortSignal.timeout(
-      contextBudgetRequest ? Math.max(90000, TIMEOUT) : path.endsWith("/context") ? Math.max(15000, TIMEOUT) : TIMEOUT,
-    ),
+    signal: AbortSignal.timeout(timeoutMs),
   })
+}
+
+async function call(path, payload, options = {}) {
+  await ensurePolicy(false)
+  if (!TOKEN) throw new Error("Runtime plugin token is not configured")
+  const contextBudgetRequest =
+    path.endsWith("/context-budget") && payload?.action === "request"
+  const timeoutMs =
+    options.timeoutMs ??
+    (contextBudgetRequest
+      ? Math.max(90000, TIMEOUT)
+      : path.endsWith("/context")
+        ? Math.max(15000, TIMEOUT)
+        : TIMEOUT)
+  let response
+  try {
+    response = await runtimeFetch(path, payload, timeoutMs)
+  } catch (error) {
+    // The sidecar may have died after the last health check. Repair once and
+    // retry, but never run the periodic "ensure" subprocess synchronously.
+    if (!process.env.OPENCODE_POLICY_COMMAND) throw error
+    await ensurePolicy(true)
+    response = await runtimeFetch(path, payload, timeoutMs)
+  }
   if (!response.ok)
     throw new Error(`runtime control ${response.status}: ${(await response.text()).slice(0, 300)}`)
   return response.json()
@@ -97,6 +126,9 @@ export default {
   id: "custom-opencode.server-runtime-guard",
   setup: async (ctx) => {
     const nativeBindings = new Map()
+    const managedContexts = new Map()
+    const contextFlights = new Map()
+    const contextVersions = new Map()
     const requests = new WeakMap()
     let catalog = [],
       catalogAt = 0
@@ -118,7 +150,8 @@ export default {
       const record = (Array.isArray(catalog) ? catalog : []).find(
         (item) => item.id === model?.id && (item.providerID || item.provider) === model?.providerID,
       )
-      const previous = nativeBindings.get(sessionID)
+      const previousRecord = nativeBindings.get(sessionID)
+      const previous = previousRecord?.binding
       const binding = {
         sessionID,
         parentID: session.parentID || null,
@@ -148,8 +181,28 @@ export default {
           : null,
         outputLimit: Number(record?.limit?.output || record?.outputLimit || 16384),
       }
+      const signature = JSON.stringify([
+        binding.parentID,
+        binding.directory,
+        binding.turnID,
+        binding.model?.providerID,
+        binding.model?.id,
+        binding.query,
+        binding.activeContextTokens,
+      ])
+      if (
+        previousRecord?.signature === signature &&
+        Date.now() - previousRecord.boundAt < 1000 &&
+        previousRecord.budget
+      )
+        return { binding, budget: previousRecord.budget }
       const budget = await call("/internal/runtime/bind", binding)
-      nativeBindings.set(sessionID, binding)
+      nativeBindings.set(sessionID, {
+        binding,
+        budget,
+        signature,
+        boundAt: Date.now(),
+      })
       if (nativeBindings.size > 1000) nativeBindings.delete(nativeBindings.keys().next().value)
       return { binding, budget }
     }
@@ -213,31 +266,82 @@ export default {
         }
       })
     })
+    async function refreshManagedContext(sessionID, model, key) {
+      const existing = contextFlights.get(sessionID)
+      if (existing?.key === key) return existing.promise
+      const version = (contextVersions.get(sessionID) || 0) + 1
+      contextVersions.set(sessionID, version)
+      const promise = call(
+        "/internal/runtime/context",
+        { sessionID, model },
+        { timeoutMs: Math.max(15000, TIMEOUT) },
+      )
+        .then((managed) => {
+          const text = managed?.text || ""
+          if (contextVersions.get(sessionID) === version) {
+            managedContexts.set(sessionID, { key, text, at: Date.now() })
+            if (managedContexts.size > 1000)
+              managedContexts.delete(managedContexts.keys().next().value)
+          }
+          return text
+        })
+        .catch(() => null)
+        .finally(() => {
+          if (contextFlights.get(sessionID)?.version === version)
+            contextFlights.delete(sessionID)
+        })
+      contextFlights.set(sessionID, { key, version, promise })
+      return promise
+    }
+
     await ctx.session.hook("context", async (event) => {
       const sessionID = event?.sessionID || ""
       if (!sessionID) return
       const turn = [...(event.messages || [])].reverse().find((message) => message.role === "user")
+      let binding
       // Unit adapters without native introspection retain the legacy contract;
       // the pinned native runtime always supports catalog and session.get.
-      if (ctx.catalog?.model?.list) await bindNative(event, turn?.id || "")
+      if (ctx.catalog?.model?.list)
+        ;({ binding } = await bindNative(event, turn?.id || ""))
       event.system ||= []
       const managedPrefix =
         `${CONTEXT_MARKER} (deduplicated, budgeted, checkpoint/RAG/repo aware):\n`
-      try {
-        const managed = await call("/internal/runtime/context", { sessionID, model: event.model })
-        const text = managed?.text || ""
-        // Replace our own previous snapshot only after a successful refresh,
-        // never user text or unrelated policy.
+      const previousPart = event.system.find((part) => systemText(part).startsWith(managedPrefix))
+      const previousText = previousPart
+        ? systemText(previousPart).slice(managedPrefix.length)
+        : ""
+      const key = JSON.stringify([
+        binding?.directory || "",
+        binding?.turnID || turn?.id || "",
+        binding?.query || "",
+        event.model?.providerID || "",
+        event.model?.id || "",
+      ])
+      const cached = managedContexts.get(sessionID)
+      let text = cached?.key === key ? cached.text : null
+      if (text === null) {
+        const refresh = refreshManagedContext(sessionID, event.model, key)
+        // Context enrichment may involve repo indexing/RAG. Give a cold build a
+        // tiny opportunity to finish, then let inference start while it warms.
+        text = await Promise.race([
+          refresh,
+          delay(Math.max(0, CONTEXT_HOT_PATH_WAIT_MS)).then(() => null),
+        ])
+      } else {
+        // Refresh exact-key context in the background when it ages out.
+        if (Date.now() - (cached?.at || 0) > 2000)
+          refreshManagedContext(sessionID, event.model, key).catch(() => {})
+      }
+      if (text !== null) {
         event.system = event.system.filter((part) => !systemText(part).startsWith(managedPrefix))
         if (text)
           event.system.push({
             type: "text",
             text: `${managedPrefix}${text}`,
           })
-      } catch {
-        // Context enrichment is additive. Budget admission still happens in
-        // http.request, so a slow index/RAG refresh must not suppress the
-        // provider request. Keep the previous snapshot when one exists.
+      } else if (!previousText) {
+        // No exact context is ready yet. Do not block the provider request; the
+        // single-flight refresh continues and will be available on the next hook.
       }
     })
 
