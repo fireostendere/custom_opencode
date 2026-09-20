@@ -148,6 +148,29 @@ def _repo_quick_stamp(root: Path) -> tuple[Any, ...]:
     return tuple(values)
 
 
+def _stamp_digest(value: tuple[Any, ...]) -> str:
+    return hashlib.sha256(repr(value).encode()).hexdigest()[:16]
+
+
+def _changed_stat_stamp(root: Path, changed: Iterable[str]) -> str:
+    """Cheaply detect edits to files already known dirty in the cached snapshot."""
+    digest = hashlib.sha256()
+    for relative in sorted(dict.fromkeys(str(item) for item in changed if item)):
+        digest.update(relative.encode("utf-8", errors="surrogateescape"))
+        path = safe_repo_file(root, relative)
+        if path is None:
+            digest.update(b"\0missing")
+            continue
+        try:
+            details = path.stat()
+            digest.update(
+                f"\0{details.st_size}:{details.st_mtime_ns}:{details.st_ctime_ns}".encode()
+            )
+        except OSError:
+            digest.update(b"\0unreadable")
+    return digest.hexdigest()[:16]
+
+
 def _capture_git_snapshot(root: Path, *, include_untracked: bool, timeout: float) -> dict[str, Any]:
     """Capture repository state without letting Git latency abort an interactive request."""
     try:
@@ -239,6 +262,8 @@ def _capture_git_snapshot(root: Path, *, include_untracked: bool, timeout: float
         "status": rows,
         "changed": changed,
         "statusHash": digest.hexdigest()[:16],
+        "changedStamp": _changed_stat_stamp(root, changed),
+        "treeStamp": _stamp_digest(_repo_quick_stamp(root)),
         "partial": status is None or status.returncode != 0,
         "includesUntracked": bool(include_untracked and status is not None and status.returncode == 0),
         "capturedAt": now_ms(),
@@ -324,7 +349,14 @@ def git_snapshot(
     stamp = _repo_quick_stamp(root)
     with _GIT_SNAPSHOT_LOCK:
         cached = _GIT_SNAPSHOT_CACHE.get(key)
-    if cached and not refresh and not fresh and cached[1] == stamp:
+    if (
+        cached
+        and not refresh
+        and not fresh
+        and cached[1] == stamp
+        and cached[2].get("changedStamp")
+        == _changed_stat_stamp(root, cached[2].get("changed") or [])
+    ):
         age = now - cached[0]
         if age >= _git_snapshot_ttl():
             _schedule_git_refresh(key, root)
@@ -410,7 +442,7 @@ class RepoIndexer:
     ) -> dict[str, Any]:
         root = Path(project_dir).resolve(strict=True)
         snapshot = snapshot or git_snapshot(project_dir, fresh=force)
-        fingerprint = f"{snapshot.get('head')}:{snapshot.get('statusHash')}"
+        fingerprint = f"{snapshot.get('head')}:{snapshot.get('statusHash')}:{snapshot.get('treeStamp')}"
         key = self._key(project_dir)
         cached = self.store.cache_get("repo-index", key)
         if not force and isinstance(cached, dict) and cached.get("fingerprint") == fingerprint:
