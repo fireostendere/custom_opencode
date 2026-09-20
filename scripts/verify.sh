@@ -79,6 +79,7 @@ done
 "$NODE" "$ROOT/scripts/compaction-recovery-regression.mjs"
 "$NODE" "$ROOT/scripts/wizard-validation-smoke.mjs"
 "$NODE" "$ROOT/scripts/config-manager-regression.mjs"
+"$NODE" "$ROOT/scripts/context-lanes-regression.mjs"
 "$NODE" "$ROOT/scripts/visible-plan-regression.mjs"
 "$NODE" "$ROOT/scripts/ponytail-v2-regression.mjs"
 "$NODE" "$ROOT/scripts/gemini-rate-limit-regression.mjs"
@@ -206,10 +207,12 @@ repo_services_py = (root / "app/repo_services.py").read_text(encoding="utf-8")
 runtime_resume_py = (root / "app/runtime_resume.py").read_text(encoding="utf-8")
 local_router_js = (root / "config/plugins/lazy-local-router.js").read_text(encoding="utf-8")
 orchestrated_plugin_js = (root / "config/plugins/orchestrated-qwen.js").read_text(encoding="utf-8")
+context_lanes_js = (root / "config/plugins/context-lanes.js").read_text(encoding="utf-8")
+context_policy_js = (root / "config/plugins/context-policy-lib.js").read_text(encoding="utf-8")
 sol_orchestrator = (root / "config/prompts/orchestrator-sol.md").read_text(encoding="utf-8")
 service = (root / "systemd/opencode-web-client.service").read_text(encoding="utf-8")
 orchestrator = (root / "config/prompts/orchestrator.md").read_text(encoding="utf-8")
-agents_policy = (root / "config/AGENTS.md").read_text(encoding="utf-8")
+agents_policy = (root / "config/prompts/engineering.md").read_text(encoding="utf-8")
 
 feature_markers = {
     "markdown/code UI": "renderMarkdown",
@@ -270,10 +273,16 @@ for name, policy in (("orchestrator", orchestrator), ("SOL orchestrator", sol_or
             bad.append(f"{name} lost a planning/safety contract: {marker}")
 for marker in ("Планирование задач", "plan_update", "OPENCODE_VISIBLE_PLAN=strict", "1–7", "Скрытые рассуждения не публикуй", "`plan`/`plan-direct`", "реальными событиями", "только ради UI"):
     if marker not in agents_policy:
-        bad.append(f"global agent policy lost adaptive planning/safety contract: {marker}")
-for marker in ('export default {', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'gpt-5.6-sol-orchestrated', 'gpt-5.6-dnd-edition', 'isOrchestratedSol', 'isDndEdition', 'orchestrator-sol.md', 'dnd-edition.md', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy', 'Custom DnD Edition policy'):
+        bad.append(f"managed engineering policy lost adaptive planning/safety contract: {marker}")
+for marker in ('export default {', 'id: "orchestrated-qwen"', 'gpt-5.6-dnd-edition', 'isOrchestratedSol', 'isDndEdition', 'ctx.session.hook("context"', 'filterDndTools'):
     if marker not in orchestrated_plugin_js:
         bad.append(f"orchestrated model plugin marker missing: {marker}")
+for marker in ('custom.context-lanes', 'orchestrator.md', 'orchestrator-sol.md', 'dnd-edition.md', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy', 'Custom DnD Edition policy', 'event.system.length = 0', 'engineering-lite.md', 'contextclass'):
+    if marker not in context_lanes_js:
+        bad.append(f"context lane plugin marker missing: {marker}")
+for marker in ('"bare"', '"lite"', '"normal"', '"full"', 'gpt-5.6-dnd-edition', 'provider === "ollama"', 'syncManagedOrchestrations', 'setSessionContextClass'):
+    if marker not in context_policy_js:
+        bad.append(f"context class policy marker missing: {marker}")
 for marker in ('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'sol-role-builder', 'sol-role-reviewer'):
     if marker not in sol_orchestrator:
         bad.append(f"SOL orchestrator prompt marker missing: {marker}")
@@ -380,7 +389,7 @@ if "plugin" in config:
 for legacy in ("provider", "agent", "permission"):
     if legacy in config: bad.append(f"legacy V1 top-level field in OpenCode config: {legacy}")
 if "instructions" in config:
-    bad.append("V2 instructions config is currently retained but not loaded; use installed AGENTS.md instead")
+    bad.append("V2 instructions config must stay absent; model-aware engineering policy is injected by context-lanes")
 if config.get("model") != "bailian-cli/qwen3.8-max":
     bad.append("primary default model must be bailian-cli/qwen3.8-max")
 
