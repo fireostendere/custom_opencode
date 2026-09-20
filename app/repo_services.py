@@ -875,6 +875,7 @@ class ContextService:
                     for item in decisions
                 )
             )
+        diff: dict[str, Any] = {}
         if include_repo:
             baseline = task.get("baseline") if task else None
             diff = semantic_diff(
