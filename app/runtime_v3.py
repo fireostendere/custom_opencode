@@ -32,7 +32,7 @@ from urllib.error import URLError
 from urllib.parse import quote
 
 from model_registry import CapabilityRegistry
-from repo_services import ArtifactStore, git_snapshot, safe_repo_file
+from repo_services import ArtifactStore, git_snapshot, invalidate_git_snapshot, safe_repo_file
 from runtime_store import EXECUTION_STATES, RuntimeStore, now_ms
 
 WRITE_TOOLS = {"edit", "write", "apply_patch", "patch", "multiedit"}
@@ -1614,6 +1614,11 @@ class ToolGateway:
         task = task or {"id": None, "project_dir": (binding or {}).get("directory")}
         task_id = task.get("id")
         root = str(task.get("project_dir") or cwd or "")
+        if root and (tool in WRITE_TOOLS or tool in SHELL_TOOLS):
+            # Native edit/shell tools can mutate tracked file contents without
+            # changing the repository directory mtime. Drop the cheap snapshot
+            # cache so the next context sees those writes immediately.
+            invalidate_git_snapshot(root)
         digest = hashlib.sha256(serialized.encode()).hexdigest()
         cache_key = f"{task_id or sid}:{tool}:{digest}"
         duplicate = self.store.cache_get("tool-result-dedupe", cache_key)
