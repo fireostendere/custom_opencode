@@ -137,7 +137,18 @@ export default {
     async function bindNative(event, turnID = "") {
       const sessionID = event.sessionID
       if (!sessionID) throw new Error("Native request lacks session identity")
-      const session = ctx.session.get ? await ctx.session.get({ sessionID }) : {}
+      const previousRecord = nativeBindings.get(sessionID)
+      const previous = previousRecord?.binding
+      const session =
+        previousRecord && Date.now() - previousRecord.boundAt < 1000
+          ? {
+              parentID: previous?.parentID || null,
+              model: previous?.model,
+              location: { directory: previous?.directory },
+            }
+          : ctx.session.get
+            ? await ctx.session.get({ sessionID })
+            : {}
       if (ctx.catalog?.model?.list && Date.now() - catalogAt > 30000) {
         try {
           const value = await ctx.catalog.model.list({})
@@ -152,8 +163,6 @@ export default {
       const record = (Array.isArray(catalog) ? catalog : []).find(
         (item) => item.id === model?.id && (item.providerID || item.provider) === model?.providerID,
       )
-      const previousRecord = nativeBindings.get(sessionID)
-      const previous = previousRecord?.binding
       const binding = {
         sessionID,
         parentID: session.parentID || null,
