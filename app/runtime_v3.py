@@ -2139,6 +2139,8 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
             else:
                 raise ValueError("action must be status, request, check or apply")
         elif parsed.path == "/internal/runtime/tool-before":
+            if payload.get("countBudget") is True:
+                v3.ledger.tool(str(payload.get("sessionID") or ""))
             result = v3.gateway.before(payload)
         elif parsed.path == "/internal/runtime/tool-after":
             result = v3.gateway.after(payload)
