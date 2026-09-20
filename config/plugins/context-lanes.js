@@ -59,7 +59,10 @@ function orchestrationFor(event) {
       prompt: managed.prompt,
     }
   const key = `${String(event?.model?.providerID || "")}/${String(event?.model?.id || "")}`
-  const staticItem = STATIC_ORCHESTRATIONS[key]
+  const dndAgent = String(event?.agent || "").startsWith("dnd-")
+  const staticItem = dndAgent
+    ? STATIC_ORCHESTRATIONS["openai/gpt-5.6-dnd-edition"]
+    : STATIC_ORCHESTRATIONS[key]
   if (!staticItem) return null
   let prompt = staticPromptCache.get(key)
   if (!prompt) {
