@@ -119,7 +119,7 @@ try {
     messageID: "msg_5",
     tool: "edit",
   })
-  const policy = await import(pathToFileURL(resolve(root, "config/plugins/context-policy-lib.js")).href)
+  const policy = await import(pathToFileURL(resolve(root, "config/plugins/tui/lib/context-policy.js")).href)
   policy.setSessionContextClass("ses_bare_plan", "bare")
   const bareContext = {
     ...context,
