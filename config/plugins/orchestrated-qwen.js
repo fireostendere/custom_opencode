@@ -1,19 +1,5 @@
-import { readFileSync } from "node:fs"
-import { homedir } from "node:os"
-import { join } from "node:path"
-
 const TARGET_PROVIDER = "bailian-cli"
 const TARGET_MODEL = "qwen3.8-orchestrated"
-const MARKER = "Custom orchestrated Qwen policy"
-const CONFIG_DIR = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", "opencode")
-const PROMPT_PATH = process.env.OPENCODE_ORCHESTRATOR_PROMPT || join(CONFIG_DIR, "prompts", "orchestrator.md")
-const SOL_PROMPT_PATH = process.env.OPENCODE_SOL_ORCHESTRATOR_PROMPT || join(CONFIG_DIR, "prompts", "orchestrator-sol.md")
-const DND_PROMPT_PATH = process.env.OPENCODE_DND_EDITION_PROMPT || join(CONFIG_DIR, "prompts", "dnd-edition.md")
-const TARGETS = {
-  [`${TARGET_PROVIDER}/${TARGET_MODEL}`]: { marker: MARKER, promptPath: PROMPT_PATH },
-  "openai/gpt-5.6-sol-orchestrated": { marker: "Custom orchestrated SOL policy", promptPath: SOL_PROMPT_PATH },
-  "openai/gpt-5.6-dnd-edition": { marker: "Custom DnD Edition policy", promptPath: DND_PROMPT_PATH },
-}
 const DND_TOOLS = new Set(["odm_narrator", "skill", "kb_knowledge_search", "kb_knowledge_get", "kb_knowledge_sources", "kb_knowledge_status"])
 
 export function isOrchestratedQwen(event) {
@@ -38,36 +24,14 @@ export function filterDndTools(tools) {
   return tools
 }
 
-function targetOf(event) {
-  const provider = event?.model?.providerID || ""
-  const model = event?.model?.id || ""
-  return TARGETS[`${provider}/${model}`]
-}
-
-function textOf(item) {
-  if (typeof item === "string") return item
-  if (item && typeof item === "object" && typeof item.text === "string") return item.text
-  return ""
-}
-
 // Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
 export default {
   id: "orchestrated-qwen",
   async setup(ctx) {
-    const policies = new Map(Object.entries(TARGETS).map(([target, config]) => {
-      const policy = readFileSync(config.promptPath, "utf8").trim()
-      if (!policy) throw new Error(`Orchestrator prompt is empty: ${config.promptPath}`)
-      return [target, { ...config, policy }]
-    }))
-
+    // Context policy injection is centralized in context-lanes.js. Keep only
+    // the DnD tool allowlist here so the Edition remains game-only even in bare mode.
     await ctx.session.hook("context", async (event) => {
-      const target = targetOf(event)
-      if (!target) return
       if (isDndEdition(event) && event.tools) event.tools = filterDndTools(event.tools)
-      const config = policies.get(`${event.model.providerID}/${event.model.id}`)
-      if (!config || !Array.isArray(event.system)) return
-      if (event.system.some((item) => textOf(item).includes(config.marker))) return
-      event.system.push({ type: "text", text: `${config.marker}:\n${config.policy}` })
     })
   },
 }
