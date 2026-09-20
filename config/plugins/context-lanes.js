@@ -6,7 +6,7 @@ import {
   managedOrchestration,
   resolveContextPolicy,
   setSessionContextClass,
-} from "./context-policy-lib.js"
+} from "./tui/lib/context-policy.js"
 
 const require = createRequire(import.meta.url)
 const CONFIG_DIR = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", "opencode")
