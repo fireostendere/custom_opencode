@@ -179,10 +179,13 @@ class SemanticRepoIndexer:
         return hashlib.sha256(project_dir.encode()).hexdigest()
 
     def _files(self, root: Path) -> list[str]:
-        proc = _run(
-            root, ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], 15.0
-        )
-        if proc.returncode == 0:
+        try:
+            proc = _run(
+                root, ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], 15.0
+            )
+        except subprocess.TimeoutExpired:
+            proc = None
+        if proc is not None and proc.returncode == 0:
             return [item for item in proc.stdout.split("\0") if item][:12000]
         out = []
         for path in root.rglob("*"):
@@ -299,11 +302,14 @@ class SemanticRepoIndexer:
         return symbols, [m.group(1) for m in IMPORT_JS.finditer(text)]
 
     def _git_graph(self, root: Path) -> list[dict[str, Any]]:
-        proc = _run(
-            root,
-            ["git", "log", "--all", "--max-count=250", "--pretty=format:%H%x09%P%x09%ct%x09%s"],
-            12.0,
-        )
+        try:
+            proc = _run(
+                root,
+                ["git", "log", "--all", "--max-count=250", "--pretty=format:%H%x09%P%x09%ct%x09%s"],
+                12.0,
+            )
+        except subprocess.TimeoutExpired:
+            return []
         if proc.returncode != 0:
             return []
         rows = []
@@ -523,10 +529,13 @@ class SemanticRepoIndexer:
         current = snapshot or git_snapshot(str(root))
         base_head = baseline.get("head")
         args = ["git", "diff", "--unified=0", str(base_head or "HEAD"), "--"]
-        proc = _run(root, args, 12.0)
+        try:
+            proc = _run(root, args, 12.0)
+        except subprocess.TimeoutExpired:
+            proc = None
         changed_lines = defaultdict(list)
         current_file = None
-        if proc.returncode == 0:
+        if proc is not None and proc.returncode == 0:
             for line in proc.stdout.splitlines():
                 if line.startswith("+++ b/"):
                     current_file = line[6:]
