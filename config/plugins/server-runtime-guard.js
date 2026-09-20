@@ -51,7 +51,8 @@ function startPolicyEnsure(command) {
 
 async function ensurePolicy(blocking = false) {
   const command = process.env.OPENCODE_POLICY_COMMAND
-  if (!command || Date.now() - lastHealth < POLICY_HEALTH_TTL_MS) return
+  if (!command) return
+  if (!blocking && Date.now() - lastHealth < POLICY_HEALTH_TTL_MS) return
   if (!command.startsWith("/"))
     throw new Error("OPENCODE_POLICY_COMMAND must be an absolute installed launcher")
   const flight = startPolicyEnsure(command)
