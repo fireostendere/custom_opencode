@@ -124,6 +124,19 @@ try {
     "DnD Edition must receive only its own policy",
   )
 
+  const dndPinnedModel = {
+    sessionID: "dnd-pinned",
+    agent: "dnd-narrator",
+    model: { providerID: "openai", id: "gpt-5.6-sol" },
+    system: [{ type: "text", text: "GENERIC CODING STARTUP" }],
+  }
+  await hooks.context(dndPinnedModel)
+  assert.deepEqual(
+    dndPinnedModel.system.map((x) => x.text),
+    ["Custom DnD Edition policy:\nSTATIC DND"],
+    "DnD agent must stay bare after its agent-level direct SOL model pin takes effect",
+  )
+
   assert.equal(command.name, "contextclass")
   await command.execute({ sessionID: "normal", prompt: { text: "bare" } })
   normal.system = [{ type: "text", text: "NATIVE AGAIN" }]
