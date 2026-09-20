@@ -243,6 +243,7 @@ class Fabric:
         self.slots = asyncio.Semaphore(min(3, max(1, self.config.get("maxParallel", 3))))
         self.mcp_runner = None
         self.metrics = {"searches": 0, "runs": 0, "cacheHits": 0, "failures": 0}
+        self._fingerprint_cache: tuple[float, dict] | None = None
         meter = metrics.get_meter("custom-opencode.tool-fabric", "1.0.0")
         self.executions = meter.create_counter("fabric.executions")
         self.latency = meter.create_histogram("fabric.duration", unit="s")
@@ -326,11 +327,24 @@ class Fabric:
         # pyvenv.cfg and silently run the system interpreter instead.
         return str(Path(path).absolute())
 
+    def _fingerprint(self):
+        now = time.monotonic()
+        try:
+            ttl = max(0.1, float(os.environ.get("OPENCODE_FABRIC_FINGERPRINT_TTL_SECONDS", "2")))
+        except ValueError:
+            ttl = 2.0
+        cached = self._fingerprint_cache
+        if cached and now - cached[0] < ttl:
+            return cached[1]
+        value = fingerprint(self.root)
+        self._fingerprint_cache = (now, value)
+        return value
+
     def search(self, query="", max_results=8, include_unavailable=False, intent="", target=""):
         if not isinstance(query, str) or len(query) > 4000 or not isinstance(max_results, int) or not 1 <= max_results <= 12:
             raise ValueError("query/maxResults out of bounds")
         started = time.monotonic()
-        fp = fingerprint(self.root)
+        fp = self._fingerprint()
         terms = re.findall(r"[\w.-]+", f"{query} {intent}".casefold())
         terms += [w for stem, expansion in self.config.get("keywords", {}).items() if any(t.startswith(stem.casefold()) for t in terms) for w in expansion.casefold().split()]
         results = []
