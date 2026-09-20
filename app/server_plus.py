@@ -48,6 +48,33 @@ def _allowed(candidate: Path, roots: tuple[Path, ...]) -> bool:
     return any(_inside(candidate, root) for root in roots)
 
 
+def validate_project_directory(raw_path: object) -> tuple[int, dict[str, object]]:
+    """Validate an exact authenticated project path without enabling filesystem browsing.
+
+    OPENCODE_PROJECT_ROOTS remains the boundary for enumeration and child creation.
+    Exact paths are intentionally allowed outside those roots because the native
+    /api/session contract already accepts an explicit location.directory.  This
+    endpoint only canonicalizes that existing capability and rejects invalid paths.
+    """
+    if not isinstance(raw_path, str):
+        return 400, {"ok": False, "error": "invalid-directory"}
+    value = raw_path.strip()
+    if not value or len(value) > 4096 or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return 400, {"ok": False, "error": "invalid-directory"}
+    try:
+        current = Path(value).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return 404, {"ok": False, "error": "directory-not-found"}
+    if not current.is_dir():
+        return 404, {"ok": False, "error": "directory-not-found"}
+    return 200, {
+        "ok": True,
+        "directory": str(current),
+        "name": current.name or str(current),
+        "browsable": _allowed(current, _project_roots()),
+    }
+
+
 def directory_snapshot(raw_path: str | None = None) -> dict[str, object]:
     roots = _project_roots()
     root_rows = [{"name": root.name or str(root), "path": str(root)} for root in roots]
@@ -340,6 +367,10 @@ class Handler(ext.Handler):
             return
         if not isinstance(payload, dict):
             self.json_response({"ok": False, "error": "invalid-directory"}, status=400)
+            return
+        if "path" in payload:
+            status, value = validate_project_directory(payload.get("path"))
+            self.json_response(value, status=status)
             return
         status, value = create_child_directory(payload.get("parent"), payload.get("name"))
         self.json_response(value, status=status)

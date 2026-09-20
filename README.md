@@ -178,7 +178,7 @@ Runtime V3 использует native OpenCode durable compaction. Custom prefl
 
 ## Project settings
 
-Project state может задавать persistent system instructions, model/profile, RAG policy и ordered permission rules. Folder browser ограничен `OPENCODE_PROJECT_ROOTS` и canonical/symlink containment.
+Project state может задавать persistent system instructions, model/profile, RAG policy и ordered permission rules. Folder browser ограничен `OPENCODE_PROJECT_ROOTS` и canonical/symlink containment. Для новой web-сессии можно также вставить точный существующий путь к проекту; сервер канонизирует его перед созданием сессии. Это не расширяет browse-root: перечисление каталогов и создание дочерних папок по-прежнему разрешены только внутри `OPENCODE_PROJECT_ROOTS`.
 
 ## RAG
 
