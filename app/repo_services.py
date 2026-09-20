@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import threading
 import time
 from typing import Any, Iterable
 from uuid import uuid4
@@ -117,18 +118,72 @@ def safe_repo_file(root: Path, relative: str) -> Path | None:
         return None
 
 
-def git_snapshot(project_dir: str) -> dict[str, Any]:
-    root = Path(project_dir).resolve(strict=False)
-    probe = _run(root, ["git", "rev-parse", "--is-inside-work-tree"], timeout=3.0)
+_GIT_SNAPSHOT_LOCK = threading.Lock()
+_GIT_SNAPSHOT_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_GIT_REFRESHING: set[str] = set()
+
+
+def _git_snapshot_ttl() -> float:
+    try:
+        return max(0.05, float(os.environ.get("OPENCODE_GIT_SNAPSHOT_TTL_SECONDS", "1.5")))
+    except ValueError:
+        return 1.5
+
+
+def _snapshot_copy(value: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    return {**value, **extra}
+
+
+def _capture_git_snapshot(root: Path, *, include_untracked: bool, timeout: float) -> dict[str, Any]:
+    """Capture repository state without letting Git latency abort an interactive request."""
+    try:
+        probe = _run(root, ["git", "rev-parse", "--is-inside-work-tree"], timeout=min(1.5, timeout))
+    except subprocess.TimeoutExpired:
+        return {
+            "git": (root / ".git").exists(),
+            "head": None,
+            "status": [],
+            "changed": [],
+            "statusHash": "timeout",
+            "partial": True,
+            "includesUntracked": False,
+            "capturedAt": now_ms(),
+        }
     if probe.returncode != 0:
-        return {"git": False, "head": None, "status": [], "changed": []}
-    head = _run(root, ["git", "rev-parse", "HEAD"], timeout=4.0)
-    status = _run(
-        root, ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], timeout=6.0
-    )
-    rows = []
-    changed = []
-    if status.returncode == 0:
+        return {
+            "git": False,
+            "head": None,
+            "status": [],
+            "changed": [],
+            "statusHash": "nogit",
+            "partial": False,
+            "includesUntracked": False,
+            "capturedAt": now_ms(),
+        }
+    try:
+        head = _run(root, ["git", "rev-parse", "HEAD"], timeout=min(2.0, timeout))
+    except subprocess.TimeoutExpired:
+        head = None
+    status = None
+    try:
+        status = _run(
+            root,
+            [
+                "git",
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all" if include_untracked else "--untracked-files=no",
+            ],
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        pass
+
+    rows: list[str] = []
+    changed: list[str] = []
+    status_text = status.stdout if status is not None and status.returncode == 0 else ""
+    if status is not None and status.returncode == 0:
         records = status.stdout.split("\0")
         index = 0
         while index < len(records) and len(rows) < 1000:
@@ -146,8 +201,11 @@ def git_snapshot(project_dir: str) -> dict[str, Any]:
             else:
                 rows.append(row)
                 changed.append(path)
+
     changed = sorted(dict.fromkeys(path for path in changed if path))
-    digest = hashlib.sha256(status.stdout.encode() if status.returncode == 0 else b"")
+    digest = hashlib.sha256(status_text.encode())
+    # Size/mtime/ctime are enough for an invalidation fingerprint and avoid
+    # synchronously reading megabytes of changed files on WSL/NTFS.
     for relative in changed:
         digest.update(relative.encode("utf-8", errors="surrogateescape"))
         path = safe_repo_file(root, relative)
@@ -156,23 +214,103 @@ def git_snapshot(project_dir: str) -> dict[str, Any]:
             continue
         try:
             details = path.stat()
-            digest.update(f"\0{details.st_size}:{details.st_mtime_ns}".encode())
-            if details.st_size <= 4_000_000:
-                digest.update(path.read_bytes())
+            digest.update(
+                f"\0{details.st_size}:{details.st_mtime_ns}:{details.st_ctime_ns}".encode()
+            )
         except OSError:
             digest.update(b"\0unreadable")
     return {
         "git": True,
-        "head": head.stdout.strip() if head.returncode == 0 else None,
+        "head": head.stdout.strip() if head is not None and head.returncode == 0 else None,
         "status": rows,
         "changed": changed,
         "statusHash": digest.hexdigest()[:16],
+        "partial": status is None or status.returncode != 0,
+        "includesUntracked": bool(include_untracked and status is not None and status.returncode == 0),
         "capturedAt": now_ms(),
     }
 
 
-def semantic_diff(project_dir: str, baseline: dict[str, Any] | None = None) -> dict[str, Any]:
-    current = git_snapshot(project_dir)
+def _refresh_git_snapshot(key: str, root: Path) -> None:
+    try:
+        value = _capture_git_snapshot(root, include_untracked=True, timeout=12.0)
+        with _GIT_SNAPSHOT_LOCK:
+            previous = _GIT_SNAPSHOT_CACHE.get(key)
+            # Never replace a usable snapshot with a timed-out background probe.
+            if not value.get("partial") or previous is None:
+                _GIT_SNAPSHOT_CACHE[key] = (time.monotonic(), value)
+    finally:
+        with _GIT_SNAPSHOT_LOCK:
+            _GIT_REFRESHING.discard(key)
+
+
+def _schedule_git_refresh(key: str, root: Path) -> None:
+    with _GIT_SNAPSHOT_LOCK:
+        if key in _GIT_REFRESHING:
+            return
+        _GIT_REFRESHING.add(key)
+    threading.Thread(
+        target=_refresh_git_snapshot,
+        args=(key, root),
+        name="custom-opencode-git-refresh",
+        daemon=True,
+    ).start()
+
+
+def invalidate_git_snapshot(project_dir: str | None = None) -> None:
+    with _GIT_SNAPSHOT_LOCK:
+        if project_dir is None:
+            _GIT_SNAPSHOT_CACHE.clear()
+            return
+        key = str(Path(project_dir).resolve(strict=False))
+        _GIT_SNAPSHOT_CACHE.pop(key, None)
+
+
+def git_snapshot(project_dir: str, *, refresh: bool = False) -> dict[str, Any]:
+    """Return a bounded, cached repo snapshot.
+
+    Interactive callers receive a fresh cache entry immediately when possible.
+    Once an entry exists, expiry is stale-while-revalidate: a complete
+    untracked-file scan runs in a daemon thread instead of blocking model/tool
+    requests. The first uncached capture intentionally skips untracked files.
+    """
+    root = Path(project_dir).resolve(strict=False)
+    key = str(root)
+    now = time.monotonic()
+    with _GIT_SNAPSHOT_LOCK:
+        cached = _GIT_SNAPSHOT_CACHE.get(key)
+    if cached and not refresh:
+        age = now - cached[0]
+        if age >= _git_snapshot_ttl():
+            _schedule_git_refresh(key, root)
+        return _snapshot_copy(
+            cached[1],
+            cacheHit=True,
+            stale=age >= _git_snapshot_ttl(),
+            ageMs=round(age * 1000, 2),
+        )
+
+    # A forced refresh is reserved for explicit/background work. Normal first
+    # touch stays fast and never enumerates all untracked files.
+    value = _capture_git_snapshot(
+        root,
+        include_untracked=refresh,
+        timeout=12.0 if refresh else 1.25,
+    )
+    with _GIT_SNAPSHOT_LOCK:
+        _GIT_SNAPSHOT_CACHE[key] = (time.monotonic(), value)
+    if not refresh:
+        _schedule_git_refresh(key, root)
+    return _snapshot_copy(value, cacheHit=False, stale=False, ageMs=0.0)
+
+
+def semantic_diff(
+    project_dir: str,
+    baseline: dict[str, Any] | None = None,
+    *,
+    snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    current = snapshot or git_snapshot(project_dir)
     baseline = baseline or {}
     root = Path(project_dir).resolve(strict=False)
     files = list(current.get("changed") or [])
@@ -211,9 +349,15 @@ class RepoIndexer:
     def _key(self, project_dir: str) -> str:
         return hashlib.sha256(project_dir.encode()).hexdigest()
 
-    def refresh(self, project_dir: str, *, force: bool = False) -> dict[str, Any]:
+    def refresh(
+        self,
+        project_dir: str,
+        *,
+        force: bool = False,
+        snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         root = Path(project_dir).resolve(strict=True)
-        snapshot = git_snapshot(project_dir)
+        snapshot = snapshot or git_snapshot(project_dir)
         fingerprint = f"{snapshot.get('head')}:{snapshot.get('statusHash')}"
         key = self._key(project_dir)
         cached = self.store.cache_get("repo-index", key)
@@ -577,6 +721,8 @@ class ContextService:
         task: dict[str, Any] | None,
         project_instructions: str = "",
         budget_chars: int = 24000,
+        include_repo: bool = True,
+        snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         budget_chars = max(2000, min(120000, int(budget_chars)))
         parts = []
@@ -600,25 +746,30 @@ class ContextService:
                     for item in decisions
                 )
             )
-        baseline = task.get("baseline") if task else None
-        diff = semantic_diff(project_dir, baseline if isinstance(baseline, dict) else None)
-        changed = diff.get("changedFiles") or []
-        if changed:
-            stats = diff.get("stats") or {}
-            parts.append(
-                f"Semantic diff since task baseline: {len(changed)} changed files, +{stats.get('insertions',0)}/-{stats.get('deletions',0)}.\n"
-                + "\n".join(f"- {path}" for path in changed[:120])
+        if include_repo:
+            baseline = task.get("baseline") if task else None
+            diff = semantic_diff(
+                project_dir,
+                baseline if isinstance(baseline, dict) else None,
+                snapshot=snapshot,
             )
-        try:
-            index = self.indexer.refresh(project_dir)
-            deps = [str(item.get("path")) for item in index.get("dependencies") or []]
-            if deps:
+            changed = diff.get("changedFiles") or []
+            if changed:
+                stats = diff.get("stats") or {}
                 parts.append(
-                    "Repository dependency/entry files cached by server:\n"
-                    + "\n".join(f"- {item}" for item in deps[:40])
+                    f"Semantic diff since task baseline: {len(changed)} changed files, +{stats.get('insertions',0)}/-{stats.get('deletions',0)}.\n"
+                    + "\n".join(f"- {path}" for path in changed[:120])
                 )
-        except Exception:
-            pass
+            try:
+                index = self.indexer.refresh(project_dir, snapshot=snapshot)
+                deps = [str(item.get("path")) for item in index.get("dependencies") or []]
+                if deps:
+                    parts.append(
+                        "Repository dependency/entry files cached by server:\n"
+                        + "\n".join(f"- {item}" for item in deps[:40])
+                    )
+            except Exception:
+                pass
         if task:
             inbox = self.store.mailbox_receive(task["id"], consume=False, limit=30)
             if inbox:
