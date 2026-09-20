@@ -91,6 +91,7 @@ const ORCHESTRATED_MODELS = new Set([
   "bailian-cli/glm-5.2",
   "openai/gpt-5.6-sol",
   "openai/gpt-5.6-sol-orchestrated",
+  "openai/gpt-5.6-dnd-edition",
   "openai/gpt-5.6-terra",
   "openai/gpt-5.6-luna",
 ])

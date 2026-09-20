@@ -8,7 +8,12 @@ export const SOL_ORCHESTRATED_MODEL = {
   providerID: 'openai',
   label: 'GPT-5.6 Sol · Orchestrated',
 }
-export const ORCHESTRATED_MODELS = [ORCHESTRATED_MODEL, SOL_ORCHESTRATED_MODEL]
+export const DND_EDITION_MODEL = {
+  id: 'gpt-5.6-dnd-edition',
+  providerID: 'openai',
+  label: 'GPT-5.6 · DnD Edition',
+}
+export const ORCHESTRATED_MODELS = [ORCHESTRATED_MODEL, SOL_ORCHESTRATED_MODEL, DND_EDITION_MODEL]
 
 // The web surface exposes Build/Plan while keeping direct agent IDs internal.
 // Native clients can still use the same plan identifiers without translation.
@@ -16,11 +21,13 @@ export function modeFromAgent(agentID = '') {
   return String(agentID).startsWith('plan') ? 'plan' : 'build'
 }
 
-export function profileFromAgent(_agentID = '') {
+export function profileFromAgent(agentID = '') {
+  if (agentID === 'dnd-narrator') return 'dnd-edition'
   return 'direct'
 }
 
 export function agentFor(mode = 'build', profile = 'direct') {
+  if (profile === 'dnd-edition') return 'dnd-narrator'
   if (profile === 'orchestrated') return mode === 'plan' ? 'plan' : 'build'
   return mode === 'plan' ? 'plan-direct' : 'build-direct'
 }

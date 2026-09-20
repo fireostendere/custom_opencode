@@ -269,7 +269,7 @@ for name, policy in (("orchestrator", orchestrator), ("SOL orchestrator", sol_or
 for marker in ("Планирование задач", "plan_update", "OPENCODE_VISIBLE_PLAN=strict", "1–7", "Скрытые рассуждения не публикуй", "`plan`/`plan-direct`", "реальными событиями", "только ради UI"):
     if marker not in agents_policy:
         bad.append(f"global agent policy lost adaptive planning/safety contract: {marker}")
-for marker in ('export default {', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'gpt-5.6-sol-orchestrated', 'isOrchestratedSol', 'orchestrator-sol.md', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy'):
+for marker in ('export default {', 'id: "orchestrated-qwen"', 'qwen3.8-orchestrated', 'gpt-5.6-sol-orchestrated', 'gpt-5.6-dnd-edition', 'isOrchestratedSol', 'isDndEdition', 'orchestrator-sol.md', 'dnd-edition.md', 'ctx.session.hook("context"', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy', 'Custom DnD Edition policy'):
     if marker not in orchestrated_plugin_js:
         bad.append(f"orchestrated model plugin marker missing: {marker}")
 for marker in ('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'sol-role-builder', 'sol-role-reviewer'):
@@ -402,7 +402,7 @@ expected = {
     "glm-5.2", "deepseek-v4-pro", "deepseek-v4-pro-0813", "deepseek-v4-flash-0731",
 }
 special_ids = {"qwen3.8-orchestrated"}
-openai_special_ids = {"gpt-5.6-sol-orchestrated"}
+openai_special_ids = {"gpt-5.6-sol-orchestrated", "gpt-5.6-dnd-edition"}
 compat_ids = {"qwen3.8-max-preview"}
 models_map = provider.get("models", {}) if isinstance(provider, dict) else {}
 models = set(models_map)
@@ -432,6 +432,10 @@ if special.get("name") != "Qwen3.8 Max · Orchestrated": bad.append("orchestrate
 sol_special = providers.get("openai", {}).get("models", {}).get("gpt-5.6-sol-orchestrated", {}) if isinstance(providers.get("openai"), dict) else {}
 if sol_special.get("modelID") != "gpt-5.6-sol": bad.append("orchestrated SOL catalog alias must map to gpt-5.6-sol")
 if sol_special.get("name") != "GPT-5.6 Sol · Orchestrated": bad.append("orchestrated SOL catalog alias has unexpected label")
+dnd_special = providers.get("openai", {}).get("models", {}).get("gpt-5.6-dnd-edition", {}) if isinstance(providers.get("openai"), dict) else {}
+if dnd_special.get("modelID") != "gpt-5.6-sol": bad.append("DnD Edition catalog alias must map to gpt-5.6-sol")
+if dnd_special.get("name") != "GPT-5.6 · DnD Edition": bad.append("DnD Edition catalog alias has unexpected label")
+if dnd_special.get("defaultVariant") != "medium": bad.append("DnD Edition default reasoning must be medium")
 ollama = providers.get("ollama", {})
 if ollama.get("package") != "aisdk:@ai-sdk/openai-compatible": bad.append("local Ollama V2 provider must use aisdk:@ai-sdk/openai-compatible")
 
@@ -477,10 +481,25 @@ role_routes.update({
     "sol-role-builder-max": "openai/gpt-5.6-terra#max",
     "sol-role-reviewer": "openai/gpt-5.6-luna#xhigh",
     "sol-role-reviewer-max": "openai/gpt-5.6-luna#max",
+    "dnd-narrator": "openai/gpt-5.6-sol#medium",
+    "dnd-narrator-high": "openai/gpt-5.6-sol#high",
+    "dnd-narrator-max": "openai/gpt-5.6-sol#max",
+    "dnd-planner": "openai/gpt-5.6-sol#high",
+    "dnd-memory": "openai/gpt-5.6-luna#low",
+    "dnd-reader": "openai/gpt-5.6-luna#low",
 })
 for agent_id, model_ref in role_routes.items():
     if (agents.get(agent_id) or {}).get("model") != model_ref:
         bad.append(f"role agent {agent_id} must stay provider-pinned to {model_ref}")
+for agent_id in ("dnd-narrator", "dnd-narrator-high", "dnd-narrator-max", "dnd-planner", "dnd-memory", "dnd-reader"):
+    rules = (agents.get(agent_id) or {}).get("permissions", [])
+    if not rules or rules[0] != {"action": "*", "resource": "*", "effect": "deny"}:
+        bad.append(f"{agent_id} must use deny-first permissions")
+if (agents.get("dnd-narrator") or {}).get("mode") != "primary":
+    bad.append("dnd-narrator must be selectable as a primary agent")
+skill_rules = {(rule.get("resource"), rule.get("effect")) for rule in (agents.get("dnd-narrator") or {}).get("permissions", []) if rule.get("action") == "skill"}
+if skill_rules != {("odm-dm-policy", "allow"), ("odm-narrator", "allow"), ("dnd-*", "allow")}:
+    bad.append("dnd-narrator must allow only the bounded game skill families")
 fast_rules = (agents.get("fast-reader") or {}).get("permissions", [])
 if not any(rule.get("action") == "kb_knowledge_search" and rule.get("effect") == "allow" for rule in fast_rules):
     bad.append("fast-reader must be allowed to perform selective RAG search")

@@ -13,6 +13,7 @@ from model_registry import (  # noqa: E402
     ALIBABA_PROVIDER,
     CANONICAL_EFFORTS,
     CapabilityRegistry,
+    dnd_role_models,
     ResourceScheduler,
     effort_plan,
     role_models,
@@ -38,6 +39,7 @@ EXPECTED_PROFILES = {
     "long-horizon",
     "sol-orchestrated",
     "sol-review",
+    "dnd-edition",
 }
 
 for name in (
@@ -51,6 +53,7 @@ for name in (
     "OPENCODE_SOL_BUILDER_MODEL",
     "OPENCODE_SOL_READER_MODEL",
     "OPENCODE_SOL_REVIEW_MODEL",
+    "OPENCODE_DND_NARRATOR_MODEL",
 ):
     os.environ.pop(name, None)
 
@@ -114,6 +117,10 @@ assert profiles["sol-orchestrated"]["orchestrated"] is True
 assert profiles["sol-orchestrated"]["effortPolicy"]["reader"]["default"] == "high"
 assert profiles["sol-review"]["cloudModel"] == "openai/gpt-5.6-luna"
 assert profiles["sol-review"]["hidden"] is True
+assert profiles["dnd-edition"]["cloudModel"] == "openai/gpt-5.6-dnd-edition"
+assert profiles["dnd-edition"]["agentBuild"] == "dnd-narrator"
+assert profiles["dnd-edition"]["contextPolicy"]["targetRatio"] == 0.55
+assert profiles["dnd-edition"]["sandbox"] == "restricted"
 
 scheduler = ResourceScheduler()
 build_route = scheduler.decide(profiles["build"])
@@ -133,6 +140,8 @@ assert alibaba["name"] == "Alibaba Cloud"
 assert (
     config["providers"]["openai"]["models"]["gpt-5.6-sol-orchestrated"]["modelID"] == "gpt-5.6-sol"
 )
+assert config["providers"]["openai"]["models"]["gpt-5.6-dnd-edition"]["modelID"] == "gpt-5.6-sol"
+assert config["providers"]["openai"]["models"]["gpt-5.6-dnd-edition"]["defaultVariant"] == "medium"
 assert sol_role_models() == {
     "builder": "openai/gpt-5.6-terra",
     "reader": "openai/gpt-5.6-luna",
@@ -147,6 +156,16 @@ else:
     raise AssertionError("SOL Fast override must be rejected")
 finally:
     os.environ.pop("OPENCODE_SOL_REVIEW_MODEL", None)
+assert dnd_role_models()["narrator"] == "openai/gpt-5.6-sol#medium"
+os.environ["OPENCODE_DND_NARRATOR_MODEL"] = "openrouter/gpt-5.6-sol#medium"
+try:
+    dnd_role_models()
+except ValueError as error:
+    assert "provider-locked" in str(error)
+else:
+    raise AssertionError("DnD narrator override must remain official OpenAI")
+finally:
+    os.environ.pop("OPENCODE_DND_NARRATOR_MODEL", None)
 
 
 def variants(model: str) -> dict[str, dict]:
@@ -210,6 +229,16 @@ assert agents["sol-role-builder-high"]["model"] == "openai/gpt-5.6-terra#high"
 assert agents["sol-role-builder-max"]["model"] == "openai/gpt-5.6-terra#max"
 assert agents["sol-role-reviewer"]["model"] == "openai/gpt-5.6-luna#xhigh"
 assert agents["sol-role-reviewer-max"]["model"] == "openai/gpt-5.6-luna#max"
+for name, model in {
+    "dnd-narrator": "openai/gpt-5.6-sol#medium",
+    "dnd-narrator-high": "openai/gpt-5.6-sol#high",
+    "dnd-narrator-max": "openai/gpt-5.6-sol#max",
+    "dnd-planner": "openai/gpt-5.6-sol#high",
+    "dnd-memory": "openai/gpt-5.6-luna#low",
+    "dnd-reader": "openai/gpt-5.6-luna#low",
+}.items():
+    assert agents[name]["model"] == model
+    assert agents[name]["permissions"][0]["effect"] == "deny"
 assert "local-reader" not in agents
 assert "qwen3.6-flash" not in agents["fast-reader"]["model"]
 

@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Zero-token contract checks for the DnD Edition OpenCode surface."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "app"))
+
+from model_registry import CapabilityRegistry, effort_plan, validate_provider_ref  # noqa: E402
+
+
+def config() -> dict:
+    text = (ROOT / "config" / "opencode.json.template").read_text(encoding="utf-8")
+    return json.loads(text.replace("__RAG_DISABLED__", "false").replace("__CUSTOM_OPENCODE_ROOT__", "/tmp/custom"))
+
+
+cfg = config()
+alias = cfg["providers"]["openai"]["models"]["gpt-5.6-dnd-edition"]
+assert alias["modelID"] == "gpt-5.6-sol"
+assert alias["name"] == "GPT-5.6 · DnD Edition"
+assert alias["defaultVariant"] == "medium"
+assert {item["id"] for item in alias["variants"]} == {"none", "low", "medium", "high", "xhigh", "max"}
+
+profiles = CapabilityRegistry().profiles()
+dnd = profiles["dnd-edition"]
+assert dnd["cloudModel"] == "openai/gpt-5.6-dnd-edition"
+assert dnd["narratorModel"] == "openai/gpt-5.6-sol#medium"
+assert dnd["complexModel"] == "openai/gpt-5.6-sol#high"
+assert dnd["exceptionalModel"] == "openai/gpt-5.6-sol#max"
+assert dnd["plannerModel"] == "openai/gpt-5.6-sol#high"
+assert dnd["memoryModel"] == "openai/gpt-5.6-luna#low"
+assert dnd["readerModel"] == "openai/gpt-5.6-luna#low"
+assert dnd["contextPolicy"]["targetRatio"] == 0.55
+assert dnd["sandbox"] == "restricted"
+assert dnd["autoReview"] is False and dnd["planningPolicy"] == "manual" and dnd["memoryPolicy"] == "manual"
+assert effort_plan("openai/gpt-5.6-sol", "max")["settings"] == {"reasoningEffort": "max"}
+assert validate_provider_ref("openrouter/gpt-5.6-sol", "openai")[0] is False
+
+agents = cfg["agents"]
+expected_agents = {
+    "dnd-narrator": "openai/gpt-5.6-sol#medium",
+    "dnd-narrator-high": "openai/gpt-5.6-sol#high",
+    "dnd-narrator-max": "openai/gpt-5.6-sol#max",
+    "dnd-planner": "openai/gpt-5.6-sol#high",
+    "dnd-memory": "openai/gpt-5.6-luna#low",
+    "dnd-reader": "openai/gpt-5.6-luna#low",
+}
+for name, model in expected_agents.items():
+    assert agents[name]["model"] == model
+    assert agents[name]["permissions"][0] == {"action": "*", "resource": "*", "effect": "deny"}
+assert agents["dnd-narrator"]["mode"] == "primary"
+skill_rules = {(item["resource"], item["effect"]) for item in agents["dnd-narrator"]["permissions"] if item["action"] == "skill"}
+assert skill_rules == {("odm-dm-policy", "allow"), ("odm-narrator", "allow"), ("dnd-*", "allow")}
+for name in ("dnd-memory", "dnd-reader"):
+    allowed = {item["action"] for item in agents[name]["permissions"] if item["effect"] == "allow"}
+    assert allowed == {"kb_knowledge_search", "kb_knowledge_get", "kb_knowledge_sources", "kb_knowledge_status"}
+
+print("DnD Edition profile/config contract passed")

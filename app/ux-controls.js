@@ -25,7 +25,7 @@ function profileSessionKey() {
 }
 function storedProfile() {
   const value = loadProfiles()[profileSessionKey()]
-  return ['direct', 'orchestrated'].includes(value) ? value : null
+  return ['direct', 'orchestrated', 'dnd-edition'].includes(value) ? value : null
 }
 function persistProfile(profile) {
   const values = loadProfiles()
@@ -47,9 +47,9 @@ function currentMode() {
   return 'build'
 }
 function currentProfile() {
-  if (!modelTransition && window.CustomOpenCodeControls?.activeModel?.()) return orchestratedModelSelected() ? 'orchestrated' : 'direct'
+  if (!modelTransition && window.CustomOpenCodeControls?.activeModel?.()) return profileForModel(selectedOrchestratedModel())
   if (desiredProfile) return desiredProfile
-  return orchestratedModelSelected() ? 'orchestrated' : profileFromAgent(rawActiveAgent())
+  return selectedOrchestratedModel() ? profileForModel(selectedOrchestratedModel()) : profileFromAgent(rawActiveAgent())
 }
 function nativeAgentButton(agentID) {
   return agentButtons().find((button) => button.dataset.agent === agentID) || null
@@ -134,6 +134,7 @@ function selectedOrchestratedModel() {
   const text = $('modelButton')?.textContent || ''
   return ORCHESTRATED_MODELS.find((model) => text.includes(model.id) || text.includes(model.label)) || null
 }
+function profileForModel(model) { return model?.id === 'gpt-5.6-dnd-edition' ? 'dnd-edition' : model ? 'orchestrated' : 'direct' }
 function orchestratedModelSelected() {
   return Boolean(selectedOrchestratedModel())
 }
@@ -143,7 +144,7 @@ function syncOrchestratedChoiceLabel() {
     const model = ORCHESTRATED_MODELS.find((item) => item.id === choice.dataset.model)
     const title = choice.querySelector('.choice-title')
     if (!model || !title) continue
-    const selected = document.documentElement.dataset.modelProfile === 'orchestrated' && selectedID === model.id
+    const selected = document.documentElement.dataset.modelProfile !== 'direct' && selectedID === model.id
     const next = `${model.label}${selected ? ' · ✓' : ''}`
     if (title.textContent !== next) title.textContent = next
   }
@@ -154,9 +155,9 @@ function syncModelSurface() {
   const profile = currentProfile()
   document.documentElement.dataset.modelProfile = profile
   const selectedOrchestrated = selectedOrchestratedModel()
-  if (profile === 'orchestrated' && selectedOrchestrated) {
+  if (profile !== 'direct' && selectedOrchestrated) {
     document.documentElement.dataset.orchestratedModel = selectedOrchestrated.id
-    button.title = `${selectedOrchestrated.label} с автоматической делегацией read-only worker и optional RAG`
+    button.title = profile === 'dnd-edition' ? `${selectedOrchestrated.label}: ODM-only D&D tools` : `${selectedOrchestrated.label} с автоматической делегацией read-only worker и optional RAG`
   } else {
     delete document.documentElement.dataset.orchestratedModel
     button.title = 'Выбрать модель'
@@ -249,7 +250,7 @@ async function chooseModel(profile, model) {
   const agentChanged = await window.CustomOpenCodeControls.changeAgent(pending.agent)
   if (!valid()) { setTransitionControls(false); return }
   if (agentChanged) {
-    if (profile === 'orchestrated') document.documentElement.dataset.orchestratedModel = model.id
+    if (profile !== 'direct') document.documentElement.dataset.orchestratedModel = model.id
     else delete document.documentElement.dataset.orchestratedModel
     endModelTransition(pending, profile)
     return
@@ -268,7 +269,7 @@ function finishAgentTransition(detail) {
   if (!pending || pending.sessionID !== profileSessionKey() || detail?.agent !== pending.agent) return
   if (detail?.sessionID !== (pending.sessionID === '__new__' ? null : pending.sessionID)) return
 }
-function chooseOrchestrated(model = ORCHESTRATED_MODEL) { chooseModel('orchestrated', model) }
+function chooseOrchestrated(model = ORCHESTRATED_MODEL) { chooseModel(profileForModel(model), model) }
 function chooseDirect() {
   const model = window.CustomOpenCodeControls?.directModel?.()
   if (model) return chooseModel('direct', model)
@@ -326,7 +327,7 @@ function installModelProfileProxy() {
     event.stopImmediatePropagation()
     $('modelDialog')?.close()
     const model = { id:native.dataset.model, providerID:native.dataset.provider }
-    const profile = ORCHESTRATED_MODELS.some((item) => item.providerID === model.providerID && item.id === model.id) ? 'orchestrated' : 'direct'
+    const profile = profileForModel(ORCHESTRATED_MODELS.find((item) => item.providerID === model.providerID && item.id === model.id))
     chooseModel(profile, model)
   }, true)
 

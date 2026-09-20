@@ -51,6 +51,8 @@ OpenAI direct models остаются на существующем официа
 | `critical` | Architect stack + DeepSeek reviewer | high-risk production work |
 | `research` | Max + Flash research + DeepSeek critic | research/synthesis |
 | `long-horizon` | Max + GLM + Flash + DeepSeek | длинная автономная работа |
+| `sol-orchestrated` | Sol + Terra + Luna | OpenAI-only orchestration |
+| `dnd-edition` | Sol medium/high/max + Luna low | restricted live D&D через ODM |
 
 Старый adaptive/device router больше не является частью model routing.
 
@@ -177,9 +179,15 @@ GLM 5.2 — отдельный executor для действительно дли
 ## Model picker
 
 Picker может показывать обычные provider models и server profiles. Dedicated
-`Qwen 3.8 Max · Orchestrated` и `GPT-5.6 Sol · Orchestrated` catalog aliases
+`Qwen 3.8 Max · Orchestrated`, `GPT-5.6 Sol · Orchestrated` и
+`GPT-5.6 · DnD Edition` catalog aliases
 используются только как trigger для orchestration prompt/plugin и указывают на
 реальные модели провайдеров. Обычные Qwen/SOL/Terra/Luna остаются direct.
+
+DnD Edition выбирает primary-agent `dnd-narrator`. Deny-first permissions
+оставляют только authoritative `odm_narrator`, read-only knowledge operations и
+загрузку `odm-dm-policy`, `odm-narrator`, `dnd-*`; coding, shell, web и admin tools
+не выдаются.
 
 Orchestration выбирается моделью/profile, а `Build` или `Plan` определяет primary execution mode независимо от него.
 
