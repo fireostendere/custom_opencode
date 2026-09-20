@@ -6,12 +6,14 @@ import { register } from "node:module"
 
 register("./opencode-plugin-stub-hooks.mjs", import.meta.url)
 process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN = "test-token"
+process.env.OPENCODE_CONTEXT_HOT_PATH_WAIT_MS = "40"
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const source = readFileSync(resolve(root, "config/plugins/server-runtime-guard.js"), "utf8")
 assert.ok(!source.includes("/internal/runtime/tool-cache"))
 
 const calls = []
 let contextFailure = false
+let delayedContext = false
 let catalogCalls = 0
 let recoveredBudget = false
 let delayedContextBudget = false
@@ -21,6 +23,17 @@ globalThis.fetch = async (url, init) => {
   if (contextFailure && String(url).endsWith('/internal/runtime/context'))
     throw new DOMException('The operation timed out.', 'TimeoutError')
   calls.push({ url: String(url), payload: JSON.parse(init.body) })
+  if (delayedContext && String(url).endsWith('/internal/runtime/context'))
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => resolve(new Response(JSON.stringify({ text: 'fresh snapshot' }), { status: 200, headers: { 'content-type': 'application/json' } })),
+        180,
+      )
+      init.signal.addEventListener('abort', () => {
+        clearTimeout(timer)
+        reject(init.signal.reason)
+      }, { once: true })
+    })
   if (delayedContextBudget && String(url).endsWith('/internal/runtime/context-budget'))
     return await new Promise((resolve, reject) => {
       const timer = setTimeout(
@@ -198,8 +211,26 @@ try {
   assert.equal(event.env.OPENCODE_WEB_PORT, "4098")
   assert.equal(event.command, "wrapped")
 
-  // Runtime context is an additive enrichment. A slow index/RAG refresh must
-  // leave native context and the provider request usable.
+  // Runtime context is additive and stale-while-revalidate. A cold repo/RAG
+  // build must leave the provider hot path after the small configured budget.
+  delayedContext = true
+  const coldContext = {
+    sessionID: 'ses_context_swr',
+    model: { providerID: 'openai', id: 'gpt-5.6-luna' },
+    system: [],
+  }
+  const coldStarted = Date.now()
+  await hooks['session:context'](coldContext)
+  assert.ok(Date.now() - coldStarted < 140, 'cold context refresh blocked the provider hot path')
+  assert.equal(coldContext.system.length, 0, 'unfinished cold context must not inject partial data')
+  await new Promise((resolve) => setTimeout(resolve, 220))
+  const warmStarted = Date.now()
+  await hooks['session:context'](coldContext)
+  assert.ok(Date.now() - warmStarted < 80, 'warmed context must be served from memory')
+  assert.equal(coldContext.system.at(-1)?.text, 'Server runtime context (deduplicated, budgeted, checkpoint/RAG/repo aware):\nfresh snapshot')
+  delayedContext = false
+
+  // A failed index/RAG refresh must preserve the previous managed snapshot.
   contextFailure = true
   const contextEvent = {
     sessionID: 'ses_context_timeout',
@@ -220,7 +251,7 @@ try {
   assert.equal((await requestAfterContextTimeout.request.json()).max_output_tokens, 1024)
   contextFailure = false
   console.log(
-    "Server runtime guard regression OK: session-scoped shell policy, secret scrub, additive context timeout",
+    "Server runtime guard regression OK: session-scoped shell policy, secret scrub, nonblocking context refresh",
   )
 } finally {
   globalThis.fetch = originalFetch
