@@ -55,6 +55,8 @@ def main() -> None:
                 if args[:2] == ["git", "status"]:
                     status_calls += 1
                     raise subprocess.TimeoutExpired(args, timeout)
+                if args[:2] == ["git", "diff-files"]:
+                    return completed(args, "")
                 raise AssertionError(args)
 
             repo_services.invalidate_git_snapshot()
@@ -79,6 +81,8 @@ def main() -> None:
                 if args[:2] == ["git", "status"]:
                     status_calls += 1
                     assert "--untracked-files=no" in args
+                    return completed(args, "")
+                if args[:2] == ["git", "diff-files"]:
                     return completed(args, "")
                 raise AssertionError(args)
 
