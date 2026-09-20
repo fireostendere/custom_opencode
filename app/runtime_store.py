@@ -745,6 +745,10 @@ class RuntimeStore:
         )
         cutoff = timestamp - days * 86_400_000
         with self.transaction() as db:
+            # TEMP tables are connection-local and pooled connections survive
+            # across prune() calls. Always reset the scratch table so pooling
+            # cannot turn a second maintenance pass into an OperationalError.
+            db.execute("DROP TABLE IF EXISTS prune_tasks")
             db.execute(
                 "CREATE TEMP TABLE prune_tasks AS SELECT id FROM tasks WHERE state IN ('completed','failed','cancelled') AND COALESCE(finished_at,updated_at)<? AND id NOT IN (SELECT depends_on FROM task_dependencies)",
                 (cutoff,),
@@ -782,6 +786,7 @@ class RuntimeStore:
                 f"DELETE FROM task_dependencies WHERE task_id IN ({old_tasks}) OR depends_on IN ({old_tasks})"
             )
             tasks = db.execute(f"DELETE FROM tasks WHERE id IN ({old_tasks})").rowcount
+            db.execute("DROP TABLE IF EXISTS prune_tasks")
         artifact_root = self.paths.artifacts.resolve(strict=False)
         removed = 0
         for raw in files:
