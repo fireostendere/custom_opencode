@@ -81,6 +81,8 @@ class RuntimeStore:
             root=root, db=db, artifacts=root / "artifacts", worktrees=root / "worktrees"
         )
         self._init_lock = threading.Lock()
+        self._journal_lock = threading.Lock()
+        self._journal_ready = False
         self._initialized = False
 
     def initialize(self) -> None:
@@ -175,13 +177,20 @@ class RuntimeStore:
         db = sqlite3.connect(str(self.paths.db), timeout=10.0, isolation_level=None)
         db.row_factory = sqlite3.Row
         try:
-            try:
-                db.execute("PRAGMA journal_mode=WAL")
-            except sqlite3.OperationalError:
-                try:
-                    db.execute("PRAGMA journal_mode=TRUNCATE")
-                except sqlite3.OperationalError:
-                    pass
+            # journal_mode is persistent database state. Re-negotiating WAL on
+            # every tiny cache/event query adds filesystem locks to the hot path,
+            # especially on WSL. Configure it once per RuntimeStore instance.
+            if not self._journal_ready:
+                with self._journal_lock:
+                    if not self._journal_ready:
+                        try:
+                            db.execute("PRAGMA journal_mode=WAL")
+                        except sqlite3.OperationalError:
+                            try:
+                                db.execute("PRAGMA journal_mode=TRUNCATE")
+                            except sqlite3.OperationalError:
+                                pass
+                        self._journal_ready = True
             try:
                 db.execute("PRAGMA synchronous=NORMAL")
             except sqlite3.OperationalError:
