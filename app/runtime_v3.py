@@ -32,7 +32,7 @@ from urllib.error import URLError
 from urllib.parse import quote
 
 from model_registry import CapabilityRegistry
-from repo_services import ArtifactStore, git_snapshot, safe_repo_file
+from repo_services import ArtifactStore, git_snapshot, invalidate_git_snapshot, safe_repo_file
 from runtime_store import EXECUTION_STATES, RuntimeStore, now_ms
 
 WRITE_TOOLS = {"edit", "write", "apply_patch", "patch", "multiedit"}
@@ -179,10 +179,13 @@ class SemanticRepoIndexer:
         return hashlib.sha256(project_dir.encode()).hexdigest()
 
     def _files(self, root: Path) -> list[str]:
-        proc = _run(
-            root, ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], 15.0
-        )
-        if proc.returncode == 0:
+        try:
+            proc = _run(
+                root, ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], 15.0
+            )
+        except subprocess.TimeoutExpired:
+            proc = None
+        if proc is not None and proc.returncode == 0:
             return [item for item in proc.stdout.split("\0") if item][:12000]
         out = []
         for path in root.rglob("*"):
@@ -299,11 +302,14 @@ class SemanticRepoIndexer:
         return symbols, [m.group(1) for m in IMPORT_JS.finditer(text)]
 
     def _git_graph(self, root: Path) -> list[dict[str, Any]]:
-        proc = _run(
-            root,
-            ["git", "log", "--all", "--max-count=250", "--pretty=format:%H%x09%P%x09%ct%x09%s"],
-            12.0,
-        )
+        try:
+            proc = _run(
+                root,
+                ["git", "log", "--all", "--max-count=250", "--pretty=format:%H%x09%P%x09%ct%x09%s"],
+                12.0,
+            )
+        except subprocess.TimeoutExpired:
+            return []
         if proc.returncode != 0:
             return []
         rows = []
@@ -320,10 +326,16 @@ class SemanticRepoIndexer:
                 )
         return rows
 
-    def refresh(self, project_dir: str, *, force: bool = False) -> dict[str, Any]:
+    def refresh(
+        self,
+        project_dir: str,
+        *,
+        force: bool = False,
+        snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         root = Path(project_dir).resolve(strict=True)
-        snap = git_snapshot(str(root))
-        fingerprint = f"v{self.VERSION}:{snap.get('head')}:{snap.get('statusHash')}:{os.environ.get('OPENCODE_REPO_EMBEDDINGS','hash')}:{os.environ.get('OPENCODE_REPO_EMBED_MODEL','sentence-transformers/all-MiniLM-L6-v2')}"
+        snap = snapshot or git_snapshot(str(root), fresh=force)
+        fingerprint = f"v{self.VERSION}:{snap.get('head')}:{snap.get('statusHash')}:{snap.get('treeStamp')}:{snap.get('generation')}:{os.environ.get('OPENCODE_REPO_EMBEDDINGS','hash')}:{os.environ.get('OPENCODE_REPO_EMBED_MODEL','sentence-transformers/all-MiniLM-L6-v2')}"
         key = self._key(str(root))
         cached = self.store.cache_get("repo-index-v4", key)
         if not force and isinstance(cached, dict) and cached.get("fingerprint") == fingerprint:
@@ -451,8 +463,15 @@ class SemanticRepoIndexer:
         )
         return index
 
-    def search(self, project_dir: str, query: str, limit: int = 40) -> dict[str, Any]:
-        index = self.refresh(project_dir)
+    def search(
+        self,
+        project_dir: str,
+        query: str,
+        limit: int = 40,
+        *,
+        snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        index = self.refresh(project_dir, snapshot=snapshot)
         q = query.strip()
         terms = _tokenize(q)
         hits = []
@@ -499,17 +518,24 @@ class SemanticRepoIndexer:
         }
 
     def semantic_diff(
-        self, project_dir: str, baseline: dict[str, Any] | None = None
+        self,
+        project_dir: str,
+        baseline: dict[str, Any] | None = None,
+        *,
+        snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         root = Path(project_dir).resolve(strict=False)
         baseline = baseline or {}
-        current = git_snapshot(str(root))
+        current = snapshot or git_snapshot(str(root))
         base_head = baseline.get("head")
         args = ["git", "diff", "--unified=0", str(base_head or "HEAD"), "--"]
-        proc = _run(root, args, 12.0)
+        try:
+            proc = _run(root, args, 12.0)
+        except subprocess.TimeoutExpired:
+            proc = None
         changed_lines = defaultdict(list)
         current_file = None
-        if proc.returncode == 0:
+        if proc is not None and proc.returncode == 0:
             for line in proc.stdout.splitlines():
                 if line.startswith("+++ b/"):
                     current_file = line[6:]
@@ -522,7 +548,7 @@ class SemanticRepoIndexer:
         for relative in current.get("changed") or []:
             if relative not in changed_lines:
                 changed_lines[relative].append((1, 2**31 - 1))
-        index = self.refresh(str(root))
+        index = self.refresh(str(root), snapshot=current)
         impacted = []
         for symbol in index.get("symbols") or []:
             ranges = changed_lines.get(str(symbol.get("path"))) or []
@@ -1334,12 +1360,17 @@ class DynamicContextManager:
         task = tasks[0] if tasks else None
         compact = self.maybe_compact(features, runtime, sid, task)
         directory = features._session_directory(sid)
+        snapshot = git_snapshot(directory)
         budget_chars = max(6000, min(24000, compact["budgetTokens"] * 2))
+        # Runtime V3 owns semantic repo context. Do not run the legacy
+        # RepoIndexer/semantic_diff pipeline a second time for the same turn.
         base = runtime.CONTEXT.envelope(
             project_dir=directory,
             task=task,
             project_instructions="",
             budget_chars=min(6000, budget_chars // 4),
+            include_repo=False,
+            snapshot=snapshot,
         )
         parts = []
         query = (
@@ -1349,7 +1380,7 @@ class DynamicContextManager:
         )
         if query:
             try:
-                repo = self.indexer.search(directory, query, limit=20)
+                repo = self.indexer.search(directory, query, limit=20, snapshot=snapshot)
                 hits = repo.get("hits") or []
                 if hits:
                     parts.append(
@@ -1359,7 +1390,11 @@ class DynamicContextManager:
                             for h in hits[:20]
                         )
                     )
-                diff = self.indexer.semantic_diff(directory, task.get("baseline") if task else None)
+                diff = self.indexer.semantic_diff(
+                    directory,
+                    task.get("baseline") if task else None,
+                    snapshot=snapshot,
+                )
                 if diff.get("changedSymbols"):
                     parts.append(
                         "Changed symbols since task baseline:\n"
@@ -1579,6 +1614,11 @@ class ToolGateway:
         task = task or {"id": None, "project_dir": (binding or {}).get("directory")}
         task_id = task.get("id")
         root = str(task.get("project_dir") or cwd or "")
+        if root and (tool in WRITE_TOOLS or tool in SHELL_TOOLS):
+            # Native edit/shell tools can mutate tracked file contents without
+            # changing the repository directory mtime. Drop the cheap snapshot
+            # cache so the next context sees those writes immediately.
+            invalidate_git_snapshot(root)
         digest = hashlib.sha256(serialized.encode()).hexdigest()
         cache_key = f"{task_id or sid}:{tool}:{digest}"
         duplicate = self.store.cache_get("tool-result-dedupe", cache_key)
@@ -2099,6 +2139,8 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
             else:
                 raise ValueError("action must be status, request, check or apply")
         elif parsed.path == "/internal/runtime/tool-before":
+            if payload.get("countBudget") is True:
+                v3.ledger.tool(str(payload.get("sessionID") or ""))
             result = v3.gateway.before(payload)
         elif parsed.path == "/internal/runtime/tool-after":
             result = v3.gateway.after(payload)

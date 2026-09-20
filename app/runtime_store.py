@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import queue
 import sqlite3
 import threading
 import time
@@ -81,6 +82,13 @@ class RuntimeStore:
             root=root, db=db, artifacts=root / "artifacts", worktrees=root / "worktrees"
         )
         self._init_lock = threading.Lock()
+        self._journal_lock = threading.Lock()
+        self._journal_ready = False
+        try:
+            pool_size = max(1, min(32, int(os.environ.get("OPENCODE_SQLITE_POOL_SIZE", "8"))))
+        except ValueError:
+            pool_size = 8
+        self._pool: queue.LifoQueue[sqlite3.Connection] = queue.LifoQueue(maxsize=pool_size)
         self._initialized = False
 
     def initialize(self) -> None:
@@ -169,27 +177,60 @@ class RuntimeStore:
                 pass
             self._initialized = True
 
+    def _new_connection(self) -> sqlite3.Connection:
+        self.paths.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        db = sqlite3.connect(
+            str(self.paths.db),
+            timeout=10.0,
+            isolation_level=None,
+            check_same_thread=False,
+        )
+        db.row_factory = sqlite3.Row
+        # journal_mode is persistent database state. Re-negotiate it once per
+        # RuntimeStore instance, not for every cache/event query.
+        if not self._journal_ready:
+            with self._journal_lock:
+                if not self._journal_ready:
+                    try:
+                        db.execute("PRAGMA journal_mode=WAL")
+                    except sqlite3.OperationalError:
+                        try:
+                            db.execute("PRAGMA journal_mode=TRUNCATE")
+                        except sqlite3.OperationalError:
+                            pass
+                    self._journal_ready = True
+        try:
+            db.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.OperationalError:
+            pass
+        db.execute("PRAGMA foreign_keys=OFF")
+        return db
+
     @contextmanager
     def connect(self):
-        self.paths.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        db = sqlite3.connect(str(self.paths.db), timeout=10.0, isolation_level=None)
-        db.row_factory = sqlite3.Row
         try:
-            try:
-                db.execute("PRAGMA journal_mode=WAL")
-            except sqlite3.OperationalError:
-                try:
-                    db.execute("PRAGMA journal_mode=TRUNCATE")
-                except sqlite3.OperationalError:
-                    pass
-            try:
-                db.execute("PRAGMA synchronous=NORMAL")
-            except sqlite3.OperationalError:
-                pass
-            db.execute("PRAGMA foreign_keys=OFF")
+            db = self._pool.get_nowait()
+        except queue.Empty:
+            db = self._new_connection()
+        discard = False
+        try:
             yield db
+        except Exception:
+            discard = True
+            raise
         finally:
-            db.close()
+            try:
+                if db.in_transaction:
+                    db.rollback()
+            except sqlite3.Error:
+                discard = True
+            if discard:
+                db.close()
+            else:
+                try:
+                    self._pool.put_nowait(db)
+                except queue.Full:
+                    db.close()
 
     @contextmanager
     def transaction(self):
@@ -704,6 +745,10 @@ class RuntimeStore:
         )
         cutoff = timestamp - days * 86_400_000
         with self.transaction() as db:
+            # TEMP tables are connection-local and pooled connections survive
+            # across prune() calls. Always reset the scratch table so pooling
+            # cannot turn a second maintenance pass into an OperationalError.
+            db.execute("DROP TABLE IF EXISTS prune_tasks")
             db.execute(
                 "CREATE TEMP TABLE prune_tasks AS SELECT id FROM tasks WHERE state IN ('completed','failed','cancelled') AND COALESCE(finished_at,updated_at)<? AND id NOT IN (SELECT depends_on FROM task_dependencies)",
                 (cutoff,),
@@ -741,6 +786,7 @@ class RuntimeStore:
                 f"DELETE FROM task_dependencies WHERE task_id IN ({old_tasks}) OR depends_on IN ({old_tasks})"
             )
             tasks = db.execute(f"DELETE FROM tasks WHERE id IN ({old_tasks})").rowcount
+            db.execute("DROP TABLE IF EXISTS prune_tasks")
         artifact_root = self.paths.artifacts.resolve(strict=False)
         removed = 0
         for raw in files:

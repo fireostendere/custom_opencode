@@ -140,16 +140,23 @@ def main() -> int:
                 {"command": command, "expected": expected, "ok": expected.lower() in text.lower()}
             )
             if command == "/models" and expected in text:
-                os.write(master, b"Qwen3.7 Plus")
+                # Exercise native keyboard navigation instead of bulk-writing a
+                # filter string. Newer OpenTUI input handling can treat a whole
+                # os.write() payload as paste while the select dialog expects
+                # key events, which made healthy builds appear unable to switch
+                # models. Fresh audit state has Current first; Down skips the
+                # category header and lands on the next selectable model.
+                before = request("GET", f"/api/session/{sid}")["model"]
+                os.write(master, b"\x1b[B")
                 read(0.3)
                 os.write(master, b"\r")
                 read(1)
                 selected = request("GET", f"/api/session/{sid}")["model"]
                 rows.append(
                     {
-                        "command": "select Qwen3.7 Plus",
-                        "ok": selected["providerID"] == "bailian-cli"
-                        and selected["id"] == "qwen3.7-plus",
+                        "command": "select next model",
+                        "ok": selected["providerID"] != before["providerID"]
+                        or selected["id"] != before["id"],
                     }
                 )
             os.write(master, b"\x1b")
