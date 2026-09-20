@@ -9,6 +9,7 @@ import {
 } from "./tui/lib/mcp-profiles.js"
 import { McpDiscovery } from "./tui/lib/mcp-discovery.js"
 import { toolFabricConfig } from "./tui/lib/tool-fabric.js"
+import { syncManagedOrchestrations } from "./context-policy-lib.js"
 
 const STORAGE_KEY = "registry-v2"
 const CONFIG_DIR = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", "opencode")
@@ -257,6 +258,11 @@ function orchestrationDefinition(input) {
   const prompt = String(input.prompt || "").trim()
   if (!prompt) throw new Error("orchestration prompt is required")
   if (prompt.length > 50_000) throw new Error("orchestration prompt is too large")
+  const contextClass = String(
+    input.contextClass || (input.customInstructions === false ? "bare" : "full"),
+  ).trim().toLowerCase()
+  if (!["bare", "lite", "normal", "full"].includes(contextClass))
+    throw new Error("contextClass must be bare, lite, normal or full")
   return {
     key: `${providerID}/${id}`,
     definition: {
@@ -265,6 +271,7 @@ function orchestrationDefinition(input) {
       baseModelID,
       name: String(input.name || `${id} · Orchestrated`).slice(0, 160),
       prompt,
+      contextClass,
     },
   }
 }
@@ -297,6 +304,7 @@ export default {
     if (saved?.version > 2)
       throw new Error("Managed registry is newer than this plugin; refusing to overwrite it")
     let registry = normalizeRegistry(saved ?? legacy)
+    syncManagedOrchestrations(registry.orchestrations)
     if (legacy !== undefined) await ctx.storage.set(STORAGE_KEY, registry)
     let installed = {}
     const exposure = new Map() // Observations only, per session; never used as activation state.
@@ -323,6 +331,7 @@ export default {
     }
 
     const save = async () => {
+      syncManagedOrchestrations(registry.orchestrations)
       await ctx.storage.set(STORAGE_KEY, registry)
     }
     const reloadAll = async () => {
@@ -460,13 +469,9 @@ export default {
         // Native context blocks have no trustworthy provenance marker here;
         // filtering the tool registry is the authoritative access boundary.
       }
-      const providerID = String(event?.model?.providerID || "")
-      const id = String(event?.model?.id || "")
-      const item = registry.orchestrations[`${providerID}/${id}`]
-      if (!item?.prompt || !Array.isArray(event.system)) return
-      const marker = `Managed orchestration ${providerID}/${id}`
-      if (event.system.some((entry) => String(entry?.text || entry).includes(marker))) return
-      event.system.push({ type: "text", text: `${marker}:\n${item.prompt}` })
+      // Orchestration prompts and context classes are injected centrally by
+      // context-lanes.js so bare sessions can atomically replace native startup
+      // context without depending on plugin hook ordering.
     })
 
     if (process.env.OPENCODE_MCP_PROFILE_EVIDENCE)
@@ -654,7 +659,7 @@ export default {
         },
         usage(
           "addorchestration",
-          '/addorchestration {"providerID":"acme","id":"coder-orchestrated","baseModelID":"coder","name":"Coder · Orchestrated","prompt":"Plan only when needed, delegate bounded reads, verify before completion."}',
+          '/addorchestration {"providerID":"acme","id":"coder-orchestrated","baseModelID":"coder","name":"Coder · Orchestrated","contextClass":"full","prompt":"Plan only when needed, delegate bounded reads, verify before completion."}',
         ),
       )
 
@@ -664,6 +669,7 @@ export default {
         execute: () =>
           enqueueMutation(async () => {
             registry = normalizeRegistry(await ctx.storage.get(STORAGE_KEY))
+            syncManagedOrchestrations(registry.orchestrations)
             await ctx.catalog.reload()
           }),
       })
