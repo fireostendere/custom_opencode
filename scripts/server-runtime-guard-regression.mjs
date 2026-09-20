@@ -156,6 +156,26 @@ try {
     assert.equal(body.reasoning_effort, expected, `${agent}/${providerID}/${id}`)
     assert.equal(body.max_tokens, 1024, 'compaction must retain the output budget cap')
   }
+  const toolBeforeCalls = calls.filter((entry) => entry.url.endsWith('/internal/runtime/tool-before')).length
+  await hooks['tool:execute.before']({
+    sessionID: 'ses_tool_fast_path',
+    cwd: '/repo',
+    tool: { name: 'read' },
+    input: { path: 'README.md' },
+  })
+  const latestToolBefore = calls.filter((entry) => entry.url.endsWith('/internal/runtime/tool-before')).at(-1)
+  assert.ok(latestToolBefore, 'combined tool-before call recorded')
+  assert.equal(latestToolBefore.payload.countBudget, true)
+  assert.equal(
+    calls.filter((entry) => entry.url.endsWith('/internal/runtime/tool-before')).length,
+    toolBeforeCalls + 1,
+  )
+  assert.equal(
+    calls.filter((entry) => entry.url.endsWith('/internal/runtime/budget-tool')).length,
+    0,
+    'tool budget admission must not require a second runtime round trip',
+  )
+
   const budgetTool = tools.find((tool) => tool.name === 'context_budget')
   assert.ok(budgetTool, 'context_budget tool registered')
   assert.deepEqual(budgetTool.input.properties.action.enum, ['status', 'request'])
