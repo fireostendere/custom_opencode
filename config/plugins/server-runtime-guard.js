@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { capRequestBody, observeUsage } from "./tui/lib/request-budget.js"
-import { resolveContextPolicy } from "./context-policy-lib.js"
+import { resolveContextPolicy } from "./tui/lib/context-policy.js"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 const execFileAsync = promisify(execFile)
