@@ -23,6 +23,7 @@ const OWN_MARKERS = [
   "Custom visible plan policy",
   "Custom orchestrated Qwen policy",
   "Custom orchestrated SOL policy",
+  "Custom DnD Edition policy",
   "Managed orchestration ",
 ]
 
