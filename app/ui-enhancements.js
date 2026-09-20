@@ -325,11 +325,22 @@ function ensureProjectBrowser() {
   actions.className = 'project-browser-actions'
   actions.innerHTML = '<button type="button" class="project-browser-open" id="browseProjects">Папки на ПК</button>'
   choices.before(actions)
+  const pathForm = document.createElement('form')
+  pathForm.id = 'projectPathForm'
+  pathForm.className = 'directory-create-form project-path-form'
+  pathForm.innerHTML = '<input id="projectPathInput" name="path" maxlength="4096" required autocomplete="off" placeholder="Точный путь: /mnt/c/Users/…" aria-label="Путь к проекту"><button type="submit" class="primary">Открыть путь</button>'
+  const pathError = document.createElement('div')
+  pathError.id = 'projectPathError'
+  pathError.className = 'directory-create-error'
+  pathError.hidden = true
   const browser = document.createElement('div')
   browser.id = 'projectBrowser'
   browser.className = 'project-browser'
   browser.hidden = true
-  actions.after(browser)
+  actions.after(pathForm)
+  pathForm.after(pathError)
+  pathError.after(browser)
+  pathForm.addEventListener('submit', openExactProjectPath)
   $('browseProjects').addEventListener('click', openProjectBrowser)
 }
 
@@ -378,6 +389,33 @@ async function openProjectBrowser() {
   ensureProjectBrowser()
   $('projectChoices').hidden = true
   await browseDirectory().catch((error) => renderDirectorySnapshot({ error:error.message }))
+}
+
+async function openExactProjectPath(event) {
+  event.preventDefault()
+  const form = event.currentTarget
+  const input = form.querySelector('input[name="path"]')
+  const button = form.querySelector('button[type="submit"]')
+  const error = $('projectPathError')
+  const path = input?.value?.trim() || ''
+  if (!path) return
+  if (error) error.hidden = true
+  if (button) button.disabled = true
+  try {
+    const result = await request('/client-directories.json', {
+      method:'POST',
+      body:JSON.stringify({ path }),
+    })
+    if (!result?.ok || !result.directory) throw new Error(result?.error || 'Не удалось открыть путь')
+    await openDirectoryAsProject(result.directory)
+  } catch (exception) {
+    if (error) {
+      error.textContent = exception.message || 'Не удалось открыть путь'
+      error.hidden = false
+    }
+  } finally {
+    if (button) button.disabled = false
+  }
 }
 
 async function openDirectoryAsProject(directory) {
