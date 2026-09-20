@@ -415,7 +415,7 @@ assert.match(applied.skills.review.location, /managed-skills[\\/]review[\\/]SKIL
 const orchestrationEvent = { model: { providerID: 'acme-ui', id: 'coder-orchestrated' }, system: [] }
 await hooks.get('context')(orchestrationEvent)
 assert.equal(orchestrationEvent.system.length, 0, 'config-manager leaves system injection to context-lanes')
-const contextPolicy = await import(new URL('config/plugins/context-policy-lib.js', root).href)
+const contextPolicy = await import(new URL('config/plugins/tui/lib/context-policy.js', root).href)
 assert.equal(contextPolicy.resolveContextClass(orchestrationEvent), 'full')
 assert.equal(contextPolicy.managedOrchestration(orchestrationEvent).prompt, 'Verify before completion.')
 await configManager.default.setup(serverContext)
