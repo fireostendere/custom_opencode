@@ -297,7 +297,12 @@ def invalidate_git_snapshot(project_dir: str | None = None) -> None:
         _GIT_REFRESH_RETRY_AT.pop(key, None)
 
 
-def git_snapshot(project_dir: str, *, refresh: bool = False) -> dict[str, Any]:
+def git_snapshot(
+    project_dir: str,
+    *,
+    refresh: bool = False,
+    fresh: bool = False,
+) -> dict[str, Any]:
     """Return a bounded, cached repo snapshot.
 
     Interactive callers receive a fresh cache entry immediately when possible.
@@ -311,7 +316,7 @@ def git_snapshot(project_dir: str, *, refresh: bool = False) -> dict[str, Any]:
     stamp = _repo_quick_stamp(root)
     with _GIT_SNAPSHOT_LOCK:
         cached = _GIT_SNAPSHOT_CACHE.get(key)
-    if cached and not refresh and cached[1] == stamp:
+    if cached and not refresh and not fresh and cached[1] == stamp:
         age = now - cached[0]
         if age >= _git_snapshot_ttl():
             _schedule_git_refresh(key, root)
@@ -322,8 +327,9 @@ def git_snapshot(project_dir: str, *, refresh: bool = False) -> dict[str, Any]:
             ageMs=round(age * 1000, 2),
         )
 
-    # A forced refresh is reserved for explicit/background work. Normal first
-    # touch stays fast and never enumerates all untracked files.
+    # A full refresh is reserved for explicit/background work. A fresh fast
+    # capture bypasses cache without enumerating untracked files; this keeps
+    # explicit diff/verification reads correct after out-of-band file edits.
     value = _capture_git_snapshot(
         root,
         include_untracked=refresh,
@@ -342,7 +348,7 @@ def semantic_diff(
     *,
     snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    current = snapshot or git_snapshot(project_dir)
+    current = snapshot or git_snapshot(project_dir, fresh=True)
     baseline = baseline or {}
     root = Path(project_dir).resolve(strict=False)
     files = list(current.get("changed") or [])
@@ -395,7 +401,7 @@ class RepoIndexer:
         snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         root = Path(project_dir).resolve(strict=True)
-        snapshot = snapshot or git_snapshot(project_dir)
+        snapshot = snapshot or git_snapshot(project_dir, fresh=force)
         fingerprint = f"{snapshot.get('head')}:{snapshot.get('statusHash')}"
         key = self._key(project_dir)
         cached = self.store.cache_get("repo-index", key)
