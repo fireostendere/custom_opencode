@@ -79,7 +79,10 @@ for (const model of [...__smoke.ux.ORCHESTRATED_MODELS, { id: 'qwen3.8-max', pro
   button.textContent = model.label || model.id
   controls.syncModelSurface()
   assert.equal(button.textContent, model.label || model.id, 'session model label must survive stale DOM state')
-  assert.equal(controls.currentProfile(), model.label ? 'orchestrated' : 'direct', 'session model must override stored profile')
+  const expectedProfile = model.id === 'gpt-5.6-dnd-edition'
+    ? 'dnd-edition'
+    : model.label ? 'orchestrated' : 'direct'
+  assert.equal(controls.currentProfile(), expectedProfile, 'session model must override stored profile')
   assert.equal(document.documentElement.dataset.orchestratedModel, model.label ? model.id : undefined)
 }
 console.log('Model identity smoke passed: session model overrides stale labels and profiles')
