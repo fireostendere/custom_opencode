@@ -122,6 +122,7 @@ _GIT_SNAPSHOT_LOCK = threading.Lock()
 _GIT_SNAPSHOT_CACHE: dict[str, tuple[float, tuple[Any, ...], dict[str, Any]]] = {}
 _GIT_REFRESHING: set[str] = set()
 _GIT_REFRESH_RETRY_AT: dict[str, float] = {}
+_GIT_GENERATION: dict[str, int] = {}
 
 
 def _git_snapshot_ttl() -> float:
@@ -244,7 +245,7 @@ def _capture_git_snapshot(root: Path, *, include_untracked: bool, timeout: float
     }
 
 
-def _refresh_git_snapshot(key: str, root: Path) -> None:
+def _refresh_git_snapshot(key: str, root: Path, generation: int) -> None:
     try:
         try:
             delay_seconds = max(
@@ -258,6 +259,8 @@ def _refresh_git_snapshot(key: str, root: Path) -> None:
         value = _capture_git_snapshot(root, include_untracked=True, timeout=12.0)
         now = time.monotonic()
         with _GIT_SNAPSHOT_LOCK:
+            if _GIT_GENERATION.get(key, 0) != generation:
+                return
             previous = _GIT_SNAPSHOT_CACHE.get(key)
             # Never replace a usable snapshot with a timed-out background probe.
             if not value.get("partial") or previous is None:
@@ -278,9 +281,10 @@ def _schedule_git_refresh(key: str, root: Path) -> None:
         if key in _GIT_REFRESHING or now < _GIT_REFRESH_RETRY_AT.get(key, 0.0):
             return
         _GIT_REFRESHING.add(key)
+        generation = _GIT_GENERATION.get(key, 0)
     threading.Thread(
         target=_refresh_git_snapshot,
-        args=(key, root),
+        args=(key, root, generation),
         name="custom-opencode-git-refresh",
         daemon=True,
     ).start()
@@ -289,12 +293,16 @@ def _schedule_git_refresh(key: str, root: Path) -> None:
 def invalidate_git_snapshot(project_dir: str | None = None) -> None:
     with _GIT_SNAPSHOT_LOCK:
         if project_dir is None:
+            keys = set(_GIT_SNAPSHOT_CACHE) | set(_GIT_REFRESHING) | set(_GIT_GENERATION)
             _GIT_SNAPSHOT_CACHE.clear()
             _GIT_REFRESH_RETRY_AT.clear()
+            for key in keys:
+                _GIT_GENERATION[key] = _GIT_GENERATION.get(key, 0) + 1
             return
         key = str(Path(project_dir).resolve(strict=False))
         _GIT_SNAPSHOT_CACHE.pop(key, None)
         _GIT_REFRESH_RETRY_AT.pop(key, None)
+        _GIT_GENERATION[key] = _GIT_GENERATION.get(key, 0) + 1
 
 
 def git_snapshot(
