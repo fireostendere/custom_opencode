@@ -343,7 +343,12 @@ trap cleanup_install EXIT
 
 if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   install -d "$CONFIG_DIR/plugins" "$CONFIG_DIR/plugins/tui" "$CONFIG_DIR/prompts" "$CONFIG_DIR/themes"
-  install -m 0644 "$ROOT/config/AGENTS.md" "$CONFIG_DIR/AGENTS.md"
+  # The managed engineering policy is now model-aware. Remove only the exact
+  # legacy global AGENTS.md that this project used to install; preserve any
+  # user-edited file rather than treating it as managed state.
+  if [[ -f "$CONFIG_DIR/AGENTS.md" ]] && cmp -s "$CONFIG_DIR/AGENTS.md" "$ROOT/config/prompts/engineering.md"; then
+    rm -f "$CONFIG_DIR/AGENTS.md"
+  fi
   install -m 0644 "$ROOT/config/cli.json" "$CONFIG_DIR/cli.json"
   install -m 0644 "$ROOT/config/events.js" "$CONFIG_DIR/events.js"
   install -m 0644 "$ROOT/config/prompts/"* "$CONFIG_DIR/prompts/"
