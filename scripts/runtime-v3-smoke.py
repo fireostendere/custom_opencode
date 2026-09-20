@@ -329,6 +329,22 @@ with tempfile.TemporaryDirectory() as temp:
     assert context["compaction"]["compactionRequested"] is True
     assert any(call[1].endswith("/compact") for call in fake.calls)
     assert "Semantic repository matches" in context["text"]
+    assert context["contextClass"] == "full"
+
+    lite = manager.envelope(
+        fake, runtime_stub, "s1", "run tests", rag_mode="on", context_class="lite"
+    )
+    assert lite["contextClass"] == "lite"
+    assert 0 < lite["budgetChars"] <= 4000
+    assert "Semantic repository matches" not in lite["text"]
+    assert "Shared engineering knowledge retrieval" not in lite["text"]
+    assert "Project instructions:" not in lite["text"]
+
+    bare = manager.envelope(
+        fake, runtime_stub, "s1", "run tests", rag_mode="on", context_class="bare"
+    )
+    assert bare["contextClass"] == "bare"
+    assert bare["text"] == "" and bare["budgetChars"] == 0
 
     replay = ReplayService(store, artifacts)
     captured = replay.capture(fake, store.get_task("t1"))
