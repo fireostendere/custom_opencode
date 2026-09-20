@@ -8,15 +8,12 @@ import { join } from "node:path"
 
 const require = createRequire(import.meta.url)
 const MODES = new Set(["off", "lite", "full", "ultra"])
-const MARKER = "Ponytail V2 engineering policy"
-
 export default {
   id: "custom.ponytail-v2",
   async setup(ctx) {
     if (process.env.PONYTAIL_ENABLED === "0") return
     const data = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share")
     const root = process.env.PONYTAIL_CHECKOUT_DIR || join(data, "opencode", "ponytail")
-    const { getPonytailInstructions } = require(join(root, "hooks", "ponytail-instructions.js"))
     const { getDefaultMode, normalizePersistedMode } = require(join(root, "hooks", "ponytail-config.js"))
     const directory = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode")
     const target = join(directory, ".ponytail-active")
@@ -33,12 +30,6 @@ export default {
       }
     }
     const registrations = await Promise.all([
-      ctx.session.hook("context", (event) => {
-        if (!Array.isArray(event.system)) return
-        const mode = readMode()
-        if (mode === "off" || event.system.some((part) => String(part?.text ?? part).startsWith(MARKER))) return
-        event.system.push({ type: "text", text: `${MARKER} (${mode}):\n${getPonytailInstructions(mode)}` })
-      }),
       ctx.command.transform((commands) => commands.add({
         name: "ponytail",
         description: "Show Ponytail mode or set off / lite / full / ultra (no model call)",
