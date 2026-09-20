@@ -202,8 +202,11 @@ cat >"$AUTH" <<'EOF'
 EOF
 chmod 0600 "$AUTH"
 cp "$AUTH" "$TMP/auth-before-update.json"
+printf '%s\n' '# user-owned AGENTS policy' >"$HOME_DIR/.config/opencode/AGENTS.md"
+cp "$HOME_DIR/.config/opencode/AGENTS.md" "$TMP/user-agents-before-update.md"
 run_with_auth_backups 4102444800000 "$TMP/preserve-auth.out"
 cmp -s "$TMP/auth-before-update.json" "$AUTH" || { echo "installer overwrote live provider credentials" >&2; exit 1; }
+cmp -s "$TMP/user-agents-before-update.md" "$HOME_DIR/.config/opencode/AGENTS.md" || { echo "installer overwrote user-owned AGENTS.md" >&2; exit 1; }
 
 # Missing API credentials may be restored, but an expired OAuth backup may not.
 printf '%s\n' '{"unmanaged":{"type":"api","key":"keep-me"}}' >"$AUTH"
