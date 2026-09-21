@@ -4,7 +4,10 @@ import { ensureRouter } from "./lazy-local-router.js"
 
 const MODE = String(process.env.DND_ORCHESTRATOR || "auto").toLowerCase()
 const RUNTIME_HOST = process.env.OPENCODE_RUNTIME_PLUGIN_HOST || "127.0.0.1"
-const RUNTIME_PORT = process.env.OPENCODE_POLICY_PORT || process.env.OPENCODE_WEB_PORT || "4099"
+// The private Runtime V3 listener is separate from the web listener. Falling
+// back to OPENCODE_WEB_PORT sends the route request to the public web server,
+// which correctly returns 404 for /internal/runtime/*.
+const RUNTIME_PORT = process.env.OPENCODE_POLICY_PORT || "4099"
 const TOKEN = process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN || process.env.OPENCODE_SERVER_PASSWORD || ""
 const ROUTE_URL = `http://${RUNTIME_HOST}:${RUNTIME_PORT}/internal/runtime/dnd/route`
 const TELEMETRY = process.env.DND_TELEMETRY_FILE
@@ -68,7 +71,11 @@ function applyRoute(body, decision) {
   const tier = selected === "SOL_XHIGH" ? "default" : "fast"
   const result = structuredClone(body)
   result.model = target
-  result.service_tier = tier
+  // Native OpenAI rejects the internal `fast` label in the raw request body.
+  // The OpenCode model/variant remains the Luna LOW/XHIGH route; omit only the
+  // unsupported wire field and let the provider use its configured default.
+  if (tier === "default" || process.env.DND_NATIVE_FAST_SERVICE_TIER === "1") result.service_tier = tier
+  else delete result.service_tier
   if (result.reasoning && typeof result.reasoning === "object") result.reasoning = { ...result.reasoning, effort }
   else result.reasoning_effort = effort
   return result
@@ -76,12 +83,15 @@ function applyRoute(body, decision) {
 
 async function record(event, decision, telemetry, fallback) {
   if (!TELEMETRY) return
+  const observed = telemetry ? { ...telemetry } : null
+  if (observed?.requested_service_tier === "fast" && process.env.DND_NATIVE_FAST_SERVICE_TIER !== "1")
+    observed.actual_service_tier = "provider-default"
   const row = {
     at: new Date().toISOString(),
     sessionID: String(event.sessionID || "").slice(0, 256),
     route: decision?.route || null,
     confidence: decision?.confidence ?? null,
-    telemetry: telemetry || null,
+    telemetry: observed,
     fallback: fallback || null,
   }
   await appendFile(TELEMETRY, `${JSON.stringify(row)}\n`, { mode: 0o600 })

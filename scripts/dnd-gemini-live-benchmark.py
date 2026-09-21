@@ -17,7 +17,7 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = "gemini-3.8-flash"
-SERVICE_FILE = Path(os.environ.get("OPENCODE_SERVICE_FILE", "/home/devil/.config/opencode/service.json"))
+SERVICE_FILE = Path(os.environ.get("OPENCODE_SERVICE_FILE", str(Path.home() / ".config/opencode/service.json")))
 SCENARIOS = {
     "Simple": "I open the door and walk inside.",
     "Deterministic": "I give Vasya one healing potion.",

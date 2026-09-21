@@ -11,7 +11,7 @@ import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVICE_FILE = Path(os.environ.get("OPENCODE_SERVICE_FILE", "/home/devil/.config/opencode/service.json"))
+SERVICE_FILE = Path(os.environ.get("OPENCODE_SERVICE_FILE", str(Path.home() / ".config/opencode/service.json")))
 MODEL = "gemini-3.8-flash"
 SCENARIOS = {
     "Simple": "I open the door and walk inside.",

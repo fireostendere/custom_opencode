@@ -161,6 +161,49 @@
             }
           ]
         },
+        "gpt-5.6-luna": {
+          "modelID": "gpt-5.6-luna",
+          "name": "GPT-5.6 Luna · D&D narrator",
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "input": 272000,
+            "output": 128000
+          },
+          "variants": [
+            {
+              "id": "low",
+              "settings": {
+                "reasoningEffort": "low",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            },
+            {
+              "id": "xhigh",
+              "settings": {
+                "reasoningEffort": "xhigh",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            }
+          ],
+          "defaultVariant": "low"
+        },
         "gpt-5.6-dnd-edition": {
           "modelID": "gpt-5.6-sol",
           "name": "GPT-5.6 · DnD Edition",

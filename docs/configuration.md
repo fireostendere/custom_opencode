@@ -82,10 +82,16 @@ selected RAG and exact D&D tool schemas. This also applies when the
 `gpt-5.6-dnd-edition` model is selected directly, including a `modelID`-shaped
 native event.
 
-Live routes are discrete: `NO_LLM`/authoritative tool dispatch, `LUNA_LOW`,
-`LUNA_XHIGH` on the Fast tier, or rare `SOL_XHIGH` on the standard tier. Sol never
-receives the Fast tier. Runtime V3 keeps state and RAG branches independent; ODM
-remains responsible for mechanics, mutations, identity and privacy.
+Live routes are discrete: `NO_LLM`/authoritative tool dispatch, requested Fast
+`LUNA_LOW`/`LUNA_XHIGH`, or rare standard-tier `SOL_XHIGH`. Sol never receives
+the Fast tier. Runtime V3 keeps state and RAG branches independent; ODM remains
+responsible for mechanics, mutations, identity and privacy.
+
+The native OpenAI wire adapter currently rejects the internal `service_tier=fast`
+field. Luna LOW/XHIGH therefore keep the requested Fast route in telemetry but
+omit that unsupported wire field and record the provider's effective tier as
+`provider-default`; set `DND_NATIVE_FAST_SERVICE_TIER=1` only after the active
+provider explicitly accepts that field.
 
 Alibaba-роли provider-locked на Alibaba Cloud/Bailian, а SOL и DnD-роли provider-locked
 на официальный OpenAI provider. Ни одна роль из orchestration stack не должна
