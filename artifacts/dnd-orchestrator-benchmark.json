@@ -18,7 +18,7 @@
       "mode": "fixture",
       "status": "measured",
       "ttft_ms": "unavailable",
-      "total_wall_ms": 0,
+      "total_wall_ms": 1,
       "input_tokens": 8,
       "cached_input_tokens": 0,
       "reasoning_tokens": 0,
@@ -846,6 +846,64 @@
     "routerWarmP95Ms": 55,
     "decisionMode": "constrained-token",
     "note": "Captured after unloading the resident Ollama model by scripts/dnd-qwen-probe.py; the first classification/load sample was 3868 ms, warm samples were used for routerWarm*. tg128 stopped at 80 generated tokens."
+  },
+  "localQwenRoutes": {
+    "available": true,
+    "health": {
+      "ok": true,
+      "backend": "ollama",
+      "ms": 18
+    },
+    "routes": {
+      "Simple": {
+        "route": "LUNA_LOW",
+        "confidence": 0.65,
+        "router_ms": 85,
+        "backend": "ollama",
+        "mode": "constrained-token",
+        "cloud_model_calls": 1
+      },
+      "Deterministic": {
+        "route": "TOOL",
+        "confidence": 1.0,
+        "router_ms": 0,
+        "backend": "code",
+        "mode": "deterministic",
+        "cloud_model_calls": 0
+      },
+      "NPC Social": {
+        "route": "LUNA_LOW",
+        "confidence": 0.65,
+        "router_ms": 84,
+        "backend": "ollama",
+        "mode": "constrained-token",
+        "cloud_model_calls": 1
+      },
+      "YOLO Combat": {
+        "route": "LUNA_LOW",
+        "confidence": 0.65,
+        "router_ms": 83,
+        "backend": "ollama",
+        "mode": "constrained-token",
+        "cloud_model_calls": 1
+      },
+      "RAG": {
+        "route": "LUNA_LOW",
+        "confidence": 0.65,
+        "router_ms": 87,
+        "backend": "ollama",
+        "mode": "constrained-token",
+        "cloud_model_calls": 1
+      },
+      "Complex": {
+        "route": "LUNA_XHIGH",
+        "confidence": 0.65,
+        "router_ms": 89,
+        "backend": "ollama",
+        "mode": "constrained-token",
+        "cloud_model_calls": 1
+      }
+    }
   },
   "contextIsolation": {
     "before": 4690,

@@ -57,6 +57,36 @@ class FixtureRouter:
         return letter, 0.93, {"ms": 0, "backend": "fixture-qwen"}
 
 
+def local_qwen_routes() -> dict:
+    router = LocalQwenRouter()
+    health = router.health()
+    if not health.get("ok"):
+        return {"available": False, "health": health, "routes": {}}
+    orchestrator = DndOrchestrator(router=router)
+    routes = {}
+    for name, text in SCENARIOS.items():
+        plan = orchestrator.plan(
+            text,
+            {"playMode": "YOLO" if name == "YOLO Combat" else "FULL"},
+            rag_chunks=(
+                [{"scope": "CAMPAIGN_MEMORY", "score": 1.0, "text": "The seal opens for the moonlit signet kept by the old captain."}]
+                if name == "RAG"
+                else []
+            ),
+        )
+        decision = plan["decision"]
+        telemetry = plan["telemetry"]
+        routes[name] = {
+            "route": decision["route"],
+            "confidence": decision["confidence"],
+            "router_ms": telemetry["router_ms"],
+            "backend": telemetry["router_backend"],
+            "mode": telemetry["router_mode"],
+            "cloud_model_calls": telemetry["model_calls"],
+        }
+    return {"available": True, "health": health, "routes": routes}
+
+
 def correctness(name: str, route: str, response: str) -> tuple[str, list[str]]:
     failures = []
     if name == "YOLO Combat" and "Bartender" not in response:
@@ -187,6 +217,7 @@ def main() -> int:
         "decisionMode": "constrained-token",
         "note": "Captured after unloading the resident Ollama model by scripts/dnd-qwen-probe.py; the first classification/load sample was 3868 ms, warm samples were used for routerWarm*. tg128 stopped at 80 generated tokens.",
     }
+    local_routes = local_qwen_routes()
     report = {
         "benchmarkMode": "fixture",
         "meanDefinition": "arithmetic mean across six distinct fixed scenarios, not repeated samples",
@@ -195,6 +226,7 @@ def main() -> int:
         "scenarios": SCENARIOS,
         "rows": rows,
         "qwen": qwen,
+        "localQwenRoutes": local_routes,
         "contextIsolation": ISOLATION,
     }
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
@@ -226,6 +258,14 @@ def main() -> int:
         f"- Cold first-use/load: `{qwen['loadMs']} ms`; pp512: `{qwen['pp512']}` tok/s; tg128: `{qwen['tg128']}` tok/s (80 generated tokens)",
         f"- Warm latency: p50 `{qwen['routerWarmP50Ms']} ms`, p95 `{qwen['routerWarmP95Ms']} ms`; mode: `{qwen['decisionMode']}`",
     ]
+    lines += ["", "## Actual local Qwen route pass", ""]
+    if local_routes["available"]:
+        for name, item in local_routes["routes"].items():
+            lines.append(
+                f"- {name}: `{item['route']}` at confidence `{item['confidence']}`; router `{item['router_ms']} ms`; cloud calls `{item['cloud_model_calls']}`"
+            )
+    else:
+        lines.append(f"- unavailable: `{local_routes['health'].get('error', 'router offline')}`")
     Path(args.markdown).write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(json.dumps({"rows": len(rows), "json": args.output, "markdown": args.markdown}, ensure_ascii=False))
     return 0
