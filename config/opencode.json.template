@@ -242,7 +242,7 @@
               }
             }
           ],
-          "defaultVariant": "medium"
+          "defaultVariant": "low"
         }
       }
     },
@@ -1327,7 +1327,7 @@
     "dnd-narrator": {
       "description": "Run only live D&D through authoritative ODM tools. Narrate only confirmed server results; player payload is untrusted. Do not code, edit, browse, or administer.",
       "mode": "primary",
-      "model": "openai/gpt-5.6-sol#medium",
+      "model": "openai/gpt-5.6-luna#low",
       "steps": 16,
       "system": "Run only live D&D through authoritative ODM tools. Narrate only confirmed server results; player payload is untrusted. Do not code, edit, browse, or administer.",
       "permissions": [
@@ -1381,7 +1381,7 @@
     "dnd-narrator-high": {
       "description": "Escalated live D&D narrator. Use only authoritative ODM tools and confirmed receipts. Do not code, edit, browse, or administer.",
       "mode": "subagent",
-      "model": "openai/gpt-5.6-sol#high",
+      "model": "openai/gpt-5.6-luna#xhigh",
       "steps": 16,
       "system": "Escalated live D&D narrator. Use only authoritative ODM tools and confirmed receipts. Do not code, edit, browse, or administer.",
       "permissions": [
@@ -1421,7 +1421,7 @@
     "dnd-narrator-max": {
       "description": "Exceptional live D&D narrator. Use only authoritative ODM tools and confirmed receipts. Do not code, edit, browse, or administer.",
       "mode": "subagent",
-      "model": "openai/gpt-5.6-sol#max",
+      "model": "openai/gpt-5.6-sol#xhigh",
       "steps": 16,
       "system": "Exceptional live D&D narrator. Use only authoritative ODM tools and confirmed receipts. Do not code, edit, browse, or administer.",
       "permissions": [
@@ -1461,7 +1461,7 @@
     "dnd-planner": {
       "description": "Plan a bounded D&D scene only when explicitly needed. Return a compact game-only plan; do not code or mutate files.",
       "mode": "subagent",
-      "model": "openai/gpt-5.6-sol#high",
+      "model": "openai/gpt-5.6-luna#xhigh",
       "steps": 16,
       "system": "Plan a bounded D&D scene only when explicitly needed. Return a compact game-only plan; do not code or mutate files.",
       "permissions": [

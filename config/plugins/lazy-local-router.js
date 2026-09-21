@@ -4,6 +4,7 @@ const LOCAL_PROVIDER = process.env.OPENCODE_LOCAL_PROVIDER || "ollama"
 const ROUTER_URL = process.env.OPENCODE_LOCAL_ROUTER_URL
 const START_SCRIPT = process.env.OPENCODE_LOCAL_ROUTER_START
 const LOG_PATH = process.env.OPENCODE_LOCAL_ROUTER_LOG
+const DND_MODE = String(process.env.DND_ORCHESTRATOR || "auto").toLowerCase()
 let currentStart = null
 
 async function healthy() {
@@ -17,8 +18,9 @@ async function healthy() {
   }
 }
 
-async function ensureRouter() {
-  if (!AUTO_START) return
+export async function ensureRouter({ dnd = false } = {}) {
+  const dndStart = dnd && DND_MODE !== "off" && process.env.DND_QWEN_AUTOSTART !== "0"
+  if (!AUTO_START && !dndStart) return
   if (currentStart) return currentStart
 
   currentStart = (async () => {
@@ -47,6 +49,10 @@ async function ensureRouter() {
   } finally {
     currentStart = null
   }
+}
+
+export async function localRouterHealth() {
+  return healthy()
 }
 
 // Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.

@@ -32,6 +32,7 @@ from urllib.error import URLError
 from urllib.parse import quote
 
 from model_registry import CapabilityRegistry
+from dnd_orchestrator import DndOrchestrator
 from repo_services import ArtifactStore, git_snapshot, invalidate_git_snapshot, safe_repo_file
 from runtime_store import EXECUTION_STATES, RuntimeStore, now_ms
 
@@ -1904,6 +1905,7 @@ class RuntimeV3:
     notifier: RemoteNotifier
     replay: ReplayService
     branches: BranchStateService
+    dnd: DndOrchestrator
 
 
 _INSTANCE: RuntimeV3 | None = None
@@ -1930,6 +1932,7 @@ def install(runtime: Any, features: Any) -> RuntimeV3:
         RemoteNotifier(runtime.STORE),
         ReplayService(runtime.STORE, runtime.ARTIFACTS),
         BranchStateService(runtime.STORE),
+        DndOrchestrator(),
     )
     from execution_ledger import ExecutionLedger
 
@@ -1947,6 +1950,9 @@ def install(runtime: Any, features: Any) -> RuntimeV3:
                 "shared-rag",
                 "replay",
                 "provider-pinned-role-router",
+                "dnd-super-orchestrator",
+                "snapshot-aware-state",
+                "structured-narration-voice-metadata",
             ]
         },
     )
@@ -2017,11 +2023,15 @@ def runtime_snapshot(runtime: Any, features: Any, directory: str | None = None) 
             "zeroTokenReplay": True,
             "providerLockedRoleRouter": True,
             "remoteNotificationAPI": True,
+            "dndSuperOrchestrator": True,
+            "dndSnapshotAware": True,
+            "dndStructuredNarration": True,
         }
     )
     base["requestAccounting"] = v3.ledger.summary()
     base["resources"] = runtime.resource_snapshot()
     base["secretBroker"] = v3.secrets.snapshot()
+    base["dndOrchestrator"] = v3.dnd.status()
     return base
 
 
@@ -2031,6 +2041,7 @@ def handle_get(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
         "/client-repo-index-v3.json",
         "/client-replay.json",
         "/client-runtime-events.json",
+        "/client-dnd-orchestrator.json",
     }:
         return False
     if not handler.authenticated():
@@ -2048,6 +2059,8 @@ def handle_get(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
         v3 = instance(runtime, features)
         if parsed.path == "/client-runtime-v3.json":
             handler.json_response(runtime_snapshot(runtime, features, directory))
+        elif parsed.path == "/client-dnd-orchestrator.json":
+            handler.json_response(v3.dnd.status())
         elif parsed.path == "/client-repo-index-v3.json":
             if not directory:
                 raise ValueError("directory/sessionID required")
@@ -2084,6 +2097,7 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
         "/internal/runtime/budget-tool",
         "/internal/runtime/budget-status",
         "/internal/runtime/execution-budget",
+        "/internal/runtime/dnd/route",
     }
     public = {
         "/client-session-branch.json",
@@ -2103,7 +2117,12 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
     try:
         payload = _json_body(handler)
         v3 = instance(runtime, features)
-        if parsed.path == "/internal/runtime/bind":
+        if parsed.path == "/internal/runtime/dnd/route":
+            message = str(payload.get("message") or "")
+            context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+            plan = v3.dnd.plan(message, context)
+            result = {"ok": True, **plan}
+        elif parsed.path == "/internal/runtime/bind":
             sid = str(payload.get("sessionID") or "")
             directory = str(Path(str(payload.get("directory") or "")).resolve(strict=True))
             if not payload.get("directory"):
