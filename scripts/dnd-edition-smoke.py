@@ -19,7 +19,11 @@ def config() -> dict:
 
 cfg = config()
 alias = cfg["providers"]["openai"]["models"]["gpt-5.6-dnd-edition"]
+luna = cfg["providers"]["openai"]["models"]["gpt-5.6-luna"]
 assert alias["modelID"] == "gpt-5.6-sol"
+variants = {item["id"]: item for item in luna["variants"]}
+assert variants["low"]["body"]["service_tier"] == "fast"
+assert variants["xhigh"]["body"]["service_tier"] == "fast"
 assert alias["name"] == "GPT-5.6 · DnD Edition"
 assert alias["defaultVariant"] == "low"
 assert {item["id"] for item in alias["variants"]} == {"none", "low", "medium", "high", "xhigh", "max"}

@@ -189,6 +189,9 @@
                 "include": [
                   "reasoning.encrypted_content"
                 ]
+              },
+              "body": {
+                "service_tier": "fast"
               }
             },
             {
@@ -199,6 +202,9 @@
                 "include": [
                   "reasoning.encrypted_content"
                 ]
+              },
+              "body": {
+                "service_tier": "fast"
               }
             }
           ],
