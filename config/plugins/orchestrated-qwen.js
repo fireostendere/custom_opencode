@@ -9,11 +9,13 @@ export function isOrchestratedSol(event) {
   return event?.model?.providerID === "openai" && event?.model?.id === "gpt-5.6-sol-orchestrated"
 }
 export function isDndEdition(event) {
-  return event?.model?.providerID === "openai" && event?.model?.id === "gpt-5.6-dnd-edition"
+  const modelID = event?.model?.id || event?.model?.modelID
+  return event?.model?.providerID === "openai" && modelID === "gpt-5.6-dnd-edition"
 }
 
 export function isDndContext(event) {
-  return isDndEdition(event) || String(event?.agent || "").startsWith("dnd-")
+  const agent = String(event?.agent || "")
+  return isDndEdition(event) || agent.startsWith("dnd-") || agent.startsWith("narrator-")
 }
 
 export function dndToolName(tool) {
@@ -48,6 +50,8 @@ if (process.env.OPENCODE_ORCHESTRATED_QWEN_SELF_CHECK) {
   if (!isDndEdition({ model: { providerID: "openai", id: "gpt-5.6-dnd-edition" } })) throw new Error("DnD selector failed")
   if (isDndEdition({ model: { providerID: "openai", id: "gpt-5.6-sol-orchestrated" } })) throw new Error("SOL alias must stay SOL")
   if (!isDndContext({ agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-5.6-sol" } })) throw new Error("DnD agent context selector failed")
+  if (!isDndContext({ agent: "narrator-social", model: { providerID: "openai", id: "gpt-5.6-luna" } })) throw new Error("ODM narrator context selector failed")
+  if (isDndContext({ agent: "build", model: { providerID: "openai", id: "gpt-5.6-luna" } })) throw new Error("ordinary direct model must stay native")
   const filtered = filterDndTools(["odm_narrator", "shell", "kb_knowledge_search", "edit"])
   if (filtered.join(",") !== "odm_narrator,kb_knowledge_search") throw new Error("DnD tool filter failed")
   console.log("orchestrated-qwen self-check OK")

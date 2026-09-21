@@ -309,6 +309,17 @@ export default {
     await ctx.session.hook("context", async (event) => {
       const sessionID = event?.sessionID || ""
       if (!sessionID) return
+      event.system ||= []
+      const policy = resolveContextPolicy(event)
+      const managedPrefix =
+        `${CONTEXT_MARKER} (deduplicated, budgeted, checkpoint/RAG/repo aware):\n`
+      // D&D is a hard minimal lane. Do not bind native sessions, build a
+      // catalog, or call the generic runtime context endpoint here.
+      if (policy.dndMinimalContext) {
+        event.system = event.system.filter((part) => !systemText(part).startsWith(managedPrefix))
+        managedContexts.delete(sessionID)
+        return
+      }
       const turn = [...(event.messages || [])].reverse().find((message) => message.role === "user")
       let binding
       // Unit adapters without native introspection retain the legacy contract;
@@ -316,10 +327,6 @@ export default {
       if (ctx.catalog?.model?.list) {
         ;({ binding } = await bindNative(event, turn?.id || ""))
       }
-      event.system ||= []
-      const policy = resolveContextPolicy(event)
-      const managedPrefix =
-        `${CONTEXT_MARKER} (deduplicated, budgeted, checkpoint/RAG/repo aware):\n`
       if (!policy.runtime) {
         event.system = event.system.filter((part) => !systemText(part).startsWith(managedPrefix))
         managedContexts.delete(sessionID)

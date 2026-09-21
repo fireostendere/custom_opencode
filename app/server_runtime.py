@@ -365,7 +365,12 @@ def _switch_session(features: Any, task: dict[str, Any]) -> dict[str, Any]:
     profile = profiles.get(profile_id)
     if not isinstance(profile, dict):
         raise ValueError(f"task profile is not configured: {profile_id}")
-    role_task = task.get("kind") in {"review", "research", "aggregate"}
+    dnd_lane = bool(profile.get("dndMinimalContext"))
+    if dnd_lane:
+        # A D&D task is a single live turn. Never reinterpret mode=plan as a
+        # planner stage or let role-task machinery create a reviewer/researcher.
+        mode = "build"
+    role_task = not dnd_lane and task.get("kind") in {"review", "research", "aggregate"}
     decision = SCHEDULER.decide(profile, selected_model=selected)
     model = decision.selected_model
     # A native plan session must retain its selected model.  Agent and model are
@@ -766,6 +771,18 @@ def _verify_finish(features: Any, task_id: str) -> None:
     try:
         task = STORE.get_task(task_id)
         if not task:
+            return
+        profile = REGISTRY.profiles().get(str(task.get("profile")), {})
+        if profile.get("dndMinimalContext"):
+            verification = {"enabled": False, "results": [], "ok": True, "reason": "D&D authoritative turn"}
+            STORE.update_task(task_id, verification=verification)
+            STORE.transition(task_id, "completed", event="task.completed", data={"dnd": True})
+            STORE.checkpoint(
+                task_id,
+                "completed",
+                summary="D&D turn completed from authoritative ODM result",
+                data={"dnd": True},
+            )
             return
         verification = (
             {"enabled": False, "results": [], "ok": True, "reason": "read-only task"}
