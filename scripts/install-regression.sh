@@ -105,6 +105,9 @@ mkdir -p "$HOME_DIR/.config/opencode"
 cat >"$HOME_DIR/.config/opencode/service.json" <<'EOF'
 {"env":{"GEMINI_API_KEY":"stale-secret","GOOGLE_API_KEY":"CHANGE_ME","MCP_RAG_ROOT":"stale-root","MCP_RAG_BIN":"stale-bin","UNMANAGED_SETTING":"preserve-me"}}
 EOF
+# Simulate the exact managed AGENTS.md written by older custom_opencode releases.
+# The new installer must migrate this to model-aware context lanes.
+cp "$COPY/config/prompts/engineering.md" "$HOME_DIR/.config/opencode/AGENTS.md"
 
 # Fresh install: no real OpenCode service, model call or systemd user manager.
 env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
@@ -119,6 +122,10 @@ UPDATER="$HOME_DIR/.local/bin/custom-opencode-update"
 WEBSERVER_WRAPPER="$HOME_DIR/.local/bin/custom-opencode-webserver"
 RUNTIME_GUARD="$HOME_DIR/.config/opencode/plugins/server-runtime-guard.js"
 VISIBLE_PLAN="$HOME_DIR/.config/opencode/plugins/visible-plan.js"
+CONTEXT_LANES="$HOME_DIR/.config/opencode/plugins/context-lanes.js"
+CONTEXT_POLICY="$HOME_DIR/.config/opencode/plugins/tui/lib/context-policy.js"
+ENGINEERING_PROMPT="$HOME_DIR/.config/opencode/prompts/engineering.md"
+ENGINEERING_LITE_PROMPT="$HOME_DIR/.config/opencode/prompts/engineering-lite.md"
 TUI_DIR="$HOME_DIR/.config/opencode/plugins/tui"
 [[ -f "$CONFIG" ]] || { echo "fresh install did not render config" >&2; exit 1; }
 grep -Fq '"app.exit": "ctrl+shift+q"' "$CLI_CONFIG"
@@ -128,6 +135,9 @@ grep -Fq '"app.exit": "ctrl+shift+q"' "$CLI_CONFIG"
 [[ -x "$WEBSERVER_WRAPPER" ]] || { echo "fresh install did not create webserver controller" >&2; exit 1; }
 [[ -f "$RUNTIME_GUARD" ]] || { echo "fresh install did not install runtime guard plugin" >&2; exit 1; }
 [[ -f "$VISIBLE_PLAN" ]] || { echo "fresh install did not install visible plan plugin" >&2; exit 1; }
+[[ -f "$CONTEXT_LANES" && -f "$CONTEXT_POLICY" ]] || { echo "fresh install did not install context lane plugins" >&2; exit 1; }
+[[ -f "$ENGINEERING_PROMPT" && -f "$ENGINEERING_LITE_PROMPT" ]] || { echo "fresh install did not install context lane prompts" >&2; exit 1; }
+[[ ! -e "$HOME_DIR/.config/opencode/AGENTS.md" ]] || { echo "legacy managed AGENTS.md was not migrated away" >&2; exit 1; }
 grep -Fq 'unset WAYLAND_DISPLAY WAYLAND_SOCKET' "$WRAPPER"
 grep -Fq 'restore-tui-model.py' "$WRAPPER"
 grep -Fq 'webserver-control.py' "$WEBSERVER_WRAPPER"
@@ -192,8 +202,11 @@ cat >"$AUTH" <<'EOF'
 EOF
 chmod 0600 "$AUTH"
 cp "$AUTH" "$TMP/auth-before-update.json"
+printf '%s\n' '# user-owned AGENTS policy' >"$HOME_DIR/.config/opencode/AGENTS.md"
+cp "$HOME_DIR/.config/opencode/AGENTS.md" "$TMP/user-agents-before-update.md"
 run_with_auth_backups 4102444800000 "$TMP/preserve-auth.out"
 cmp -s "$TMP/auth-before-update.json" "$AUTH" || { echo "installer overwrote live provider credentials" >&2; exit 1; }
+cmp -s "$TMP/user-agents-before-update.md" "$HOME_DIR/.config/opencode/AGENTS.md" || { echo "installer overwrote user-owned AGENTS.md" >&2; exit 1; }
 
 # Missing API credentials may be restored, but an expired OAuth backup may not.
 printf '%s\n' '{"unmanaged":{"type":"api","key":"keep-me"}}' >"$AUTH"

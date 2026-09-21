@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { capRequestBody, observeUsage } from "./tui/lib/request-budget.js"
+import { resolveContextPolicy } from "./tui/lib/context-policy.js"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 const execFileAsync = promisify(execFile)
@@ -277,14 +278,14 @@ export default {
         }
       })
     })
-    async function refreshManagedContext(sessionID, model, key) {
+    async function refreshManagedContext(sessionID, model, key, contextClass) {
       const existing = contextFlights.get(sessionID)
       if (existing?.key === key) return existing.promise
       const version = (contextVersions.get(sessionID) || 0) + 1
       contextVersions.set(sessionID, version)
       const promise = call(
         "/internal/runtime/context",
-        { sessionID, model },
+        { sessionID, model, contextClass },
         { timeoutMs: Math.max(15000, TIMEOUT) },
       )
         .then((managed) => {
@@ -316,8 +317,14 @@ export default {
         ;({ binding } = await bindNative(event, turn?.id || ""))
       }
       event.system ||= []
+      const policy = resolveContextPolicy(event)
       const managedPrefix =
         `${CONTEXT_MARKER} (deduplicated, budgeted, checkpoint/RAG/repo aware):\n`
+      if (!policy.runtime) {
+        event.system = event.system.filter((part) => !systemText(part).startsWith(managedPrefix))
+        managedContexts.delete(sessionID)
+        return
+      }
       const previousPart = event.system.find((part) => systemText(part).startsWith(managedPrefix))
       const previousText = previousPart
         ? systemText(previousPart).slice(managedPrefix.length)
@@ -328,21 +335,28 @@ export default {
         binding?.query || "",
         event.model?.providerID || "",
         event.model?.id || "",
+        policy.contextClass,
       ])
       const cached = managedContexts.get(sessionID)
       let text = cached?.key === key ? cached.text : null
       if (text === null) {
-        const refresh = refreshManagedContext(sessionID, event.model, key)
-        // Context enrichment may involve repo indexing/RAG. Give a cold build a
-        // tiny opportunity to finish, then let inference start while it warms.
+        const refresh = refreshManagedContext(sessionID, event.model, key, policy.contextClass)
+        // Lite never waits on enrichment; normal waits half the legacy budget;
+        // full retains the previous hot-path allowance.
+        const hotWait =
+          policy.contextClass === "full"
+            ? CONTEXT_HOT_PATH_WAIT_MS
+            : policy.contextClass === "normal"
+              ? Math.min(CONTEXT_HOT_PATH_WAIT_MS, 50)
+              : 0
         text = await Promise.race([
           refresh,
-          delay(Math.max(0, CONTEXT_HOT_PATH_WAIT_MS)).then(() => null),
+          delay(Math.max(0, hotWait)).then(() => null),
         ])
       } else {
         // Refresh exact-key context in the background when it ages out.
         if (Date.now() - (cached?.at || 0) > 2000)
-          refreshManagedContext(sessionID, event.model, key).catch(() => {})
+          refreshManagedContext(sessionID, event.model, key, policy.contextClass).catch(() => {})
       }
       if (text !== null) {
         event.system = event.system.filter((part) => !systemText(part).startsWith(managedPrefix))

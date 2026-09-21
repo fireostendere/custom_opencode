@@ -967,22 +967,39 @@ const orchestratedPlugin = readFileSync(
   resolve(root, "config/plugins/orchestrated-qwen.js"),
   "utf8",
 )
+const contextLanesPlugin = readFileSync(
+  resolve(root, "config/plugins/context-lanes.js"),
+  "utf8",
+)
 for (const marker of [
   "export default {",
   'id: "orchestrated-qwen"',
   "qwen3.8-orchestrated",
   "gpt-5.6-sol-orchestrated",
+  "gpt-5.6-dnd-edition",
   "isOrchestratedSol",
-  "orchestrator-sol.md",
+  "isDndEdition",
   'ctx.session.hook("context"',
-  "Custom orchestrated Qwen policy",
-  "Custom orchestrated SOL policy",
+  "filterDndTools",
 ]) {
   if (!orchestratedPlugin.includes(marker))
-    throw new Error(`Orchestrated Qwen plugin marker missing: ${marker}`)
+    throw new Error(`Orchestrated model compatibility plugin marker missing: ${marker}`)
+}
+for (const marker of [
+  'id: "custom.context-lanes"',
+  "orchestrator.md",
+  "orchestrator-sol.md",
+  "dnd-edition.md",
+  "Custom orchestrated Qwen policy",
+  "Custom orchestrated SOL policy",
+  "Custom DnD Edition policy",
+  "event.system.length = 0",
+]) {
+  if (!contextLanesPlugin.includes(marker))
+    throw new Error(`Context lane plugin marker missing: ${marker}`)
 }
 for (const source of [
-  orchestratedPlugin,
+  contextLanesPlugin,
   readFileSync(resolve(root, "config/plugins/server-runtime-guard.js"), "utf8"),
 ]) {
   if (!/event\.system\.push\(\{\s*type:\s*["']text["']/.test(source))

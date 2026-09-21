@@ -199,11 +199,22 @@ Direct task сохраняет выбранную модель. Queue сама �
 
 ## Context / compaction
 
-Runtime V3 использует native OpenCode durable compaction.
+Runtime V3 использует native OpenCode durable compaction. Отдельно от размера context window действует startup `contextClass`:
+
+| Class | Startup policy | Runtime enrichment |
+| --- | --- | --- |
+| `bare` | только собственная orchestration policy, если она есть | выключен |
+| `lite` | короткий execution kernel | ≤4k chars, без semantic repo/RAG |
+| `normal` | native + engineering/Ponytail/plan policy | ≤12k chars, bounded repo/RAG |
+| `full` | полный orchestration context | ≤24k chars |
+
+`GPT-5.6 · DnD Edition` использует `bare`: coding/Ponytail/plan инструкции и engineering RAG не попадают к narrator. Это не отключает deny-first permissions или game-only tool allowlist. Ollama и fast reader/Flash по умолчанию используют `lite`. Обычные direct-модели используют `normal`; Qwen/SOL orchestrated — `full`.
+
+Managed orchestration задаёт класс через `contextClass`; `customInstructions:false` эквивалентно `bare`. Сессионный override доступен через `/contextclass` и не меняет выбранную provider/model.
 
 Custom preflight budget model-aware: он берёт реальный context limit активной модели и `contextPolicy.targetRatio`. Повторный custom compact требует meaningful context growth и не должен спамиться по короткому fixed cooldown.
 
-Изменение effort или role transition само по себе compaction не запускает.
+Изменение effort, role transition или context class само по себе compaction не запускает.
 
 ## Alibaba model catalog
 

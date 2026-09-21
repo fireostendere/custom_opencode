@@ -9,7 +9,7 @@
 //      aggregates errors when the rollback itself fails;
 //   5. enqueueMutation serializes concurrent mutations without lost updates;
 //   6. remove-managed lifecycle and type guard;
-//   7. the orchestration context hook injects the managed policy exactly once.
+//   7. orchestration policy is registered for the central context-lanes injector.
 import assert from 'node:assert/strict'
 import { register } from 'node:module'
 import { readFileSync } from 'node:fs'
@@ -139,12 +139,13 @@ assert.equal(store.get(STORAGE_KEY).models['acme/coder'].enabled, true)
 await exec('addmcp', { name: 'docs', config: { type: 'remote', url: 'https://mcp.example.com?api_key={env:DOCS_KEY}' } })
 await exec('addmcp', { name: 'fs', config: { type: 'local', command: ['npx', '-y', 'example-mcp'] } })
 await exec('addskill', { id: 'review', name: 'Review', description: 'Review changes', content: 'Review the current changes.' })
-await exec('addorchestration', { providerID: 'acme', id: 'coder-orchestrated', baseModelID: 'coder', prompt: 'Verify before completion.' })
+await exec('addorchestration', { providerID: 'acme', id: 'coder-orchestrated', baseModelID: 'coder', contextClass: 'bare', prompt: 'Verify before completion.' })
 
 let state = snapshot()
 assert.deepEqual(state.providers, ['acme'])
 assert.ok(state.models.includes('acme/coder'), state.models.join(','))
 assert.ok(state.models.includes('acme/coder-orchestrated'), 'orchestration alias must reach the catalog')
+assert.equal(store.get(STORAGE_KEY).orchestrations['acme/coder-orchestrated'].contextClass, 'bare')
 assert.deepEqual([...state.mcp.keys()].sort(), ['docs', 'fs'])
 assert.deepEqual(state.skills, ['review'])
 
@@ -225,17 +226,15 @@ await assert.rejects(
   /JSON argument is required/,
 )
 
-// 9. Orchestration context hook injects the managed policy exactly once.
+// 9. The config manager no longer injects system policy itself; it registers
+// managed orchestration metadata for context-lanes so bare replacement is atomic.
 const contextHook = hooks['context']
-assert.ok(contextHook, 'context hook must be registered')
+assert.ok(contextHook, 'context hook must remain registered for MCP exposure')
 const event = { model: { providerID: 'acme', id: 'coder-orchestrated' }, system: [] }
 await contextHook(event)
-assert.equal(event.system.length, 1)
-assert.ok(event.system[0].text.includes('Managed orchestration acme/coder-orchestrated'))
-await contextHook(event)
-assert.equal(event.system.length, 1, 'hook must not duplicate the policy')
-const plain = { model: { providerID: 'acme', id: 'coder' }, system: [] }
-await contextHook(plain)
-assert.equal(plain.system.length, 0)
+assert.equal(event.system.length, 0, 'config-manager must not race context-lanes system injection')
+const policyModule = await import('../config/plugins/tui/lib/context-policy.js')
+assert.equal(policyModule.resolveContextClass({ sessionID: 'managed', model: event.model }), 'bare')
+assert.equal(policyModule.managedOrchestration(event).prompt, 'Verify before completion.')
 
-console.log('config-manager regression OK: self-check, happy path, secret rejection, rollback, gated failed-save serialization, remove-managed, context hook')
+console.log('config-manager regression OK: self-check, happy path, secret rejection, rollback, serialization, managed context metadata')

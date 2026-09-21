@@ -170,9 +170,11 @@ Full subagent transcripts should not be copied into the primary context. Large e
 
 ## Context and compaction
 
-Runtime V3 uses native OpenCode durable compaction. The custom preflight budget is model-aware and derives from the active model context window plus the profile `targetRatio`. A completed/requested compaction is tracked with token-growth gating so the runtime does not repeatedly request compaction on a short fixed timer.
+Runtime V3 uses native OpenCode durable compaction. Startup context is additionally routed through `bare|lite|normal|full` classes. `bare` skips custom engineering/Ponytail/plan and server repo/RAG enrichment; `lite` uses a compact execution kernel and a runtime envelope capped at 4k characters without semantic repo/RAG. Normal direct work uses `normal`; Qwen/SOL orchestration uses `full`; DnD Edition uses `bare`.
 
-Changing effort or moving between orchestration roles does not itself trigger compaction.
+The custom preflight budget is model-aware and derives from the active model context window plus the profile `targetRatio`. A completed/requested compaction is tracked with token-growth gating so the runtime does not repeatedly request compaction on a short fixed timer.
+
+Changing effort, moving between orchestration roles, or switching context class does not itself trigger compaction.
 
 ## Regression
 

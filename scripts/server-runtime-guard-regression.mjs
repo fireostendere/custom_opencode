@@ -248,6 +248,39 @@ try {
   await hooks['session:context'](coldContext)
   assert.ok(Date.now() - warmStarted < 80, 'warmed context must be served from memory')
   assert.equal(coldContext.system.at(-1)?.text, 'Server runtime context (deduplicated, budgeted, checkpoint/RAG/repo aware):\nfresh snapshot')
+  const normalContextCall = calls.find(
+    (entry) =>
+      entry.url.endsWith('/internal/runtime/context') &&
+      entry.payload.sessionID === coldContext.sessionID,
+  )
+  assert.equal(normalContextCall?.payload.contextClass, 'normal')
+
+  const contextCallsBeforeBare = calls.filter((entry) =>
+    entry.url.endsWith('/internal/runtime/context'),
+  ).length
+  const bareDnd = {
+    sessionID: 'ses_dnd_bare',
+    agent: 'dnd-narrator',
+    model: { providerID: 'openai', id: 'gpt-5.6-sol' },
+    system: [
+      { type: 'text', text: 'keep-this-non-runtime-part' },
+      {
+        type: 'text',
+        text: 'Server runtime context (deduplicated, budgeted, checkpoint/RAG/repo aware):\nstale engineering context',
+      },
+    ],
+  }
+  await hooks['session:context'](bareDnd)
+  assert.deepEqual(
+    bareDnd.system.map((item) => item.text),
+    ['keep-this-non-runtime-part'],
+    'bare lane must evict any previously cached runtime enrichment',
+  )
+  assert.equal(
+    calls.filter((entry) => entry.url.endsWith('/internal/runtime/context')).length,
+    contextCallsBeforeBare,
+    'bare lane must not request repo/RAG runtime context',
+  )
   delayedContext = false
 
   // A failed index/RAG refresh must preserve the previous managed snapshot.
@@ -271,7 +304,7 @@ try {
   assert.equal((await requestAfterContextTimeout.request.json()).max_output_tokens, 1024)
   contextFailure = false
   console.log(
-    "Server runtime guard regression OK: session-scoped shell policy, secret scrub, nonblocking context refresh",
+    "Server runtime guard regression OK: session-scoped shell policy, secret scrub, class-aware nonblocking context refresh, bare bypass",
   )
 } finally {
   globalThis.fetch = originalFetch

@@ -14,24 +14,19 @@ try {
   await mkdir(hooks, { recursive: true })
   await writeFile(join(hooks, 'ponytail-instructions.js'), `exports.getPonytailInstructions = mode => 'Reviewed rules: ' + mode`)
   await writeFile(join(hooks, 'ponytail-config.js'), `exports.getDefaultMode = () => 'full'; exports.normalizePersistedMode = mode => mode`)
-  let contextHook, command, disposed = 0
+  let command, disposed = 0
   const receipts = []
   const registration = () => ({ dispose: () => { disposed++ } })
   const cleanup = await plugin.setup({
-    session: { hook: async (name, fn) => { assert.equal(name, 'context'); contextHook = fn; return registration() },
-      synthetic: async receipt => { assert.equal(receipt.resume, false); receipts.push(receipt) } },
+    session: {
+      synthetic: async receipt => { assert.equal(receipt.resume, false); receipts.push(receipt) },
+    },
     command: { transform: async fn => { fn({ add: def => { command = def } }); return registration() } },
   })
   assert.equal(command.name, 'ponytail')
-  let event = { system: [] }
-  contextHook(event); contextHook(event)
-  assert.equal(event.system.length, 1)
-  assert.match(event.system[0].text, /Reviewed rules: full/)
   for (const mode of ['lite', 'full', 'ultra', 'off']) {
     await command.execute({ sessionID: 'test', prompt: { text: mode } })
-    event = { system: [] }; contextHook(event)
-    assert.equal(event.system.length, mode === 'off' ? 0 : 1)
-    if (mode !== 'off') assert.match(event.system[0].text, new RegExp('Reviewed rules: ' + mode))
+    assert.equal(receipts.at(-1).text, `Ponytail: ${mode}`)
   }
   const state = join(process.env.XDG_CONFIG_HOME, 'opencode', '.ponytail-active')
   assert.equal((await stat(state)).mode & 0o777, 0o600)
@@ -39,12 +34,20 @@ try {
   assert.equal((await readFile(state, 'utf8')).trim(), 'off')
   await command.execute({ sessionID: 'test', prompt: { text: '' } })
   assert.equal(receipts.at(-1).text, 'Ponytail: off')
-  await rm(state); await symlink(join(tmp, 'outside'), state)
-  assert.throws(() => contextHook({ system: [] }), /Unsafe/)
-  await cleanup(); assert.equal(disposed, 2)
+
+  await rm(state)
+  await symlink(join(tmp, 'outside'), state)
+  await assert.rejects(
+    command.execute({ sessionID: 'test', prompt: { text: '' } }),
+    /Unsafe/,
+    'state symlink must still be rejected even though prompt injection moved to context-lanes',
+  )
+
+  await cleanup()
+  assert.equal(disposed, 1)
   process.env.PONYTAIL_ENABLED = '0'
   await plugin.setup({})
-  console.log('Ponytail V2 regression passed: native context, mode commands, no inference, atomic private state, symlink rejection, cleanup, disabled mode')
+  console.log('Ponytail V2 regression passed: mode command, no inference, atomic private state, symlink rejection; injection owned by context-lanes')
 } finally {
   for (const key of Object.keys(process.env)) if (!(key in original)) delete process.env[key]
   Object.assign(process.env, original)

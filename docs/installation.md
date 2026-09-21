@@ -96,7 +96,7 @@ Installer:
 6. создаёт/обновляет user systemd unit;
 7. рендерит актуальный OpenCode V2 config;
 8. делает backup существующего `opencode.json`;
-9. устанавливает `AGENTS.md`, prompts и plugins;
+9. устанавливает model-aware prompts и plugins; старый managed `AGENTS.md` удаляется только если он не был изменён пользователем;
 10. аккуратно дополняет auth storage только реально заданными credential fields;
 11. создаёт `~/.local/bin/custom-opencode`, `custom-opencode-update` и контроллер `custom-opencode-webserver` для TUI wizard;
 12. перезапускает web/OpenCode V2 services;
@@ -104,9 +104,22 @@ Installer:
 
 Успешная установка заканчивается `Self-test PASS`.
 
+## Стартовый контекст
+
+Кастомные инженерные инструкции больше не лежат в безусловном `AGENTS.md`. Их собирает `context-lanes` отдельно для каждого запроса:
+
+- `bare` — удаляет общие startup-инструкции custom OpenCode, Ponytail, visible-plan policy и server repo/RAG enrichment; для orchestration alias остаётся только его собственная policy;
+- `lite` — короткий execution kernel, без Ponytail, plan prompt, semantic repo и RAG; runtime envelope ограничен 4000 символами;
+- `normal` — штатный OpenCode context плюс инженерная policy/Ponytail и bounded runtime context до 12000 символов;
+- `full` — полный orchestration/engineering path и runtime envelope до 24000 символов.
+
+По умолчанию используется `normal`. Локальные Ollama и fast-reader/Flash идут через `lite`; `GPT-5.6 · DnD Edition` — через `bare`. Для текущей сессии класс можно временно поменять командой `/contextclass bare|lite|normal|full|auto`. Managed orchestration может зафиксировать класс полем `contextClass` в `/addorchestration`; `customInstructions:false` является shorthand для `bare`.
+
+`bare` меняет только передаваемый модели prompt/context. Серверные permissions, sandbox, secret broker и deny-first tool allowlists продолжают применяться независимо от текста system prompt.
+
 ## Ponytail checkout
 
-Installer управляет отдельным checkout `DietrichGebert/ponytail` на reviewed commit `2ed6c52c9d7e5e56942508591085fd45dea277d3`. Путь по умолчанию — `$XDG_DATA_HOME/opencode/ponytail` или `~/.local/share/opencode/ponytail`. Native V2 bridge `plugins/ponytail-v2.js` загружает instruction builder из reviewed checkout. Старый upstream V1 callback-entrypoint в V2 не регистрируется; upstream `skills/`, `commands/` и `hooks/` не копируются в `~/.config/opencode`.
+Installer управляет отдельным checkout `DietrichGebert/ponytail` на reviewed commit `2ed6c52c9d7e5e56942508591085fd45dea277d3`. Путь по умолчанию — `$XDG_DATA_HOME/opencode/ponytail` или `~/.local/share/opencode/ponytail`. Native V2 bridge `plugins/ponytail-v2.js` управляет режимом/state, а `context-lanes.js` подмешивает reviewed instruction builder только для `normal/full`. В `lite/bare` Ponytail не попадает в model context. Старый upstream V1 callback-entrypoint в V2 не регистрируется; upstream `skills/`, `commands/` и `hooks/` не копируются в `~/.config/opencode`.
 
 Provisioning fail-closed проверяет origin, ветку `main`, чистоту checkout, наличие обязательных файлов, принадлежность pin к `origin/main` и fast-forward-only обновление. Неиспользуемые локальные коммиты и изменения не перезаписываются.
 

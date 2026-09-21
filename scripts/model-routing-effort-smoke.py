@@ -274,7 +274,7 @@ for token in (
 ):
     assert token.casefold() in prompt.casefold(), token
 
-agents_policy = (ROOT / "config" / "AGENTS.md").read_text(encoding="utf-8")
+agents_policy = (ROOT / "config" / "prompts" / "engineering.md").read_text(encoding="utf-8")
 for token in (
     "Планирование задач",
     "plan",
