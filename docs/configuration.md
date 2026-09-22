@@ -87,11 +87,10 @@ Live routes are discrete: `NO_LLM`/authoritative tool dispatch, requested Fast
 the Fast tier. Runtime V3 keeps state and RAG branches independent; ODM remains
 responsible for mechanics, mutations, identity and privacy.
 
-The native OpenAI wire adapter currently rejects the internal `service_tier=fast`
-field. Luna LOW/XHIGH therefore keep the requested Fast route in telemetry but
-omit that unsupported wire field and record the provider's effective tier as
-`provider-default`; set `DND_NATIVE_FAST_SERVICE_TIER=1` only after the active
-provider explicitly accepts that field.
+The D&D orchestrator uses `fast` as its internal route label and sends the
+provider-compatible OpenAI wire value `service_tier=priority`, matching the
+accelerated tier used by Codex. Telemetry records `requested_service_tier` as
+`fast` and `actual_service_tier` as `priority`.
 
 Alibaba-роли provider-locked на Alibaba Cloud/Bailian, а SOL и DnD-роли provider-locked
 на официальный OpenAI provider. Ни одна роль из orchestration stack не должна

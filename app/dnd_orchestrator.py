@@ -402,10 +402,7 @@ class DndOrchestrator:
         telemetry.narrator_effort = route_model(decision.route).get("effort")
         telemetry.requested_service_tier = route_model(decision.route).get("serviceTier")
         telemetry.actual_service_tier = (
-            "provider-default"
-            if telemetry.requested_service_tier == "fast"
-            and os.environ.get("DND_NATIVE_FAST_SERVICE_TIER") != "1"
-            else telemetry.requested_service_tier
+            "priority" if telemetry.requested_service_tier == "fast" else telemetry.requested_service_tier
         )
         telemetry.model_calls = 0 if decision.route in {"NO_LLM", "TOOL"} else 1
         return {"decision": decision.as_dict(), "telemetry": telemetry.as_dict(), "dag": turn_dag(decision), "rag": chosen}

@@ -73,11 +73,9 @@ function applyRoute(body, decision) {
   const tier = selected === "SOL_XHIGH" ? "default" : "fast"
   const result = structuredClone(body)
   result.model = target
-  // Native OpenAI rejects the internal `fast` label in the raw request body.
-  // Keep Fast as a routing/telemetry label; omit only the unsupported wire
-  // field and let the provider use its configured default.
-  if (tier === "default" || process.env.DND_NATIVE_FAST_SERVICE_TIER === "1") result.service_tier = tier
-  else delete result.service_tier
+  // `fast` is our internal route label. The OpenAI/Codex wire value for the
+  // accelerated tier is `priority`; sending the internal label causes HTTP 400.
+  result.service_tier = tier === "fast" ? "priority" : tier
   if (result.reasoning && typeof result.reasoning === "object") result.reasoning = { ...result.reasoning, effort }
   else result.reasoning_effort = effort
   return result
@@ -86,8 +84,7 @@ function applyRoute(body, decision) {
 async function record(event, decision, telemetry, fallback) {
   if (!TELEMETRY) return
   const observed = telemetry ? { ...telemetry } : null
-  if (observed?.requested_service_tier === "fast" && process.env.DND_NATIVE_FAST_SERVICE_TIER !== "1")
-    observed.actual_service_tier = "provider-default"
+  if (observed?.requested_service_tier === "fast") observed.actual_service_tier = "priority"
   const row = {
     at: new Date().toISOString(),
     sessionID: String(event.sessionID || "").slice(0, 256),
@@ -157,7 +154,7 @@ if (process.env.DND_SUPER_ORCHESTRATOR_SELF_CHECK) {
   if (routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "LUNA_LOW" }).model !== "gpt-5.6-luna") throw new Error("Luna low route failed")
   const lunaLow = routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "LUNA_LOW" })
   const lunaXhigh = routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "LUNA_XHIGH" })
-  const expectedFast = process.env.DND_NATIVE_FAST_SERVICE_TIER === "1" ? "fast" : undefined
+  const expectedFast = "priority"
   if (lunaLow.service_tier !== expectedFast) throw new Error("Luna low wire tier contract failed")
   if (lunaXhigh.service_tier !== expectedFast) throw new Error("Luna xhigh wire tier contract failed")
   if (routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "SOL_XHIGH" }).service_tier !== "default") throw new Error("Sol tier failed")
