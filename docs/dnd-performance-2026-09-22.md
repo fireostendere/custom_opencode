@@ -42,3 +42,23 @@ The ODM `astra` branch contains project setup, the disposable campaign server,
 `scripts/benchmark-opencode.py`, reproduction instructions in
 `docs/opencode-dnd-2026-09-22.md`, and sanitized measurements in
 `docs/performance/opencode-dnd-2026-09-22.json`. Production ODM was not redeployed.
+
+## Cache and branch integration followup
+
+Native OpenCode supplies a stable session-derived `promptCacheKey`; the DnD
+request hook preserves it. The DnD system prefix is stable and excludes generic
+runtime snapshots. Recorded cache reads were 58,880 / 87,229 total input tokens
+(67.5% including two cold requests); warmed individual requests reached 80–86%.
+This confirms cache reuse, not a maximum possible speedup. The first requests
+also acquire MCP tools, changing the advertised schema prefix.
+
+OpenAI documents automatic prefix caching and stable history/tool definitions:
+https://developers.openai.com/api/docs/guides/prompt-caching
+The application uses the installed native transport; no unverified cache-retention
+or explicit-breakpoint fields were injected into its authenticated endpoint.
+
+All 16 local/origin branch tips were included in the integration candidate.
+Five historical feature branches had identical patches already cherry-picked;
+their ancestry was merged without replacing later fixes. The full installer
+verifier passed before promotion to main. ODM's companion integration includes
+sticky referee sessions scoped to one input, not indefinite cross-turn reuse.
