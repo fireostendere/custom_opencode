@@ -156,6 +156,12 @@ function mcpDefinition(input) {
   }
   if (!config.type || !["local", "remote"].includes(String(config.type)))
     throw new Error("MCP config.type must be local or remote")
+  if (config.cwd !== undefined) {
+    if (typeof config.cwd !== "string" || !config.cwd.trim() || config.cwd.includes("\0") || config.cwd.length > 4096) {
+      throw new Error("MCP cwd must be a non-empty path of at most 4096 characters")
+    }
+    config.cwd = config.cwd.trim()
+  }
   if (config.type === "remote") {
     const url = String(config.url || "")
     let parsed
@@ -819,6 +825,8 @@ if (process.env.OPENCODE_CONFIG_MANAGER_SELF_CHECK) {
     },
   })
   if (local.config.type !== "local") throw new Error("local MCP self-check failed")
+  const localWithCwd = mcpDefinition({ name: "local-cwd", config: { type: "local", command: ["tool"], cwd: "/tmp/custom-opencode/mcp-rag" } })
+  if (localWithCwd.config.cwd !== "/tmp/custom-opencode/mcp-rag") throw new Error("local MCP cwd self-check failed")
   const camelLocal = mcpDefinition({
     name: "camel-local",
     config: {

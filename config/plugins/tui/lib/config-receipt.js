@@ -2,20 +2,23 @@
 // Consume only our exact correlation ID; never wake a model to read a receipt.
 export async function readConfigReceipt(client, sessionID, requestID) {
   const marker = `custom.config.receipt:${requestID}\n`
-  const inbox = await client.session.inbox?.list?.({ sessionID }) || []
-  const pending = inbox.find((item) => item.type === "synthetic" && item.payload?.text?.startsWith(marker))
-  if (pending) {
-    const value = JSON.parse(pending.payload.text.slice(marker.length))
-    try { await client.session.inbox.cancel({ sessionID, inboxID: pending.id }) }
-    catch (error) {
-      // A running session may already have admitted it. Its context hook removes
-      // receipts before inference; do not cancel any replacement/user input.
-      if (![404, 409].includes(error.status ?? error.statusCode)) throw error
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const inbox = await client.session.inbox?.list?.({ sessionID }) || []
+    const pending = inbox.find((item) => item.type === "synthetic" && item.payload?.text?.startsWith(marker))
+    if (pending) {
+      const value = JSON.parse(pending.payload.text.slice(marker.length))
+      try { await client.session.inbox.cancel({ sessionID, inboxID: pending.id }) }
+      catch (error) {
+        // A running session may already have admitted it. Its context hook removes
+        // receipts before inference; do not cancel any replacement/user input.
+        if (![404, 409].includes(error.status ?? error.statusCode)) throw error
+      }
+      return value
     }
-    return value
+    const messages = await client.session.context({ sessionID })
+    const admitted = messages.find((item) => item.text?.startsWith(marker))
+    if (admitted) return JSON.parse(admitted.text.slice(marker.length))
+    if (attempt < 39) await new Promise((resolve) => setTimeout(resolve, 50))
   }
-  const messages = await client.session.context({ sessionID })
-  const admitted = messages.find((item) => item.text?.startsWith(marker))
-  if (!admitted) throw new Error("Configuration response missing; check config-manager plugin status.")
-  return JSON.parse(admitted.text.slice(marker.length))
+  throw new Error("Configuration response missing; check config-manager plugin status.")
 }
