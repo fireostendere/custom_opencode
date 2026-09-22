@@ -37,6 +37,7 @@ const commands = new Map()
 let catalogTransform = null
 let mcpTransform = null
 let skillTransform = null
+let mcpListCalls = 0
 const deferred = () => {
   let resolve
   const promise = new Promise((complete) => { resolve = complete })
@@ -75,6 +76,7 @@ const ctx = {
     model: { get: () => undefined, update: () => {} },
   },
   mcp: {
+    list: async () => { mcpListCalls += 1 },
     reload: async () => {},
     transform: async (callback) => { mcpTransform = callback },
   },
@@ -233,6 +235,16 @@ assert.ok(contextHook, 'context hook must remain registered for MCP exposure')
 const event = { model: { providerID: 'acme', id: 'coder-orchestrated' }, system: [] }
 await contextHook(event)
 assert.equal(event.system.length, 0, 'config-manager must not race context-lanes system injection')
+const dndEvent = {
+  sessionID: 'dnd-tools',
+  agent: 'dnd-narrator',
+  model: { providerID: 'openai', id: 'gpt-5.6-dnd-edition' },
+  tools: { odm_narrator: {}, shell: {} },
+}
+const mcpListCallsBeforeDnd = mcpListCalls
+await contextHook(dndEvent)
+assert.equal(mcpListCalls, mcpListCallsBeforeDnd + 1, 'D&D context must load MCP tools before filtering')
+assert.deepEqual(Object.keys(dndEvent.tools), ['odm_narrator'], 'D&D lane must keep narrator MCP')
 const policyModule = await import('../config/plugins/tui/lib/context-policy.js')
 assert.equal(policyModule.resolveContextClass({ sessionID: 'managed', model: event.model }), 'bare')
 assert.equal(policyModule.managedOrchestration(event).prompt, 'Verify before completion.')

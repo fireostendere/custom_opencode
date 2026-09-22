@@ -27,9 +27,9 @@ Mode: deterministic fixture. The mean is across six distinct scenarios, not repe
 
 ## Actual local Qwen route pass
 
-- Simple: `LUNA_LOW` at confidence `0.65`; router `85 ms`; cloud calls `1`
+- Simple: `LUNA_LOW` at confidence `0.65`; router `83 ms`; cloud calls `1`
 - Deterministic: `TOOL` at confidence `1.0`; router `0 ms`; cloud calls `0`
-- NPC Social: `LUNA_LOW` at confidence `0.65`; router `84 ms`; cloud calls `1`
-- YOLO Combat: `LUNA_LOW` at confidence `0.65`; router `83 ms`; cloud calls `1`
-- RAG: `LUNA_LOW` at confidence `0.65`; router `87 ms`; cloud calls `1`
-- Complex: `LUNA_XHIGH` at confidence `0.65`; router `89 ms`; cloud calls `1`
+- NPC Social: `LUNA_LOW` at confidence `0.65`; router `82 ms`; cloud calls `1`
+- YOLO Combat: `LUNA_LOW` at confidence `0.65`; router `88 ms`; cloud calls `1`
+- RAG: `LUNA_LOW` at confidence `0.65`; router `84 ms`; cloud calls `1`
+- Complex: `LUNA_XHIGH` at confidence `0.65`; router `83 ms`; cloud calls `1`

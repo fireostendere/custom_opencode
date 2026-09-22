@@ -451,9 +451,9 @@ export default {
     await ctx.session.hook("context", async (event) => {
       if (event.tools) {
         if (isDndContext(event)) {
-          // D&D never asks the MCP manager for the full catalog. The separate
-          // D&D lane keeps only lazy ODM/selected RAG namespaces; exact
-          // authoritative operations are resolved by the ODM adapter.
+          // Load MCP tools before keeping only the D&D allowlist. Without this
+          // the connected odm_narrator server is invisible to the model.
+          await ctx.mcp.list?.()
           event.tools = filterDndTools(event.tools)
           exposure.set(event.sessionID, {
             id: "dnd-lazy",

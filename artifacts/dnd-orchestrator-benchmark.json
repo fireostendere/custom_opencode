@@ -852,13 +852,13 @@
     "health": {
       "ok": true,
       "backend": "ollama",
-      "ms": 18
+      "ms": 14
     },
     "routes": {
       "Simple": {
         "route": "LUNA_LOW",
         "confidence": 0.65,
-        "router_ms": 85,
+        "router_ms": 83,
         "backend": "ollama",
         "mode": "constrained-token",
         "cloud_model_calls": 1
@@ -874,7 +874,7 @@
       "NPC Social": {
         "route": "LUNA_LOW",
         "confidence": 0.65,
-        "router_ms": 84,
+        "router_ms": 82,
         "backend": "ollama",
         "mode": "constrained-token",
         "cloud_model_calls": 1
@@ -882,7 +882,7 @@
       "YOLO Combat": {
         "route": "LUNA_LOW",
         "confidence": 0.65,
-        "router_ms": 83,
+        "router_ms": 88,
         "backend": "ollama",
         "mode": "constrained-token",
         "cloud_model_calls": 1
@@ -890,7 +890,7 @@
       "RAG": {
         "route": "LUNA_LOW",
         "confidence": 0.65,
-        "router_ms": 87,
+        "router_ms": 84,
         "backend": "ollama",
         "mode": "constrained-token",
         "cloud_model_calls": 1
@@ -898,7 +898,7 @@
       "Complex": {
         "route": "LUNA_XHIGH",
         "confidence": 0.65,
-        "router_ms": 89,
+        "router_ms": 83,
         "backend": "ollama",
         "mode": "constrained-token",
         "cloud_model_calls": 1

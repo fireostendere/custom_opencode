@@ -11,8 +11,14 @@ if [[ $(stat -c %u "$ROOT") != $(id -u) || $(stat -c %u "$ENV_FILE") != $(id -u)
   echo "Repository and .env must be owned by the current user" >&2
   exit 1
 fi
-chmod 0700 "$ROOT"
-chmod 0600 "$ENV_FILE"
+chmod 0700 "$ROOT" 2>/dev/null || {
+  [[ "$ROOT" == /mnt/* ]] || exit 1
+  echo "warning: filesystem does not support repository mode hardening: $ROOT" >&2
+}
+chmod 0600 "$ENV_FILE" 2>/dev/null || {
+  [[ "$ENV_FILE" == /mnt/* ]] || exit 1
+  echo "warning: filesystem does not support .env mode hardening: $ENV_FILE" >&2
+}
 
 PYTHON3=$(command -v python3 || true)
 if [[ -z "$PYTHON3" ]]; then

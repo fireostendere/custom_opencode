@@ -1,6 +1,6 @@
 const TARGET_PROVIDER = "bailian-cli"
 const TARGET_MODEL = "qwen3.8-orchestrated"
-const DND_TOOLS = new Set(["odm_narrator", "skill", "kb_knowledge_search", "kb_knowledge_get", "kb_knowledge_sources", "kb_knowledge_status"])
+const DND_TOOLS = new Set(["odm_narrator", "odm_narrator_odm_narrator", "mcp_discover", "skill", "kb_knowledge_search", "kb_knowledge_get", "kb_knowledge_sources", "kb_knowledge_status"])
 
 export function isOrchestratedQwen(event) {
   return event?.model?.providerID === TARGET_PROVIDER && event?.model?.id === TARGET_MODEL
@@ -52,7 +52,7 @@ if (process.env.OPENCODE_ORCHESTRATED_QWEN_SELF_CHECK) {
   if (!isDndContext({ agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-5.6-sol" } })) throw new Error("DnD agent context selector failed")
   if (!isDndContext({ agent: "narrator-social", model: { providerID: "openai", id: "gpt-5.6-luna" } })) throw new Error("ODM narrator context selector failed")
   if (isDndContext({ agent: "build", model: { providerID: "openai", id: "gpt-5.6-luna" } })) throw new Error("ordinary direct model must stay native")
-  const filtered = filterDndTools(["odm_narrator", "shell", "kb_knowledge_search", "edit"])
-  if (filtered.join(",") !== "odm_narrator,kb_knowledge_search") throw new Error("DnD tool filter failed")
+  const filtered = filterDndTools(["odm_narrator", "odm_narrator_odm_narrator", "odm_narrator_odm_campaigns", "mcp_discover", "shell", "kb_knowledge_search", "edit"])
+  if (filtered.join(",") !== "odm_narrator,odm_narrator_odm_narrator,mcp_discover,kb_knowledge_search") throw new Error("DnD tool filter failed")
   console.log("orchestrated-qwen self-check OK")
 }

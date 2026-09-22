@@ -29,7 +29,9 @@ function lastUser(body) {
     return [...body.messages].reverse().find((item) => item?.role === "user")?.content
   }
   if (typeof body?.input === "string") return body.input
-  if (Array.isArray(body?.input)) return body.input.at(-1)?.content || body.input.at(-1)
+  if (Array.isArray(body?.input)) {
+    return [...body.input].reverse().find((item) => item?.role === "user")?.content || ""
+  }
   return ""
 }
 
@@ -71,10 +73,11 @@ function applyRoute(body, decision) {
   const tier = selected === "SOL_XHIGH" ? "default" : "fast"
   const result = structuredClone(body)
   result.model = target
-  // Fast is a provider request mode, not just an orchestration label. Keep it
-  // on the wire so a rejected Fast request is visible instead of silently
-  // turning into provider-default latency.
-  result.service_tier = tier
+  // Native OpenAI rejects the internal `fast` label in the raw request body.
+  // Keep Fast as a routing/telemetry label; omit only the unsupported wire
+  // field and let the provider use its configured default.
+  if (tier === "default" || process.env.DND_NATIVE_FAST_SERVICE_TIER === "1") result.service_tier = tier
+  else delete result.service_tier
   if (result.reasoning && typeof result.reasoning === "object") result.reasoning = { ...result.reasoning, effort }
   else result.reasoning_effort = effort
   return result
@@ -82,12 +85,15 @@ function applyRoute(body, decision) {
 
 async function record(event, decision, telemetry, fallback) {
   if (!TELEMETRY) return
+  const observed = telemetry ? { ...telemetry } : null
+  if (observed?.requested_service_tier === "fast" && process.env.DND_NATIVE_FAST_SERVICE_TIER !== "1")
+    observed.actual_service_tier = "provider-default"
   const row = {
     at: new Date().toISOString(),
     sessionID: String(event.sessionID || "").slice(0, 256),
     route: decision?.route || null,
     confidence: decision?.confidence ?? null,
-    telemetry: telemetry ? { ...telemetry } : null,
+    telemetry: observed,
     fallback: fallback || null,
   }
   await appendFile(TELEMETRY, `${JSON.stringify(row)}\n`, { mode: 0o600 })
@@ -149,11 +155,16 @@ if (process.env.DND_SUPER_ORCHESTRATOR_SELF_CHECK) {
   const event = { agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-5.6-dnd-edition" } }
   if (!isDndOrchestratorRequest(event)) throw new Error("D&D request selector failed")
   if (routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "LUNA_LOW" }).model !== "gpt-5.6-luna") throw new Error("Luna low route failed")
-  if (routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "LUNA_LOW" }).service_tier !== "fast") throw new Error("Luna low fast tier failed")
-  if (routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "LUNA_XHIGH" }).service_tier !== "fast") throw new Error("Luna xhigh fast tier failed")
+  const lunaLow = routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "LUNA_LOW" })
+  const lunaXhigh = routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "LUNA_XHIGH" })
+  const expectedFast = process.env.DND_NATIVE_FAST_SERVICE_TIER === "1" ? "fast" : undefined
+  if (lunaLow.service_tier !== expectedFast) throw new Error("Luna low wire tier contract failed")
+  if (lunaXhigh.service_tier !== expectedFast) throw new Error("Luna xhigh wire tier contract failed")
   if (routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "SOL_XHIGH" }).service_tier !== "default") throw new Error("Sol tier failed")
   let refused = false
   try { routeBody({}, { route: "TOOL" }) } catch { refused = true }
   if (!refused) throw new Error("tool route must not become an invented narrator call")
+  const followup = { input: [{ role: "user", content: "keep routing" }, { type: "function_call_output", output: "tool result" }] }
+  if (textOf(lastUser(followup)) !== "keep routing") throw new Error("Responses input user extraction failed")
   console.log("dnd-super-orchestrator self-check OK")
 }
