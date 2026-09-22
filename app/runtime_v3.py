@@ -175,6 +175,8 @@ class SemanticRepoIndexer:
 
     def __init__(self, store: RuntimeStore):
         self.store = store
+        # ponytail: one hot project avoids repeated multi-MB JSON decode; use an LRU only if concurrent projects show cache churn.
+        self._hot_index: tuple[str, str, dict[str, Any]] | None = None
 
     def _key(self, project_dir: str) -> str:
         return hashlib.sha256(project_dir.encode()).hexdigest()
@@ -338,11 +340,12 @@ class SemanticRepoIndexer:
         snap = snapshot or git_snapshot(str(root), fresh=force)
         fingerprint = f"v{self.VERSION}:{snap.get('head')}:{snap.get('statusHash')}:{snap.get('treeStamp')}:{snap.get('generation')}:{os.environ.get('OPENCODE_REPO_EMBEDDINGS','hash')}:{os.environ.get('OPENCODE_REPO_EMBED_MODEL','sentence-transformers/all-MiniLM-L6-v2')}"
         key = self._key(str(root))
+        if not force and self._hot_index and self._hot_index[:2] == (key, fingerprint):
+            return {**self._hot_index[2], "cacheHit": True}
         cached = self.store.cache_get("repo-index-v4", key)
         if not force and isinstance(cached, dict) and cached.get("fingerprint") == fingerprint:
-            result = dict(cached)
-            result["cacheHit"] = True
-            return result
+            self._hot_index = (key, fingerprint, cached)
+            return {**cached, "cacheHit": True}
         files = [
             relative for relative in self._files(root) if safe_repo_file(root, relative) is not None
         ]
@@ -457,6 +460,7 @@ class SemanticRepoIndexer:
             "cacheHit": False,
         }
         self.store.cache_set("repo-index-v4", key, index, ttl_seconds=21600)
+        self._hot_index = (key, fingerprint, index)
         self.store.event(
             kind="repo.indexed",
             project_dir=str(root),

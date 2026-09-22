@@ -157,12 +157,13 @@ def _changed_stat_stamp(root: Path, changed: Iterable[str]) -> str:
     digest = hashlib.sha256()
     for relative in sorted(dict.fromkeys(str(item) for item in changed if item)):
         digest.update(relative.encode("utf-8", errors="surrogateescape"))
-        path = safe_repo_file(root, relative)
-        if path is None:
+        item = Path(relative)
+        if item.is_absolute() or ".." in item.parts:
             digest.update(b"\0missing")
             continue
         try:
-            details = path.stat()
+            # Metadata only: resolving every dirty path costs a syscall chain on WSL/NTFS.
+            details = (root / item).lstat()
             digest.update(
                 f"\0{details.st_size}:{details.st_mtime_ns}:{details.st_ctime_ns}".encode()
             )

@@ -480,7 +480,7 @@ function mergeContextMessages(current,incoming,older=false) {
 }
 function contextCacheFor(id) {
   let value=state.contextCache.get(id)
-  if(!value){value={messages:[],loaded:false,loading:false,nextCursor:null,hasMore:true,complete:false,seenCursors:new Set()};state.contextCache.set(id,value)}
+  if(!value){value={messages:[],loaded:false,loading:false,refreshQueued:false,nextCursor:null,hasMore:true,complete:false,seenCursors:new Set()};state.contextCache.set(id,value)}
   return value
 }
 function setContextPageCursor(cache,cursor,nextCursor) {
@@ -491,7 +491,7 @@ async function loadContext({force=false,initial=false}={}) {
   if(!state.selected)return
   const id=state.selected.id,cache=contextCacheFor(id)
   if(cache.loaded&&!force){state.context=cache.messages;syncPromptHistory();renderMessages({bottom:initial});renderUsage();return}
-  if(cache.loading)return
+  if(cache.loading){if(force)cache.refreshQueued=true;return}
   cache.loading=true
   const wasLoaded=cache.loaded
   try {
@@ -512,6 +512,7 @@ async function loadContext({force=false,initial=false}={}) {
     if(state.selected?.id===id){if(cache.messages.length)toast(`История: ${error.message}`);else $('messagesInner').innerHTML=`<div class="empty">Не удалось открыть сессию: ${escapeHtml(error.message)}</div>`}
   }finally{
     cache.loading=false
+    if(cache.refreshQueued){cache.refreshQueued=false;if(state.selected?.id===id)void loadContext({force:true})}
   }
 }
 async function loadOlderContext() {
@@ -536,6 +537,7 @@ async function loadOlderContext() {
   }
   finally{
     cache.loading=false
+    if(cache.refreshQueued){cache.refreshQueued=false;if(state.selected?.id===id)void loadContext({force:true})}
   }
 }
 function scheduleContextReload(delay=250) { clearTimeout(contextReloadTimer); contextReloadTimer=setTimeout(()=>loadContext({force:true}),delay) }

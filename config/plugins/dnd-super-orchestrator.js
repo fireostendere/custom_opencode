@@ -26,17 +26,16 @@ function textOf(value) {
 
 function lastUser(body) {
   if (Array.isArray(body?.messages)) {
-    return [...body.messages].reverse().find((item) => item?.role === "user")?.content
+    return body.messages.findLast((item) => item?.role === "user")?.content
   }
   if (typeof body?.input === "string") return body.input
   if (Array.isArray(body?.input)) {
-    return [...body.input].reverse().find((item) => item?.role === "user")?.content || ""
+    return body.input.findLast((item) => item?.role === "user")?.content || ""
   }
   return ""
 }
 
-function contextOf(body) {
-  const text = textOf(lastUser(body)).slice(0, 12000)
+function contextOf(text) {
   return {
     playMode: /\byolo\b/i.test(text) ? "YOLO" : "FULL",
     hasCombat: /\b(attack|combat|fight|damage|initiative|smash)\b/i.test(text),
@@ -46,13 +45,14 @@ function contextOf(body) {
 
 async function route(event, body) {
   if (!TOKEN) throw new Error("D&D orchestrator runtime token is not configured")
+  const message = textOf(lastUser(body)).slice(0, 12000)
   const response = await fetch(ROUTE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-OpenCode-Runtime": TOKEN },
     body: JSON.stringify({
       sessionID: event.sessionID,
-      message: textOf(lastUser(body)).slice(0, 12000),
-      context: contextOf(body),
+      message,
+      context: contextOf(message),
     }),
     signal: AbortSignal.timeout(Number(process.env.DND_ROUTER_TIMEOUT_MS || 2200)),
   })
@@ -71,7 +71,7 @@ function applyRoute(body, decision) {
   const target = selected === "SOL_XHIGH" ? "gpt-5.6-sol" : "gpt-5.6-luna"
   const effort = selected === "LUNA_LOW" ? "low" : "xhigh"
   const tier = selected === "SOL_XHIGH" ? "default" : "fast"
-  const result = structuredClone(body)
+  const result = { ...body }
   result.model = target
   // `fast` is our internal route label. The OpenAI/Codex wire value for the
   // accelerated tier is `priority`; sending the internal label causes HTTP 400.
@@ -162,6 +162,9 @@ if (process.env.DND_SUPER_ORCHESTRATOR_SELF_CHECK) {
   if (lunaXhigh.service_tier !== expectedFast) throw new Error("Luna xhigh wire tier contract failed")
   if (routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "SOL_XHIGH" }).service_tier !== "default") throw new Error("Sol tier failed")
   let refused = false
+  const original = { messages: [{ role: "user", content: "attack" }], reasoning: { summary: "auto" }, reasoning_effort: "high", service_tier: "priority" }
+  const routed = routeBody(original, { route: "LUNA_LOW" })
+  if (routed.messages !== original.messages || original.reasoning.effort || !original.service_tier || !original.reasoning_effort) throw new Error("Routing must reuse history without mutating the request")
   try { routeBody({}, { route: "TOOL" }) } catch { refused = true }
   if (!refused) throw new Error("tool route must not become an invented narrator call")
   const followup = { input: [{ role: "user", content: "keep routing" }, { type: "function_call_output", output: "tool result" }] }

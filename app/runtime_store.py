@@ -727,7 +727,10 @@ class RuntimeStore:
             return None
         if row["expires_at"] is not None and int(row["expires_at"]) < timestamp:
             with self.transaction() as db:
-                db.execute("DELETE FROM cache WHERE namespace=? AND cache_key=?", (namespace, key))
+                db.execute(
+                    "DELETE FROM cache WHERE namespace=? AND cache_key=? AND expires_at<?",
+                    (namespace, key, timestamp),
+                )
             return None
         return _loads(row["value_json"], None)
 
