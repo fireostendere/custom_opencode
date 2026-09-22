@@ -14,6 +14,7 @@ const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/
 const ENV_REF_RE = /^\{env:[A-Z_][A-Z0-9_]*\}$/
 const SENSITIVE_NAME_RE =
   /(?:^|[-_])(?:api[-_]?key|key|token|access[-_]?token|secret|password|passphrase|authorization|auth|credential)(?:$|[-_])/i
+const PATH_MAX_LENGTH = 4096
 
 const TITLES = {
   catalog: "Каталог моделей",
@@ -31,6 +32,13 @@ function isSensitiveName(value) {
 
 function credentialReference(value) {
   return ENV_REF_RE.test(String(value).trim())
+}
+
+function validateOptionalPath(value) {
+  if (!value) return ""
+  if (value.includes("\0")) return "Working directory must not contain NUL bytes."
+  if (value.length > PATH_MAX_LENGTH) return `Working directory must be at most ${PATH_MAX_LENGTH} characters.`
+  return ""
 }
 
 function promptText(editor) {
@@ -483,6 +491,10 @@ async function mcpInput(context) {
     )
     if (command == null) return null
     config.command = JSON.parse(command)
+    const cwd = await ask(context, "Local working directory (optional)", ".", validateOptionalPath, true, previous.cwd)
+    if (cwd == null) return null
+    if (cwd) config.cwd = cwd
+    else delete config.cwd
   }
   const codemode = await choose(context, "Enable MCP code mode?", [
     { title: "No", value: false },

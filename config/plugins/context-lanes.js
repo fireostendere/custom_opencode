@@ -4,6 +4,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import {
   managedOrchestration,
+  isDndLane,
   resolveContextPolicy,
   setSessionContextClass,
 } from "./tui/lib/context-policy.js"
@@ -24,6 +25,7 @@ const OWN_MARKERS = [
   "Custom orchestrated Qwen policy",
   "Custom orchestrated SOL policy",
   "Custom DnD Edition policy",
+  "Required game skill already loaded:",
   "Managed orchestration ",
 ]
 
@@ -52,6 +54,16 @@ function textOf(item) {
 }
 
 function orchestrationFor(event) {
+  if (isDndLane(event)) {
+    const path = process.env.OPENCODE_DND_EDITION_PROMPT || join(CONFIG_DIR, "prompts", "dnd-edition.md")
+    let prompt = staticPromptCache.get("dnd-lane")
+    if (!prompt) {
+      prompt = readFileSync(path, "utf8").trim()
+      if (!prompt) throw new Error(`Orchestrator prompt is empty: ${path}`)
+      staticPromptCache.set("dnd-lane", prompt)
+    }
+    return { marker: "Custom DnD Edition policy", prompt }
+  }
   const managed = managedOrchestration(event)
   if (managed)
     return {
@@ -59,10 +71,7 @@ function orchestrationFor(event) {
       prompt: managed.prompt,
     }
   const key = `${String(event?.model?.providerID || "")}/${String(event?.model?.id || "")}`
-  const dndAgent = String(event?.agent || "").startsWith("dnd-")
-  const staticItem = dndAgent
-    ? STATIC_ORCHESTRATIONS["openai/gpt-5.6-dnd-edition"]
-    : STATIC_ORCHESTRATIONS[key]
+  const staticItem = STATIC_ORCHESTRATIONS[key]
   if (!staticItem) return null
   let prompt = staticPromptCache.get(key)
   if (!prompt) {
@@ -106,7 +115,7 @@ export default {
   async setup(ctx) {
     const registrations = []
     registrations.push(
-      await ctx.session.hook("context", (event) => {
+      await ctx.session.hook("context", async (event) => {
         if (!Array.isArray(event.system)) return
         const policy = resolveContextPolicy(event)
         const orchestration = orchestrationFor(event)
@@ -141,6 +150,14 @@ export default {
             type: "text",
             text: `${orchestration.marker}:\n${orchestration.prompt}`,
           })
+        if (policy.dndMinimalContext && ctx.skill?.list) {
+          const catalog = await ctx.skill.list()
+          const skills = Array.isArray(catalog) ? catalog : catalog?.data || []
+          for (const id of ["odm-dm-policy", "odm-narrator"]) {
+            const skill = skills.find(item => item.id === id)
+            if (skill?.content) event.system.push({ type: "text", text: `Required game skill already loaded: ${id}\n${skill.content}` })
+          }
+        }
       }),
     )
 

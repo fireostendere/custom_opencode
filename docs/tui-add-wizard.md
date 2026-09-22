@@ -80,6 +80,7 @@ Regression вызывает зарегистрированные TUI command row
 - generic `/add provider` и typed `/add model`;
 - native JSON alias `/addmcp {...}`;
 - remote и local MCP;
+- local MCP с отдельным рабочим каталогом, включая WSL launcher `scripts/rag-mcp.sh` для отдельного checkout `mcp-rag`;
 - отмена wizard без mutation;
 - ID/content/URL secret validation;
 - итоговая file-backed persistence и synthetic receipts;

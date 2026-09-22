@@ -46,9 +46,11 @@ try {
     )
   ).default
   const hooks = {}
+  const gameSkills = []
   let command
   const registration = () => ({ dispose: async () => {} })
   await plugin.setup({
+    skill: { list: async () => ({ data: gameSkills }) },
     session: {
       hook: async (name, fn) => {
         hooks[name] = fn
@@ -123,6 +125,11 @@ try {
     ["Custom DnD Edition policy:\nSTATIC DND"],
     "DnD Edition must receive only its own policy",
   )
+  gameSkills.push({ id: 'odm-narrator', content: 'NARRATOR' }, { id: 'odm-dm-policy', content: 'POLICY' }, { id: 'odm-development', content: 'CODING' })
+  await hooks.context(dnd)
+  assert.deepEqual(dnd.system.slice(-2).map(item => item.text), ['Required game skill already loaded: odm-dm-policy\nPOLICY', 'Required game skill already loaded: odm-narrator\nNARRATOR'])
+  assert.ok(!dnd.system.some(item => item.text.includes('CODING')), 'preloading must stay game-only')
+  gameSkills.length = 0
 
   const dndPinnedModel = {
     sessionID: "dnd-pinned",
@@ -135,6 +142,46 @@ try {
     dndPinnedModel.system.map((x) => x.text),
     ["Custom DnD Edition policy:\nSTATIC DND"],
     "DnD agent must stay bare after its agent-level direct SOL model pin takes effect",
+  )
+
+  const dndModelLane = {
+    sessionID: "dnd-model",
+    agent: "build",
+    model: { providerID: "openai", id: "gpt-5.6-dnd-edition" },
+    system: [
+      { type: "text", text: "AGENTS.md: repository coding instructions" },
+      { type: "text", text: "Ponytail V2 engineering policy (full): coding" },
+      { type: "text", text: "Custom orchestrator coding prompt" },
+      { type: "text", text: "builder prompt" },
+      { type: "text", text: "reviewer prompt" },
+      { type: "text", text: "planner prompt" },
+      { type: "text", text: "SOLID/Torvalds policy" },
+    ],
+  }
+  await hooks.context(dndModelLane)
+  const dndTexts = dndModelLane.system.map((x) => x.text)
+  assert.deepEqual(dndTexts, ["Custom DnD Edition policy:\nSTATIC DND"])
+  for (const marker of ["AGENTS.md", "Ponytail", "orchestrator", "builder", "reviewer", "planner", "SOLID", "Torvalds"])
+    assert.ok(!dndTexts.join("\n").includes(marker), `D&D lane leaked ${marker}`)
+  const dndPolicy = policy.resolveContextPolicy(dndModelLane)
+  assert.equal(dndPolicy.dndMinimalContext, true)
+  assert.equal(dndPolicy.planning, false)
+  assert.equal(dndPolicy.automaticReview, false)
+  assert.equal(dndPolicy.automaticSubagents, false)
+  assert.equal(dndPolicy.repoContext, false)
+  assert.equal(dndPolicy.genericTools, false)
+
+  const dndNativeModelID = {
+    sessionID: "dnd-model-id",
+    agent: "build",
+    model: { providerID: "openai", modelID: "gpt-5.6-dnd-edition" },
+    system: [{ type: "text", text: "AGENTS.md and Ponytail must not arrive" }],
+  }
+  await hooks.context(dndNativeModelID)
+  assert.deepEqual(
+    dndNativeModelID.system.map((x) => x.text),
+    ["Custom DnD Edition policy:\nSTATIC DND"],
+    "DnD modelID events must enter the hard minimal lane",
   )
 
   assert.equal(command.name, "contextclass")

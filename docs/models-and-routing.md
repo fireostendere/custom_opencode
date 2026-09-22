@@ -52,7 +52,7 @@ OpenAI direct models остаются на существующем официа
 | `research` | Max + Flash research + DeepSeek critic | research/synthesis |
 | `long-horizon` | Max + GLM + Flash + DeepSeek | длинная автономная работа |
 | `sol-orchestrated` | Sol + Terra + Luna | OpenAI-only orchestration |
-| `dnd-edition` | Sol medium/high/max + Luna low | restricted live D&D через ODM |
+| `dnd-edition` | Qwen3.5-4B System-1 + Luna low/xhigh + Sol xhigh | restricted live D&D через ODM |
 
 Старый adaptive/device router больше не является частью model routing.
 
@@ -75,6 +75,18 @@ architect / critical / research / long-horizon
 ```
 
 Нагрузка хоста, GPU, запущенные игры или доступность другого inference endpoint не меняют model route.
+
+## D&D Super Orchestrator
+
+Runtime V3 adds the D&D-only path without changing direct/manual selection:
+
+```text
+ODM/CODE -> resident Qwen3.5-4B -> NO_LLM/tool | Luna Fast LOW | Luna Fast XHIGH | Sol XHIGH Standard
+```
+
+The local router emits a single constrained route token and typed metadata. It does not narrate, own mechanics, or receive the full MCP catalog. ODM remains authoritative for dice, state, legality, identity and privacy. Snapshot reads prefer `odm_narrator.snapshot` with revision/sections and fall back to the existing delta read. RAG is local and scope-filtered.
+
+`DND_ORCHESTRATOR=off` preserves legacy behavior, `on` requires a healthy local router, and `auto` falls back to Luna LOW. The native HTTP hook cannot execute an authoritative ODM tool mutation itself; managed Runtime V3 can keep the `NO_LLM` plan, while auto mode safely falls back to Luna LOW for that adapter boundary.
 
 ## Effort routing
 

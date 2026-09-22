@@ -10,6 +10,7 @@ import {
 import { McpDiscovery } from "./tui/lib/mcp-discovery.js"
 import { toolFabricConfig } from "./tui/lib/tool-fabric.js"
 import { syncManagedOrchestrations } from "./tui/lib/context-policy.js"
+import { filterDndTools, isDndContext } from "./orchestrated-qwen.js"
 
 const STORAGE_KEY = "registry-v2"
 const CONFIG_DIR = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", "opencode")
@@ -156,6 +157,12 @@ function mcpDefinition(input) {
   }
   if (!config.type || !["local", "remote"].includes(String(config.type)))
     throw new Error("MCP config.type must be local or remote")
+  if (config.cwd !== undefined) {
+    if (typeof config.cwd !== "string" || !config.cwd.trim() || config.cwd.includes("\0") || config.cwd.length > 4096) {
+      throw new Error("MCP cwd must be a non-empty path of at most 4096 characters")
+    }
+    config.cwd = config.cwd.trim()
+  }
   if (config.type === "remote") {
     const url = String(config.url || "")
     let parsed
@@ -431,7 +438,9 @@ export default {
       if (fabric && !(draft.list?.() || []).some(([name]) => name === "fabric"))
         draft.set("fabric", fabric)
       for (const [name, config] of Object.entries(registry.mcp))
-        draft.set(name, structuredClone(config))
+        // Native config already merges global and project settings. A managed
+        // default must not re-enable a server explicitly disabled by the project.
+        if (!draft.get?.(name)) draft.set(name, structuredClone(config))
       installed = Object.fromEntries(draft.list?.() || Object.entries(registry.mcp))
       assertMcpNamespaces(installed)
       if (Object.keys(registry.mcpProfiles).length) {
@@ -449,6 +458,26 @@ export default {
 
     await ctx.session.hook("context", async (event) => {
       if (event.tools) {
+        if (isDndContext(event)) {
+          // Load MCP tools before keeping only the D&D allowlist. Without this
+          // the connected odm_narrator server is invisible to the model.
+          await ctx.mcp.list?.()
+          event.tools = filterDndTools(event.tools)
+          const report = {
+            id: "dnd-lazy",
+            active: ["odm_narrator"],
+            exposed: Object.keys(event.tools || {}).filter(name => !["skill", "mcp_discover"].includes(name)),
+            excluded: [],
+            deferred: [],
+            agent: event.agent,
+            observedAt: new Date().toISOString(),
+          }
+          // D&D keeps its small allowlist eager, but discovery must still know
+          // this session. Otherwise a missing MCP loops on "retry next step".
+          if (hasDiscovery) discovery.update(event.sessionID, { ...event.tools }, report)
+          exposure.set(event.sessionID, report)
+          return
+        }
         await ctx.mcp.list?.()
         const text = (event.messages || []).filter((m) => m.role === "user").at(-1)?.content
         const selection = resolveMcpProfile(registry, {
@@ -819,6 +848,8 @@ if (process.env.OPENCODE_CONFIG_MANAGER_SELF_CHECK) {
     },
   })
   if (local.config.type !== "local") throw new Error("local MCP self-check failed")
+  const localWithCwd = mcpDefinition({ name: "local-cwd", config: { type: "local", command: ["tool"], cwd: "/tmp/custom-opencode/mcp-rag" } })
+  if (localWithCwd.config.cwd !== "/tmp/custom-opencode/mcp-rag") throw new Error("local MCP cwd self-check failed")
   const camelLocal = mcpDefinition({
     name: "camel-local",
     config: {

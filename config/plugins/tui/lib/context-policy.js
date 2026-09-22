@@ -77,6 +77,16 @@ export function managedOrchestration(event) {
   return managed.get(modelKey(event)) || null
 }
 
+export function isDndLane(event) {
+  const agent = String(event?.agent || "")
+  const modelID = event?.model?.id || event?.model?.modelID
+  return (
+    (event?.model?.providerID === "openai" && modelID === "gpt-5.6-dnd-edition") ||
+    agent.startsWith("dnd-") ||
+    agent.startsWith("narrator-")
+  )
+}
+
 export function setSessionContextClass(sessionID, value) {
   const id = String(sessionID || "")
   if (!id) throw new Error("sessionID required")
@@ -93,6 +103,7 @@ export function setSessionContextClass(sessionID, value) {
 }
 
 export function resolveContextClass(event) {
+  if (isDndLane(event)) return "bare"
   const sessionID = String(event?.sessionID || "")
   if (sessionID && sessions.has(sessionID)) return sessions.get(sessionID)
 
@@ -116,6 +127,26 @@ export function resolveContextClass(event) {
 }
 
 export function resolveContextPolicy(event) {
+  if (isDndLane(event))
+    return {
+      contextClass: "bare",
+      lane: "dnd",
+      clearNative: true,
+      engineering: false,
+      ponytail: false,
+      planPrompt: false,
+      runtime: false,
+      runtimeBudgetChars: 0,
+      semanticRepo: false,
+      rag: false,
+      planning: false,
+      codingPromptStack: false,
+      repoContext: false,
+      automaticReview: false,
+      automaticSubagents: false,
+      genericTools: false,
+      dndMinimalContext: true,
+    }
   const contextClass = resolveContextClass(event)
   if (contextClass === "bare")
     return {

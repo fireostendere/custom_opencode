@@ -151,6 +151,7 @@ const keymapLayers = []
 let submitListener
 let dialogPrompts = []
 let dialogSelects = []
+let managedDelay = 0
 
 const dialog = {
   async confirm() { return confirmSave },
@@ -207,7 +208,13 @@ const context = {
       },
       command: async ({ sessionID, command, text: argumentsText }) => {
         assert.equal(typeof argumentsText, 'string', 'V2 session.command requires text')
-        if (command === 'managed') return serverCommands.get(command).execute({ sessionID, prompt: { text: argumentsText } })
+        if (command === 'managed') {
+          if (managedDelay) {
+            setTimeout(() => { void serverCommands.get(command).execute({ sessionID, prompt: { text: argumentsText } }) }, managedDelay)
+            return
+          }
+          return serverCommands.get(command).execute({ sessionID, prompt: { text: argumentsText } })
+        }
         commandCalls.push({ sessionID, command, arguments: argumentsText })
         const call = commandCalls.at(-1)
         const definition = serverCommands.get(command)
@@ -250,7 +257,7 @@ function configureDialog(promptsToReturn, selectsToReturn = []) {
 async function waitFor(predicate, label) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) return
-    await new Promise((resolve) => setTimeout(resolve, 1))
+    await new Promise((resolve) => setTimeout(resolve, 5))
   }
   throw new Error(`Timed out waiting for ${label}: ${JSON.stringify({ prompts, alerts, toasts, remainingPrompts: dialogPrompts, commandCalls })}`)
 }
@@ -278,6 +285,9 @@ assert.ok(alerts.some((message) => message.includes('api_key must use {env:VAR}'
 
 const localCase = fixture.buttons.find((item) => item.id === 'mcp-local')
 await runButton('mcp', localCase.prompts, localCase.selects)
+
+const ragCase = fixture.buttons.find((item) => item.id === 'mcp-rag-wsl')
+await runButton('mcp', ragCase.prompts, ragCase.selects)
 
 const skillCase = fixture.buttons.find((item) => item.id === 'skill')
 await runButton('skill', skillCase.prompts, skillCase.selects)
@@ -358,6 +368,13 @@ assert.ok(registry.models['acme-ui/coder'])
 assert.ok(registry.models['acme-ui/alias-model'])
 assert.ok(registry.mcp.docs)
 assert.ok(registry.mcp.filesystem)
+assert.deepEqual(registry.mcp.kb, {
+  type: 'local',
+  command: ['bash', '/tmp/custom-opencode/scripts/rag-mcp.sh'],
+  cwd: '/tmp/custom-opencode',
+  codemode: false,
+  disabled: false,
+})
 assert.ok(registry.mcp['alias-docs'])
 assert.equal(registry.skills.review.content, 'Review the current changes.\nVerify the result.')
 assert.equal(registry.skills['hardware-engineer'].name, 'hardware-engineer')
@@ -407,6 +424,13 @@ assert.deepEqual(applied.mcp.get('filesystem'), {
   codemode: false,
   disabled: false,
 })
+assert.deepEqual(applied.mcp.get('kb'), {
+  type: 'local',
+  command: ['bash', '/tmp/custom-opencode/scripts/rag-mcp.sh'],
+  cwd: '/tmp/custom-opencode',
+  codemode: false,
+  disabled: false,
+})
 assert.equal(applied.skills.review.name, 'Review')
 assert.equal(applied.skills.review.description, 'Review changes')
 assert.equal(applied.skills.review.content, 'Review the current changes.\nVerify the result.')
@@ -427,7 +451,9 @@ assert.equal(toasts.filter((item) => item.variant === 'success').length, command
 assert.ok(prompts.length >= 20)
 assert.ok(selects.length >= 6)
 
+managedDelay = 25
 await runButton('mcp-profile', ['core', 'Core', '', ''], ['docs', '__done', 'normal'])
+managedDelay = 0
 assert.deepEqual(JSON.parse(await readFile(registryPath, 'utf8')).mcpProfiles.core.mcp, ['docs'])
 await runButton('mcp-profile', ['Core updated', 'docs', 'reviewer'], ['core', 'filesystem', '__done', 'normal'])
 assert.deepEqual(JSON.parse(await readFile(registryPath, 'utf8')).mcpProfiles.core.mcp, ['docs', 'filesystem'])
@@ -460,7 +486,7 @@ const report = {
     skills: Object.keys(registry.skills).sort(),
     orchestrations: Object.keys(registry.orchestrations).sort(),
   },
-  checks: ['canonical /add routing', 'all five wizard buttons', 'currentFocusedRenderable submit interception', 'empty /addmcp opens wizard', 'applied provider/model settings', 'applied orchestration policy', 'applied remote and local MCP', 'applied skill content', 'native JSON alias', 'cancel', 'secret validation', 'file-backed registry persistence', 'fresh setup reapplies persisted settings'],
+  checks: ['canonical /add routing', 'all five wizard buttons', 'currentFocusedRenderable submit interception', 'empty /addmcp opens wizard', 'applied provider/model settings', 'applied orchestration policy', 'applied remote and local MCP', 'applied mcp-rag WSL launcher and cwd', 'applied skill content', 'native JSON alias', 'cancel', 'secret validation', 'file-backed registry persistence', 'fresh setup reapplies persisted settings'],
 }
 
 const reportArgument = process.argv.find((argument) => argument.startsWith('--report='))

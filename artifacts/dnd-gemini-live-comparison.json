@@ -1,0 +1,141 @@
+{
+  "benchmarkMode": "live-official-google-api-one-pass",
+  "model": "gemini-3.8-flash",
+  "thinking": "HIGH",
+  "retry": false,
+  "cloudCalls": 6,
+  "scenarios": {
+    "Simple": "I open the door and walk inside.",
+    "Deterministic": "I give Vasya one healing potion.",
+    "NPC Social": "I try to convince the bartender not to give us away while the guards are standing nearby.",
+    "YOLO Combat": "I smash the nearest guard with a stool and yell at the bartender that his beer tastes like piss.",
+    "RAG": "What do we already know about the seal on this door? I use that knowledge to open it.",
+    "Complex": "I try to turn the captain of the guard against the advisor using what each of them knows about last week's events."
+  },
+  "rows": [
+    {
+      "scenario": "Simple",
+      "status": "PASS",
+      "wall_ms": 6889,
+      "ttft_ms": null,
+      "input_tokens": 100,
+      "cached_input_tokens": 0,
+      "reasoning_tokens": 401,
+      "output_tokens": 45,
+      "text": "The door swings open, letting in a cool draft as you step across the threshold. Inside, the Bartender glances up from wiping down the counter, while Guard 1 and Guard 2 eye you from across the room.",
+      "error": null
+    },
+    {
+      "scenario": "Deterministic",
+      "status": "FAIL",
+      "wall_ms": 3649,
+      "ttft_ms": null,
+      "input_tokens": null,
+      "cached_input_tokens": null,
+      "reasoning_tokens": null,
+      "output_tokens": null,
+      "text": "",
+      "error": "HTTP 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n"
+    },
+    {
+      "scenario": "NPC Social",
+      "status": "FAIL",
+      "wall_ms": 4463,
+      "ttft_ms": null,
+      "input_tokens": null,
+      "cached_input_tokens": null,
+      "reasoning_tokens": null,
+      "output_tokens": null,
+      "text": "",
+      "error": "HTTP 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n"
+    },
+    {
+      "scenario": "YOLO Combat",
+      "status": "PASS",
+      "wall_ms": 5383,
+      "ttft_ms": null,
+      "input_tokens": 139,
+      "cached_input_tokens": 0,
+      "reasoning_tokens": 924,
+      "output_tokens": 56,
+      "text": "You hoist a heavy wooden stool and swing it hard at Guard 1, barking that the ale tastes like straight piss. Guard 1 scrambles to brace, Guard 2 reaches for his steel, and the Bartender merely scowls as one hand drops swiftly beneath the counter.",
+      "error": null
+    },
+    {
+      "scenario": "RAG",
+      "status": "FAIL",
+      "wall_ms": 17741,
+      "ttft_ms": null,
+      "input_tokens": null,
+      "cached_input_tokens": null,
+      "reasoning_tokens": null,
+      "output_tokens": null,
+      "text": "",
+      "error": "HTTP 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n"
+    },
+    {
+      "scenario": "Complex",
+      "status": "FAIL",
+      "wall_ms": 9745,
+      "ttft_ms": null,
+      "input_tokens": null,
+      "cached_input_tokens": null,
+      "reasoning_tokens": null,
+      "output_tokens": null,
+      "text": "",
+      "error": "HTTP 503: {\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n"
+    }
+  ],
+  "superOrchestratorLocalRoutes": {
+    "Simple": {
+      "route": "LUNA_LOW",
+      "confidence": 0.65,
+      "router_ms": 85,
+      "backend": "ollama",
+      "mode": "constrained-token",
+      "cloud_model_calls": 1
+    },
+    "Deterministic": {
+      "route": "TOOL",
+      "confidence": 1.0,
+      "router_ms": 0,
+      "backend": "code",
+      "mode": "deterministic",
+      "cloud_model_calls": 0
+    },
+    "NPC Social": {
+      "route": "LUNA_LOW",
+      "confidence": 0.65,
+      "router_ms": 84,
+      "backend": "ollama",
+      "mode": "constrained-token",
+      "cloud_model_calls": 1
+    },
+    "YOLO Combat": {
+      "route": "LUNA_LOW",
+      "confidence": 0.65,
+      "router_ms": 83,
+      "backend": "ollama",
+      "mode": "constrained-token",
+      "cloud_model_calls": 1
+    },
+    "RAG": {
+      "route": "LUNA_LOW",
+      "confidence": 0.65,
+      "router_ms": 87,
+      "backend": "ollama",
+      "mode": "constrained-token",
+      "cloud_model_calls": 1
+    },
+    "Complex": {
+      "route": "LUNA_XHIGH",
+      "confidence": 0.65,
+      "router_ms": 89,
+      "backend": "ollama",
+      "mode": "constrained-token",
+      "cloud_model_calls": 1
+    }
+  },
+  "comparisonNote": "Super Orchestrator route pass uses local Qwen and its checked-in fixture correctness; Gemini rows are one live official API request each. They are not the same narrator backend."
+  ,"correctnessNote": "Gemini was called through the official text API without ODM tools/receipts. Non-empty Gemini rows are transport/prose successes, not authoritative D&D correctness passes."
+}

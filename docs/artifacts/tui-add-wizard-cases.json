@@ -26,9 +26,17 @@
       "id": "mcp-local",
       "kind": "mcp",
       "nativeCommand": "addmcp",
-      "prompts": ["filesystem", "[\"npx\", \"-y\", \"example-mcp\", \"--header\", \"Authorization: {env:MCP_TEST_KEY}\"]"],
+      "prompts": ["filesystem", "[\"npx\", \"-y\", \"example-mcp\", \"--header\", \"Authorization: {env:MCP_TEST_KEY}\"]", ""],
       "selects": ["local", false, false],
       "expected": "mcp.filesystem"
+    },
+    {
+      "id": "mcp-rag-wsl",
+      "kind": "mcp",
+      "nativeCommand": "addmcp",
+      "prompts": ["kb", "[\"bash\", \"/tmp/custom-opencode/scripts/rag-mcp.sh\"]", "/tmp/custom-opencode"],
+      "selects": ["local", false, false],
+      "expected": "mcp.kb"
     },
     {
       "id": "skill",

@@ -446,7 +446,7 @@ if sol_special.get("name") != "GPT-5.6 Sol · Orchestrated": bad.append("orchest
 dnd_special = providers.get("openai", {}).get("models", {}).get("gpt-5.6-dnd-edition", {}) if isinstance(providers.get("openai"), dict) else {}
 if dnd_special.get("modelID") != "gpt-5.6-sol": bad.append("DnD Edition catalog alias must map to gpt-5.6-sol")
 if dnd_special.get("name") != "GPT-5.6 · DnD Edition": bad.append("DnD Edition catalog alias has unexpected label")
-if dnd_special.get("defaultVariant") != "medium": bad.append("DnD Edition default reasoning must be medium")
+if dnd_special.get("defaultVariant") != "low": bad.append("DnD Edition default reasoning must be low")
 ollama = providers.get("ollama", {})
 if ollama.get("package") != "aisdk:@ai-sdk/openai-compatible": bad.append("local Ollama V2 provider must use aisdk:@ai-sdk/openai-compatible")
 
@@ -492,10 +492,10 @@ role_routes.update({
     "sol-role-builder-max": "openai/gpt-5.6-terra#max",
     "sol-role-reviewer": "openai/gpt-5.6-luna#xhigh",
     "sol-role-reviewer-max": "openai/gpt-5.6-luna#max",
-    "dnd-narrator": "openai/gpt-5.6-sol#medium",
-    "dnd-narrator-high": "openai/gpt-5.6-sol#high",
-    "dnd-narrator-max": "openai/gpt-5.6-sol#max",
-    "dnd-planner": "openai/gpt-5.6-sol#high",
+    "dnd-narrator": "openai/gpt-5.6-luna#low",
+    "dnd-narrator-high": "openai/gpt-5.6-luna#xhigh",
+    "dnd-narrator-max": "openai/gpt-5.6-sol#xhigh",
+    "dnd-planner": "openai/gpt-5.6-luna#xhigh",
     "dnd-memory": "openai/gpt-5.6-luna#low",
     "dnd-reader": "openai/gpt-5.6-luna#low",
 })

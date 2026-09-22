@@ -50,7 +50,7 @@ def main() -> int:
             ROOT,
             checkout,
             ignore=shutil.ignore_patterns(
-                ".git", ".env", "__pycache__", "node_modules", ".tmp_verify"
+                ".git", ".env", ".opencode", "__pycache__", "node_modules", ".tmp_verify"
             ),
         )
         if args.cli_prefix:
