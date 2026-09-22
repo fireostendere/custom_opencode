@@ -13,3 +13,5 @@ node_modules/
 # both this repository and tool workspaces, never in a public config template.
 .private/
 .mcp-artifacts/
+# Project-local links to separately installed skills are machine-specific.
+/.opencode/skills
