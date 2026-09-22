@@ -1,0 +1,93 @@
+{
+  "benchmarkMode": "live-production-one-pass",
+  "date": "2026-09-21",
+  "campaignId": "770a9113-40cd-4804-8f43-bc5c0afda137",
+  "campaignStatusAfterTest": "ended",
+  "transport": "authenticated ODM loopback MCP via SSH; no user campaign touched",
+  "sameReceiptForNarrators": true,
+  "modelToolCalls": 0,
+  "mechanics": {
+    "encounter": "Guard 1 / Guard 2",
+    "visiblePlayer": "Дуплодёр",
+    "initiative": 16,
+    "attack": {
+      "attacker": "Дуплодёр",
+      "weapon": "Короткий лук",
+      "target": "Guard 1",
+      "rolledTotal": 23,
+      "targetAc": 16,
+      "hit": true,
+      "damage": 8,
+      "damageType": "piercing",
+      "targetHpAfter": "3/11",
+      "targetHealth": "bloodied"
+    },
+    "authoritativeMutation": "ODM applied the damage; narrators received the receipt and did not mutate mechanics"
+  },
+  "candidates": [
+    {
+      "name": "Super Orchestrator",
+      "path": "native custom OpenCode -> local Qwen3.5-4B -> Luna",
+      "orchestrator": "on",
+      "route": "LUNA_LOW",
+      "routerConfidence": 0.65,
+      "routerMs": [74, 79],
+      "routerBackend": "ollama",
+      "routerMode": "constrained-token",
+      "model": "gpt-5.6-luna",
+      "effort": "low",
+      "requestedServiceTier": "fast",
+      "actualServiceTier": "provider-default",
+      "cloudModelCalls": 1,
+      "plannerCalls": 0,
+      "reviewerCalls": 0,
+      "openCodeProcessWallMs": 17181,
+      "ttftMs": 1335,
+      "narratorEventTotalMs": 2645,
+      "inputTokens": null,
+      "reasoningTokens": null,
+      "outputTokens": null,
+      "correctness": "PASS",
+      "response": "Стрела Дуплодёра впивается в Guard 1, и тот, пошатнувшись, зажимает кровоточащий бок. Дуплодёр орёт трактирщику: «Твоё пиво на вкус как моча!», пока Guard 2 вскидывает оружие и бросается прикрывать товарища."
+    },
+    {
+      "name": "Direct Luna LOW",
+      "path": "native custom OpenCode -> gpt-5.6-luna#low",
+      "orchestrator": "off",
+      "route": "DIRECT",
+      "routerConfidence": null,
+      "routerMs": null,
+      "routerBackend": null,
+      "routerMode": null,
+      "model": "gpt-5.6-luna",
+      "effort": "low",
+      "requestedServiceTier": null,
+      "actualServiceTier": "provider-default",
+      "cloudModelCalls": 1,
+      "plannerCalls": 0,
+      "reviewerCalls": 0,
+      "openCodeProcessWallMs": 15760,
+      "ttftMs": 1389,
+      "narratorEventTotalMs": 2670,
+      "inputTokens": null,
+      "reasoningTokens": null,
+      "outputTokens": null,
+      "correctness": "PASS",
+      "response": "Стрела Дуплодёра впивается в ближайшего стражника; тот пошатывается, истекая кровью, но остаётся на ногах. «Твоё пиво на вкус как моча!» — орёшь ты трактирщику, пока Guard 2 угрожающе разворачивается к вам."
+    }
+  ],
+  "existingGeminiComparison": {
+    "model": "gemini-3.8-flash",
+    "benchmarkMode": "official Google API one-pass, fixed narrator fixtures",
+    "simple": {"status": "PASS", "wallMs": 6889},
+    "yoloCombat": {"status": "PASS", "wallMs": 5383},
+    "successfulScenarios": "2/6",
+    "authoritativeMcp": false,
+    "note": "Gemini rows are the previously captured official API fixture results, not this ODM production campaign run."
+  },
+  "limitations": [
+    "OpenCode CLI did not expose provider usage-token fields; TTFT uses native text-event timestamps.",
+    "The active OpenAI native adapter rejected the raw fast service_tier field, so Luna requested fast but effective tier was provider-default.",
+    "Narrator model calls were receipt-driven and deliberately made no model-side MCP calls; ODM mechanics and publication were performed through the official MCP control plane."
+  ]
+}

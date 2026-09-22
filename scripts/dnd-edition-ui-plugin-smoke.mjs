@@ -7,10 +7,10 @@ const plugin = await import(new URL('config/plugins/orchestrated-qwen.js', root)
 let hook
 await plugin.default.setup({ session: { hook: async (name, fn) => { assert.equal(name, 'context'); hook = fn } } })
 
-const dnd = { model: { providerID: 'openai', id: 'gpt-5.6-dnd-edition' }, system: [], tools: ['odm_narrator', 'skill', 'shell', 'kb_knowledge_search', 'edit'] }
+const dnd = { model: { providerID: 'openai', id: 'gpt-5.6-dnd-edition' }, system: [], tools: ['odm_narrator', 'odm_narrator_odm_narrator', 'odm_narrator_odm_campaigns', 'mcp_discover', 'skill', 'shell', 'kb_knowledge_search', 'edit'] }
 await hook(dnd)
-assert.deepEqual(dnd.tools, ['odm_narrator', 'skill', 'kb_knowledge_search'])
-assert.match(dnd.system[0].text, /Live D&D only/)
+assert.deepEqual(dnd.tools, ['odm_narrator', 'odm_narrator_odm_narrator', 'mcp_discover', 'skill', 'kb_knowledge_search'])
+assert.deepEqual(dnd.system, [], 'context-lanes owns the D&D system prompt')
 
 const sol = { model: { providerID: 'openai', id: 'gpt-5.6-sol-orchestrated' }, system: [], tools: ['shell'] }
 await hook(sol)

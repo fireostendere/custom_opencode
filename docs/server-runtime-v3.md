@@ -20,6 +20,16 @@ Approval is manual in the trusted native client/UI. It protects against accident
 - Large data remains server-side as artifacts. Models receive compact summaries/IDs and fetch ranges only when needed.
 - RAG and repository retrieval are server context sources; agents do not have to treat them as unrelated external black boxes.
 
+## D&D orchestration
+
+The D&D profile uses the existing Runtime V3 DAG, not a second scheduler. ODM/CODE
+is authoritative; a resident localhost Qwen3.5-4B constrained-token classifier
+selects `NO_LLM`, Luna Fast LOW, Luna Fast XHIGH, or rare Sol XHIGH Standard.
+Independent snapshot/state and local RAG reads may run in parallel before the
+narrator node. Direct/manual model selection remains untouched. D&D context is
+identified by the edition alias, `dnd-*` agents, or the ODM adapter's
+`narrator-*` agents, while ordinary `build` requests remain native.
+
 ## Durable task manager
 
 `RuntimeStore` persists tasks, dependency edges, events, checkpoints, artifacts, token/cost usage, project memory, decisions, mailbox messages, caches and patch ownership.

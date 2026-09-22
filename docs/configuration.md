@@ -52,13 +52,46 @@ OPENCODE_SOL_ORCHESTRATED_MODEL=openai/gpt-5.6-sol-orchestrated
 OPENCODE_SOL_BUILDER_MODEL=openai/gpt-5.6-terra
 OPENCODE_SOL_READER_MODEL=openai/gpt-5.6-luna
 OPENCODE_SOL_REVIEW_MODEL=openai/gpt-5.6-luna
-OPENCODE_DND_NARRATOR_MODEL=openai/gpt-5.6-sol#medium
-OPENCODE_DND_COMPLEX_MODEL=openai/gpt-5.6-sol#high
-OPENCODE_DND_EXCEPTIONAL_MODEL=openai/gpt-5.6-sol#max
-OPENCODE_DND_PLANNER_MODEL=openai/gpt-5.6-sol#high
+OPENCODE_DND_NARRATOR_MODEL=openai/gpt-5.6-luna#low
+OPENCODE_DND_COMPLEX_MODEL=openai/gpt-5.6-luna#xhigh
+OPENCODE_DND_EXCEPTIONAL_MODEL=openai/gpt-5.6-sol#xhigh
+OPENCODE_DND_PLANNER_MODEL=openai/gpt-5.6-luna#xhigh
 OPENCODE_DND_MEMORY_MODEL=openai/gpt-5.6-luna#low
 OPENCODE_DND_READER_MODEL=openai/gpt-5.6-luna#low
 ```
+
+## D&D Super Orchestrator
+
+`DND_ORCHESTRATOR=auto|on|off` extends the existing `dnd-edition` profile. `auto`
+uses the resident localhost Qwen3.5-4B System-1 router when healthy and safely
+falls back to Luna Fast LOW; `on` fails closed if the router is unavailable; `off`
+keeps the legacy D&D path. The router emits one constrained symbolic token, not
+free-form routing JSON. Typed decisions and telemetry are exposed at
+`/client-dnd-orchestrator.json` without prompt, secret, whisper or hidden-campaign
+text.
+
+The supported local backend is pinned through `DND_QWEN_BACKEND` (the installed
+default is Ollama). Ollama uses its native `/api/chat` path with `think=false` and
+one generated token; the model remains localhost-only and resident after startup.
+
+The D&D lane is a hard context boundary: its profile disables planning,
+`codingPromptStack`, Ponytail, repository context, automatic review, automatic
+subagents and generic tools, and enables `dndMinimalContext`. It clears native
+startup instructions before adding only the trusted D&D policy, selected state,
+selected RAG and exact D&D tool schemas. This also applies when the
+`gpt-5.6-dnd-edition` model is selected directly, including a `modelID`-shaped
+native event.
+
+Live routes are discrete: `NO_LLM`/authoritative tool dispatch, requested Fast
+`LUNA_LOW`/`LUNA_XHIGH`, or rare standard-tier `SOL_XHIGH`. Sol never receives
+the Fast tier. Runtime V3 keeps state and RAG branches independent; ODM remains
+responsible for mechanics, mutations, identity and privacy.
+
+The native OpenAI wire adapter currently rejects the internal `service_tier=fast`
+field. Luna LOW/XHIGH therefore keep the requested Fast route in telemetry but
+omit that unsupported wire field and record the provider's effective tier as
+`provider-default`; set `DND_NATIVE_FAST_SERVICE_TIER=1` only after the active
+provider explicitly accepts that field.
 
 Alibaba-роли provider-locked на Alibaba Cloud/Bailian, а SOL и DnD-роли provider-locked
 на официальный OpenAI provider. Ни одна роль из orchestration stack не должна

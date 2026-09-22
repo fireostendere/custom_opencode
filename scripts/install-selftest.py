@@ -217,6 +217,7 @@ def main(argv: list[str] | None = None) -> int:
             "qwen-quota",
             "slow-cmd-watchdog", "custom.config-manager", "custom-opencode.server-runtime-guard",
             "custom.visible-plan", "custom.context-lanes", "orchestrated-qwen", "gemini-rate-limit",
+            "dnd-super-orchestrator",
         }
         if os.environ.get("PONYTAIL_ENABLED", "1") != "0":
             required_plugins.add("custom.ponytail-v2")

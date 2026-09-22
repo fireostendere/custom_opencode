@@ -10,6 +10,7 @@ import {
 import { McpDiscovery } from "./tui/lib/mcp-discovery.js"
 import { toolFabricConfig } from "./tui/lib/tool-fabric.js"
 import { syncManagedOrchestrations } from "./tui/lib/context-policy.js"
+import { filterDndTools, isDndContext } from "./orchestrated-qwen.js"
 
 const STORAGE_KEY = "registry-v2"
 const CONFIG_DIR = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", "opencode")
@@ -455,6 +456,22 @@ export default {
 
     await ctx.session.hook("context", async (event) => {
       if (event.tools) {
+        if (isDndContext(event)) {
+          // Load MCP tools before keeping only the D&D allowlist. Without this
+          // the connected odm_narrator server is invisible to the model.
+          await ctx.mcp.list?.()
+          event.tools = filterDndTools(event.tools)
+          exposure.set(event.sessionID, {
+            id: "dnd-lazy",
+            active: ["odm_narrator"],
+            exposed: Object.keys(event.tools || {}),
+            excluded: [],
+            deferred: [],
+            agent: event.agent,
+            observedAt: new Date().toISOString(),
+          })
+          return
+        }
         await ctx.mcp.list?.()
         const text = (event.messages || []).filter((m) => m.role === "user").at(-1)?.content
         const selection = resolveMcpProfile(registry, {

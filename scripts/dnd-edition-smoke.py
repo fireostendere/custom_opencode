@@ -19,32 +19,43 @@ def config() -> dict:
 
 cfg = config()
 alias = cfg["providers"]["openai"]["models"]["gpt-5.6-dnd-edition"]
+luna = cfg["providers"]["openai"]["models"]["gpt-5.6-luna"]
 assert alias["modelID"] == "gpt-5.6-sol"
+variants = {item["id"]: item for item in luna["variants"]}
+assert "body" not in variants["low"]
+assert "body" not in variants["xhigh"]
 assert alias["name"] == "GPT-5.6 · DnD Edition"
-assert alias["defaultVariant"] == "medium"
+assert alias["defaultVariant"] == "low"
 assert {item["id"] for item in alias["variants"]} == {"none", "low", "medium", "high", "xhigh", "max"}
 
 profiles = CapabilityRegistry().profiles()
 dnd = profiles["dnd-edition"]
 assert dnd["cloudModel"] == "openai/gpt-5.6-dnd-edition"
-assert dnd["narratorModel"] == "openai/gpt-5.6-sol#medium"
-assert dnd["complexModel"] == "openai/gpt-5.6-sol#high"
-assert dnd["exceptionalModel"] == "openai/gpt-5.6-sol#max"
-assert dnd["plannerModel"] == "openai/gpt-5.6-sol#high"
+assert dnd["narratorModel"] == "openai/gpt-5.6-luna#low"
+assert dnd["complexModel"] == "openai/gpt-5.6-luna#xhigh"
+assert dnd["exceptionalModel"] == "openai/gpt-5.6-sol#xhigh"
+assert dnd["plannerModel"] == "openai/gpt-5.6-luna#xhigh"
 assert dnd["memoryModel"] == "openai/gpt-5.6-luna#low"
 assert dnd["readerModel"] == "openai/gpt-5.6-luna#low"
 assert dnd["contextPolicy"]["targetRatio"] == 0.55
 assert dnd["sandbox"] == "restricted"
-assert dnd["autoReview"] is False and dnd["planningPolicy"] == "manual" and dnd["memoryPolicy"] == "manual"
+assert dnd["autoReview"] is False and dnd["planningPolicy"] == "disabled" and dnd["memoryPolicy"] == "disabled"
+assert dnd["codingPromptStack"] is False and dnd["ponytail"] is False
+assert dnd["repoContext"] is False and dnd["automaticReview"] is False
+assert dnd["automaticSubagents"] is False and dnd["genericTools"] is False
+assert dnd["dndMinimalContext"] is True
+assert dnd["effortPolicy"]["narrator"] == {"default": "low", "maximum": "xhigh"}
+assert dnd["dndOrchestrator"]["decisionMode"] == "constrained-token"
+assert dnd["dndOrchestrator"]["serviceTiers"]["sol"] == "default"
 assert effort_plan("openai/gpt-5.6-sol", "max")["settings"] == {"reasoningEffort": "max"}
 assert validate_provider_ref("openrouter/gpt-5.6-sol", "openai")[0] is False
 
 agents = cfg["agents"]
 expected_agents = {
-    "dnd-narrator": "openai/gpt-5.6-sol#medium",
-    "dnd-narrator-high": "openai/gpt-5.6-sol#high",
-    "dnd-narrator-max": "openai/gpt-5.6-sol#max",
-    "dnd-planner": "openai/gpt-5.6-sol#high",
+    "dnd-narrator": "openai/gpt-5.6-luna#low",
+    "dnd-narrator-high": "openai/gpt-5.6-luna#xhigh",
+    "dnd-narrator-max": "openai/gpt-5.6-sol#xhigh",
+    "dnd-planner": "openai/gpt-5.6-luna#xhigh",
     "dnd-memory": "openai/gpt-5.6-luna#low",
     "dnd-reader": "openai/gpt-5.6-luna#low",
 }
