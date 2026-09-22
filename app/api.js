@@ -269,7 +269,7 @@ async function sendPromptNow(session, { text, files = [], delivery = 'normal' })
 
 export async function abortSession(sessionID) {
   const id = encodeURIComponent(sessionID)
-  try { return await request(`/api/session/${id}/interrupt`, { method: 'POST', body: '{}' }) }
+  try { return await request(`/api/session/${id}/interrupt?continue=false`, { method: 'POST', body: '{}' }) }
   catch (error) {
     if (error.status !== 404) throw error
     return request(`/api/session/${id}/abort`, { method: 'POST', body: '{}' })

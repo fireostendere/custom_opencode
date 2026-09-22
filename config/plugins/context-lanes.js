@@ -25,6 +25,7 @@ const OWN_MARKERS = [
   "Custom orchestrated Qwen policy",
   "Custom orchestrated SOL policy",
   "Custom DnD Edition policy",
+  "Required game skill already loaded:",
   "Managed orchestration ",
 ]
 
@@ -114,7 +115,7 @@ export default {
   async setup(ctx) {
     const registrations = []
     registrations.push(
-      await ctx.session.hook("context", (event) => {
+      await ctx.session.hook("context", async (event) => {
         if (!Array.isArray(event.system)) return
         const policy = resolveContextPolicy(event)
         const orchestration = orchestrationFor(event)
@@ -149,6 +150,14 @@ export default {
             type: "text",
             text: `${orchestration.marker}:\n${orchestration.prompt}`,
           })
+        if (policy.dndMinimalContext && ctx.skill?.list) {
+          const catalog = await ctx.skill.list()
+          const skills = Array.isArray(catalog) ? catalog : catalog?.data || []
+          for (const id of ["odm-dm-policy", "odm-narrator"]) {
+            const skill = skills.find(item => item.id === id)
+            if (skill?.content) event.system.push({ type: "text", text: `Required game skill already loaded: ${id}\n${skill.content}` })
+          }
+        }
       }),
     )
 

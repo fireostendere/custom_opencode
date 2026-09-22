@@ -23,35 +23,6 @@
           "catalog": 10000,
           "execution": 60000
         }
-      },
-      "odm_narrator": {
-        "type": "local",
-        "command": [
-          "ssh",
-          "-T",
-          "-o",
-          "BatchMode=yes",
-          "-o",
-          "ServerAliveInterval=30",
-          "root@api.iroslyakov.com",
-          "docker",
-          "exec",
-          "-i",
-          "odm-69daa64036-mcp",
-          "node",
-          "--import",
-          "/app/external-tools-preload.mjs",
-          "/app/server.mjs",
-          "--stdio"
-        ],
-        "cwd": "__CUSTOM_OPENCODE_ROOT__",
-        "disabled": false,
-        "codemode": false,
-        "timeout": {
-          "startup": 15000,
-          "catalog": 15000,
-          "execution": 60000
-        }
       }
     }
   },
@@ -1439,6 +1410,26 @@
           "effect": "allow"
         },
         {
+          "action": "dnd_knowledge_search",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_get",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_sources",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_status",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
           "action": "kb_knowledge_search",
           "resource": "*",
           "effect": "allow"
@@ -1484,6 +1475,26 @@
         },
         {
           "action": "mcp_discover",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_search",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_get",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_sources",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_status",
           "resource": "*",
           "effect": "allow"
         },
@@ -1538,6 +1549,26 @@
           "effect": "allow"
         },
         {
+          "action": "dnd_knowledge_search",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_get",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_sources",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_status",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
           "action": "kb_knowledge_search",
           "resource": "*",
           "effect": "allow"
@@ -1588,6 +1619,26 @@
           "effect": "allow"
         },
         {
+          "action": "dnd_knowledge_search",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_get",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_sources",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_status",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
           "action": "kb_knowledge_search",
           "resource": "*",
           "effect": "allow"
@@ -1622,6 +1673,26 @@
           "effect": "deny"
         },
         {
+          "action": "dnd_knowledge_search",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_get",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_sources",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_status",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
           "action": "kb_knowledge_search",
           "resource": "*",
           "effect": "allow"
@@ -1654,6 +1725,26 @@
           "action": "*",
           "resource": "*",
           "effect": "deny"
+        },
+        {
+          "action": "dnd_knowledge_search",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_get",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_sources",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "dnd_knowledge_status",
+          "resource": "*",
+          "effect": "allow"
         },
         {
           "action": "kb_knowledge_search",

@@ -225,6 +225,7 @@ class LocalQwenRouter:
         self.url = (url or os.environ.get("DND_QWEN_URL") or "http://127.0.0.1:11434/v1").rstrip("/")
         self.timeout = float(timeout or os.environ.get("DND_QWEN_TIMEOUT_S", "1.8"))
         self._slots = threading.BoundedSemaphore(max(1, int(queue or os.environ.get("DND_QWEN_QUEUE", "2"))))
+        self._retry_after = 0.0
 
     @property
     def health_url(self) -> str:
@@ -248,6 +249,8 @@ class LocalQwenRouter:
             return {"ok": False, "backend": "unavailable", "error": type(exc).__name__, "ms": int((time.perf_counter() - started) * 1000)}
 
     def classify(self, message: str, context: dict[str, Any] | None = None) -> tuple[str, float, dict[str, Any]]:
+        if time.monotonic() < self._retry_after:
+            raise TimeoutError("local Qwen router is cooling down after a connection failure")
         if not self._slots.acquire(timeout=self.timeout):
             raise TimeoutError("local Qwen router queue is full")
         started = time.perf_counter()
@@ -286,6 +289,9 @@ class LocalQwenRouter:
                     weights = {key: pow(2.718281828, value) for key, value in probs.items()}
                     confidence = weights.get(letter, 0.0) / (sum(weights.values()) or 1.0)
             return letter, confidence, {"ms": int((time.perf_counter() - started) * 1000), "backend": "ollama" if self.ollama_native else "local-qwen"}
+        except (URLError, OSError):
+            self._retry_after = time.monotonic() + 30
+            raise
         finally:
             self._slots.release()
 

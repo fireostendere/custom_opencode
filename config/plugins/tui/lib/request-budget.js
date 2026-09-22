@@ -143,11 +143,12 @@ export function observeUsage(response, done) {
       }
     },
     async cancel(reason) {
-      try {
-        await finish(usage, terminal ? null : "provider stream cancelled before terminal event")
-      } finally {
-        await reader.cancel(reason)
-      }
+      // Close the provider immediately; accounting must not keep inference alive.
+      const closed = reader.cancel(reason)
+      // The service owns this accounting write; the cancelled session needn't
+      // wait for the policy server to reply before returning control to the user.
+      void finish(usage, terminal ? null : "provider stream cancelled before terminal event").catch(() => {})
+      await closed
     },
   })
   return new Response(stream, {

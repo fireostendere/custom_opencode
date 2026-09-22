@@ -46,9 +46,11 @@ try {
     )
   ).default
   const hooks = {}
+  const gameSkills = []
   let command
   const registration = () => ({ dispose: async () => {} })
   await plugin.setup({
+    skill: { list: async () => ({ data: gameSkills }) },
     session: {
       hook: async (name, fn) => {
         hooks[name] = fn
@@ -123,6 +125,11 @@ try {
     ["Custom DnD Edition policy:\nSTATIC DND"],
     "DnD Edition must receive only its own policy",
   )
+  gameSkills.push({ id: 'odm-narrator', content: 'NARRATOR' }, { id: 'odm-dm-policy', content: 'POLICY' }, { id: 'odm-development', content: 'CODING' })
+  await hooks.context(dnd)
+  assert.deepEqual(dnd.system.slice(-2).map(item => item.text), ['Required game skill already loaded: odm-dm-policy\nPOLICY', 'Required game skill already loaded: odm-narrator\nNARRATOR'])
+  assert.ok(!dnd.system.some(item => item.text.includes('CODING')), 'preloading must stay game-only')
+  gameSkills.length = 0
 
   const dndPinnedModel = {
     sessionID: "dnd-pinned",

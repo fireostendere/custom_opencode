@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +59,20 @@ calls = []
 adapter = SnapshotAdapter(lambda tool, payload: calls.append(payload) or ({"revision": "r1"} if payload["operation"] == "snapshot" else {"delta": True}))
 assert adapter.read(["party", "recent"])["path"] == "snapshot"
 assert calls[0]["sections"] == ["party", "recent"]
+offline = LocalQwenRouter()
+with patch("dnd_orchestrator.urlopen", side_effect=TimeoutError("offline")) as request:
+    for _ in range(3):
+        try:
+            offline.classify("Hello")
+        except TimeoutError:
+            pass
+    assert request.call_count == 1, "offline router must not cost a timeout for every cloud/tool step"
+    offline._retry_after = 0
+    try:
+        offline.classify("Hello")
+    except TimeoutError:
+        pass
+    assert request.call_count == 2, "router must probe again after cooldown"
 fallback_calls = []
 def snapshot_then_read(tool, payload):
     fallback_calls.append(payload)

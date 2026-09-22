@@ -575,7 +575,7 @@ def _tool_signatures(features: Any, sid: str) -> list[str]:
 def _interrupt(features: Any, sid: str) -> None:
     q = quote(sid, safe="")
     try:
-        features._backend_request_json("POST", f"/api/session/{q}/interrupt", {}, timeout=10.0)
+        features._backend_request_json("POST", f"/api/session/{q}/interrupt?continue=false", {}, timeout=10.0)
     except Exception:
         features._backend_request_json("POST", f"/api/session/{q}/abort", {}, timeout=10.0)
 

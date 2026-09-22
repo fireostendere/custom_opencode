@@ -11,6 +11,8 @@ const dnd = { model: { providerID: 'openai', id: 'gpt-5.6-dnd-edition' }, system
 await hook(dnd)
 assert.deepEqual(dnd.tools, ['odm_narrator', 'odm_narrator_odm_narrator', 'mcp_discover', 'skill', 'kb_knowledge_search'])
 assert.deepEqual(dnd.system, [], 'context-lanes owns the D&D system prompt')
+assert.deepEqual(plugin.filterDndTools(['dnd_knowledge_search', 'dnd_knowledge_get', 'dnd_knowledge_ingest', 'dnd_knowledge_status', 'odm_narrator_odm_campaigns']),
+  ['dnd_knowledge_search', 'dnd_knowledge_get', 'dnd_knowledge_status'], 'project D&D RAG stays available without ingest or administration')
 
 const sol = { model: { providerID: 'openai', id: 'gpt-5.6-sol-orchestrated' }, system: [], tools: ['shell'] }
 await hook(sol)

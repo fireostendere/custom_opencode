@@ -67,6 +67,6 @@ skill_rules = {(item["resource"], item["effect"]) for item in agents["dnd-narrat
 assert skill_rules == {("odm-dm-policy", "allow"), ("odm-narrator", "allow"), ("dnd-*", "allow")}
 for name in ("dnd-memory", "dnd-reader"):
     allowed = {item["action"] for item in agents[name]["permissions"] if item["effect"] == "allow"}
-    assert allowed == {"kb_knowledge_search", "kb_knowledge_get", "kb_knowledge_sources", "kb_knowledge_status"}
+    assert allowed == {f"{server}_knowledge_{action}" for server in ("kb", "dnd") for action in ("search", "get", "sources", "status")}
 
 print("DnD Edition profile/config contract passed")

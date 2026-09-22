@@ -1,6 +1,7 @@
 const TARGET_PROVIDER = "bailian-cli"
 const TARGET_MODEL = "qwen3.8-orchestrated"
 const DND_TOOLS = new Set(["odm_narrator", "odm_narrator_odm_narrator", "mcp_discover", "skill", "kb_knowledge_search", "kb_knowledge_get", "kb_knowledge_sources", "kb_knowledge_status"])
+for (const action of ["search", "get", "sources", "status"]) DND_TOOLS.add(`dnd_knowledge_${action}`)
 
 export function isOrchestratedQwen(event) {
   return event?.model?.providerID === TARGET_PROVIDER && event?.model?.id === TARGET_MODEL

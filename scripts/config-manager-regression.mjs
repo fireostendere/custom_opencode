@@ -33,6 +33,7 @@ let saveFailures = 0
 let reloadFailures = 0
 const synthetics = []
 const hooks = {}
+const registeredTools = new Map()
 const commands = new Map()
 let catalogTransform = null
 let mcpTransform = null
@@ -46,6 +47,7 @@ const deferred = () => {
 let nextStorageSetGate = null
 
 const ctx = {
+  tool: { transform: async callback => callback({ add: definition => registeredTools.set(definition.name, definition) }) },
   storage: {
     get: async (key) => (key === STORAGE_KEY ? store.get(key) : undefined),
     set: async (key, value) => {
@@ -149,6 +151,11 @@ assert.ok(state.models.includes('acme/coder'), state.models.join(','))
 assert.ok(state.models.includes('acme/coder-orchestrated'), 'orchestration alias must reach the catalog')
 assert.equal(store.get(STORAGE_KEY).orchestrations['acme/coder-orchestrated'].contextClass, 'bare')
 assert.deepEqual([...state.mcp.keys()].sort(), ['docs', 'fs'])
+const projectMcp = new Map([['docs', { type: 'remote', url: 'https://project.example/mcp', disabled: true }]])
+mcpTransform({ get: name => projectMcp.get(name), list: () => [...projectMcp], set: (name, config) => projectMcp.set(name, config) })
+assert.equal(projectMcp.get('docs').disabled, true, 'managed defaults must respect project disables')
+assert.equal(projectMcp.get('docs').url, 'https://project.example/mcp', 'project endpoint must win over managed defaults')
+assert.ok(projectMcp.has('fs'), 'managed servers missing from native config remain available')
 assert.deepEqual(state.skills, ['review'])
 
 await exec('managed')
@@ -245,6 +252,12 @@ const mcpListCallsBeforeDnd = mcpListCalls
 await contextHook(dndEvent)
 assert.equal(mcpListCalls, mcpListCallsBeforeDnd + 1, 'D&D context must load MCP tools before filtering')
 assert.deepEqual(Object.keys(dndEvent.tools), ['odm_narrator'], 'D&D lane must keep narrator MCP')
+const discover = registeredTools.get('mcp_discover').execute
+const found = JSON.parse((await discover({ query: 'odm_narrator' }, { sessionID: 'dnd-tools' })).content)
+assert.deepEqual(found.tools.map(tool => tool.name), ['odm_narrator'], 'D&D discovery must have a current snapshot')
+await contextHook({ ...dndEvent, sessionID: 'dnd-offline', tools: { skill: {}, mcp_discover: {} } })
+const missing = JSON.parse((await discover({ query: 'odm' }, { sessionID: 'dnd-offline' })).content)
+assert.equal(missing.availableNextStep, false, 'offline MCP must not cause an endless next-step retry')
 const policyModule = await import('../config/plugins/tui/lib/context-policy.js')
 assert.equal(policyModule.resolveContextClass({ sessionID: 'managed', model: event.model }), 'bare')
 assert.equal(policyModule.managedOrchestration(event).prompt, 'Verify before completion.')

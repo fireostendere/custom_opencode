@@ -119,7 +119,10 @@ export default {
       }
       let plan
       try {
-        await ensureRouter({ dnd: true })
+        // Auto mode can narrate while the optional local model starts. Waiting
+        // for its cold start on every tool continuation stalls the whole game.
+        if (mode() === "on") await ensureRouter({ dnd: true })
+        else void ensureRouter({ dnd: true }).catch(() => {})
         plan = await route(event, body)
       } catch (error) {
         if (mode() === "on") throw error

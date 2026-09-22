@@ -115,3 +115,18 @@ await reader.cancel()
 assert.equal(notifications, 1)
 assert.equal(result[0].output, 20)
 console.log("PASS: early SDK cancellation after terminal event persists usage exactly once")
+
+// Escape must reach the provider before a slow ledger write completes.
+let providerCancelled = false
+let releaseLedger
+const ledger = new Promise(resolve => { releaseLedger = resolve })
+const slowLedger = observeUsage(new Response(new ReadableStream({
+  cancel() { providerCancelled = true },
+})), () => ledger)
+const cancelling = slowLedger.body.cancel("Escape")
+await new Promise(resolve => setTimeout(resolve, 20))
+assert.equal(providerCancelled, true, "usage accounting must not delay provider cancellation")
+await Promise.race([cancelling, new Promise((_, reject) => setTimeout(() => reject(new Error('cancel waited for ledger')), 100))])
+releaseLedger()
+await cancelling
+console.log("PASS: cancellation reaches provider while ledger is still pending")

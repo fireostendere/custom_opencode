@@ -56,9 +56,11 @@ export class McpDiscovery {
       profile: state.profile,
       tools: selected.map(({ score, ...row }) => row),
       totalMatches: matches.length,
-      availableNextStep: true,
+      availableNextStep: selected.length > 0,
       message:
-        "Selected native tools and their input schemas are available on the next model step. Permissions are unchanged.",
+        selected.length
+          ? "Selected native tools and their input schemas are available on the next model step. Permissions are unchanged."
+          : "No matching connected MCP tools in this profile. Check MCP connection status; repeating discovery cannot reconnect a failed server.",
     }
   }
 

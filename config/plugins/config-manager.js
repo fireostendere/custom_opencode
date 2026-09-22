@@ -438,7 +438,9 @@ export default {
       if (fabric && !(draft.list?.() || []).some(([name]) => name === "fabric"))
         draft.set("fabric", fabric)
       for (const [name, config] of Object.entries(registry.mcp))
-        draft.set(name, structuredClone(config))
+        // Native config already merges global and project settings. A managed
+        // default must not re-enable a server explicitly disabled by the project.
+        if (!draft.get?.(name)) draft.set(name, structuredClone(config))
       installed = Object.fromEntries(draft.list?.() || Object.entries(registry.mcp))
       assertMcpNamespaces(installed)
       if (Object.keys(registry.mcpProfiles).length) {
@@ -461,15 +463,19 @@ export default {
           // the connected odm_narrator server is invisible to the model.
           await ctx.mcp.list?.()
           event.tools = filterDndTools(event.tools)
-          exposure.set(event.sessionID, {
+          const report = {
             id: "dnd-lazy",
             active: ["odm_narrator"],
-            exposed: Object.keys(event.tools || {}),
+            exposed: Object.keys(event.tools || {}).filter(name => !["skill", "mcp_discover"].includes(name)),
             excluded: [],
             deferred: [],
             agent: event.agent,
             observedAt: new Date().toISOString(),
-          })
+          }
+          // D&D keeps its small allowlist eager, but discovery must still know
+          // this session. Otherwise a missing MCP loops on "retry next step".
+          if (hasDiscovery) discovery.update(event.sessionID, { ...event.tools }, report)
+          exposure.set(event.sessionID, report)
           return
         }
         await ctx.mcp.list?.()
