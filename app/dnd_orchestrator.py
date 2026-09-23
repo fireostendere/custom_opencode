@@ -18,7 +18,7 @@ from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-ROUTES = ("NO_LLM", "TOOL", "LUNA_LOW", "LUNA_XHIGH", "SOL_XHIGH")
+ROUTES = ("NO_LLM", "TOOL", "LUNA_LOW", "LUNA_XHIGH", "LUNA_MAX", "SOL_XHIGH")
 RAG_SCOPES = ("NONE", "RULES", "LORE", "CAMPAIGN_MEMORY")
 TOOL_FAMILIES = (
     "NONE",
@@ -140,7 +140,11 @@ def _family(message: str) -> str:
 
 def _complexity(message: str) -> str:
     low = message.casefold()
-    if re.search(r"\b(conflict|contradiction|hidden|last week|each of them|turn .* against|multiple motives)\b", low):
+    if re.search(r"\b(conflict\w*|contradict\w*|turn .* against|multiple motives)\b", low):
+        return "HARD"
+    if re.search(r"\b(hidden|last week)\b", low) and re.search(r"\b(each|multiple|factions|conflict\w*|contradict\w*)\b", low):
+        return "HARD"
+    if re.search(r"\b(?:противореч\w*|скрыт\w*|тайн\w*)\b", low) and re.search(r"\b(?:кажд\w*|нескольк\w*|двух|троих|сторон\w*|против)\b", low):
         return "HARD"
     if len(message) > 180 or len(re.findall(r"\b(and|while|but|using|because)\b", low)) >= 2:
         return "COMPLEX"
@@ -167,15 +171,24 @@ def _typed_fields(message: str, route: str, confidence: float, backend: str, mod
         and bool(re.search(r"\b(give|hand|use|drink|consume|roll|check)\b", low))
         and not bool(re.search(r"\b(describe|narrate|story|scene)\b", low))
     )
-    if confidence < 0.55:
-        route = "LUNA_XHIGH" if complexity in {"COMPLEX", "HARD"} else "LUNA_LOW"
+    if route == "LUNA_XHIGH" and complexity == "HARD":
+        route = "LUNA_MAX"
+        fallback = "hard-scene-luna-max"
+    elif route == "LUNA_MAX" and complexity != "HARD":
+        route = "LUNA_XHIGH" if complexity == "COMPLEX" else "LUNA_LOW"
+        fallback = "luna-max-hard-only"
+    elif route == "SOL_XHIGH" and (complexity != "HARD" or len(message) < 120):
+        route = "LUNA_MAX" if complexity == "HARD" else "LUNA_XHIGH" if complexity == "COMPLEX" else "LUNA_LOW"
+        fallback = "sol-exceptional-only"
+    elif confidence < 0.55:
+        route = "LUNA_MAX" if complexity == "HARD" else "LUNA_XHIGH" if complexity == "COMPLEX" else "LUNA_LOW"
         fallback = "low-confidence"
-    elif confidence < 0.80 and route in {"NO_LLM", "TOOL", "SOL_XHIGH"}:
-        route = "LUNA_XHIGH" if complexity in {"COMPLEX", "HARD"} else "LUNA_LOW"
+    elif confidence < 0.80 and route in {"NO_LLM", "TOOL", "SOL_XHIGH"} and not (route == "SOL_XHIGH" and backend == "ollama"):
+        route = "LUNA_MAX" if complexity == "HARD" else "LUNA_XHIGH" if complexity == "COMPLEX" else "LUNA_LOW"
         fallback = "conservative-confidence"
     else:
         fallback = None
-    if deterministic_tool and confidence >= 0.80 and route not in {"LUNA_XHIGH", "SOL_XHIGH"}:
+    if deterministic_tool and confidence >= 0.80 and route not in {"LUNA_XHIGH", "LUNA_MAX", "SOL_XHIGH"}:
         route = "TOOL"
     needs_rag = "YES" if rag_scope != "NONE" else "NO"
     needs_narration = "NO" if route in {"NO_LLM", "TOOL"} and deterministic_tool else "YES"
@@ -212,6 +225,7 @@ def route_model(route: str) -> dict[str, str | None]:
     table = {
         "LUNA_LOW": ("gpt-6-luna", "low", "default"),
         "LUNA_XHIGH": ("gpt-6-luna", "xhigh", "default"),
+        "LUNA_MAX": ("gpt-6-luna", "max", "default"),
         "SOL_XHIGH": ("gpt-6-sol", "xhigh", "default"),
     }
     model, effort, tier = table.get(route, (None, None, None))
@@ -223,7 +237,7 @@ class LocalQwenRouter:
 
     def __init__(self, url: str | None = None, timeout: float | None = None, queue: int | None = None):
         self.url = (url or os.environ.get("DND_QWEN_URL") or "http://127.0.0.1:11434/v1").rstrip("/")
-        self.timeout = float(timeout or os.environ.get("DND_QWEN_TIMEOUT_S", "1.8"))
+        self.timeout = float(timeout or os.environ.get("DND_QWEN_TIMEOUT_S", "8.0"))
         self._slots = threading.BoundedSemaphore(max(1, int(queue or os.environ.get("DND_QWEN_QUEUE", "2"))))
         self._retry_after = 0.0
 
@@ -255,7 +269,7 @@ class LocalQwenRouter:
             raise TimeoutError("local Qwen router queue is full")
         started = time.perf_counter()
         try:
-            system = "D&D System-1 router. Return exactly one token: A=NO_LLM, B=TOOL, C=LUNA_LOW, D=LUNA_XHIGH, E=SOL_XHIGH. Never narrate."
+            system = "D&D System-1 router. Return exactly one token: A=NO_LLM, B=TOOL, C=LUNA_LOW, D=LUNA_XHIGH, E=LUNA_MAX, F=SOL_XHIGH. Prefer Luna; F only for exceptionally complex multi-party consistency. Never narrate."
             compact = json.dumps({"message": _text(message, 4000), "context": context or {}}, ensure_ascii=False, separators=(",", ":"))
             body = {
                 "model": os.environ.get("DND_QWEN_MODEL", "custom-opencode-qwen35-4b-q4km"),
@@ -279,7 +293,7 @@ class LocalQwenRouter:
             choice = (payload.get("choices") or [{}])[0]
             message = choice.get("message") or payload.get("message") or {}
             token = _text(message.get("content") or choice.get("text"), 8).upper()
-            letter = next((item for item in "ABCDE" if item in token), "C")
+            letter = next((item for item in "ABCDEF" if item in token), "C")
             confidence = 0.65
             rows = ((choice.get("logprobs") or {}).get("content") or [])
             if rows and isinstance(rows[0], dict):
@@ -385,7 +399,7 @@ class DndOrchestrator:
             else:
                 try:
                     letter, confidence, info = self.router.classify(message, context)
-                    route = {"A": "NO_LLM", "B": "TOOL", "C": "LUNA_LOW", "D": "LUNA_XHIGH", "E": "SOL_XHIGH"}[letter]
+                    route = {"A": "NO_LLM", "B": "TOOL", "C": "LUNA_LOW", "D": "LUNA_XHIGH", "E": "LUNA_MAX", "F": "SOL_XHIGH"}[letter]
                     decision = _typed_fields(message, route, confidence, str(info.get("backend") or "local-qwen"), "constrained-token")
                     telemetry = DndTelemetry(play_mode=play_mode, route=decision.route, router_confidence=decision.confidence, router_ms=int(info.get("ms") or 0), router_backend=decision.router_backend, router_mode=decision.router_mode, router_input_tokens=max(1, len(message) // 4), total_latency_ms=int((time.perf_counter() - started) * 1000), fallback=decision.fallback)
                 except Exception as exc:
@@ -407,7 +421,8 @@ class DndOrchestrator:
         telemetry.narrator_model = route_model(decision.route).get("model")
         telemetry.narrator_effort = route_model(decision.route).get("effort")
         telemetry.requested_service_tier = route_model(decision.route).get("serviceTier")
-        telemetry.actual_service_tier = telemetry.requested_service_tier
+        # The provider response, not the plan, determines the actual tier.
+        telemetry.actual_service_tier = None
         telemetry.model_calls = 0 if decision.route in {"NO_LLM", "TOOL"} else 1
         return {"decision": decision.as_dict(), "telemetry": telemetry.as_dict(), "dag": turn_dag(decision), "rag": chosen}
 

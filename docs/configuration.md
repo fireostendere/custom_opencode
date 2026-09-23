@@ -52,12 +52,12 @@ OPENCODE_SOL_ORCHESTRATED_MODEL=openai/gpt-6-sol-orchestrated
 OPENCODE_SOL_BUILDER_MODEL=openai/gpt-6-sol-direct
 OPENCODE_SOL_READER_MODEL=openai/gpt-6-luna-direct
 OPENCODE_SOL_REVIEW_MODEL=openai/gpt-6-luna-direct
-OPENCODE_DND_NARRATOR_MODEL=openai/gpt-6-dnd-edition#low
-OPENCODE_DND_COMPLEX_MODEL=openai/gpt-6-dnd-edition#xhigh
+OPENCODE_DND_NARRATOR_MODEL=openai/gpt-6-luna-direct#low
+OPENCODE_DND_COMPLEX_MODEL=openai/gpt-6-luna-direct#xhigh
 OPENCODE_DND_EXCEPTIONAL_MODEL=openai/gpt-6-sol-orchestrated#xhigh
-OPENCODE_DND_PLANNER_MODEL=openai/gpt-6-dnd-edition#xhigh
-OPENCODE_DND_MEMORY_MODEL=openai/gpt-6-dnd-edition#low
-OPENCODE_DND_READER_MODEL=openai/gpt-6-dnd-edition#low
+OPENCODE_DND_PLANNER_MODEL=openai/gpt-6-luna-direct#xhigh
+OPENCODE_DND_MEMORY_MODEL=openai/gpt-6-luna-direct#low
+OPENCODE_DND_READER_MODEL=openai/gpt-6-luna-direct#low
 ```
 
 ## D&D Super Orchestrator
@@ -69,6 +69,11 @@ keeps the legacy D&D path. The router emits one constrained symbolic token, not
 free-form routing JSON. Typed decisions and telemetry are exposed at
 `/client-dnd-orchestrator.json` without prompt, secret, whisper or hidden-campaign
 text.
+
+The selectable `gpt-6-dnd-edition` alias exposes only `#auto`. Internal worker
+refs remain pinned to Luna low/xhigh or Sol xhigh; `#auto` is not an internal
+reasoning effort. Sol is admitted only when the local router selects it for a
+scene classified as hard. A cold router may fall back to Luna low.
 
 The supported local backend is pinned through `DND_QWEN_BACKEND` (the installed
 default is Ollama). Ollama uses its native `/api/chat` path with `think=false` and
@@ -83,12 +88,15 @@ selected RAG and exact D&D tool schemas. This also applies when the
 native event.
 
 Live routes are discrete: `NO_LLM`/authoritative tool dispatch,
-`LUNA_LOW`/`LUNA_XHIGH`, or rare `SOL_XHIGH`. Runtime V3 keeps state and RAG branches independent; ODM remains
+`LUNA_LOW`/`LUNA_XHIGH`/`LUNA_MAX`, or rare `SOL_XHIGH` for exceptionally complex scenes. Runtime V3 keeps state and RAG branches independent; ODM remains
 responsible for mechanics, mutations, identity and privacy.
 
 The D&D orchestrator uses the provider's default service tier. The current
-OpenCode OAuth path accepts GPT-6 Luna but rejects `service_tier=priority` with
-HTTP 400. The DnD Edition catalog alias maps to Luna so the un-routed profile
+OpenCode OAuth path accepts GPT-6 Luna but rejects both explicit `service_tier=fast`
+and `priority` with HTTP 400. Its native `gpt-6-luna-fast` alias retries at the
+default tier after that refusal, so selecting it does not establish Fast mode.
+Use an API-key provider path that returns an actual Fast-tier receipt before
+claiming Luna Fast; the DnD Edition catalog alias maps to Luna so the un-routed profile
 also selects the narrator model.
 
 The player-facing prompt lives in `config/prompts/dnd-edition.md`. It gives the

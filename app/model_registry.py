@@ -33,12 +33,12 @@ SOL_ROLE_ENV = {
     "reviewer": "OPENCODE_SOL_REVIEW_MODEL",
 }
 DND_ROLE_DEFAULTS = {
-    "narrator": "openai/gpt-6-dnd-edition#low",
-    "complex": "openai/gpt-6-dnd-edition#xhigh",
+    "narrator": "openai/gpt-6-luna-direct#low",
+    "complex": "openai/gpt-6-luna-direct#xhigh",
     "exceptional": "openai/gpt-6-sol-orchestrated#xhigh",
-    "planner": "openai/gpt-6-dnd-edition#xhigh",
-    "memory": "openai/gpt-6-dnd-edition#low",
-    "reader": "openai/gpt-6-dnd-edition#low",
+    "planner": "openai/gpt-6-luna-direct#xhigh",
+    "memory": "openai/gpt-6-luna-direct#low",
+    "reader": "openai/gpt-6-luna-direct#low",
 }
 DND_ROLE_ENV = {role: f"OPENCODE_DND_{role.upper()}_MODEL" for role in DND_ROLE_DEFAULTS}
 SOL_FORBIDDEN_MODEL_IDS = {"gpt-6-sol-fast"}
@@ -424,7 +424,7 @@ class CapabilityRegistry:
             "readerPolicy": "disabled",
             "memoryPolicy": "disabled",
             "reviewPolicy": "disabled",
-            "effortPolicy": {"narrator": {"default": "low", "maximum": "xhigh"}},
+            "effortPolicy": {"narrator": {"default": "auto", "maximum": "auto"}},
             "contextPolicy": {"mode": "model-aware", "targetRatio": 0.55},
             "sandbox": "restricted",
             "autoReview": False,
@@ -442,12 +442,13 @@ class CapabilityRegistry:
                 "routes": {
                     "NO_LLM": "authoritative-code",
                     "TOOL": "authoritative-mcp",
-                    "LUNA_LOW": "openai/gpt-6-dnd-edition#low",
-                    "LUNA_XHIGH": "openai/gpt-6-dnd-edition#xhigh",
+                    "LUNA_LOW": "openai/gpt-6-luna-direct#low",
+                    "LUNA_XHIGH": "openai/gpt-6-luna-direct#xhigh",
+                    "LUNA_MAX": "openai/gpt-6-luna-direct#max",
                     "SOL_XHIGH": "openai/gpt-6-sol-orchestrated#xhigh",
                 },
                 "confidence": {"accept": 0.80, "conservative": 0.55},
-                "serviceTiers": {"luna": "fast", "sol": "default"},
+                "serviceTiers": {"luna": "default", "sol": "default"},
             },
         }
         fast = {

@@ -568,6 +568,9 @@ function renderControls(){
   $('agentControls').innerHTML=state.agents.map((agent)=>`<button type="button" class="${agent.id===agentID||(['build','plan'].includes(agent.id)&&agent.id===mode)?'active':''}" data-agent="${escapeHtml(agent.id)}">${escapeHtml(agent.name||agent.id)}</button>`).join('')
   document.querySelectorAll('[data-agent]').forEach((b)=>b.addEventListener('click',()=>changeAgent(b.dataset.agent)))
   const ref=activeModelRef(), model=activeModel(), selectedVariant=ref?.variant||''; $('modelButton').disabled=!state.models.length; $('modelButton').textContent=modelRefLabel(ref)||'Модель'
+  if(ref?.id==='gpt-6-dnd-edition'&&ref?.providerID==='openai'){
+    $('variantSelect').innerHTML='<option value="auto">Авто</option>'; $('variantSelect').value='auto'; $('variantSelect').disabled=true; return
+  }
   const variants=modelVariants(model)
   const configuredEffort=model?.settings?.effort||''
   $('variantSelect').innerHTML=variants.length?`<option value="">${escapeHtml(configuredEffort||'default')}</option>${variants.map((v)=>`<option value="${escapeHtml(v.id)}">${escapeHtml(v.id)}</option>`).join('')}`:'<option value="">—</option>'

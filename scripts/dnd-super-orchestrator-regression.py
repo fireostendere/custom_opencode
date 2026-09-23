@@ -37,19 +37,34 @@ class LowConfidenceRouter(FakeRouter):
         return "B", 0.62, {"ms": 1, "backend": "fixture"}
 
 
+class OllamaRouter(FakeRouter):
+    def classify(self, message, context):
+        return self.letter, 0.65, {"ms": 1, "backend": "ollama"}
+
+
 assert DndOrchestrator(router=LocalQwenRouter(url="http://127.0.0.1:9/v1")).plan("I give Vasya one healing potion.")["decision"]["route"] == "TOOL"
 social = DndOrchestrator(router=FakeRouter("C")).plan("I try to convince the bartender while two guards watch.")
 assert social["decision"]["route"] == "LUNA_LOW"
 assert social["decision"]["npc_intent"] == "BATCH"
 assert social["telemetry"]["model_calls"] == 1
 assert social["telemetry"]["requested_service_tier"] == "default"
-assert social["telemetry"]["actual_service_tier"] == "default"
+assert social["telemetry"]["actual_service_tier"] is None
 assert {node["id"] for node in social["dag"]}.isdisjoint({"planner", "reviewer", "subagent"})
 assert sum(node["id"] == "narrator" for node in social["dag"]) == 1
 complex_plan = DndOrchestrator(router=FakeRouter("E")).plan("I turn the captain against the advisor using what each knows about last week's events.")
-assert complex_plan["decision"]["route"] == "SOL_XHIGH"
+assert complex_plan["decision"]["route"] == "LUNA_MAX"
+assert DndOrchestrator(router=FakeRouter("D")).plan("I turn the captain against the advisor using what each knows about last week's events.")["decision"]["route"] == "LUNA_MAX"
 assert complex_plan["telemetry"]["requested_service_tier"] == "default"
+assert route_model("LUNA_MAX") == {"model": "gpt-6-luna", "effort": "max", "serviceTier": "default"}
 assert route_model("SOL_XHIGH")["serviceTier"] == "default"
+assert DndOrchestrator(router=FakeRouter("E")).plan("I ask the bartender about the road.")["decision"]["route"] == "LUNA_LOW"
+assert DndOrchestrator(router=FakeRouter("E")).plan("What did I hide last week?")["decision"]["route"] == "LUNA_LOW"
+assert DndOrchestrator(router=OllamaRouter("E")).plan("Настрою капитана против советника, используя тайну каждого и противоречивые свидетельства.")["decision"]["route"] == "LUNA_MAX"
+assert DndOrchestrator(router=OllamaRouter("F")).plan("Настрою капитана против советника, используя тайну каждого и противоречивые свидетельства.")["decision"]["route"] == "LUNA_MAX"
+exceptional = "Resolve conflicting testimony across five factions, hidden promises and contradictory campaign facts; preserve each NPC's private knowledge and irreversible consequences."
+assert DndOrchestrator(router=FakeRouter("F")).plan(exceptional)["decision"]["route"] == "SOL_XHIGH"
+assert DndOrchestrator(router=OllamaRouter("F")).plan(exceptional)["decision"]["route"] == "SOL_XHIGH"
+assert DndOrchestrator(router=OllamaRouter("F")).plan("Я спрашиваю трактирщика о дороге.")["decision"]["route"] == "LUNA_LOW"
 uncertain_tool = DndOrchestrator(router=LowConfidenceRouter()).plan("I hand over the relic to Vasya.")
 assert uncertain_tool["decision"]["route"] == "LUNA_LOW"
 assert uncertain_tool["decision"]["fallback"] == "conservative-confidence"

@@ -1,5 +1,5 @@
 import { appendFile } from "node:fs/promises"
-import { isDndContext } from "./orchestrated-qwen.js"
+import { isDndEdition } from "./orchestrated-qwen.js"
 import { ensureRouter } from "./lazy-local-router.js"
 
 const MODE = String(process.env.DND_ORCHESTRATOR || "auto").toLowerCase()
@@ -54,7 +54,7 @@ async function route(event, body) {
       message,
       context: contextOf(message),
     }),
-    signal: AbortSignal.timeout(Number(process.env.DND_ROUTER_TIMEOUT_MS || 2200)),
+    signal: AbortSignal.timeout(Number(process.env.DND_ROUTER_TIMEOUT_MS || 9000)),
   })
   if (!response.ok) throw new Error(`D&D orchestrator runtime ${response.status}`)
   return response.json()
@@ -62,17 +62,18 @@ async function route(event, body) {
 
 function applyRoute(body, decision) {
   const selected = decision?.route
-  if (!["LUNA_LOW", "LUNA_XHIGH", "SOL_XHIGH"].includes(selected)) {
+  if (!["LUNA_LOW", "LUNA_XHIGH", "LUNA_MAX", "SOL_XHIGH"].includes(selected)) {
     // Native OpenCode cannot execute ODM's authoritative MCP operation without
     // a narrator turn. Refuse a destructive shortcut instead of paying for a
     // narrator call that pretends to be NO_LLM.
     throw new Error(`D&D ${selected || "unknown"} route requires managed ODM tool dispatch`)
   }
   const target = selected === "SOL_XHIGH" ? "gpt-6-sol" : "gpt-6-luna"
-  const effort = selected === "LUNA_LOW" ? "low" : "xhigh"
+  const effort = selected === "LUNA_LOW" ? "low" : selected === "LUNA_MAX" ? "max" : "xhigh"
   const result = { ...body }
   result.model = target
-  // OAuth accepts Luna at the provider default tier; priority returns HTTP 400.
+  // ChatGPT OAuth rejects fast/priority and the native Fast alias silently
+  // retries at default; keep the live D&D route available until API-key auth.
   delete result.service_tier
   result.reasoning = { ...(result.reasoning && typeof result.reasoning === "object" ? result.reasoning : {}), effort }
   delete result.reasoning_effort
@@ -94,7 +95,7 @@ async function record(event, decision, telemetry, fallback) {
 }
 
 export function isDndOrchestratorRequest(event) {
-  return isDndContext(event)
+  return isDndEdition(event) || event?.agent === "dnd-narrator" || String(event?.agent || "").startsWith("narrator-")
 }
 
 export function routeBody(body, decision) {
@@ -151,11 +152,14 @@ export default {
 if (process.env.DND_SUPER_ORCHESTRATOR_SELF_CHECK) {
   const event = { agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-6-dnd-edition" } }
   if (!isDndOrchestratorRequest(event)) throw new Error("D&D request selector failed")
+  if (isDndOrchestratorRequest({ agent: "dnd-narrator-high", model: { providerID: "openai", id: "gpt-6-luna-direct" } })) throw new Error("pinned D&D worker must not be rerouted")
+  if (isDndOrchestratorRequest({ agent: "dnd-narrator-max", model: { providerID: "openai", id: "gpt-6-sol-orchestrated" } })) throw new Error("pinned Sol worker must not be rerouted")
   if (routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_LOW" }).model !== "gpt-6-luna") throw new Error("Luna low route failed")
   const lunaLow = routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_LOW" })
   const lunaXhigh = routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_XHIGH" })
-  if ("service_tier" in lunaLow || "service_tier" in lunaXhigh) throw new Error("Luna OAuth tier contract failed")
-  if (lunaLow.reasoning?.effort !== "low" || lunaXhigh.reasoning?.effort !== "xhigh" || "reasoning_effort" in lunaLow) throw new Error("Luna OAuth reasoning contract failed")
+  const lunaMax = routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_MAX" })
+  if ("service_tier" in lunaLow || "service_tier" in lunaXhigh || "service_tier" in lunaMax) throw new Error("Luna OAuth tier contract failed")
+  if (lunaLow.reasoning?.effort !== "low" || lunaXhigh.reasoning?.effort !== "xhigh" || lunaMax.reasoning?.effort !== "max" || "reasoning_effort" in lunaLow) throw new Error("Luna reasoning contract failed")
   if ("service_tier" in routeBody({ model: "gpt-6-sol", messages: [] }, { route: "SOL_XHIGH" })) throw new Error("Sol default tier failed")
   let refused = false
   const original = { messages: [{ role: "user", content: "attack" }], reasoning: { summary: "auto" }, reasoning_effort: "high", service_tier: "priority" }
