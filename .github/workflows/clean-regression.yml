@@ -24,11 +24,11 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: {persist-credentials: false}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: {node-version: '22'}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: {python-version: '3.12'}
       - name: Validate workflow and CLI harness consistency
         run: python scripts/workflow-cli-consistency.py
@@ -57,7 +57,7 @@ jobs:
           set -euo pipefail
           python scripts/audit-regression.py --output "$RUNNER_TEMP/regression"
           test -s "$RUNNER_TEMP/regression/report.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: model-free-regression
@@ -66,11 +66,11 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: {persist-credentials: false}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: {node-version: '22'}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: {python-version: '3.12'}
       - name: Install runtime test dependencies
         run: |
@@ -82,7 +82,7 @@ jobs:
           set -euo pipefail
           python scripts/install-native-regression.py --output "$RUNNER_TEMP/native-install/reports"
           test -s "$RUNNER_TEMP/native-install/reports/report.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: native-install-regression
@@ -91,11 +91,11 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: {persist-credentials: false}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: {node-version: '22'}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: {python-version: '3.12'}
       - name: Install pinned native OpenCode
         run: |
@@ -113,7 +113,7 @@ jobs:
           set -euo pipefail
           python scripts/native-budget-regression.py --retry-once --output "$RUNNER_TEMP/native-budget"
           test -n "$(ls -A "$RUNNER_TEMP/native-budget")"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: native-budget-wire
@@ -122,9 +122,9 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: {persist-credentials: false}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: {python-version: '3.12'}
       - name: Install real isolation dependencies
         run: |
@@ -141,7 +141,7 @@ jobs:
           python scripts/tool-fabric-smoke.py | tee "$RUNNER_TEMP/kernel-sandbox/tool-fabric.log"
           test -s "$RUNNER_TEMP/kernel-sandbox/preflight.json"
           test -s "$RUNNER_TEMP/kernel-sandbox/tool-fabric.log"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: kernel-sandbox
