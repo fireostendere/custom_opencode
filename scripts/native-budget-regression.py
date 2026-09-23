@@ -239,7 +239,7 @@ def main():
                         "fixture": {
                             "name": "Fixture",
                             "capabilities": {"tools": True, "input": ["text"], "output": ["text"]},
-                            "limit": {"context": 32000, "output": 2048},
+                            "limit": {"context": 128000, "output": 2048},
                         }
                     },
                 }
