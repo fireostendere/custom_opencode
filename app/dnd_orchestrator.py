@@ -210,9 +210,9 @@ def deterministic_decision(message: str, play_mode: str = "FULL") -> DndDecision
 
 def route_model(route: str) -> dict[str, str | None]:
     table = {
-        "LUNA_LOW": ("gpt-5.6-luna", "low", "fast"),
-        "LUNA_XHIGH": ("gpt-5.6-luna", "xhigh", "fast"),
-        "SOL_XHIGH": ("gpt-5.6-sol", "xhigh", "default"),
+        "LUNA_LOW": ("gpt-6-luna", "low", "default"),
+        "LUNA_XHIGH": ("gpt-6-luna", "xhigh", "default"),
+        "SOL_XHIGH": ("gpt-6-sol", "xhigh", "default"),
     }
     model, effort, tier = table.get(route, (None, None, None))
     return {"model": model, "effort": effort, "serviceTier": tier}
@@ -407,9 +407,7 @@ class DndOrchestrator:
         telemetry.narrator_model = route_model(decision.route).get("model")
         telemetry.narrator_effort = route_model(decision.route).get("effort")
         telemetry.requested_service_tier = route_model(decision.route).get("serviceTier")
-        telemetry.actual_service_tier = (
-            "priority" if telemetry.requested_service_tier == "fast" else telemetry.requested_service_tier
-        )
+        telemetry.actual_service_tier = telemetry.requested_service_tier
         telemetry.model_calls = 0 if decision.route in {"NO_LLM", "TOOL"} else 1
         return {"decision": decision.as_dict(), "telemetry": telemetry.as_dict(), "dag": turn_dag(decision), "rag": chosen}
 

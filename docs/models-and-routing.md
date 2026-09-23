@@ -51,7 +51,7 @@ OpenAI direct models остаются на существующем официа
 | `critical` | Architect stack + DeepSeek reviewer | high-risk production work |
 | `research` | Max + Flash research + DeepSeek critic | research/synthesis |
 | `long-horizon` | Max + GLM + Flash + DeepSeek | длинная автономная работа |
-| `sol-orchestrated` | Sol + Terra + Luna | OpenAI-only orchestration |
+| `sol-orchestrated` | Sol + Luna | OpenAI-only orchestration |
 | `dnd-edition` | Qwen3.5-4B System-1 + Luna low/xhigh + Sol xhigh | restricted live D&D через ODM |
 
 Старый adaptive/device router больше не является частью model routing.
@@ -81,7 +81,7 @@ architect / critical / research / long-horizon
 Runtime V3 adds the D&D-only path without changing direct/manual selection:
 
 ```text
-ODM/CODE -> resident Qwen3.5-4B -> NO_LLM/tool | Luna Fast LOW | Luna Fast XHIGH | Sol XHIGH Standard
+ODM/CODE -> resident Qwen3.5-4B -> NO_LLM/tool | Luna LOW | Luna XHIGH | Sol XHIGH
 ```
 
 The local router emits a single constrained route token and typed metadata. It does not narrate, own mechanics, or receive the full MCP catalog. ODM remains authoritative for dice, state, legality, identity and privacy. Snapshot reads prefer `odm_narrator.snapshot` with revision/sections and fall back to the existing delta read. RAG is local and scope-filtered.
@@ -191,10 +191,10 @@ GLM 5.2 — отдельный executor для действительно дли
 ## Model picker
 
 Picker может показывать обычные provider models и server profiles. Dedicated
-`Qwen 3.8 Max · Orchestrated`, `GPT-5.6 Sol · Orchestrated` и
-`GPT-5.6 · DnD Edition` catalog aliases
+`Qwen 3.8 Max · Orchestrated`, `GPT-6 Sol · Orchestrated` и
+`GPT-6 · DnD Edition` catalog aliases
 используются только как trigger для orchestration prompt/plugin и указывают на
-реальные модели провайдеров. Обычные Qwen/SOL/Terra/Luna остаются direct.
+реальные модели провайдеров. Обычные Qwen/Sol/Luna остаются direct.
 
 DnD Edition выбирает primary-agent `dnd-narrator`. Deny-first permissions
 оставляют только authoritative `odm_narrator`, read-only knowledge operations и
@@ -220,7 +220,7 @@ Runtime V3 использует native OpenCode durable compaction. Отдель
 | `normal` | native + engineering/Ponytail/plan policy | ≤12k chars, bounded repo/RAG |
 | `full` | полный orchestration context | ≤24k chars |
 
-`GPT-5.6 · DnD Edition` использует `bare`: coding/Ponytail/plan инструкции и engineering RAG не попадают к narrator. Это не отключает deny-first permissions или game-only tool allowlist. Ollama и fast reader/Flash по умолчанию используют `lite`. Обычные direct-модели используют `normal`; Qwen/SOL orchestrated — `full`.
+`GPT-6 · DnD Edition` использует `bare`: coding/Ponytail/plan инструкции и engineering RAG не попадают к narrator. Это не отключает deny-first permissions или game-only tool allowlist. Ollama и fast reader/Flash по умолчанию используют `lite`. Обычные direct-модели используют `normal`; Qwen/SOL orchestrated — `full`.
 
 Managed orchestration задаёт класс через `contextClass`; `customInstructions:false` эквивалентно `bare`. Сессионный override доступен через `/contextclass` и не меняет выбранную provider/model.
 

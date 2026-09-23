@@ -9,12 +9,12 @@ function esc(value){return String(value??'').replace(/[&<>"']/g,(c)=>({'&':'&amp
 function sid(){const m=/^#\/session\/([^/?]+)/.exec(location.hash||'');return m?decodeURIComponent(m[1]):null}
 function key(){return `${PROFILE_KEY}${sid()||'draft'}`}
 function explicitProfile(){return localStorage.getItem(key())||'direct'}
-function canonicalProfile(id){return ({orchestrated:'architect','qwen3.8-orchestrated':'architect','gpt-5.6-sol-orchestrated':'sol-orchestrated','gpt-5.6-dnd-edition':'dnd-edition'})[id]||id}
+function canonicalProfile(id){return ({orchestrated:'architect','qwen3.8-orchestrated':'architect','gpt-6-sol-orchestrated':'sol-orchestrated','gpt-6-dnd-edition':'dnd-edition'})[id]||id}
 function profile(){
   const selected=canonicalProfile(explicitProfile());if(selected!=='direct')return selected
   const model=window.CustomOpenCodeControls?.activeModel?.()
-  if(model?.providerID==='openai'&&model.id==='gpt-5.6-dnd-edition')return 'dnd-edition'
-  if(model?.providerID==='openai'&&model.id==='gpt-5.6-sol-orchestrated')return 'sol-orchestrated'
+  if(model?.providerID==='openai'&&model.id==='gpt-6-dnd-edition')return 'dnd-edition'
+  if(model?.providerID==='openai'&&model.id==='gpt-6-sol-orchestrated')return 'sol-orchestrated'
   if(model?.providerID==='bailian-cli'&&model.id==='qwen3.8-orchestrated')return 'architect'
   return 'direct'
 }

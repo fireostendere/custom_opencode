@@ -303,7 +303,7 @@ with tempfile.TemporaryDirectory() as temp:
             self.forks = 0
             self.session = {
                 "agent": "build",
-                "model": {"providerID": "openai", "id": "gpt-5.6-luna", "variant": "high"},
+                "model": {"providerID": "openai", "id": "gpt-6-luna", "variant": "high"},
             }
             self.agent_switches = []
             self.model_switches = []
@@ -354,8 +354,8 @@ with tempfile.TemporaryDirectory() as temp:
     server_runtime.CONTEXT = ContextService(store, indexer)
     assert server_runtime._profile_id("orchestrated") == "architect"
     assert server_runtime._profile_id("qwen3.8-orchestrated") == "architect"
-    assert server_runtime._profile_id("gpt-5.6-sol-orchestrated") == "sol-orchestrated"
-    assert server_runtime._profile_id("gpt-5.6-dnd-edition") == "dnd-edition"
+    assert server_runtime._profile_id("gpt-6-sol-orchestrated") == "sol-orchestrated"
+    assert server_runtime._profile_id("gpt-6-dnd-edition") == "dnd-edition"
     try:
         server_runtime._profile_id("unknown-profile")
     except ValueError as error:
@@ -379,8 +379,8 @@ with tempfile.TemporaryDirectory() as temp:
     # model with a variant all retain their exact model selection.
     for profile, model, expected_agent in (
         ("architect", {"providerID": "bailian-cli", "id": "qwen3.8-orchestrated"}, "plan"),
-        ("sol-orchestrated", {"providerID": "openai", "id": "gpt-5.6-sol-orchestrated"}, "plan"),
-        ("dnd-edition", {"providerID": "openai", "id": "gpt-5.6-dnd-edition"}, "dnd-narrator"),
+        ("sol-orchestrated", {"providerID": "openai", "id": "gpt-6-sol-orchestrated"}, "plan"),
+        ("dnd-edition", {"providerID": "openai", "id": "gpt-6-dnd-edition"}, "dnd-narrator"),
         ("direct", {"providerID": "custom", "id": "manual", "variant": "precise"}, "plan-direct"),
     ):
         fake.session = {"agent": "build", "model": dict(model)}

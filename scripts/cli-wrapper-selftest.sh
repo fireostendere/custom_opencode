@@ -38,7 +38,7 @@ for args in '--agent plan --model'; do
     exit 1
   fi
 done
-for ref in bailian-cli/qwen3.8-orchestrated openai/gpt-5.6-sol-orchestrated 'custom/direct#high'; do
+for ref in bailian-cli/qwen3.8-orchestrated openai/gpt-6-sol-orchestrated 'custom/direct#high'; do
   "$CLI" run --model "$ref" --agent plan --help >/dev/null
   "$CLI" run --agent=plan --model="$ref" --help >/dev/null
 done

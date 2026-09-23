@@ -184,7 +184,7 @@ function primaryAgentFor(model, agent) {
   const modelID = model?.id || model?.modelID
   const providerID = model?.providerID || model?.provider
   const mode = id.startsWith('plan') ? 'plan' : 'build'
-  const orchestrated = (providerID === 'bailian-cli' && modelID === 'qwen3.8-orchestrated') || (providerID === 'openai' && modelID === 'gpt-5.6-sol-orchestrated')
+  const orchestrated = ORCHESTRATED_MODELS.some((model) => model.id.endsWith('-orchestrated') && model.providerID === providerID && model.id === modelID)
   return orchestrated ? mode : `${mode}-direct`
 }
 async function transferSessionToProject(session,project,{select=false,removeSource=false}={}) {

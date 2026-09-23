@@ -18,10 +18,10 @@ source = source.replace(
 )
 source = source.replace(/<span[^>]*>\{([^}]+)\}<\/span>/g, '$1')
 assert.ok(!source.includes('@opencode-ai/plugin/tui'), 'plugin import replacement failed')
-for (const modelID of ['gpt-5.6-sol-orchestrated', 'gpt-5.6-dnd-edition', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+for (const modelID of ['gpt-6-astra', 'gpt-6-astra-orchestrated', 'gpt-6-sol-orchestrated', 'gpt-6-dnd-edition', 'gpt-6-sol-direct', 'gpt-6-luna-direct']) {
   assert.ok(source.includes(`openai/${modelID}`), `SOL orchestration model missing from TUI grouping: ${modelID}`)
 }
-assert.ok(!source.includes('openai/gpt-5.6-sol-fast'), 'SOL Fast must not be used by the TUI orchestration grouping')
+assert.ok(!source.includes('openai/gpt-6-sol-fast'), 'SOL Fast must not be used by the TUI orchestration grouping')
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
 const plugin = (await import(moduleUrl)).default
 assert.equal(plugin.id, 'custom.model-selector')
@@ -70,8 +70,10 @@ const models = [
   { providerID: 'bailian-cli', id: 'qwen-flash', name: 'Qwen Flash', enabled: true, status: 'active', cost: [{ input: 0.01 }], variants: [{ id: 'low' }, { id: 'medium' }] },
   { providerID: 'bailian-cli', id: 'qwen3.7-plus', name: 'Qwen Plus', enabled: true, status: 'active', cost: [{ input: 0.04 }] },
   { providerID: 'openai', id: 'gpt-test', name: 'GPT Test', enabled: true, status: 'active', cost: [{ input: 0.2 }] },
-  { providerID: 'openai', id: 'gpt-5.6-sol-orchestrated', name: 'GPT-5.6 Sol · Orchestrated', enabled: true, status: 'active', cost: [{ input: 1 }] },
-  { providerID: 'openai', id: 'gpt-5.6-dnd-edition', name: 'GPT-5.6 · DnD Edition', enabled: true, status: 'active', cost: [{ input: 1 }] },
+  { providerID: 'openai', id: 'gpt-6-astra', name: 'GPT-6 Astra', enabled: true, status: 'active', cost: [{ input: 1 }] },
+  { providerID: 'openai', id: 'gpt-6-astra-orchestrated', name: 'GPT-6 Astra · Orchestrated', enabled: true, status: 'active', cost: [{ input: 1 }] },
+  { providerID: 'openai', id: 'gpt-6-sol-orchestrated', name: 'GPT-6 Sol · Orchestrated', enabled: true, status: 'active', cost: [{ input: 1 }] },
+  { providerID: 'openai', id: 'gpt-6-dnd-edition', name: 'GPT-6 · DnD Edition', enabled: true, status: 'active', cost: [{ input: 1 }] },
   { providerID: 'opencode', id: 'free-model', name: 'Free Model', enabled: true, status: 'active', cost: [{ input: 0 }] },
   { providerID: 'other', id: 'z-model', name: 'Z Model', enabled: true, status: 'active', cost: [{ input: 1 }] },
   { providerID: 'other', id: 'old-model', name: 'Old Model', enabled: false, status: 'deprecated', cost: [{ input: 0.5 }] },
@@ -206,8 +208,9 @@ assert.equal(persisted.filter((item) => item.providerID === 'bailian-cli' && ite
 
 assert.equal(new Set(dialogOptions.map((item) => `${item.category}:${item.value.providerID}/${item.value.modelID}`)).size, dialogOptions.length, 'model list contains duplicates inside a category')
 assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'qwen3.8-max').map((item) => item.category), ['Current', 'Orchestrated'])
-assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'gpt-5.6-sol-orchestrated').map((item) => item.category), ['Orchestrated'])
-assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'gpt-5.6-dnd-edition').map((item) => item.category), ['Orchestrated'])
+assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'gpt-6-sol-orchestrated').map((item) => item.category), ['Orchestrated'])
+assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'gpt-6-astra-orchestrated').map((item) => item.category), ['Orchestrated'])
+assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'gpt-6-dnd-edition').map((item) => item.category), ['Orchestrated'])
 assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'qwen-flash').map((item) => item.category), ['Alibaba'])
 assert.deepEqual(dialogOptions.filter((item) => item.value.modelID === 'gpt-test').map((item) => item.category), ['Recent', 'OpenAI'])
 assert.deepEqual(
@@ -232,7 +235,7 @@ assert.deepEqual(
   dialogOptions
     .filter((item) => item.category === 'Orchestrated')
     .map((item) => item.value.modelID),
-  ['gpt-5.6-dnd-edition', 'gpt-5.6-sol-orchestrated', 'qwen3.8-max', 'qwen3.7-plus'],
+  ['gpt-6-dnd-edition', 'gpt-6-astra', 'gpt-6-astra-orchestrated', 'gpt-6-sol-orchestrated', 'qwen3.8-max', 'qwen3.7-plus'],
 )
 assert.deepEqual(
   dialogOptions

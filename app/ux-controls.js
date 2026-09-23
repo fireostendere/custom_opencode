@@ -134,7 +134,7 @@ function selectedOrchestratedModel() {
   const text = $('modelButton')?.textContent || ''
   return ORCHESTRATED_MODELS.find((model) => text.includes(model.id) || text.includes(model.label)) || null
 }
-function profileForModel(model) { return model?.id === 'gpt-5.6-dnd-edition' ? 'dnd-edition' : model ? 'orchestrated' : 'direct' }
+function profileForModel(model) { return model?.id === 'gpt-6-dnd-edition' ? 'dnd-edition' : model ? 'orchestrated' : 'direct' }
 function orchestratedModelSelected() {
   return Boolean(selectedOrchestratedModel())
 }

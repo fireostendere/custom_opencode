@@ -91,7 +91,7 @@ try {
   const normal = {
     sessionID: "normal",
     agent: "build",
-    model: { providerID: "openai", id: "gpt-5.6-sol" },
+    model: { providerID: "openai", id: "gpt-6-sol-direct" },
     system: [{ type: "text", text: "NATIVE" }],
   }
   await hooks.context(normal)
@@ -103,7 +103,7 @@ try {
   const staticFull = {
     sessionID: "static",
     agent: "build",
-    model: { providerID: "openai", id: "gpt-5.6-sol-orchestrated" },
+    model: { providerID: "openai", id: "gpt-6-sol-orchestrated" },
     system: [{ type: "text", text: "NATIVE" }],
   }
   await hooks.context(staticFull)
@@ -112,7 +112,7 @@ try {
   const dnd = {
     sessionID: "dnd",
     agent: "dnd-narrator",
-    model: { providerID: "openai", id: "gpt-5.6-dnd-edition" },
+    model: { providerID: "openai", id: "gpt-6-dnd-edition" },
     system: [
       { type: "text", text: "NATIVE CODING" },
       { type: "text", text: "Custom engineering policy:\nOLD" },
@@ -134,7 +134,7 @@ try {
   const dndPinnedModel = {
     sessionID: "dnd-pinned",
     agent: "dnd-narrator",
-    model: { providerID: "openai", id: "gpt-5.6-sol" },
+    model: { providerID: "openai", id: "gpt-6-sol-direct" },
     system: [{ type: "text", text: "GENERIC CODING STARTUP" }],
   }
   await hooks.context(dndPinnedModel)
@@ -147,7 +147,7 @@ try {
   const dndModelLane = {
     sessionID: "dnd-model",
     agent: "build",
-    model: { providerID: "openai", id: "gpt-5.6-dnd-edition" },
+    model: { providerID: "openai", id: "gpt-6-dnd-edition" },
     system: [
       { type: "text", text: "AGENTS.md: repository coding instructions" },
       { type: "text", text: "Ponytail V2 engineering policy (full): coding" },
@@ -174,7 +174,7 @@ try {
   const dndNativeModelID = {
     sessionID: "dnd-model-id",
     agent: "build",
-    model: { providerID: "openai", modelID: "gpt-5.6-dnd-edition" },
+    model: { providerID: "openai", modelID: "gpt-6-dnd-edition" },
     system: [{ type: "text", text: "AGENTS.md and Ponytail must not arrive" }],
   }
   await hooks.context(dndNativeModelID)

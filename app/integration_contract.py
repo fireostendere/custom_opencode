@@ -33,8 +33,8 @@ def contract() -> dict[str, Any]:
             "modelProfiles": [
                 "direct",
                 "qwen3.8-orchestrated",
-                "gpt-5.6-sol-orchestrated",
-                "gpt-5.6-dnd-edition",
+                "gpt-6-sol-orchestrated",
+                "gpt-6-dnd-edition",
             ],
             "orchestrationLivesInModelProfile": True,
             "queueAuthority": "server",

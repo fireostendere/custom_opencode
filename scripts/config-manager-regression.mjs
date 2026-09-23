@@ -245,7 +245,7 @@ assert.equal(event.system.length, 0, 'config-manager must not race context-lanes
 const dndEvent = {
   sessionID: 'dnd-tools',
   agent: 'dnd-narrator',
-  model: { providerID: 'openai', id: 'gpt-5.6-dnd-edition' },
+  model: { providerID: 'openai', id: 'gpt-6-dnd-edition' },
   tools: { odm_narrator: {}, shell: {} },
 }
 const mcpListCallsBeforeDnd = mcpListCalls
