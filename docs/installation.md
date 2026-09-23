@@ -113,7 +113,7 @@ Installer:
 - `normal` — штатный OpenCode context плюс инженерная policy/Ponytail и bounded runtime context до 12000 символов;
 - `full` — полный orchestration/engineering path и runtime envelope до 24000 символов.
 
-По умолчанию используется `normal`. Локальные Ollama и fast-reader/Flash идут через `lite`; `GPT-5.6 · DnD Edition` — через `bare`. Для текущей сессии класс можно временно поменять командой `/contextclass bare|lite|normal|full|auto`. Managed orchestration может зафиксировать класс полем `contextClass` в `/addorchestration`; `customInstructions:false` является shorthand для `bare`.
+По умолчанию используется `normal`. Локальные Ollama и fast-reader/Flash идут через `lite`; `GPT-6 · DnD Edition` — через `bare`. Для текущей сессии класс можно временно поменять командой `/contextclass bare|lite|normal|full|auto`. Managed orchestration может зафиксировать класс полем `contextClass` в `/addorchestration`; `customInstructions:false` является shorthand для `bare`.
 
 `bare` меняет только передаваемый модели prompt/context. Серверные permissions, sandbox, secret broker и deny-first tool allowlists продолжают применяться независимо от текста system prompt.
 

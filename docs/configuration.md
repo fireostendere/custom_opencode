@@ -48,23 +48,23 @@ OPENCODE_READER_MODEL=bailian-cli/qwen3.8-flash
 OPENCODE_REVIEW_MODEL=bailian-cli/deepseek-v4-pro-0813
 OPENCODE_LONG_HORIZON_MODEL=bailian-cli/glm-5.2
 OPENCODE_ORCHESTRATED_MODEL=bailian-cli/qwen3.8-orchestrated
-OPENCODE_SOL_ORCHESTRATED_MODEL=openai/gpt-5.6-sol-orchestrated
-OPENCODE_SOL_BUILDER_MODEL=openai/gpt-5.6-terra
-OPENCODE_SOL_READER_MODEL=openai/gpt-5.6-luna
-OPENCODE_SOL_REVIEW_MODEL=openai/gpt-5.6-luna
-OPENCODE_DND_NARRATOR_MODEL=openai/gpt-5.6-luna#low
-OPENCODE_DND_COMPLEX_MODEL=openai/gpt-5.6-luna#xhigh
-OPENCODE_DND_EXCEPTIONAL_MODEL=openai/gpt-5.6-sol#xhigh
-OPENCODE_DND_PLANNER_MODEL=openai/gpt-5.6-luna#xhigh
-OPENCODE_DND_MEMORY_MODEL=openai/gpt-5.6-luna#low
-OPENCODE_DND_READER_MODEL=openai/gpt-5.6-luna#low
+OPENCODE_SOL_ORCHESTRATED_MODEL=openai/gpt-6-sol-orchestrated
+OPENCODE_SOL_BUILDER_MODEL=openai/gpt-6-sol-direct
+OPENCODE_SOL_READER_MODEL=openai/gpt-6-luna-direct
+OPENCODE_SOL_REVIEW_MODEL=openai/gpt-6-luna-direct
+OPENCODE_DND_NARRATOR_MODEL=openai/gpt-6-dnd-edition#low
+OPENCODE_DND_COMPLEX_MODEL=openai/gpt-6-dnd-edition#xhigh
+OPENCODE_DND_EXCEPTIONAL_MODEL=openai/gpt-6-sol-orchestrated#xhigh
+OPENCODE_DND_PLANNER_MODEL=openai/gpt-6-dnd-edition#xhigh
+OPENCODE_DND_MEMORY_MODEL=openai/gpt-6-dnd-edition#low
+OPENCODE_DND_READER_MODEL=openai/gpt-6-dnd-edition#low
 ```
 
 ## D&D Super Orchestrator
 
 `DND_ORCHESTRATOR=auto|on|off` extends the existing `dnd-edition` profile. `auto`
 uses the resident localhost Qwen3.5-4B System-1 router when healthy and safely
-falls back to Luna Fast LOW; `on` fails closed if the router is unavailable; `off`
+falls back to Luna LOW; `on` fails closed if the router is unavailable; `off`
 keeps the legacy D&D path. The router emits one constrained symbolic token, not
 free-form routing JSON. Typed decisions and telemetry are exposed at
 `/client-dnd-orchestrator.json` without prompt, secret, whisper or hidden-campaign
@@ -79,24 +79,31 @@ The D&D lane is a hard context boundary: its profile disables planning,
 subagents and generic tools, and enables `dndMinimalContext`. It clears native
 startup instructions before adding only the trusted D&D policy, selected state,
 selected RAG and exact D&D tool schemas. This also applies when the
-`gpt-5.6-dnd-edition` model is selected directly, including a `modelID`-shaped
+`gpt-6-dnd-edition` model is selected directly, including a `modelID`-shaped
 native event.
 
-Live routes are discrete: `NO_LLM`/authoritative tool dispatch, requested Fast
-`LUNA_LOW`/`LUNA_XHIGH`, or rare standard-tier `SOL_XHIGH`. Sol never receives
-the Fast tier. Runtime V3 keeps state and RAG branches independent; ODM remains
+Live routes are discrete: `NO_LLM`/authoritative tool dispatch,
+`LUNA_LOW`/`LUNA_XHIGH`, or rare `SOL_XHIGH`. Runtime V3 keeps state and RAG branches independent; ODM remains
 responsible for mechanics, mutations, identity and privacy.
 
-The D&D orchestrator uses `fast` as its internal route label and sends the
-provider-compatible OpenAI wire value `service_tier=priority`, matching the
-accelerated tier used by Codex. Telemetry records `requested_service_tier` as
-`fast` and `actual_service_tier` as `priority`.
+The D&D orchestrator uses the provider's default service tier. The current
+OpenCode OAuth path accepts GPT-6 Luna but rejects `service_tier=priority` with
+HTTP 400. The DnD Edition catalog alias maps to Luna so the un-routed profile
+also selects the narrator model.
+
+The player-facing prompt lives in `config/prompts/dnd-edition.md`. It gives the
+narrator scene pacing and NPC guidance while keeping ODM as the source of game
+state. The native DnD route selects a model; it does not prefetch RAG. When a
+rule or setting fact matters, the narrator can make one compact search through
+the project's read-only `dnd_knowledge_*` tools. Campaign continuity comes from
+ODM state, not the general `kb_knowledge_*` engineering corpus, which DnD agents
+cannot use. The DnD corpus must be connected in the game project for lookup.
 
 Alibaba-роли provider-locked на Alibaba Cloud/Bailian, а SOL и DnD-роли provider-locked
 на официальный OpenAI provider. Ни одна роль из orchestration stack не должна
 автоматически уходить на другой gateway/provider.
 
-`direct` сохраняет ровно выбранную пользователем модель. Managed profiles (`fast`, `build`, `architect`, `sol-orchestrated`, `dnd-edition`, `critical`, `research`, `long-horizon`) используют только собственные role refs. `dnd-edition` доступен в picker как `openai/gpt-5.6-dnd-edition` и выбирает restricted primary-agent `dnd-narrator`.
+`direct` сохраняет ровно выбранную пользователем модель. Managed profiles (`fast`, `build`, `architect`, `sol-orchestrated`, `dnd-edition`, `critical`, `research`, `long-horizon`) используют только собственные role refs. `dnd-edition` доступен в picker как `openai/gpt-6-dnd-edition` и выбирает restricted primary-agent `dnd-narrator`.
 
 Host load, GPU state, запущенные игры и доступность другого inference endpoint не участвуют в выборе model route.
 

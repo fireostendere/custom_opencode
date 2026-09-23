@@ -42,8 +42,8 @@ social = DndOrchestrator(router=FakeRouter("C")).plan("I try to convince the bar
 assert social["decision"]["route"] == "LUNA_LOW"
 assert social["decision"]["npc_intent"] == "BATCH"
 assert social["telemetry"]["model_calls"] == 1
-assert social["telemetry"]["requested_service_tier"] == "fast"
-assert social["telemetry"]["actual_service_tier"] == "priority"
+assert social["telemetry"]["requested_service_tier"] == "default"
+assert social["telemetry"]["actual_service_tier"] == "default"
 assert {node["id"] for node in social["dag"]}.isdisjoint({"planner", "reviewer", "subagent"})
 assert sum(node["id"] == "narrator" for node in social["dag"]) == 1
 complex_plan = DndOrchestrator(router=FakeRouter("E")).plan("I turn the captain against the advisor using what each knows about last week's events.")

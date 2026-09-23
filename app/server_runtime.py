@@ -70,8 +70,8 @@ PROFILE_IDS = {
 PROFILE_ALIASES = {
     "orchestrated": "architect",
     "qwen3.8-orchestrated": "architect",
-    "gpt-5.6-sol-orchestrated": "sol-orchestrated",
-    "gpt-5.6-dnd-edition": "dnd-edition",
+    "gpt-6-sol-orchestrated": "sol-orchestrated",
+    "gpt-6-dnd-edition": "dnd-edition",
 }
 
 

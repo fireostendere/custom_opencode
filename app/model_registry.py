@@ -23,9 +23,9 @@ ROLE_ENV = {
     "long_horizon": "OPENCODE_LONG_HORIZON_MODEL",
 }
 SOL_ROLE_DEFAULTS = {
-    "builder": "openai/gpt-5.6-terra",
-    "reader": "openai/gpt-5.6-luna",
-    "reviewer": "openai/gpt-5.6-luna",
+    "builder": "openai/gpt-6-sol-direct",
+    "reader": "openai/gpt-6-luna-direct",
+    "reviewer": "openai/gpt-6-luna-direct",
 }
 SOL_ROLE_ENV = {
     "builder": "OPENCODE_SOL_BUILDER_MODEL",
@@ -33,15 +33,15 @@ SOL_ROLE_ENV = {
     "reviewer": "OPENCODE_SOL_REVIEW_MODEL",
 }
 DND_ROLE_DEFAULTS = {
-    "narrator": "openai/gpt-5.6-luna#low",
-    "complex": "openai/gpt-5.6-luna#xhigh",
-    "exceptional": "openai/gpt-5.6-sol#xhigh",
-    "planner": "openai/gpt-5.6-luna#xhigh",
-    "memory": "openai/gpt-5.6-luna#low",
-    "reader": "openai/gpt-5.6-luna#low",
+    "narrator": "openai/gpt-6-dnd-edition#low",
+    "complex": "openai/gpt-6-dnd-edition#xhigh",
+    "exceptional": "openai/gpt-6-sol-orchestrated#xhigh",
+    "planner": "openai/gpt-6-dnd-edition#xhigh",
+    "memory": "openai/gpt-6-dnd-edition#low",
+    "reader": "openai/gpt-6-dnd-edition#low",
 }
 DND_ROLE_ENV = {role: f"OPENCODE_DND_{role.upper()}_MODEL" for role in DND_ROLE_DEFAULTS}
-SOL_FORBIDDEN_MODEL_IDS = {"gpt-5.6-sol-fast"}
+SOL_FORBIDDEN_MODEL_IDS = {"gpt-6-sol-fast"}
 ALIBABA_LOCKED_PREFIXES = (
     "qwen",
     "deepseek",
@@ -110,7 +110,7 @@ def sol_role_models() -> dict[str, str]:
         _, model, _ = _split_ref(value)
         if model.casefold() in SOL_FORBIDDEN_MODEL_IDS:
             raise ValueError(
-                f"{SOL_ROLE_ENV[role]}: gpt-5.6-sol-fast is disabled; use GPT-5.6 Luna"
+                f"{SOL_ROLE_ENV[role]}: gpt-6-sol-fast is disabled; use GPT-6 Luna"
             )
         result[role] = value
     return result
@@ -152,12 +152,13 @@ def effort_plan(ref: str, requested: str = "auto") -> dict[str, Any]:
     if requested == "auto":
         result.update(effortSupported=True, effortMapping="provider-default")
         return result
-    if provider == "openai" and low.startswith("gpt-5.6-"):
+    if provider == "openai" and low.startswith("gpt-6-"):
+        effective = "low" if requested == "minimal" else requested
         result.update(
-            effectiveEffort=requested,
+            effectiveEffort=effective,
             effortSupported=True,
             effortMapping="openai-reasoning-effort",
-            settings={"reasoningEffort": requested},
+            settings={"reasoningEffort": effective},
         )
         return result
     if provider != ALIBABA_PROVIDER:
@@ -339,9 +340,9 @@ class CapabilityRegistry:
             raise ValueError(f"OPENCODE_ORCHESTRATED_MODEL: {error}")
         sol_orchestrated = (
             os.environ.get(
-                "OPENCODE_SOL_ORCHESTRATED_MODEL", "openai/gpt-5.6-sol-orchestrated"
+                "OPENCODE_SOL_ORCHESTRATED_MODEL", "openai/gpt-6-sol-orchestrated"
             ).strip()
-            or "openai/gpt-5.6-sol-orchestrated"
+            or "openai/gpt-6-sol-orchestrated"
         )
         ok, error = validate_provider_ref(sol_orchestrated, "openai")
         if not ok:
@@ -360,7 +361,7 @@ class CapabilityRegistry:
         }
         sol_profile = {
             "id": "sol-orchestrated",
-            "label": "GPT-5.6 Sol · Orchestrated",
+            "label": "GPT-6 Sol · Orchestrated",
             "route": "cloud",
             "cloudModel": sol_orchestrated,
             "plannerModel": sol_orchestrated,
@@ -407,9 +408,9 @@ class CapabilityRegistry:
         }
         dnd_edition = {
             "id": "dnd-edition",
-            "label": "GPT-5.6 · DnD Edition",
+            "label": "GPT-6 · DnD Edition",
             "route": "cloud",
-            "cloudModel": "openai/gpt-5.6-dnd-edition",
+            "cloudModel": "openai/gpt-6-dnd-edition",
             "narratorModel": dnd_roles["narrator"],
             "complexModel": dnd_roles["complex"],
             "exceptionalModel": dnd_roles["exceptional"],
@@ -441,9 +442,9 @@ class CapabilityRegistry:
                 "routes": {
                     "NO_LLM": "authoritative-code",
                     "TOOL": "authoritative-mcp",
-                    "LUNA_LOW": "openai/gpt-5.6-luna#low",
-                    "LUNA_XHIGH": "openai/gpt-5.6-luna#xhigh",
-                    "SOL_XHIGH": "openai/gpt-5.6-sol#xhigh",
+                    "LUNA_LOW": "openai/gpt-6-dnd-edition#low",
+                    "LUNA_XHIGH": "openai/gpt-6-dnd-edition#xhigh",
+                    "SOL_XHIGH": "openai/gpt-6-sol-orchestrated#xhigh",
                 },
                 "confidence": {"accept": 0.80, "conservative": 0.55},
                 "serviceTiers": {"luna": "fast", "sol": "default"},

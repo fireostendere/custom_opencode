@@ -65,10 +65,13 @@ assert.ok(!source.includes("from './refresh-coalescer.js'"), 'refresh-coalescer 
 const bootIndex = source.lastIndexOf('initialize().catch')
 assert.ok(bootIndex > 0, 'app.js boot call not found')
 source = source.slice(0, bootIndex)
-  + 'globalThis.__smoke.exports = { transferSessionToProject, forkWithFallback, sessionWithControls, handoffText, messagePlainText, changeAgent, changeModel, loadSessionsNow, selectSession, resetPromptHistory, navigatePromptHistory, syncRunStatuses, renderSessionShortcuts, state, seedDraft: (id, value) => { drafts[id] = value }, draftOf: (id) => drafts[id] }\n'
+  + 'globalThis.__smoke.exports = { primaryAgentFor, transferSessionToProject, forkWithFallback, sessionWithControls, handoffText, messagePlainText, changeAgent, changeModel, loadSessionsNow, selectSession, resetPromptHistory, navigatePromptHistory, syncRunStatuses, renderSessionShortcuts, state, seedDraft: (id, value) => { drafts[id] = value }, draftOf: (id) => drafts[id] }\n'
 
 await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
 const app = globalThis.__smoke.exports
+assert.equal(app.primaryAgentFor({ id: 'gpt-6-astra-orchestrated', providerID: 'openai' }, 'build-direct'), 'build')
+assert.equal(app.primaryAgentFor({ id: 'gpt-6-sol-orchestrated', providerID: 'openai' }, 'plan-direct'), 'plan')
+assert.equal(app.primaryAgentFor({ id: 'gpt-6-dnd-edition', providerID: 'openai' }, 'build-direct'), 'build-direct')
 const state = app.state
 
 const calls = { createSession: [], sendPrompt: [], deleteSession: [], switchAgent: [], switchModel: [] }

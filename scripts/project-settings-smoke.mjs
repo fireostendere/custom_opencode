@@ -17,7 +17,7 @@ globalThis.fetch = async (path, options) => {
 state.sessionID = 'empty'
 state.settings = { defaultModel:'sol-orchestrated', rag:'off' }
 await applyProjectDefaultsOnce()
-assert.deepEqual(switched, [{providerID:'openai',id:'gpt-5.6-sol-orchestrated'}], 'Saved SOL alias must actually select SOL')
+assert.deepEqual(switched, [{providerID:'openai',id:'gpt-6-sol-orchestrated'}], 'Saved SOL alias must actually select SOL')
 await applyProjectDefaultsOnce()
 assert.equal(switched.length, 1, 'Do not reapply a default over a manual selection')
 state.sessionID = 'history'

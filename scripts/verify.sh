@@ -274,20 +274,20 @@ for name, policy in (("orchestrator", orchestrator), ("SOL orchestrator", sol_or
 for marker in ("Планирование задач", "plan_update", "OPENCODE_VISIBLE_PLAN=strict", "1–7", "Скрытые рассуждения не публикуй", "`plan`/`plan-direct`", "реальными событиями", "только ради UI"):
     if marker not in agents_policy:
         bad.append(f"managed engineering policy lost adaptive planning/safety contract: {marker}")
-for marker in ('export default {', 'id: "orchestrated-qwen"', 'gpt-5.6-dnd-edition', 'isOrchestratedSol', 'isDndEdition', 'ctx.session.hook("context"', 'filterDndTools'):
+for marker in ('export default {', 'id: "orchestrated-qwen"', 'gpt-6-dnd-edition', 'isOrchestratedSol', 'isDndEdition', 'ctx.session.hook("context"', 'filterDndTools'):
     if marker not in orchestrated_plugin_js:
         bad.append(f"orchestrated model plugin marker missing: {marker}")
 for marker in ('custom.context-lanes', 'orchestrator.md', 'orchestrator-sol.md', 'dnd-edition.md', 'Custom orchestrated Qwen policy', 'Custom orchestrated SOL policy', 'Custom DnD Edition policy', 'event.system.length = 0', 'engineering-lite.md', 'contextclass'):
     if marker not in context_lanes_js:
         bad.append(f"context lane plugin marker missing: {marker}")
-for marker in ('"bare"', '"lite"', '"normal"', '"full"', 'gpt-5.6-dnd-edition', 'provider === "ollama"', 'syncManagedOrchestrations', 'setSessionContextClass'):
+for marker in ('"bare"', '"lite"', '"normal"', '"full"', 'gpt-6-dnd-edition', 'provider === "ollama"', 'syncManagedOrchestrations', 'setSessionContextClass'):
     if marker not in context_policy_js:
         bad.append(f"context class policy marker missing: {marker}")
-for marker in ('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'sol-role-builder', 'sol-role-reviewer'):
+for marker in ('gpt-6-sol', 'gpt-6-sol', 'gpt-6-luna', 'sol-role-builder', 'sol-role-reviewer'):
     if marker not in sol_orchestrator:
         bad.append(f"SOL orchestrator prompt marker missing: {marker}")
-if "gpt-5.6-sol-fast" in sol_orchestrator:
-    bad.append("SOL orchestrator must not use gpt-5.6-sol-fast")
+if "gpt-6-sol-fast" in sol_orchestrator:
+    bad.append("SOL orchestrator must not use gpt-6-sol-fast")
 if not (root / "scripts/rag-mcp.sh").is_file():
     bad.append("missing portable RAG MCP launcher")
 if not (root / "scripts/runtime-smoke.py").is_file():
@@ -413,7 +413,7 @@ expected = {
     "glm-5.2", "deepseek-v4-pro", "deepseek-v4-pro-0813", "deepseek-v4-flash-0731",
 }
 special_ids = {"qwen3.8-orchestrated"}
-openai_special_ids = {"gpt-5.6-sol-orchestrated", "gpt-5.6-dnd-edition"}
+openai_special_ids = {"gpt-6-sol-orchestrated", "gpt-6-dnd-edition"}
 compat_ids = {"qwen3.8-max-preview"}
 models_map = provider.get("models", {}) if isinstance(provider, dict) else {}
 models = set(models_map)
@@ -440,12 +440,12 @@ if compat.get("modelID") != "qwen3.8-max": bad.append("legacy qwen3.8-max-previe
 special = models_map.get("qwen3.8-orchestrated", {})
 if special.get("modelID") != "qwen3.8-max": bad.append("orchestrated Qwen catalog alias must map to qwen3.8-max")
 if special.get("name") != "Qwen3.8 Max · Orchestrated": bad.append("orchestrated Qwen catalog alias has unexpected label")
-sol_special = providers.get("openai", {}).get("models", {}).get("gpt-5.6-sol-orchestrated", {}) if isinstance(providers.get("openai"), dict) else {}
-if sol_special.get("modelID") != "gpt-5.6-sol": bad.append("orchestrated SOL catalog alias must map to gpt-5.6-sol")
-if sol_special.get("name") != "GPT-5.6 Sol · Orchestrated": bad.append("orchestrated SOL catalog alias has unexpected label")
-dnd_special = providers.get("openai", {}).get("models", {}).get("gpt-5.6-dnd-edition", {}) if isinstance(providers.get("openai"), dict) else {}
-if dnd_special.get("modelID") != "gpt-5.6-sol": bad.append("DnD Edition catalog alias must map to gpt-5.6-sol")
-if dnd_special.get("name") != "GPT-5.6 · DnD Edition": bad.append("DnD Edition catalog alias has unexpected label")
+sol_special = providers.get("openai", {}).get("models", {}).get("gpt-6-sol-orchestrated", {}) if isinstance(providers.get("openai"), dict) else {}
+if sol_special.get("modelID") != "gpt-6-sol": bad.append("orchestrated SOL catalog alias must map to gpt-6-sol")
+if sol_special.get("name") != "GPT-6 Sol · Orchestrated": bad.append("orchestrated SOL catalog alias has unexpected label")
+dnd_special = providers.get("openai", {}).get("models", {}).get("gpt-6-dnd-edition", {}) if isinstance(providers.get("openai"), dict) else {}
+if dnd_special.get("modelID") != "gpt-6-luna": bad.append("DnD Edition catalog alias must map to gpt-6-luna")
+if dnd_special.get("name") != "GPT-6 · DnD Edition": bad.append("DnD Edition catalog alias has unexpected label")
 if dnd_special.get("defaultVariant") != "low": bad.append("DnD Edition default reasoning must be low")
 ollama = providers.get("ollama", {})
 if ollama.get("package") != "aisdk:@ai-sdk/openai-compatible": bad.append("local Ollama V2 provider must use aisdk:@ai-sdk/openai-compatible")
@@ -486,18 +486,18 @@ role_routes = {
     "role-long-horizon-max": "bailian-cli/glm-5.2#max",
 }
 role_routes.update({
-    "sol-fast-reader": "openai/gpt-5.6-luna#xhigh",
-    "sol-role-builder": "openai/gpt-5.6-terra#medium",
-    "sol-role-builder-high": "openai/gpt-5.6-terra#high",
-    "sol-role-builder-max": "openai/gpt-5.6-terra#max",
-    "sol-role-reviewer": "openai/gpt-5.6-luna#xhigh",
-    "sol-role-reviewer-max": "openai/gpt-5.6-luna#max",
-    "dnd-narrator": "openai/gpt-5.6-luna#low",
-    "dnd-narrator-high": "openai/gpt-5.6-luna#xhigh",
-    "dnd-narrator-max": "openai/gpt-5.6-sol#xhigh",
-    "dnd-planner": "openai/gpt-5.6-luna#xhigh",
-    "dnd-memory": "openai/gpt-5.6-luna#low",
-    "dnd-reader": "openai/gpt-5.6-luna#low",
+    "sol-fast-reader": "openai/gpt-6-luna-direct#xhigh",
+    "sol-role-builder": "openai/gpt-6-sol-direct#medium",
+    "sol-role-builder-high": "openai/gpt-6-sol-direct#high",
+    "sol-role-builder-max": "openai/gpt-6-sol-direct#max",
+    "sol-role-reviewer": "openai/gpt-6-luna-direct#xhigh",
+    "sol-role-reviewer-max": "openai/gpt-6-luna-direct#max",
+    "dnd-narrator": "openai/gpt-6-dnd-edition#low",
+    "dnd-narrator-high": "openai/gpt-6-dnd-edition#xhigh",
+    "dnd-narrator-max": "openai/gpt-6-sol-orchestrated#xhigh",
+    "dnd-planner": "openai/gpt-6-dnd-edition#xhigh",
+    "dnd-memory": "openai/gpt-6-dnd-edition#low",
+    "dnd-reader": "openai/gpt-6-dnd-edition#low",
 })
 for agent_id, model_ref in role_routes.items():
     if (agents.get(agent_id) or {}).get("model") != model_ref:

@@ -24,7 +24,7 @@ Approval is manual in the trusted native client/UI. It protects against accident
 
 The D&D profile uses the existing Runtime V3 DAG, not a second scheduler. ODM/CODE
 is authoritative; a resident localhost Qwen3.5-4B constrained-token classifier
-selects `NO_LLM`, Luna Fast LOW, Luna Fast XHIGH, or rare Sol XHIGH Standard.
+selects `NO_LLM`, Luna LOW, Luna XHIGH, or rare Sol XHIGH.
 Independent snapshot/state and local RAG reads may run in parallel before the
 narrator node. Direct/manual model selection remains untouched. D&D context is
 identified by the edition alias, `dnd-*` agents, or the ODM adapter's

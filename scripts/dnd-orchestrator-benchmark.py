@@ -144,7 +144,7 @@ def fixture_result(candidate: str, name: str, text: str) -> dict:
         }
     else:
         route = {"B — Direct Luna LOW": "LUNA_LOW", "C — Direct Luna XHIGH": "LUNA_XHIGH", "D — Codex Luna XHIGH": "LUNA_XHIGH"}.get(candidate, "LUNA_LOW")
-        model = "gpt-5.6-luna" if candidate != "D — Codex Luna XHIGH" else "gpt-5.6-luna (Codex)"
+        model = "gpt-6-luna" if candidate != "D — Codex Luna XHIGH" else "gpt-6-luna (Codex)"
         response = "Bartender and Guard 1: Your move." if name == "YOLO Combat" else "The authoritative game state determines the result."
         row = {
             "candidate": candidate,
@@ -164,8 +164,8 @@ def fixture_result(candidate: str, name: str, text: str) -> dict:
             "route": route,
             "model": model,
             "effort": "low" if route == "LUNA_LOW" else "xhigh",
-            "requested_tier": "fast",
-            "effective_tier": "fast",
+            "requested_tier": "default",
+            "effective_tier": "default",
             "router_ms": "unavailable",
             "snapshot_ms": "unavailable",
             "rag_ms": "unavailable",

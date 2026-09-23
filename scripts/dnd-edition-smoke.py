@@ -18,25 +18,26 @@ def config() -> dict:
 
 
 cfg = config()
-alias = cfg["providers"]["openai"]["models"]["gpt-5.6-dnd-edition"]
-luna = cfg["providers"]["openai"]["models"]["gpt-5.6-luna"]
-assert alias["modelID"] == "gpt-5.6-sol"
+alias = cfg["providers"]["openai"]["models"]["gpt-6-dnd-edition"]
+luna = cfg["providers"]["openai"]["models"]["gpt-6-luna-direct"]
+assert alias["modelID"] == "gpt-6-luna"
+assert luna["modelID"] == "gpt-6-luna"
 variants = {item["id"]: item for item in luna["variants"]}
 assert "body" not in variants["low"]
 assert "body" not in variants["xhigh"]
-assert alias["name"] == "GPT-5.6 · DnD Edition"
+assert alias["name"] == "GPT-6 · DnD Edition"
 assert alias["defaultVariant"] == "low"
 assert {item["id"] for item in alias["variants"]} == {"none", "low", "medium", "high", "xhigh", "max"}
 
 profiles = CapabilityRegistry().profiles()
 dnd = profiles["dnd-edition"]
-assert dnd["cloudModel"] == "openai/gpt-5.6-dnd-edition"
-assert dnd["narratorModel"] == "openai/gpt-5.6-luna#low"
-assert dnd["complexModel"] == "openai/gpt-5.6-luna#xhigh"
-assert dnd["exceptionalModel"] == "openai/gpt-5.6-sol#xhigh"
-assert dnd["plannerModel"] == "openai/gpt-5.6-luna#xhigh"
-assert dnd["memoryModel"] == "openai/gpt-5.6-luna#low"
-assert dnd["readerModel"] == "openai/gpt-5.6-luna#low"
+assert dnd["cloudModel"] == "openai/gpt-6-dnd-edition"
+assert dnd["narratorModel"] == "openai/gpt-6-dnd-edition#low"
+assert dnd["complexModel"] == "openai/gpt-6-dnd-edition#xhigh"
+assert dnd["exceptionalModel"] == "openai/gpt-6-sol-orchestrated#xhigh"
+assert dnd["plannerModel"] == "openai/gpt-6-dnd-edition#xhigh"
+assert dnd["memoryModel"] == "openai/gpt-6-dnd-edition#low"
+assert dnd["readerModel"] == "openai/gpt-6-dnd-edition#low"
 assert dnd["contextPolicy"]["targetRatio"] == 0.55
 assert dnd["sandbox"] == "restricted"
 assert dnd["autoReview"] is False and dnd["planningPolicy"] == "disabled" and dnd["memoryPolicy"] == "disabled"
@@ -47,17 +48,17 @@ assert dnd["dndMinimalContext"] is True
 assert dnd["effortPolicy"]["narrator"] == {"default": "low", "maximum": "xhigh"}
 assert dnd["dndOrchestrator"]["decisionMode"] == "constrained-token"
 assert dnd["dndOrchestrator"]["serviceTiers"]["sol"] == "default"
-assert effort_plan("openai/gpt-5.6-sol", "max")["settings"] == {"reasoningEffort": "max"}
-assert validate_provider_ref("openrouter/gpt-5.6-sol", "openai")[0] is False
+assert effort_plan("openai/gpt-6-sol-direct", "max")["settings"] == {"reasoningEffort": "max"}
+assert validate_provider_ref("openrouter/gpt-6-sol", "openai")[0] is False
 
 agents = cfg["agents"]
 expected_agents = {
-    "dnd-narrator": "openai/gpt-5.6-luna#low",
-    "dnd-narrator-high": "openai/gpt-5.6-luna#xhigh",
-    "dnd-narrator-max": "openai/gpt-5.6-sol#xhigh",
-    "dnd-planner": "openai/gpt-5.6-luna#xhigh",
-    "dnd-memory": "openai/gpt-5.6-luna#low",
-    "dnd-reader": "openai/gpt-5.6-luna#low",
+    "dnd-narrator": "openai/gpt-6-dnd-edition#low",
+    "dnd-narrator-high": "openai/gpt-6-dnd-edition#xhigh",
+    "dnd-narrator-max": "openai/gpt-6-sol-orchestrated#xhigh",
+    "dnd-planner": "openai/gpt-6-dnd-edition#xhigh",
+    "dnd-memory": "openai/gpt-6-dnd-edition#low",
+    "dnd-reader": "openai/gpt-6-dnd-edition#low",
 }
 for name, model in expected_agents.items():
     assert agents[name]["model"] == model
@@ -67,6 +68,8 @@ skill_rules = {(item["resource"], item["effect"]) for item in agents["dnd-narrat
 assert skill_rules == {("odm-dm-policy", "allow"), ("odm-narrator", "allow"), ("dnd-*", "allow")}
 for name in ("dnd-memory", "dnd-reader"):
     allowed = {item["action"] for item in agents[name]["permissions"] if item["effect"] == "allow"}
-    assert allowed == {f"{server}_knowledge_{action}" for server in ("kb", "dnd") for action in ("search", "get", "sources", "status")}
+    assert allowed == {f"dnd_knowledge_{action}" for action in ("search", "get", "sources", "status")}
+for name in expected_agents:
+    assert all(not item["action"].startswith("kb_knowledge_") for item in agents[name]["permissions"])
 
 print("DnD Edition profile/config contract passed")

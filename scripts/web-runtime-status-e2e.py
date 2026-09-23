@@ -75,7 +75,7 @@ def check_workspace_settings(page, url, root):
     assert page.evaluate('window.CustomOpenCodeControls.activeModel()') == original_model
     assert 'Быстрая задача' in page.locator('#runtimeTop').inner_text()
     page.click('[data-runtime-profile="direct"]')
-    page.evaluate("document.documentElement.dataset.orchestratedModel='gpt-5.6-sol-orchestrated';document.documentElement.dataset.modelProfile='orchestrated'")
+    page.evaluate("document.documentElement.dataset.orchestratedModel='gpt-6-sol-orchestrated';document.documentElement.dataset.modelProfile='orchestrated'")
     assert page.evaluate('window.CustomOpenCodeRuntime.currentProfile()') == 'direct', 'Stale DOM changed the actual route'
     page.locator('[data-runtime-close]').click()
 

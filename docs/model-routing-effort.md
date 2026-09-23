@@ -20,24 +20,24 @@ The dedicated SOL profile uses the same provider boundary:
 
 | Role | Model | Provider |
 | --- | --- | --- |
-| planner | `gpt-5.6-sol` | `openai` |
-| builder | `gpt-5.6-terra` | `openai` |
-| reader | `gpt-5.6-luna` | `openai` |
-| reviewer | `gpt-5.6-luna` | `openai` |
+| planner | `gpt-6-sol` | `openai` |
+| builder | `gpt-6-sol` | `openai` |
+| reader | `gpt-6-luna` | `openai` |
+| reviewer | `gpt-6-luna` | `openai` |
 
-Its trigger is `openai/gpt-5.6-sol-orchestrated`; ordinary SOL, Terra, and Luna selections remain direct.
+Its trigger is `openai/gpt-6-sol-orchestrated`; ordinary Sol and Luna selections remain direct.
 
 The dedicated D&D profile is also OpenAI-only:
 
 | Role | Model | Default effort |
 | --- | --- | --- |
-| narrator | `gpt-5.6-sol` | medium |
-| complex/private narrator | `gpt-5.6-sol` | high |
-| exceptional gated narrator | `gpt-5.6-sol` | max |
-| boundary planner | `gpt-5.6-sol` | high |
-| boundary memory / reader | `gpt-5.6-luna` | low |
+| narrator | `gpt-6-luna` | low |
+| complex/private narrator | `gpt-6-luna` | xhigh |
+| exceptional gated narrator | `gpt-6-sol` | xhigh |
+| boundary planner | `gpt-6-luna` | xhigh |
+| boundary memory / reader | `gpt-6-luna` | low |
 
-Its trigger is `openai/gpt-5.6-dnd-edition`. The selectable `dnd-narrator`
+Its trigger is `openai/gpt-6-dnd-edition`. The selectable `dnd-narrator`
 agent is primary and deny-first; it cannot use coding, shell, web or admin tools.
 
 Canonical environment overrides:
@@ -49,16 +49,16 @@ OPENCODE_READER_MODEL=bailian-cli/qwen3.8-flash
 OPENCODE_REVIEW_MODEL=bailian-cli/deepseek-v4-pro-0813
 OPENCODE_LONG_HORIZON_MODEL=bailian-cli/glm-5.2
 OPENCODE_ORCHESTRATED_MODEL=bailian-cli/qwen3.8-orchestrated
-OPENCODE_SOL_ORCHESTRATED_MODEL=openai/gpt-5.6-sol-orchestrated
-OPENCODE_SOL_BUILDER_MODEL=openai/gpt-5.6-terra
-OPENCODE_SOL_READER_MODEL=openai/gpt-5.6-luna
-OPENCODE_SOL_REVIEW_MODEL=openai/gpt-5.6-luna
-OPENCODE_DND_NARRATOR_MODEL=openai/gpt-5.6-sol#medium
-OPENCODE_DND_COMPLEX_MODEL=openai/gpt-5.6-sol#high
-OPENCODE_DND_EXCEPTIONAL_MODEL=openai/gpt-5.6-sol#max
-OPENCODE_DND_PLANNER_MODEL=openai/gpt-5.6-sol#high
-OPENCODE_DND_MEMORY_MODEL=openai/gpt-5.6-luna#low
-OPENCODE_DND_READER_MODEL=openai/gpt-5.6-luna#low
+OPENCODE_SOL_ORCHESTRATED_MODEL=openai/gpt-6-sol-orchestrated
+OPENCODE_SOL_BUILDER_MODEL=openai/gpt-6-sol-direct
+OPENCODE_SOL_READER_MODEL=openai/gpt-6-luna-direct
+OPENCODE_SOL_REVIEW_MODEL=openai/gpt-6-luna-direct
+OPENCODE_DND_NARRATOR_MODEL=openai/gpt-6-dnd-edition#low
+OPENCODE_DND_COMPLEX_MODEL=openai/gpt-6-dnd-edition#xhigh
+OPENCODE_DND_EXCEPTIONAL_MODEL=openai/gpt-6-sol-orchestrated#xhigh
+OPENCODE_DND_PLANNER_MODEL=openai/gpt-6-dnd-edition#xhigh
+OPENCODE_DND_MEMORY_MODEL=openai/gpt-6-dnd-edition#low
+OPENCODE_DND_READER_MODEL=openai/gpt-6-dnd-edition#low
 ```
 
 Routing is deterministic. `direct` preserves the exact user-selected provider/model. Managed profiles are pinned to their configured role/provider. Host load, games, GPU state, or availability of another inference endpoint do not change the selected model.
@@ -126,9 +126,9 @@ Critical review uses Alibaba DeepSeek V4 Pro 0813 / max and is read-only. The re
 - `critical`: Max planner + Flash reader + Plus builder + DeepSeek reviewer.
 - `research`: Max planner/synthesis + Flash research + DeepSeek contradiction check.
 - `long-horizon`: Max planner + GLM executor + Flash reader + DeepSeek reviewer.
-- `sol-orchestrated`: SOL planner + Terra builder + Luna reader + SOL Fast reviewer.
+- `sol-orchestrated`: Sol planner/builder + Luna reader/reviewer.
 - `sol-review`: hidden Luna read-only review route used by the SOL profile's automatic review.
-- `dnd-edition`: restricted ODM narrator; Sol medium by default, deterministic high/max gates, optional scoped RAG and boundary-only planner/memory.
+- `dnd-edition`: restricted ODM narrator; Luna low by default, Sol xhigh for exceptional scenes, optional scoped RAG and boundary-only planner/memory.
 
 ## Configured subagents
 
@@ -140,21 +140,21 @@ Critical review uses Alibaba DeepSeek V4 Pro 0813 / max and is read-only. The re
 - `role-reviewer-max`: DeepSeek V4 Pro 0813 / max, read-only.
 - `role-long-horizon`: GLM 5.2 / effective high.
 - `role-long-horizon-max`: GLM 5.2 / max.
-- `sol-fast-reader`: GPT-5.6 Luna / xhigh, read-only.
-- `sol-role-builder`: GPT-5.6 Terra / medium.
-- `sol-role-builder-high`: GPT-5.6 Terra / high.
-- `sol-role-builder-max`: GPT-5.6 Terra / max.
-- `sol-role-reviewer`: GPT-5.6 Luna / xhigh, read-only.
-- `sol-role-reviewer-max`: GPT-5.6 Luna / max, read-only.
-- `dnd-narrator`: selectable primary Sol / medium with only ODM, read-only knowledge and game-skill access.
-- `dnd-narrator-high`, `dnd-narrator-max`, `dnd-planner`: hidden/bounded Sol roles.
+- `sol-fast-reader`: GPT-6 Luna / xhigh, read-only.
+- `sol-role-builder`: GPT-6 Sol / medium.
+- `sol-role-builder-high`: GPT-6 Sol / high.
+- `sol-role-builder-max`: GPT-6 Sol / max.
+- `sol-role-reviewer`: GPT-6 Luna / xhigh, read-only.
+- `sol-role-reviewer-max`: GPT-6 Luna / max, read-only.
+- `dnd-narrator`: selectable primary Luna / low with only ODM, read-only D&D knowledge and game-skill access.
+- `dnd-narrator-high` and `dnd-planner`: bounded Luna / xhigh roles; `dnd-narrator-max`: exceptional Sol / xhigh.
 - `dnd-memory`, `dnd-reader`: Luna / low, knowledge-only.
 
 The `qwen3.8-orchestrated` catalog entry is a dedicated alias for the primary Qwen 3.8 Max orchestration session. The `orchestrated-qwen` plugin injects orchestration policy only for that alias, so ordinary direct Qwen 3.8 Max sessions remain native/direct.
 
-The same plugin handles `gpt-5.6-sol-orchestrated` and injects the SOL policy only for that alias. It never changes direct OpenAI model selections.
+The same plugin handles `gpt-6-sol-orchestrated` and injects the SOL policy only for that alias. It never changes direct OpenAI model selections.
 
-For `gpt-5.6-dnd-edition` the plugin injects only the stable game policy and
+For `gpt-6-dnd-edition` the plugin injects only the stable game policy and
 filters the tool surface. Ordinary OpenAI aliases and the SOL orchestrator keep
 their existing prompts and tools.
 

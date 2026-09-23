@@ -34,13 +34,13 @@ const STATIC_ORCHESTRATIONS = {
     marker: "Custom orchestrated Qwen policy",
     path: process.env.OPENCODE_ORCHESTRATOR_PROMPT || join(CONFIG_DIR, "prompts", "orchestrator.md"),
   },
-  "openai/gpt-5.6-sol-orchestrated": {
+  "openai/gpt-6-sol-orchestrated": {
     marker: "Custom orchestrated SOL policy",
     path:
       process.env.OPENCODE_SOL_ORCHESTRATOR_PROMPT ||
       join(CONFIG_DIR, "prompts", "orchestrator-sol.md"),
   },
-  "openai/gpt-5.6-dnd-edition": {
+  "openai/gpt-6-dnd-edition": {
     marker: "Custom DnD Edition policy",
     path: process.env.OPENCODE_DND_EDITION_PROMPT || join(CONFIG_DIR, "prompts", "dnd-edition.md"),
   },
