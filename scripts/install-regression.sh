@@ -74,7 +74,7 @@ cat >"$FAKE_BIN/opencode2" <<'EOF'
 set -euo pipefail
 printf 'opencode2 %s\n' "$*" >>"${CUSTOM_OPENCODE_REGRESSION_LOG:?}"
 if [[ "${1:-}" == "--version" ]]; then
-  printf 'opencode2 v0.0.0-beta-18743\n'
+  printf 'opencode2 v0.0.0-beta-19271\n'
   printf 'runtime-env WSL_DISTRO_NAME=%s DISPLAY=%s WAYLAND_DISPLAY=%s WAYLAND_SOCKET=%s\n' \
     "${WSL_DISTRO_NAME-}" "${DISPLAY-}" "${WAYLAND_DISPLAY-}" "${WAYLAND_SOCKET-}" \
     >>"${CUSTOM_OPENCODE_REGRESSION_LOG:?}"

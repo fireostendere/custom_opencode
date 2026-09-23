@@ -32,7 +32,9 @@ export async function listSessions() {
   const sessions = [...(first?.data || [])]
   let cursor = first?.cursor?.next
   let pages = 0
-  while (cursor && pages++ < 200) {
+  const seenCursors = new Set()
+  while (cursor && !seenCursors.has(cursor) && pages++ < 200) {
+    seenCursors.add(cursor)
     const page = await request(`/api/session?limit=100&cursor=${encodeURIComponent(cursor)}`)
     sessions.push(...(page?.data || []))
     cursor = page?.cursor?.next
@@ -205,6 +207,9 @@ export async function switchModel(sessionID, model) {
 }
 
 const pendingPrompts = new Map()
+const unsupportedPromptShape = (error) =>
+  [404, 405].includes(error.status) ||
+  ([400, 422].includes(error.status) && /unsupported (?:shape|format)|missing (?:key|field|property).*(?:prompt|text)|expected.*(?:prompt|text)/i.test(error.message))
 export function isPromptPending(sessionID) { return pendingPrompts.has(sessionID) }
 export async function sendPrompt(session, input) {
   pendingPrompts.set(session.id, (pendingPrompts.get(session.id) || 0) + 1)
@@ -229,7 +234,7 @@ async function sendPromptNow(session, { text, files = [], delivery = 'normal' })
       body: JSON.stringify(body),
     })
   } catch (error) {
-    if (![400, 404, 405, 422].includes(error.status)) throw error
+    if (!unsupportedPromptShape(error)) throw error
     lastFormatError = error
   }
 
@@ -240,7 +245,7 @@ async function sendPromptNow(session, { text, files = [], delivery = 'normal' })
       body: JSON.stringify({ prompt: { text, files }, delivery: mode }),
     })
   } catch (error) {
-    if (![400, 404, 405, 422].includes(error.status)) throw error
+    if (!unsupportedPromptShape(error)) throw error
     lastFormatError = error
   }
 
@@ -258,7 +263,7 @@ async function sendPromptNow(session, { text, files = [], delivery = 'normal' })
         }),
       })
     } catch (error) {
-      if (![400, 404, 405, 422].includes(error.status)) throw error
+      if (!unsupportedPromptShape(error)) throw error
       lastFormatError = error
     }
   }

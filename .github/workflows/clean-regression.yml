@@ -43,19 +43,15 @@ jobs:
       - name: Install pinned native OpenCode
         run: |
           set -euo pipefail
-          npm install -g @opencode-ai/cli@0.0.0-beta-18743
-          # Regression guard: a broken npm postinstall can leave the placeholder
-          # bin/opencode2.exe that dies with "Exec format error" mid-suite. Validate the
-          # real binary and force exactly one clean reinstall before anything depends on it.
+          npm install -g @opencode-ai/cli@0.0.0-beta-19271
+          # npm may block postinstall and leave the placeholder binary.
           # The workflow-level OPENCODE_DISABLE_AUTOUPDATE keeps this bare validation from
           # detaching the CLI's own updater, whose `npm install --global` reify once
           # replaced this pinned tree mid-job (see scripts/install.sh).
           if ! opencode2 --version; then
-            echo "pinned opencode2 failed validation; reinstalling once" >&2
-            npm uninstall -g @opencode-ai/cli || true
-            npm install -g @opencode-ai/cli@0.0.0-beta-18743
-            opencode2 --version
+            node "$(npm root -g)/@opencode-ai/cli/postinstall.mjs"
           fi
+          opencode2 --version
       - name: Run clean model-free regression matrix
         run: |
           set -euo pipefail
@@ -104,16 +100,14 @@ jobs:
       - name: Install pinned native OpenCode
         run: |
           set -euo pipefail
-          npm install -g @opencode-ai/cli@0.0.0-beta-18743
+          npm install -g @opencode-ai/cli@0.0.0-beta-19271
           # Same postinstall-placeholder guard as model-free-matrix; the workflow-level
           # OPENCODE_DISABLE_AUTOUPDATE keeps the bare validation from spawning the CLI's
           # own updater against this pinned tree.
           if ! opencode2 --version; then
-            echo "pinned opencode2 failed validation; reinstalling once" >&2
-            npm uninstall -g @opencode-ai/cli || true
-            npm install -g @opencode-ai/cli@0.0.0-beta-18743
-            opencode2 --version
+            node "$(npm root -g)/@opencode-ai/cli/postinstall.mjs"
           fi
+          opencode2 --version
       - name: Real native inference, retry, turn boundary and MCP wire contracts
         run: |
           set -euo pipefail

@@ -186,9 +186,9 @@ try {
   assert.equal(budgetCall.payload.tokens, 120000)
   assert.ok(budgetOutput.content && typeof budgetOutput.content === 'string')
   delayedContextBudget = true
-  const waitedAt = Date.now()
+  const waitedAt = performance.now()
   await budgetTool.execute({ action: 'request', tokens: 121000, reason: 'wait for human' }, { sessionID: 'ses_budget_wait' })
-  assert.ok(Date.now() - waitedAt >= 2000, 'context request must outlive the normal 1.8s control timeout')
+  assert.ok(performance.now() - waitedAt >= 2000, 'context request must outlive the normal 1.8s control timeout')
   assert.equal(contextBudgetAborted, false, 'fresh human approval wait must not be aborted early')
   delayedContextBudget = false
   const event = {

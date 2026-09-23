@@ -62,6 +62,27 @@ body = JSON.parse(calls.at(-1).options.body)
 if (body.prompt?.text !== "fallback" || body.delivery !== "steer")
   throw new Error("Compatibility prompt fallback regression")
 
+for (const status of [400, 422]) {
+  calls = []
+  globalThis.fetch = async (path, options = {}) => {
+    calls.push({ path, options })
+    return response(status, "prompt rejected by policy")
+  }
+  await api.sendPrompt({ id: "ses_rejected" }, { text: "rejected", files: [] }).then(
+    () => { throw new Error("Rejected prompt unexpectedly succeeded") },
+    () => {},
+  )
+  if (calls.length !== 1) throw new Error("Rejected prompt must not be retried with another shape")
+}
+
+let sessionPages = 0
+globalThis.fetch = async () => {
+  sessionPages++
+  return response(200, { data:[{ id:String(sessionPages) }], cursor:{ next:'loop' } })
+}
+await api.listSessions()
+if (sessionPages !== 2) throw new Error("Session pagination must stop on a repeated cursor")
+
 const pending = []
 globalThis.fetch = () => new Promise((resolve) => pending.push(resolve))
 const sendingFirst = api.sendPrompt({ id: "ses_pending" }, { text: "first" })

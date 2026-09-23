@@ -3,7 +3,7 @@ set -euo pipefail
 
 DEFAULT_REPO=https://github.com/fireostendere/custom_opencode.git
 DEFAULT_REF=main
-DEFAULT_OPENCODE_PACKAGE=@opencode-ai/cli@0.0.0-beta-18743
+DEFAULT_OPENCODE_PACKAGE=@opencode-ai/cli@0.0.0-beta-19271
 
 MODE=install
 REPO=$DEFAULT_REPO

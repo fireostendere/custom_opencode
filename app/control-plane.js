@@ -1,3 +1,5 @@
+import { createRefreshCoalescer } from './refresh-coalescer.js'
+
 const $ = (id) => document.getElementById(id)
 
 let inFlight = false
@@ -93,7 +95,7 @@ async function autoEvaluate(sid, decision) {
   }
 }
 
-async function tick() {
+async function tickNow() {
   if (document.hidden) return
   const sid = sessionID()
   const permissionBanner = $('permissionBanner')
@@ -103,6 +105,7 @@ async function tick() {
   }
   try {
     const decision = await request(`/client-permission-risk.json?sessionID=${encodeURIComponent(sid)}`)
+    if (sessionID() !== sid || permissionBanner.hidden || permissionBanner.dataset.permissionSession !== sid || permissionBanner.dataset.permissionId !== String(decision?.permissionID || '')) return
     if (decision?.stale || !decision?.risk) {
       hideRiskSurface()
       return
@@ -115,9 +118,12 @@ async function tick() {
   }
 }
 
-window.addEventListener('hashchange', () => { lastAttemptKey = ''; tick() })
-document.addEventListener('visibilitychange', () => { if (!document.hidden) tick() })
+const coalescedTick = createRefreshCoalescer()
+function tick(force = false) { void coalescedTick(tickNow, force).catch(() => {}) }
+
+window.addEventListener('hashchange', () => { lastAttemptKey = ''; tick(true) })
+document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(true) })
 const permissionBanner = $('permissionBanner')
-if (permissionBanner) new MutationObserver(tick).observe(permissionBanner, { attributes:true, attributeFilter:['hidden'] })
+if (permissionBanner) new MutationObserver(() => tick(true)).observe(permissionBanner, { attributes:true, attributeFilter:['hidden'] })
 setInterval(tick, 2500)
 tick()

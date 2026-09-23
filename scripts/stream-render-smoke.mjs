@@ -39,7 +39,7 @@ source = source
   .replace("import { modeFromAgent, ORCHESTRATED_MODELS } from './ux-state.js'", 'const { modeFromAgent, ORCHESTRATED_MODELS } = globalThis.__smoke.ux')
 const bootIndex = source.lastIndexOf('initialize().catch')
 assert.ok(bootIndex > 0, 'app.js boot call not found')
-source = source.slice(0, bootIndex) + 'globalThis.__smoke.exports = { handleEvent, state }\n'
+source = source.slice(0, bootIndex) + 'globalThis.__smoke.exports = { handleEvent, loadContext, state }\n'
 await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
 
 const { handleEvent, state } = globalThis.__smoke.exports
@@ -62,6 +62,22 @@ assert.equal(inner.renderWrites, 1, 'the queued frame must render once')
 assert.match(inner.innerHTML, /final answer/, 'the single render must contain the final stream value')
 
 console.log('Stream render smoke passed: burst SSE events coalesce into one final-state render')
+
+const { loadContext } = globalThis.__smoke.exports
+const oldMessage = { id:'m1', type:'assistant', text:'old' }
+state.contextCache.set('ses_stream', { messages:[oldMessage], loaded:true, loading:false, refreshQueued:false, nextCursor:null, hasMore:false, complete:true, seenCursors:new Set() })
+const pageResolvers = []
+globalThis.__smoke.api.getContextPage = () => new Promise((resolvePage) => pageResolvers.push(resolvePage))
+const firstLoad = loadContext({ force:true })
+await loadContext({ force:true })
+assert.equal(pageResolvers.length, 1, 'overlapping history refresh must not start a second request')
+pageResolvers.shift()({ messages:[oldMessage], complete:true })
+await firstLoad
+assert.equal(pageResolvers.length, 1, 'forced refresh during a pending read must replay once')
+pageResolvers.shift()({ messages:[{ ...oldMessage, text:'new' }], complete:true })
+await new Promise((resolveTick) => setTimeout(resolveTick, 0))
+assert.equal(state.context.find((message) => message.id === 'm1')?.text, 'new', 'replay must show the latest history')
+console.log('History refresh smoke passed: in-flight update is replayed')
 
 // A previous session's DOM/profile must not relabel the active model.
 globalThis.location = { hash: '#/session/ses_stream' }

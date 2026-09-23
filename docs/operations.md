@@ -54,6 +54,12 @@ git pull --ff-only
 
 Затем запускайте `custom-opencode-update`.
 
+Изменения в защищённый `main` публикуются через pull request после обязательных
+проверок `model-free-matrix`, `native-clean-install`, `native-budget-wire` и
+`kernel-sandbox`. Перед удалением рабочей ветки проверьте, что она входит в
+`main` (`git branch --no-merged main`); ветку, открытую в отдельном worktree,
+сохраняйте до завершения работы в нём.
+
 ## Логи
 
 Web service:
@@ -87,6 +93,12 @@ python3 ./scripts/install-selftest.py --rag-enabled
 ```text
 /rag-start quick
 ```
+
+Self-test проверяет установку без платных запросов к моделям. Для проверки
+inference отдельно отправьте короткий запрос выбранной моделью. Если Bailian
+возвращает `403 AccessDenied.Unpurchased`, проверьте `bl auth status` и доступ
+к этой модели в текущем Alibaba Cloud Token Plan: наличие модели в каталоге
+OpenCode само по себе не подтверждает доступ аккаунта.
 
 ## Backup перед рискованным обновлением
 

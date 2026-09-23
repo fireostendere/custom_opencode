@@ -45,9 +45,12 @@ jobs:
       - name: Install reviewed OpenCode V2 build
         run: |
           prefix="$RUNNER_TEMP/opencode-v2"
-          npm install --global --prefix "$prefix" @opencode-ai/cli@0.0.0-beta-18743
+          npm install --global --prefix "$prefix" @opencode-ai/cli@0.0.0-beta-19271
           bin="$prefix/bin/opencode2"
           test -x "$bin"
+          if ! "$bin" --version; then
+            node "$prefix/lib/node_modules/@opencode-ai/cli/postinstall.mjs"
+          fi
           "$bin" --version
           printf 'OPENCODE2_BIN=%s\n' "$bin" >> "$GITHUB_ENV"
       - name: Packaged TUI loader smoke

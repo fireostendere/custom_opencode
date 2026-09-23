@@ -38,20 +38,36 @@ cat >"$FAKE_BIN/npm" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'npm %s\n' "$*" >>"${CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG:?}"
-if [[ "$*" != "install --global --prefix $HOME/.local @opencode-ai/cli@0.0.0-beta-18743" ]]; then
+if [[ "$*" != "install --global --prefix $HOME/.local @opencode-ai/cli@0.0.0-beta-19271" ]]; then
   echo "unexpected npm invocation: $*" >&2
   exit 2
 fi
 mkdir -p "$HOME/.local/bin"
+mkdir -p "$HOME/.local/lib/node_modules/@opencode-ai/cli"
+: >"$HOME/.local/lib/node_modules/@opencode-ai/cli/postinstall.mjs"
 cat >"$HOME/.local/bin/opencode2" <<'INNER'
 #!/usr/bin/env bash
-printf 'opencode2 %s\n' "$*" >>"${CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG:?}"
-if [[ "${1:-}" == "--version" ]]; then printf 'opencode2 v0.0.0-beta-18743\n'; fi
-exit 0
+echo 'postinstall script was not run' >&2
+exit 1
 INNER
 chmod +x "$HOME/.local/bin/opencode2"
 EOF
 chmod +x "$FAKE_BIN/npm"
+
+cat >"$FAKE_BIN/node" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == "$HOME/.local/lib/node_modules/@opencode-ai/cli/postinstall.mjs" ]] || exit 2
+printf 'node %s\n' "$*" >>"${CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG:?}"
+cat >"$HOME/.local/bin/opencode2" <<'INNER'
+#!/usr/bin/env bash
+printf 'opencode2 %s\n' "$*" >>"${CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG:?}"
+if [[ "${1:-}" == "--version" ]]; then printf 'opencode2 v0.0.0-beta-19271\n'; fi
+exit 0
+INNER
+chmod +x "$HOME/.local/bin/opencode2"
+EOF
+chmod +x "$FAKE_BIN/node"
 
 # An unversioned legacy-shaped binary is intentionally present. The installer/wrapper must never
 # probe or execute it: custom_opencode has exactly one OpenCode runtime, opencode2.
@@ -65,7 +81,8 @@ chmod +x "$FAKE_BIN/opencode"
 env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:/usr/bin:/bin" \
   bash "$COPY/scripts/install.sh" >"$TMP/install.out"
 
-grep -Fxq "npm install --global --prefix $HOME_DIR/.local @opencode-ai/cli@0.0.0-beta-18743" "$LOG"
+grep -Fxq "npm install --global --prefix $HOME_DIR/.local @opencode-ai/cli@0.0.0-beta-19271" "$LOG"
+grep -Fxq "node $HOME_DIR/.local/lib/node_modules/@opencode-ai/cli/postinstall.mjs" "$LOG"
 [[ -x "$HOME_DIR/.local/bin/opencode2" ]] || {
   echo "clean install did not bootstrap opencode2" >&2
   exit 1
