@@ -30,7 +30,7 @@ ponytail_validate_pin_tree() {
 
 ponytail_provision() {
   local upstream=${PONYTAIL_UPSTREAM_URL:-https://github.com/DietrichGebert/ponytail.git}
-  local pin=${PONYTAIL_PIN_COMMIT:-2ed6c52c9d7e5e56942508591085fd45dea277d3}
+  local pin=${PONYTAIL_PIN_COMMIT:-e3ba2aa6f1e6f0bc4d69eb09c9f0d0a93af56156}
   local branch=main
   local data_home=${XDG_DATA_HOME:-$HOME/.local/share}
   local checkout=${PONYTAIL_CHECKOUT_DIR:-$data_home/opencode/ponytail}

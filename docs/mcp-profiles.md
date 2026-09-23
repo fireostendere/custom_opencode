@@ -97,7 +97,7 @@ deterministic fallback and makes no additional inference request for routing.
 
 ## Native tool context and Code Mode limitation
 
-The installed beta-18743 exposes mutable `session.hook("context").tools`. Its
+The installed beta-19271 exposes mutable `session.hook("context").tools`. Its
 request builder constructs the provider tool definitions from that object **after**
 the hook. Filtering is per model request, using session/agent identity; switching
 one worker never changes a global active MCP set.

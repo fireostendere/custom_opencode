@@ -147,18 +147,19 @@ def main(argv: list[str] | None = None) -> int:
         add("shared-service-env", False, "opencode2 not found")
 
     backend_models: set[str] = set()
+    required_models = {plus.MAX_MODEL, plus.FLASH_MODEL}
 
     def backend_check() -> tuple[bool, str]:
         target = server_rag._v2_workspace_target("/api/model", str(base.SCRATCH_ROOT))
         models = plus._backend_request_json("GET", target, timeout=5.0)
         backend_models.clear()
         backend_models.update(plus._model_ids(models))
-        return models is not None, f"HTTP API reachable at {base.BACKEND_URL}"
+        # The service can answer HTTP before user providers and plugins load.
+        return models is not None and required_models <= backend_models, f"HTTP API reachable at {base.BACKEND_URL}"
 
     ok, detail = retry(backend_check, timeout=20.0)
     add("opencode-backend", ok, detail)
 
-    required_models = {plus.MAX_MODEL, plus.FLASH_MODEL}
     missing_models = sorted(required_models - backend_models)
     add(
         "backend-model-catalog",
@@ -166,22 +167,20 @@ def main(argv: list[str] | None = None) -> int:
         "Max + Flash available" if not missing_models else "Missing: " + ", ".join(missing_models),
     )
 
-    try:
+    def agent_check() -> tuple[bool, str]:
         agents = plus._data(plus._backend_request_json(
             "GET", server_rag._v2_workspace_target("/api/agent", str(base.SCRATCH_ROOT)), timeout=5.0))
         agent_ids = {
             item.get("id") for item in agents or []
             if isinstance(item, dict) and isinstance(item.get("id"), str)
         }
-        add(
-            "backend-agent-catalog",
-            "fast-reader" in agent_ids,
-            "fast-reader registered" if "fast-reader" in agent_ids else "fast-reader missing",
-        )
-    except Exception as exc:
-        add("backend-agent-catalog", False, f"{type(exc).__name__}: {exc}")
+        ready = "fast-reader" in agent_ids
+        return ready, "fast-reader registered" if ready else "fast-reader missing"
 
-    try:
+    ok, detail = retry(agent_check, timeout=20.0)
+    add("backend-agent-catalog", ok, detail)
+
+    def plugin_check() -> tuple[bool, str]:
         plugins = plus._data(plus._backend_request_json(
             "GET", server_rag._v2_workspace_target("/api/plugin", str(base.SCRATCH_ROOT)), timeout=5.0))
         # V2 exposes the lifecycle state below `state.status`; older endpoint
@@ -225,18 +224,16 @@ def main(argv: list[str] | None = None) -> int:
             plugin_id for plugin_id in required_plugins
             if plugin_status.get(plugin_id) != "active"
         )
-        add(
-            "backend-plugin-catalog",
-            not inactive_plugins and not failed_local_plugins,
-            f"{len(required_plugins)} required custom plugins active; no failed local plugins"
-            if not inactive_plugins and not failed_local_plugins
-            else "; ".join(filter(None, [
-                "Missing/inactive: " + ", ".join(inactive_plugins) if inactive_plugins else "",
-                "Failed local: " + ", ".join(failed_local_plugins) if failed_local_plugins else "",
-            ])),
-        )
-    except Exception as exc:
-        add("backend-plugin-catalog", False, f"{type(exc).__name__}: {exc}")
+        ready = not inactive_plugins and not failed_local_plugins
+        detail = (f"{len(required_plugins)} required custom plugins active; no failed local plugins"
+                  if ready else "; ".join(filter(None, [
+                      "Missing/inactive: " + ", ".join(inactive_plugins) if inactive_plugins else "",
+                      "Failed local: " + ", ".join(failed_local_plugins) if failed_local_plugins else "",
+                  ])))
+        return ready, detail
+
+    ok, detail = retry(plugin_check, timeout=20.0)
+    add("backend-plugin-catalog", ok, detail)
 
     def web_check() -> tuple[bool, str]:
         host = local_probe_host(str(base.WEB_HOST))

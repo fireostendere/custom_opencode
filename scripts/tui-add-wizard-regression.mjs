@@ -330,7 +330,7 @@ assert.equal(canonicalEditor.plainText, '')
 assert.equal(canonicalEvent.prevented, true)
 assert.equal(canonicalEvent.stopped, true)
 
-// The exact beta-18743 field must route an empty native alias into the wizard.
+// The pinned beta-19271 field must route an empty native alias into the wizard.
 canonicalEditor.plainText = '/addmcp'
 configureDialog(['typed-docs', 'https://mcp.example.com/typed'], ['remote', false, false])
 const beforeEmptyAlias = commandCalls.length

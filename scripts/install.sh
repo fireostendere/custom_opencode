@@ -62,7 +62,7 @@ export CUSTOM_OPENCODE_SERVICE_MODE="$SERVICE_MODE"
 # custom_opencode targets one reviewed OpenCode V2 build. An explicit .env
 # override can advance the pin after the regression suite is run against it.
 export PATH="$BIN_DIR:$PATH"
-OPENCODE_CLI_PACKAGE=${OPENCODE_CLI_PACKAGE:-@opencode-ai/cli@0.0.0-beta-18743}
+OPENCODE_CLI_PACKAGE=${OPENCODE_CLI_PACKAGE:-@opencode-ai/cli@0.0.0-beta-19271}
 OPENCODE_CLI_VERSION=${OPENCODE_CLI_PACKAGE##*@}
 CURRENT_OPENCODE_VERSION=$(opencode2 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//' || true)
 if [[ "$CURRENT_OPENCODE_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
@@ -74,6 +74,10 @@ if [[ "$CURRENT_OPENCODE_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
   echo "==> Installing OpenCode V2 ($OPENCODE_CLI_PACKAGE)"
   "$NPM" install --global --prefix "$HOME/.local" "$OPENCODE_CLI_PACKAGE"
   hash -r
+  # npm 12 may block lifecycle scripts, leaving the package's placeholder binary.
+  if [[ $(opencode2 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//' || true) != "$OPENCODE_CLI_VERSION" ]]; then
+    node "$HOME/.local/lib/node_modules/@opencode-ai/cli/postinstall.mjs"
+  fi
 fi
 if ! command -v opencode2 >/dev/null 2>&1; then
   echo "OpenCode V2 installation completed without an opencode2 executable" >&2
