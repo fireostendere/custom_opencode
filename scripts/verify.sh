@@ -446,7 +446,7 @@ if sol_special.get("name") != "GPT-6 Sol · Orchestrated": bad.append("orchestra
 dnd_special = providers.get("openai", {}).get("models", {}).get("gpt-6-dnd-edition", {}) if isinstance(providers.get("openai"), dict) else {}
 if dnd_special.get("modelID") != "gpt-6-luna": bad.append("DnD Edition catalog alias must map to gpt-6-luna")
 if dnd_special.get("name") != "GPT-6 · DnD Edition": bad.append("DnD Edition catalog alias has unexpected label")
-if dnd_special.get("defaultVariant") != "low": bad.append("DnD Edition default reasoning must be low")
+if dnd_special.get("defaultVariant") != "auto": bad.append("DnD Edition default reasoning must be auto")
 ollama = providers.get("ollama", {})
 if ollama.get("package") != "aisdk:@ai-sdk/openai-compatible": bad.append("local Ollama V2 provider must use aisdk:@ai-sdk/openai-compatible")
 
