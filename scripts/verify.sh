@@ -492,12 +492,12 @@ role_routes.update({
     "sol-role-builder-max": "openai/gpt-6-sol-direct#max",
     "sol-role-reviewer": "openai/gpt-6-luna-direct#xhigh",
     "sol-role-reviewer-max": "openai/gpt-6-luna-direct#max",
-    "dnd-narrator": "openai/gpt-6-dnd-edition#low",
-    "dnd-narrator-high": "openai/gpt-6-dnd-edition#xhigh",
+    "dnd-narrator": "openai/gpt-6-dnd-edition#auto",
+    "dnd-narrator-high": "openai/gpt-6-luna-direct#xhigh",
     "dnd-narrator-max": "openai/gpt-6-sol-orchestrated#xhigh",
-    "dnd-planner": "openai/gpt-6-dnd-edition#xhigh",
-    "dnd-memory": "openai/gpt-6-dnd-edition#low",
-    "dnd-reader": "openai/gpt-6-dnd-edition#low",
+    "dnd-planner": "openai/gpt-6-luna-direct#xhigh",
+    "dnd-memory": "openai/gpt-6-luna-direct#low",
+    "dnd-reader": "openai/gpt-6-luna-direct#low",
 })
 for agent_id, model_ref in role_routes.items():
     if (agents.get(agent_id) or {}).get("model") != model_ref:

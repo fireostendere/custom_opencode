@@ -143,7 +143,7 @@ assert (
     config["providers"]["openai"]["models"]["gpt-6-sol-orchestrated"]["modelID"] == "gpt-6-sol"
 )
 assert config["providers"]["openai"]["models"]["gpt-6-dnd-edition"]["modelID"] == "gpt-6-luna"
-assert config["providers"]["openai"]["models"]["gpt-6-dnd-edition"]["defaultVariant"] == "low"
+assert config["providers"]["openai"]["models"]["gpt-6-dnd-edition"]["defaultVariant"] == "auto"
 openai_models = config["providers"]["openai"]["models"]
 assert openai_models["gpt-6-luna-direct"]["modelID"] == "gpt-6-luna"
 assert openai_models["gpt-6-sol-direct"]["modelID"] == "gpt-6-sol"
@@ -166,7 +166,7 @@ else:
     raise AssertionError("SOL Fast override must be rejected")
 finally:
     os.environ.pop("OPENCODE_SOL_REVIEW_MODEL", None)
-assert dnd_role_models()["narrator"] == "openai/gpt-6-dnd-edition#low"
+assert dnd_role_models()["narrator"] == "openai/gpt-6-luna-direct#low"
 os.environ["OPENCODE_DND_NARRATOR_MODEL"] = "openrouter/gpt-6-sol#medium"
 try:
     dnd_role_models()
@@ -240,12 +240,12 @@ assert agents["sol-role-builder-max"]["model"] == "openai/gpt-6-sol-direct#max"
 assert agents["sol-role-reviewer"]["model"] == "openai/gpt-6-luna-direct#xhigh"
 assert agents["sol-role-reviewer-max"]["model"] == "openai/gpt-6-luna-direct#max"
 for name, model in {
-    "dnd-narrator": "openai/gpt-6-dnd-edition#low",
-    "dnd-narrator-high": "openai/gpt-6-dnd-edition#xhigh",
+    "dnd-narrator": "openai/gpt-6-dnd-edition#auto",
+    "dnd-narrator-high": "openai/gpt-6-luna-direct#xhigh",
     "dnd-narrator-max": "openai/gpt-6-sol-orchestrated#xhigh",
-    "dnd-planner": "openai/gpt-6-dnd-edition#xhigh",
-    "dnd-memory": "openai/gpt-6-dnd-edition#low",
-    "dnd-reader": "openai/gpt-6-dnd-edition#low",
+    "dnd-planner": "openai/gpt-6-luna-direct#xhigh",
+    "dnd-memory": "openai/gpt-6-luna-direct#low",
+    "dnd-reader": "openai/gpt-6-luna-direct#low",
 }.items():
     assert agents[name]["model"] == model
     assert agents[name]["permissions"][0]["effect"] == "deny"
