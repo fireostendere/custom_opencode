@@ -196,7 +196,7 @@ async function transferSessionToProject(session,project,{select=false,removeSour
   state.sessions=[created,...state.sessions.filter((item)=>item.id!==created.id)]
   if(context.length){
     const handoff=handoffText(sourceSession,context)
-    state.running.set(created.id,{status:'handoff',since:Date.now()});renderSessions();renderHeader()
+    state.running.set(created.id,{status:'handoff',since:Date.now(),optimistic:true});renderSessions();renderHeader()
     try { await api.sendPrompt(created,{text:handoff,files:[],delivery:'normal'}) }
     catch (error) {
       state.running.delete(created.id);state.sessions=state.sessions.filter((item)=>item.id!==created.id);clearSessionModelState(created.id)
@@ -286,8 +286,9 @@ function syncRunStatuses(statuses) {
   for(const session of state.sessions){
     const active=runningStatus(statuses[session.id]),previous=state.running.get(session.id)
     if(active&&!previous){state.running.set(session.id,{status:normalizeRunStatus(statuses[session.id]),since:Date.now()});changed=true}
+    else if(active&&previous?.optimistic){previous.optimistic=false;previous.status=normalizeRunStatus(statuses[session.id])}
     // /active is a full snapshot. Allow a just-submitted prompt to reach the server.
-    else if(!active&&previous&&!api.isPromptPending(session.id)&&(session.id in statuses||Date.now()-previous.since>=5000)){markFinished(session.id,'готово');changed=true}
+    else if(!active&&previous&&!api.isPromptPending(session.id)&&((!previous.optimistic&&session.id in statuses)||Date.now()-previous.since>=5000)){markFinished(session.id,'готово');changed=true}
   }
   return changed
 }
@@ -917,7 +918,7 @@ async function sendMessage(event){
       queueFor(session.id).push({text,files});rememberSubmittedPrompt(session.id,text);renderSessions();toast('Добавлено в очередь');return
     }
     previousRun=state.running.get(session.id)
-    invalidateRunSync();state.running.set(session.id,{status:running?'steer':'running',since:Date.now()});if(!running){statusPolling.wake();rateLimitPolling.wake()}renderHeader();renderSessions();updateBadge()
+    invalidateRunSync();state.running.set(session.id,{status:running?'steer':'running',since:Date.now(),optimistic:true});if(!running){statusPolling.wake();rateLimitPolling.wake()}renderHeader();renderSessions();updateBadge()
     await api.sendPrompt(session,{text,files,delivery:running?'steer':'normal'});rememberSubmittedPrompt(session.id,text);setTimeout(()=>loadContext({force:true}),180)
   } catch(error){
     if(session){invalidateRunSync();previousRun?state.running.set(session.id,previousRun):state.running.delete(session.id);renderHeader();renderSessions();updateBadge()}
@@ -927,7 +928,7 @@ async function sendMessage(event){
     drafts[draftKey()]=input.value;saveJson(DRAFT_KEY,drafts);autosizeInput()
   }
 }
-async function flushQueue(sessionID){const queue=queueFor(sessionID);if(!queue.length||isRunning(sessionID))return;const session=state.sessions.find((s)=>s.id===sessionID);if(!session)return;const next=queue.shift();invalidateRunSync();state.running.set(sessionID,{status:'queued-start',since:Date.now()});statusPolling.wake();rateLimitPolling.wake();renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();try{await api.sendPrompt(session,{...next,delivery:'normal'})}catch(e){invalidateRunSync();state.running.delete(sessionID);queue.unshift(next);notifyUser('OpenCode: очередь остановлена',e.message,`queue-${sessionID}`)}renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
+async function flushQueue(sessionID){const queue=queueFor(sessionID);if(!queue.length||isRunning(sessionID))return;const session=state.sessions.find((s)=>s.id===sessionID);if(!session)return;const next=queue.shift();invalidateRunSync();state.running.set(sessionID,{status:'queued-start',since:Date.now(),optimistic:true});statusPolling.wake();rateLimitPolling.wake();renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();try{await api.sendPrompt(session,{...next,delivery:'normal'})}catch(e){invalidateRunSync();state.running.delete(sessionID);queue.unshift(next);notifyUser('OpenCode: очередь остановлена',e.message,`queue-${sessionID}`)}renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
 async function stopSelected(){if(!state.selected)return;try{await api.abortSession(state.selected.id);toast('Остановка отправлена')}catch(e){toast(`Остановка: ${e.message}`)}}
 
 function openProjectDialog(mode='create'){state.projectDialogMode=mode;const titles={copy:'Копировать с контекстом',move:'Перенести в проект'};$('projectDialogTitle').textContent=titles[mode]||'Создать в проекте';const currentDirectory=directory(state.selected);const projects=state.projects.filter((p)=>p.id!==QUICK_PROJECT_ID&&!(mode==='move'&&(p.id===state.selected?.projectID||p.canonical===currentDirectory)));$('projectChoices').hidden=false;$('projectBrowser')?.setAttribute('hidden','');$('projectChoices').innerHTML=projects.map((p)=>`<button class="choice" data-project="${escapeHtml(p.id)}"><div class="choice-title">${escapeHtml(projectLabel(p))}</div><div class="choice-meta">${escapeHtml(p.canonical||p.id)}</div></button>`).join('')||'<div class="empty">Проекты не найдены.</div>';$('projectChoices').querySelectorAll('button[data-project]').forEach((b)=>b.addEventListener('click',()=>chooseProject(b.dataset.project)));$('projectDialog').showModal()}
@@ -950,7 +951,7 @@ async function forkWithFallback(session,messageID){
     if(!created?.id)throw new Error('OpenCode не вернул id новой сессии')
     if(context.length){
       const handoff=handoffText(sourceSession,context)
-      state.running.set(created.id,{status:'fork-handoff',since:Date.now()})
+      state.running.set(created.id,{status:'fork-handoff',since:Date.now(),optimistic:true})
       try{await api.sendPrompt(created,{text:handoff,files:[],delivery:'normal'})}
       catch(promptError){state.running.delete(created.id);try{await api.deleteSession(created.id)}catch{};throw promptError}
     }
@@ -1007,7 +1008,7 @@ function updateBadge(){const count=state.running.size;try{if(count)navigator.set
 function ensureAssistant(id){let m=state.context.find((x)=>x.id===id);if(m)return m;m={id,type:'assistant',content:[],time:{created:Date.now()}};state.context.push(m);return m}
 function ensurePart(message,type,ordinal=0){let p=(message.content||[]).filter((x)=>x.type===type)[ordinal];if(p)return p;p={type,text:''};message.content||=[];message.content.push(p);return p}
 function ensureTool(message,data){let p=(message.content||[]).find((x)=>x.type==='tool'&&x.id===data.id);if(p)return p;p={type:'tool',id:data.id,name:data.name||'tool',state:{status:'streaming',input:''},time:{created:Date.now()}};message.content||=[];message.content.push(p);return p}
-function markStarted(sessionID,label='running'){if(!sessionID||(state.sessions.length&&!state.sessions.some((session)=>session.id===sessionID)))return;invalidateRunSync();state.running.set(sessionID,{status:label,since:Date.now()});statusPolling.wake();rateLimitPolling.wake();renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
+function markStarted(sessionID,label='running'){if(!sessionID||(state.sessions.length&&!state.sessions.some((session)=>session.id===sessionID)))return;invalidateRunSync();state.running.set(sessionID,{status:label,since:Date.now(),optimistic:label==='managed-send'});statusPolling.wake();rateLimitPolling.wake();renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
 function markFinished(sessionID,kind='готово'){if(!sessionID)return;invalidateRunSync();const wasRunning=state.running.has(sessionID);state.running.delete(sessionID);renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();const session=state.sessions.find((s)=>s.id===sessionID);if(wasRunning&&(document.hidden||state.selected?.id!==sessionID))notifyUser(`OpenCode: ${kind}`,sessionTitle(session),`done-${sessionID}`,sessionID);if(wasRunning||queueFor(sessionID).length)void flushQueue(sessionID)}
 function handleEvent(payload){
   window.dispatchEvent(new CustomEvent('custom-opencode:event',{detail:payload}))

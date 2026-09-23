@@ -473,6 +473,12 @@ state.running.set('ses_status', {status:'running',since:Date.now()})
 assert.equal(app.syncRunStatuses({}), false, 'Allow native admission after a just-accepted prompt')
 assert.equal(app.syncRunStatuses({ses_status:{type:'idle'}}), true)
 assert.equal(app.syncRunStatuses({ses_status:{type:'running'}}), true)
+state.running.set('ses_status', {status:'managed-send',since:Date.now(),optimistic:true})
+assert.equal(app.syncRunStatuses({ses_status:{type:'idle'}}), false, 'stale idle snapshot must not hide Stop immediately after send')
+assert.equal(state.running.has('ses_status'), true)
+assert.equal(app.syncRunStatuses({ses_status:{type:'busy'}}), false)
+assert.equal(state.running.get('ses_status').optimistic, false, 'backend busy confirms the run')
+assert.equal(app.syncRunStatuses({ses_status:{type:'idle'}}), true, 'confirmed run must finish promptly')
 
 // Mirrors collapse nested workers into their root and exclude only proven empty history.
 reset()
