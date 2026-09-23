@@ -54,7 +54,7 @@ node scripts/tui-accounts-regression.mjs
 
 В установленном custom OpenCode через визард добавлены `openai/gpt-6-astra`
 и `openai/gpt-6-astra-orchestrated` («GPT-6 Astra · Orchestrated»).
-Во втором варианте Astra ведёт задачу, существующие `sol-role-builder*` на Terra
+Во втором варианте Astra ведёт задачу, существующие `sol-role-builder*` на GPT-6 Sol
 выполняют изменения, а роли `sol-fast-reader`/`sol-role-reviewer*` на Luna — анализ
 и ревью. Эти записи хранятся в managed registry установленного OpenCode;
 они не добавлены в шаблон конфигурации для новых установок.

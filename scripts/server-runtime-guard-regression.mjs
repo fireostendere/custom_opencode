@@ -115,7 +115,7 @@ try {
   ]) {
     const requestEvent = {
       sessionID: "ses_request_budget",
-      model: { providerID: "openai", id: "gpt-5.6-luna" },
+      model: { providerID: "openai", id: "gpt-6-luna" },
       request: new Request(url, {
         method: "POST",
         body: JSON.stringify({ input: [], max_output_tokens: 4096 }),
@@ -128,7 +128,7 @@ try {
   recoveredBudget = true
   const recoveredRequest = {
     sessionID: 'ses_recovered_budget',
-    model: { providerID: 'openai', id: 'gpt-5.6-luna' },
+    model: { providerID: 'openai', id: 'gpt-6-luna' },
     request: new Request('https://api.openai.com/v1/responses', {
       method: 'POST', body: JSON.stringify({ input: [], tools: [{ type: 'function', name: 'ordinary_tool' }], max_output_tokens: 4096 }),
     }),
@@ -236,7 +236,7 @@ try {
   delayedContext = true
   const coldContext = {
     sessionID: 'ses_context_swr',
-    model: { providerID: 'openai', id: 'gpt-5.6-luna' },
+    model: { providerID: 'openai', id: 'gpt-6-luna' },
     system: [],
   }
   const coldStarted = Date.now()
@@ -261,7 +261,7 @@ try {
   const bareDnd = {
     sessionID: 'ses_dnd_bare',
     agent: 'dnd-narrator',
-    model: { providerID: 'openai', id: 'gpt-5.6-sol' },
+    model: { providerID: 'openai', id: 'gpt-6-sol' },
     system: [
       { type: 'text', text: 'keep-this-non-runtime-part' },
       {
@@ -287,7 +287,7 @@ try {
   contextFailure = true
   const contextEvent = {
     sessionID: 'ses_context_timeout',
-    model: { providerID: 'openai', id: 'gpt-5.6-luna' },
+    model: { providerID: 'openai', id: 'gpt-6-luna' },
     system: [{ type: 'text', text: 'Server runtime context (deduplicated, budgeted, checkpoint/RAG/repo aware):\nprevious snapshot' }],
   }
   await hooks['session:context'](contextEvent)

@@ -20,7 +20,7 @@ function isNightPromoModel(modelID, providerID){
 
 const ORCHESTRATED_CHOICES = [
   { providerID:'bailian-cli', id:'qwen3.8-orchestrated', label:'Qwen3.8 Max · Orchestrated', meta:'Max → Flash worker · optional RAG' },
-  { providerID:'openai', id:'gpt-5.6-sol-orchestrated', label:'GPT-5.6 Sol · Orchestrated', meta:'Sol → Terra builder · Luna reader' },
+  { providerID:'openai', id:'gpt-6-sol-orchestrated', label:'GPT-6 Sol · Orchestrated', meta:'Sol builder · Luna reader' },
 ]
 
 function dataOf(value) {

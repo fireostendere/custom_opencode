@@ -281,7 +281,7 @@ if CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH"
 fi
 grep -Fq 'requires --model provider/model[#variant]' "$TMP/final-plan-model.out"
 : >"$LOG"
-for ref in 'bailian-cli/qwen3.8-orchestrated' 'openai/gpt-5.6-sol-orchestrated' 'example/direct#precise'; do
+for ref in 'bailian-cli/qwen3.8-orchestrated' 'openai/gpt-6-sol-orchestrated' 'example/direct#precise'; do
   CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" run --model "$ref" --agent plan --help
   grep -Fxq "opencode2 run --model $ref --agent plan --help" "$LOG"
   CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" run --agent=plan --model="$ref" --help

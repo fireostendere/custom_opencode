@@ -4,16 +4,21 @@ export const ORCHESTRATED_MODEL = {
   label: 'Qwen3.8 Max · Orchestrated',
 }
 export const SOL_ORCHESTRATED_MODEL = {
-  id: 'gpt-5.6-sol-orchestrated',
+  id: 'gpt-6-sol-orchestrated',
   providerID: 'openai',
-  label: 'GPT-5.6 Sol · Orchestrated',
+  label: 'GPT-6 Sol · Orchestrated',
+}
+export const ASTRA_ORCHESTRATED_MODEL = {
+  id: 'gpt-6-astra-orchestrated',
+  providerID: 'openai',
+  label: 'GPT-6 Astra · Orchestrated',
 }
 export const DND_EDITION_MODEL = {
-  id: 'gpt-5.6-dnd-edition',
+  id: 'gpt-6-dnd-edition',
   providerID: 'openai',
-  label: 'GPT-5.6 · DnD Edition',
+  label: 'GPT-6 · DnD Edition',
 }
-export const ORCHESTRATED_MODELS = [ORCHESTRATED_MODEL, SOL_ORCHESTRATED_MODEL, DND_EDITION_MODEL]
+export const ORCHESTRATED_MODELS = [ORCHESTRATED_MODEL, SOL_ORCHESTRATED_MODEL, ASTRA_ORCHESTRATED_MODEL, DND_EDITION_MODEL]
 
 // The web surface exposes Build/Plan while keeping direct agent IDs internal.
 // Native clients can still use the same plan identifiers without translation.

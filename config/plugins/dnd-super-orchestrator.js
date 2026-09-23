@@ -26,17 +26,16 @@ function textOf(value) {
 
 function lastUser(body) {
   if (Array.isArray(body?.messages)) {
-    return [...body.messages].reverse().find((item) => item?.role === "user")?.content
+    return body.messages.findLast((item) => item?.role === "user")?.content
   }
   if (typeof body?.input === "string") return body.input
   if (Array.isArray(body?.input)) {
-    return [...body.input].reverse().find((item) => item?.role === "user")?.content || ""
+    return body.input.findLast((item) => item?.role === "user")?.content || ""
   }
   return ""
 }
 
-function contextOf(body) {
-  const text = textOf(lastUser(body)).slice(0, 12000)
+function contextOf(text) {
   return {
     playMode: /\byolo\b/i.test(text) ? "YOLO" : "FULL",
     hasCombat: /\b(attack|combat|fight|damage|initiative|smash)\b/i.test(text),
@@ -46,13 +45,14 @@ function contextOf(body) {
 
 async function route(event, body) {
   if (!TOKEN) throw new Error("D&D orchestrator runtime token is not configured")
+  const message = textOf(lastUser(body)).slice(0, 12000)
   const response = await fetch(ROUTE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-OpenCode-Runtime": TOKEN },
     body: JSON.stringify({
       sessionID: event.sessionID,
-      message: textOf(lastUser(body)).slice(0, 12000),
-      context: contextOf(body),
+      message,
+      context: contextOf(message),
     }),
     signal: AbortSignal.timeout(Number(process.env.DND_ROUTER_TIMEOUT_MS || 2200)),
   })
@@ -68,23 +68,20 @@ function applyRoute(body, decision) {
     // narrator call that pretends to be NO_LLM.
     throw new Error(`D&D ${selected || "unknown"} route requires managed ODM tool dispatch`)
   }
-  const target = selected === "SOL_XHIGH" ? "gpt-5.6-sol" : "gpt-5.6-luna"
+  const target = selected === "SOL_XHIGH" ? "gpt-6-sol" : "gpt-6-luna"
   const effort = selected === "LUNA_LOW" ? "low" : "xhigh"
-  const tier = selected === "SOL_XHIGH" ? "default" : "fast"
-  const result = structuredClone(body)
+  const result = { ...body }
   result.model = target
-  // `fast` is our internal route label. The OpenAI/Codex wire value for the
-  // accelerated tier is `priority`; sending the internal label causes HTTP 400.
-  result.service_tier = tier === "fast" ? "priority" : tier
-  if (result.reasoning && typeof result.reasoning === "object") result.reasoning = { ...result.reasoning, effort }
-  else result.reasoning_effort = effort
+  // OAuth accepts Luna at the provider default tier; priority returns HTTP 400.
+  delete result.service_tier
+  result.reasoning = { ...(result.reasoning && typeof result.reasoning === "object" ? result.reasoning : {}), effort }
+  delete result.reasoning_effort
   return result
 }
 
 async function record(event, decision, telemetry, fallback) {
   if (!TELEMETRY) return
   const observed = telemetry ? { ...telemetry } : null
-  if (observed?.requested_service_tier === "fast") observed.actual_service_tier = "priority"
   const row = {
     at: new Date().toISOString(),
     sessionID: String(event.sessionID || "").slice(0, 256),
@@ -152,16 +149,18 @@ export default {
 }
 
 if (process.env.DND_SUPER_ORCHESTRATOR_SELF_CHECK) {
-  const event = { agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-5.6-dnd-edition" } }
+  const event = { agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-6-dnd-edition" } }
   if (!isDndOrchestratorRequest(event)) throw new Error("D&D request selector failed")
-  if (routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "LUNA_LOW" }).model !== "gpt-5.6-luna") throw new Error("Luna low route failed")
-  const lunaLow = routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "LUNA_LOW" })
-  const lunaXhigh = routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "LUNA_XHIGH" })
-  const expectedFast = "priority"
-  if (lunaLow.service_tier !== expectedFast) throw new Error("Luna low wire tier contract failed")
-  if (lunaXhigh.service_tier !== expectedFast) throw new Error("Luna xhigh wire tier contract failed")
-  if (routeBody({ model: "gpt-5.6-sol", messages: [] }, { route: "SOL_XHIGH" }).service_tier !== "default") throw new Error("Sol tier failed")
+  if (routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_LOW" }).model !== "gpt-6-luna") throw new Error("Luna low route failed")
+  const lunaLow = routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_LOW" })
+  const lunaXhigh = routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_XHIGH" })
+  if ("service_tier" in lunaLow || "service_tier" in lunaXhigh) throw new Error("Luna OAuth tier contract failed")
+  if (lunaLow.reasoning?.effort !== "low" || lunaXhigh.reasoning?.effort !== "xhigh" || "reasoning_effort" in lunaLow) throw new Error("Luna OAuth reasoning contract failed")
+  if ("service_tier" in routeBody({ model: "gpt-6-sol", messages: [] }, { route: "SOL_XHIGH" })) throw new Error("Sol default tier failed")
   let refused = false
+  const original = { messages: [{ role: "user", content: "attack" }], reasoning: { summary: "auto" }, reasoning_effort: "high", service_tier: "priority" }
+  const routed = routeBody(original, { route: "LUNA_LOW" })
+  if (routed.messages !== original.messages || original.reasoning.effort || !original.service_tier || !original.reasoning_effort) throw new Error("Routing must reuse history without mutating the request")
   try { routeBody({}, { route: "TOOL" }) } catch { refused = true }
   if (!refused) throw new Error("tool route must not become an invented narrator call")
   const followup = { input: [{ role: "user", content: "keep routing" }, { type: "function_call_output", output: "tool result" }] }

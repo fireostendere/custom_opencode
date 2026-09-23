@@ -89,11 +89,12 @@ const ORCHESTRATED_MODELS = new Set([
   "bailian-cli/qwen3.7-plus",
   "bailian-cli/deepseek-v4-pro-0813",
   "bailian-cli/glm-5.2",
-  "openai/gpt-5.6-sol",
-  "openai/gpt-5.6-sol-orchestrated",
-  "openai/gpt-5.6-dnd-edition",
-  "openai/gpt-5.6-terra",
-  "openai/gpt-5.6-luna",
+  "openai/gpt-6-astra",
+  "openai/gpt-6-astra-orchestrated",
+  "openai/gpt-6-sol-direct",
+  "openai/gpt-6-sol-orchestrated",
+  "openai/gpt-6-dnd-edition",
+  "openai/gpt-6-luna-direct",
 ])
 
 function key(model) {

@@ -19,8 +19,8 @@ const AGENT_DEFAULTS = new Map([
 
 const MODEL_DEFAULTS = new Map([
   ["bailian-cli/qwen3.8-orchestrated", "full"],
-  ["openai/gpt-5.6-sol-orchestrated", "full"],
-  ["openai/gpt-5.6-dnd-edition", "bare"],
+  ["openai/gpt-6-sol-orchestrated", "full"],
+  ["openai/gpt-6-dnd-edition", "bare"],
   ["bailian-cli/qwen3.8-flash", "lite"],
 ])
 
@@ -81,7 +81,7 @@ export function isDndLane(event) {
   const agent = String(event?.agent || "")
   const modelID = event?.model?.id || event?.model?.modelID
   return (
-    (event?.model?.providerID === "openai" && modelID === "gpt-5.6-dnd-edition") ||
+    (event?.model?.providerID === "openai" && modelID === "gpt-6-dnd-edition") ||
     agent.startsWith("dnd-") ||
     agent.startsWith("narrator-")
   )

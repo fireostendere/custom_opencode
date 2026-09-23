@@ -308,10 +308,12 @@ if (
 )
   throw new Error("Orchestrated Qwen identity regression")
 if (
-  ux.SOL_ORCHESTRATED_MODEL.id !== "gpt-5.6-sol-orchestrated" ||
+  ux.SOL_ORCHESTRATED_MODEL.id !== "gpt-6-sol-orchestrated" ||
   ux.SOL_ORCHESTRATED_MODEL.providerID !== "openai"
 )
   throw new Error("Orchestrated SOL identity regression")
+if (ux.ASTRA_ORCHESTRATED_MODEL.id !== "gpt-6-astra-orchestrated" || ux.ASTRA_ORCHESTRATED_MODEL.providerID !== "openai")
+  throw new Error("Orchestrated Astra identity regression")
 
 const index = readFileSync(resolve(root, "app/index.html"), "utf8")
 for (const marker of [
@@ -948,10 +950,10 @@ if (orchestrated.modelID !== "qwen3.8-max")
   throw new Error("Orchestrated catalog model must route to the real qwen3.8-max API model")
 if (orchestrated.name !== "Qwen3.8 Max · Orchestrated")
   throw new Error("Orchestrated catalog model label regression")
-const solOrchestrated = config.providers?.openai?.models?.["gpt-5.6-sol-orchestrated"] || {}
-if (solOrchestrated.modelID !== "gpt-5.6-sol")
-  throw new Error("Orchestrated SOL catalog model must route to the real gpt-5.6-sol API model")
-if (solOrchestrated.name !== "GPT-5.6 Sol · Orchestrated")
+const solOrchestrated = config.providers?.openai?.models?.["gpt-6-sol-orchestrated"] || {}
+if (solOrchestrated.modelID !== "gpt-6-sol")
+  throw new Error("Orchestrated SOL catalog model must route to the real gpt-6-sol API model")
+if (solOrchestrated.name !== "GPT-6 Sol · Orchestrated")
   throw new Error("Orchestrated SOL catalog model label regression")
 for (const id of [
   "sol-fast-reader",
@@ -975,8 +977,8 @@ for (const marker of [
   "export default {",
   'id: "orchestrated-qwen"',
   "qwen3.8-orchestrated",
-  "gpt-5.6-sol-orchestrated",
-  "gpt-5.6-dnd-edition",
+  "gpt-6-sol-orchestrated",
+  "gpt-6-dnd-edition",
   "isOrchestratedSol",
   "isDndEdition",
   'ctx.session.hook("context"',

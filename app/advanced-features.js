@@ -293,7 +293,7 @@ function syncProjectModelOptions() {
   const options = new Map([
     ['inherit', 'Оставить выбранную'],
     ['orchestrated', 'Qwen 3.8 Max · Оркестрированная'],
-    ['sol-orchestrated', 'GPT-5.6 Sol · Оркестрированная'],
+    ['sol-orchestrated', 'GPT-6 Sol · Оркестрированная'],
   ])
   for (const model of state.models || []) {
     const provider = String(model?.providerID || '')
@@ -340,7 +340,7 @@ async function applyProjectDefaultsOnce(sessionID = state.sessionID) {
   } catch { return }
   if (state.sessionID !== sessionID) return
   const settings = state.settings
-  const ref = ({ orchestrated:'bailian-cli/qwen3.8-orchestrated', 'sol-orchestrated':'openai/gpt-5.6-sol-orchestrated' })[settings.defaultModel] || settings.defaultModel
+  const ref = ({ orchestrated:'bailian-cli/qwen3.8-orchestrated', 'sol-orchestrated':'openai/gpt-6-sol-orchestrated' })[settings.defaultModel] || settings.defaultModel
   if (typeof ref === 'string' && ref.includes('/') && !await chooseConcreteModel(ref)) return
   if (state.sessionID !== sessionID) return
   sessionStorage.setItem(key, '1')
