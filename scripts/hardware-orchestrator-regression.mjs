@@ -116,7 +116,7 @@ test('model resolution uses catalog variants, supports explicit mapping, and nev
   const reduced = [{ ...models[2], variants: { xhigh: {}, high: {} } }]
   assert.throws(() => resolveModel(reduced, 'astra', 'max'), /required reasoning effort max/)
   assert.throws(() => resolveModel(models.slice(0, 2), 'astra', 'max'), /unavailable/)
-  assert.throws(() => resolveModel([{ ...models[0], variants: [] }], 'luna'), /refusing to guess/)
+  assert.throws(() => resolveModel([{ ...models[0], variants: [] }], 'luna'), /required reasoning effort xhigh/)
   assert.throws(() => resolveModel([{ ...models[0], enabled: false }], 'luna'), /unavailable/)
   assert.equal(resolveModel([{ ...models[2], id: 'verified-expert', name: 'custom' }], 'astra', 'max', 'verified-expert').id, 'verified-expert')
 })
