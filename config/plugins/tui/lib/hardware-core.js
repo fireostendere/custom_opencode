@@ -71,9 +71,8 @@ export function resolveModel(models, family, desired = "xhigh", override) {
   }
   if (!model) throw new Error(`Hardware ${family} model unavailable; configure a real OpenAI catalog entry (no silent downgrade)`)
   const supported = variantIDs(model)
-  const effort = desired === "max" ? ["max", "xhigh", "high"].find(item => supported.includes(item)) :
-    supported.includes(desired) ? desired : undefined
-  if (!effort) throw new Error(`Hardware ${model.id}: supported reasoning effort is not advertised; refusing to guess`)
+  const effort = supported.includes(desired) ? desired : undefined
+  if (!effort) throw new Error(`Hardware ${model.id}: required reasoning effort ${desired} is not advertised; refusing to downgrade or guess`)
   return { id: model.id, model: model.modelID || model.id, effort, input: model.capabilities?.input || [], family }
 }
 
