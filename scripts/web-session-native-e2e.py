@@ -99,9 +99,14 @@ def main():
                             page.locator("#username").fill("opencode")
                             page.locator("#password").fill("fixture-password")
                             page.locator("#loginSubmit").click()
+                            # The login redirect can paint the menu before app.js binds it.
+                            # Rendered sessions prove initialization has attached handlers.
+                            seed_choice = page.locator(f'[data-session="{seed["id"]}"]')
+                            seed_choice.wait_for(state="attached", timeout=60000)
                             if mobile:
                                 page.locator("#menu").click()
-                            page.locator(f'[data-session="{seed["id"]}"]').click(timeout=60000)
+                                page.wait_for_function("document.querySelector('#sidebar').classList.contains('open')")
+                            seed_choice.click(timeout=60000)
                             page.wait_for_function("id => location.hash.endsWith(id)", arg=seed["id"])
                             for target in [project, other]:
                                 if mobile:
