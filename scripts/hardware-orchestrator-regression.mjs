@@ -245,7 +245,7 @@ test('filter keeps hardware/KB/CAD discovery; excludes game/coding writes and hi
 test('native manifest registers alias, prompt, tools and slash status without changing project instructions', async t => {
   const h = await harness(t)
   assert.equal(h.aliases.get(HARDWARE_MODEL).modelID, 'gpt-6-luna')
-  assert.equal(h.aliases.get(HARDWARE_MODEL).variants, undefined)
+  assert.deepEqual(h.aliases.get(HARDWARE_MODEL).variants, [])
   assert.equal(h.aliases.get(HARDWARE_MODEL).settings?.reasoningEffort, undefined)
   assert.equal(h.commands.has('hardware-status'), true)
   const event = { model: eventModel, agent: 'build', system: [{ type: 'text', text: 'PROJECT CONSTRAINTS' }], tools: ['hardware_consult', 'shell'] }
