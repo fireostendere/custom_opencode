@@ -89,7 +89,7 @@ export default {
         // The Edition is a routing alias, not a reasoning model. Hide inherited
         // effort variants/settings; the selected worker receives its effort
         // only after routing (Luna/Sol XHIGH, Astra MAX).
-        delete draft.variants
+        draft.variants = []
         if (draft.settings && typeof draft.settings === "object") {
           draft.settings = { ...draft.settings }
           delete draft.settings.reasoningEffort
