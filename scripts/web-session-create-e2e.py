@@ -49,7 +49,7 @@ class Backend(harness.fixture.Backend):
 
 
 def new_dialog(page):
-    if not page.locator("#newSession").is_visible():
+    if page.locator("#menu").is_visible() and not page.locator("#sidebar").evaluate("el => el.classList.contains('open')"):
         page.locator("#menu").click()
     page.locator("#newSession").click()
     expect(page.locator("#projectDialog")).to_be_visible()
