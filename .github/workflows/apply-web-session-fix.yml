@@ -1,0 +1,52 @@
+name: Apply and validate web session repair
+on:
+  push:
+    branches: ['fix/web-new-session-20260924']
+    paths: ['.github/workflows/apply-web-session-fix.yml']
+permissions:
+  contents: write
+concurrency:
+  group: web-session-repair-20260924
+  cancel-in-progress: false
+jobs:
+  repair:
+    if: github.repository == 'fireostendere/custom_opencode' && github.ref == 'refs/heads/fix/web-new-session-20260924'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      OPENCODE_DISABLE_AUTOUPDATE: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: {node-version: '22'}
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.12'}
+      - name: Verify and apply the reviewed patch on the repair branch only
+        run: |
+          base64 -d .github/web-session-fix.patch.gz.b64 | gzip -d > /tmp/web-session-fix.patch
+          echo 'd367849a49f70040818d322e3d319e04d41dd91201816e170bbce2cb332392c6  /tmp/web-session-fix.patch' | sha256sum -c -
+          git apply --check --unidiff-zero /tmp/web-session-fix.patch
+          git apply --index --unidiff-zero /tmp/web-session-fix.patch
+          node --check app/app.js
+          node --check app/api.js
+          node scripts/web-smoke.mjs
+          node scripts/session-transfer-smoke.mjs
+          python -m py_compile scripts/web-session-create-e2e.py scripts/web-session-native-e2e.py
+          git rm .github/web-session-fix.patch.gz.b64 .github/workflows/web-session-debug.yml .github/workflows/web-session-native-probe.yml .github/workflows/apply-web-session-fix.yml
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix(web): open a persistent empty session after project selection'
+          git push origin HEAD:refs/heads/fix/web-new-session-20260924
+      - name: Install native engine and Chromium
+        run: |
+          npm install -g @opencode-ai/cli@0.0.0-beta-19271
+          if ! opencode2 --version; then node "$(npm root -g)/@opencode-ai/cli/postinstall.mjs"; fi
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium
+      - name: Run UI and native regressions without model inference
+        run: |
+          python scripts/audit-regression.py --suite web-session-create --suite web-session-native --suite web-fixtures-browser --suite web-critical-controls --suite composed-server --output validation/web-session-repair --timeout 180
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: web-session-repair-results
+          path: validation/web-session-repair
+          retention-days: 3
