@@ -27,8 +27,8 @@ boards. Keep this change in its feature branch until those checks pass.
 | `design` | Luna XHIGH | A separable circuit block or bounded calculation analysis |
 | `vision` | Luna XHIGH with image capability | Selected original images; ambiguous markings remain unknown |
 | `pcb_review` | Sol XHIGH | Separate fresh-context review of raw evidence, not of the designer's verdict |
-| `critical_design` | Astra, highest advertised effort | Exceptionally difficult design problem |
-| `critical_review` | Astra, highest advertised effort | Critical unresolved risk or deepest independent review |
+| `critical_design` | Astra MAX | Exceptionally difficult design problem |
+| `critical_review` | Astra MAX | Critical unresolved risk or deepest independent review |
 | JEV | Local Qwen 4B | Task classification only; never component selection, pinout or electrical sign-off |
 
 Primary routing is Luna-first. Clear PCB-review requests select Sol. Explicit
@@ -43,8 +43,7 @@ Model IDs and reasoning efforts are resolved from the **actual native catalog**.
 The code prefers existing `gpt-6-luna-direct`, `gpt-6-sol-direct` and a catalog
 entry identified as Astra. It does not invent an Astra endpoint or pretend that
 Sol is Astra. Missing model or unadvertised required effort produces an explicit
-error. For `max`, choose the highest advertised `max`, `xhigh`, then `high`.
-This checks catalog metadata, not the account's live entitlement.
+error. `max` is the highest canonical effort in this project; `xhigh` is the penultimate level. Astra routing requires an advertised literal `max` and fails closed instead of silently downgrading to `xhigh` or `high`. This checks catalog metadata, not the account's live entitlement.
 
 ## Enable on the local installation
 
@@ -56,8 +55,7 @@ or divergent work without reconciling it.
 
 After installation and a native process restart, select
 **GPT-6 · Hardware Edition** in the model picker. The alias is registered only
-when a real Luna entry exists. Keep the ordinary Build agent: there is no new
-web/TUI mode. Directly selected models and D&D retain their existing behavior.
+when a real Luna entry exists. The alias itself intentionally exposes no reasoning-effort variants and carries no default reasoning effort: it is only a router. The routed worker receives the role-specific effort (Luna/Sol XHIGH, Astra MAX). Keep the ordinary Build agent: there is no new web/TUI mode. Directly selected models and D&D retain their existing behavior.
 
 `/hardware-status` reports routing, image indices and worker usage without an
 LLM call. The same data is available to the model via `hardware_status`.
