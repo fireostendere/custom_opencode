@@ -35,6 +35,8 @@ def main():
         config.mkdir(parents=True)
         project = root / "project"
         project.mkdir()
+        scratch = root / "scratch"
+        scratch.mkdir()
         other = root / "Внешний проект with spaces"
         other.mkdir()
         with socket.socket() as listener:
@@ -73,7 +75,7 @@ def main():
                 "OPENCODE_BACKEND_URL":service["url"], "OPENCODE_BACKEND_PASSWORD":service["password"],
                 "OPENCODE_SERVER_USERNAME":"opencode", "OPENCODE_SERVER_PASSWORD":"fixture-password",
                 "OPENCODE_WEB_ALLOW_LOCAL":"0", "OPENCODE_AUTH_ALLOW_BASIC":"0",
-                "OPENCODE_SCRATCH_DIRECTORY":str(project), "OPENCODE_PROJECT_ROOTS":str(project),
+                "OPENCODE_SCRATCH_DIRECTORY":str(scratch), "OPENCODE_PROJECT_ROOTS":str(project),
                 "CUSTOM_OPENCODE_FEATURE_STATE":str(root / "features.json"), "CUSTOM_OPENCODE_RUNTIME_DB":str(root / "runtime.sqlite3"),
                 "MCP_RAG_ENABLED":"0", "OPENCODE_RESOURCE_SCHEDULER":"off",
             })
