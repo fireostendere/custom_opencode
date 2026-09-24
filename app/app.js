@@ -100,6 +100,16 @@ function latestQuota() {
 function projectMap() { return new Map(state.projects.map((project)=>[project.id,project])) }
 function directory(session) { return session?.location?.directory || projectMap().get(session?.projectID)?.canonical || '' }
 function projectLabel(project) { return project?.name || project?.canonical?.split(/[\\/]/).filter(Boolean).pop() || project?.id || 'Без проекта' }
+function isOperationalProject(project) {
+  const raw=String(project?.canonical||'').trim()
+  if(!raw)return true
+  const normalized=raw.replace(/\\/g,'/').toLowerCase()
+  const name=String(project?.name||normalized.split('/').filter(Boolean).at(-1)||'').toLowerCase()
+  const systemTemp=/^\/(?:tmp|var\/tmp|run\/user\/\d+|dev\/shm)(?:\/|$)/.test(normalized)||/\/appdata\/local\/temp(?:\/|$)/.test(normalized)
+  if(!systemTemp)return false
+  const ephemeral=/(?:^|[-_.])(probe|benchmark|canary|scratch|subagent|worker)(?:[-_.]|$)/
+  return ephemeral.test(name)||name.startsWith('odm-opencode-')||name.startsWith('custom-opencode-')
+}
 function projectInfo(session) {
   if (session?.projectID === QUICK_PROJECT_ID) return { key:QUICK_PROJECT_ID, label:'Быстрые', directory:directory(session) }
   const project = projectMap().get(session?.projectID)
@@ -954,7 +964,7 @@ function openProjectDialog(mode='create') {
   $('projectSelectionStatus').textContent=''
   $('projectPathError')?.setAttribute('hidden','')
   const currentDirectory=directory(state.selected)
-  const projects=state.projects.filter((p)=>p.id!==QUICK_PROJECT_ID&&!(mode==='move'&&(p.id===state.selected?.projectID||p.canonical===currentDirectory)))
+  const projects=state.projects.filter((p)=>p.id!==QUICK_PROJECT_ID&&!isOperationalProject(p)&&!(mode==='move'&&(p.id===state.selected?.projectID||p.canonical===currentDirectory)))
   $('projectChoices').hidden=false
   $('projectBrowser')?.setAttribute('hidden','')
   $('projectChoices').innerHTML=projects.map((p)=>`<button type="button" class="choice" data-project="${escapeHtml(p.id)}"><div class="choice-title">${escapeHtml(projectLabel(p))}</div><div class="choice-meta">${escapeHtml(p.canonical||p.id)}</div></button>`).join('')||'<div class="empty">Проекты не найдены.</div>'
