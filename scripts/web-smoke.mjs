@@ -31,6 +31,30 @@ const response = (status, value) => ({
 })
 
 const api = await loadSource("app/api.js")
+// Create identity must survive both command acknowledgements and Session responses.
+for (const ack of [true, {ok:true}, {}, {title:'Renamed'}, {id:'other',location:{directory:'/wrong'}}, null]) {
+  const session = {id:'ses_created',title:'Server default',location:{directory:'/chosen'},projectID:'proj_chosen'}
+  const requests = []
+  globalThis.fetch = async (path, options = {}) => {
+    requests.push({path,options})
+    return path === '/api/session' ? response(200,{data:session}) : ack === null ? response(204,null) : response(200,{data:ack})
+  }
+  const created = await api.createSession({directory:'/chosen',title:'New chat'})
+  if(created.id !== session.id || created.location.directory !== '/chosen' || created.projectID !== 'proj_chosen')
+    throw new Error('Rename acknowledgement destroyed the created session identity')
+  if(requests.filter(call=>call.path==='/api/session').length!==1)throw new Error('Creation was retried')
+}
+for(const failure of ['create','rename']) {
+  let posts=0
+  globalThis.fetch = async(path) => {
+    if(path==='/api/session'){posts++;return failure==='create'?response(503,'unavailable'):response(200,{data:{id:'ses_ok',title:'Default'}})}
+    return response(503,'rename unavailable')
+  }
+  let rejected=false
+  try { const created=await api.createSession({directory:'/chosen',title:'New chat'});if(created.id!=='ses_ok')throw new Error('Lost session') }
+  catch { rejected=true }
+  if(rejected !== (failure==='create') || posts!==1)throw new Error('Create/rename failure handling regression')
+}
 let calls = []
 globalThis.fetch = async (path, options = {}) => {
   calls.push({ path, options })

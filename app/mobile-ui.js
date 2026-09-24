@@ -81,11 +81,25 @@ if (sidebar && menu) {
   // mobile browsers cannot leave a dead area that fails to close the sidebar.
   document.addEventListener('click', (event) => {
     const target = event.target
+    // An active native modal owns its clicks; its project choices must not be
+    // swallowed as outside-drawer dismissals when an overlay is still present.
+    if (target?.closest?.('dialog[open]')) return
     const menuButton = target?.closest?.('#menu')
     if (menuButton && mobileQuery.matches) {
       event.preventDefault()
       event.stopImmediatePropagation()
       sidebarOpen() ? closeSidebar() : openSidebar()
+      return
+    }
+
+    // Consume the drawer entry before selecting a chat OR opening a chooser.
+    // Otherwise the next project click closes the drawer instead of creating
+    // the session, and Back can restore a stale sidebar/modal history entry.
+    const navigationButton = target?.closest?.('[data-session], [data-session-shortcut], #newSession, #chooseProject')
+    if (navigationButton && mobileQuery.matches && sidebarOpen()) {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      closeSidebar(() => navigationButton.click())
       return
     }
 
@@ -100,15 +114,6 @@ if (sidebar && menu) {
       event.stopImmediatePropagation()
       closeSidebar()
       return
-    }
-
-    // Selecting a chat while the drawer owns a synthetic history entry should
-    // consume that entry first, otherwise Back would need an extra press later.
-    const sessionButton = target?.closest?.('[data-session], [data-session-shortcut]')
-    if (sessionButton && mobileQuery.matches && sidebarOpen() && history.state?.[SIDEBAR_STATE_KEY]) {
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      closeSidebar(() => sessionButton.click())
     }
   }, true)
 

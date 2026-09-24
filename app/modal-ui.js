@@ -105,7 +105,7 @@ function closeFromHistory(dialog) {
 }
 
 function closeDialog(dialog) {
-  if (dialog?.open) dialog.close()
+  if (dialog?.open && dialog.getAttribute('aria-busy') !== 'true') dialog.close()
 }
 
 function closeAndRestore(dialog) {
@@ -140,32 +140,17 @@ function closeAndRestore(dialog) {
   return promise
 }
 
-function isActionSelection(target, dialog) {
-  if (!target?.closest || !dialog?.open) return false
-  if (target.closest('[data-fav]')) return false
-  if (dialog.id === 'projectDialog') {
-    return Boolean(target.closest('button[data-project], button[data-open-directory]'))
-  }
-  return false
-}
-
-async function replayAfterHistoryRestore(target, dialog) {
-  await closeAndRestore(dialog)
-  if (!target?.isConnected) return
-  target.click()
-}
-
-function installProjectBridgeWrapper() {
-  const bridge = window.CustomOpenCodeProjects
-  const original = bridge?.selectDirectory
-  if (typeof original !== 'function' || original.__modalHistorySafe) return
-  const wrapped = async (...args) => {
-    const dialog = document.getElementById('projectDialog')
-    if (dialog?.open) await closeAndRestore(dialog)
-    return original.apply(bridge, args)
-  }
-  wrapped.__modalHistorySafe = true
-  bridge.selectDirectory = wrapped
+// A successful action owns navigation. Consume the chooser's history entry
+// instead of dismissing it and replaying its click before the POST finishes.
+function navigate(url) {
+  const dialog = currentDialog()
+  const token = dialog && modalToken(dialog)
+  if (!token || history.state?.[MODAL_STATE_KEY] !== token) return false
+  const next = { ...(history.state || {}) }
+  delete next[MODAL_STATE_KEY]
+  history.replaceState(Object.keys(next).length ? next : null, '', url)
+  pendingClose = null
+  return true
 }
 
 if (window.HTMLDialogElement) {
@@ -184,17 +169,6 @@ if (window.HTMLDialogElement) {
 document.addEventListener('close', handleDialogClose, true)
 document.addEventListener('click', (event) => {
   const target = event.target
-  const actionDialog = target?.closest?.('dialog')
-  if (isActionSelection(target, actionDialog)) {
-    const action = target.closest('button[data-model][data-provider], button[data-project], button[data-open-directory]')
-    if (action) {
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      replayAfterHistoryRestore(action, actionDialog).catch((error) => console.error('modal action restore failed', error))
-      return
-    }
-  }
-
   const closeButton = target?.closest?.('[data-close], [data-appearance-close], [data-workflow-close], [data-runtime-close]')
   if (closeButton) {
     const id = closeButton.dataset.close || closeButton.dataset.appearanceClose || closeButton.dataset.workflowClose
@@ -218,7 +192,6 @@ document.addEventListener('click', (event) => {
 
 document.querySelectorAll('dialog').forEach((dialog) => prepareDialog(dialog))
 
-document.addEventListener('DOMContentLoaded', installProjectBridgeWrapper, { once:true })
 
 window.addEventListener('popstate', () => {
   if (pendingClose) {
@@ -243,6 +216,7 @@ window.addEventListener('popstate', () => {
 })
 
 window.CustomOpenCodeModal = {
+  navigate,
   close: closeDialog,
   closeAndRestore,
   current: currentDialog,

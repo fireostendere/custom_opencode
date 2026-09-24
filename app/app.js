@@ -41,7 +41,7 @@ const state = {
   agents: [], models: [], providers: [], defaultModel: null,
   draftAgent: null, draftModel: null, attachments: [],
   loading: false, running: new Map(), queues: new Map(), deliveryMode: 'steer',
-  projectDialogMode: 'create', actionSession: null, pendingPermission: null,
+  projectDialogMode: 'create', projectDialogPending: false, actionSession: null, pendingPermission: null,
   git: { vcs: null, files: [], diffs: [] }, notifyEnabled: localStorage.getItem(NOTIFY_KEY) === '1',
 }
 let sessionMeta = loadJson(META_KEY, {})
@@ -440,7 +440,7 @@ function renderSessions() {
   document.querySelectorAll('[data-session-more]').forEach((button)=>button.addEventListener('click',(event)=>{event.stopPropagation();openSessionActions(button.dataset.sessionMore)}))
 }
 
-async function selectSession(id,{push=true,saveDraft=true}={}) {
+async function selectSession(id,{push=true,saveDraft=true,waitForDetails=true}={}) {
   const session=state.sessions.find((s)=>s.id===id); if(!session)return
   if(saveDraft)saveDraftNow()
   const cachedContext=state.contextCache.get(id)
@@ -454,8 +454,14 @@ async function selectSession(id,{push=true,saveDraft=true}={}) {
   renderControls()
   const initialAgent=session.agent
   const modelVersionAtStart=sessionModelVersions.get(id)
-  const [detail]=await Promise.all([api.getSession(id).catch(()=>null),loadContext({force:Boolean(cachedContext),initial:true}),loadControls(),refreshGit()])
-  if(detail&&state.selected?.id===id){const liveAgent=state.selected.agent,liveModel=state.selected.model&&{...state.selected.model},model=detail.model&&sessionModelFromRead(id,detail.model,modelVersionAtStart,liveModel);state.selected={...state.selected,...detail,...(liveAgent!==initialAgent?{agent:liveAgent}:{}),...(model?{model}:{})};const index=state.sessions.findIndex((item)=>item.id===id);if(index>=0)state.sessions[index]=state.selected;renderHeader();renderControls()}
+  const hydrate = async () => {
+    const [detail]=await Promise.all([api.getSession(id).catch(()=>null),loadContext({force:Boolean(cachedContext),initial:true}),loadControls(),refreshGit()])
+    if(detail&&state.selected?.id===id){const liveAgent=state.selected.agent,liveModel=state.selected.model&&{...state.selected.model},model=detail.model&&sessionModelFromRead(id,detail.model,modelVersionAtStart,liveModel);state.selected={...state.selected,...detail,...(liveAgent!==initialAgent?{agent:liveAgent}:{}),...(model?{model}:{})};const index=state.sessions.findIndex((item)=>item.id===id);if(index>=0)state.sessions[index]=state.selected;renderHeader();renderControls()}
+  }
+  // The empty chat is already selected and rendered. Optional model/Git reads
+  // must not keep the create dialog open or turn a successful POST into a retry.
+  if (waitForDetails) await hydrate()
+  else void hydrate().catch((error) => { if(state.selected?.id===id)toast(`Загрузка сессии: ${error.message}`) })
 }
 function clearSelection() {
   saveDraftNow();initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=null;historyPaginationIntent=false;clearTimeout(historyPaginationIntentTimer);historyPaginationIntentTimer=0;historyPaginationTouch=null; state.selected=null;state.context=[];state.attachments=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
@@ -464,7 +470,7 @@ function clearSelection() {
   window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:null}}))
   renderSessions();renderHeader();renderMessages();renderAttachments();restoreDraft();loadDraftControls()
 }
-function setSessionHash(id) { const next=`#/session/${encodeURIComponent(id)}`; if(location.hash!==next) history.pushState(null,'',next) }
+function setSessionHash(id) { const next=`#/session/${encodeURIComponent(id)}`; if(location.hash!==next&&!window.CustomOpenCodeModal?.navigate(next)) history.pushState(null,'',next) }
 function sessionIdFromHash() { const match=/^#\/session\/([^/?]+)/.exec(location.hash); return match?decodeURIComponent(match[1]):null }
 function contextMessages(messages) { return (Array.isArray(messages)?messages:[]).filter((message)=>['user','assistant'].includes(message?.type)||['user','assistant'].includes(message?.role)) }
 function messageKey(message) {
@@ -901,8 +907,13 @@ async function createAt(dir,title){
   const source=state.selected
   const session=await api.createSession({directory:dir,title,agent:source?.agent||state.draftAgent,model:source?.model||state.draftModel})
   if(!session?.id)throw new Error('OpenCode не вернул id новой сессии')
+  // A list request started before this POST must not erase the new session.
+  sessionSyncGeneration += 1
   state.sessions=[session,...state.sessions.filter((s)=>s.id!==session.id)]
-  await selectSession(session.id)
+  $('search').value = ''
+  const projectKey = projectInfo(session).key
+  saveJson(PROJECT_COLLAPSE_KEY, loadJson(PROJECT_COLLAPSE_KEY, []).filter((key) => key !== projectKey))
+  await selectSession(session.id, {waitForDetails:false})
   return session
 }
 async function createNewSession(){
@@ -934,8 +945,53 @@ async function sendMessage(event){
 async function flushQueue(sessionID){const queue=queueFor(sessionID);if(!queue.length||isRunning(sessionID))return;const session=state.sessions.find((s)=>s.id===sessionID);if(!session)return;const next=queue.shift();invalidateRunSync();state.running.set(sessionID,{status:'queued-start',since:Date.now(),optimistic:true});statusPolling.wake();rateLimitPolling.wake();renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();try{await api.sendPrompt(session,{...next,delivery:'normal'})}catch(e){invalidateRunSync();state.running.delete(sessionID);queue.unshift(next);notifyUser('OpenCode: очередь остановлена',e.message,`queue-${sessionID}`)}renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
 async function stopSelected(){if(!state.selected)return;try{await api.abortSession(state.selected.id);toast('Остановка отправлена')}catch(e){toast(`Остановка: ${e.message}`)}}
 
-function openProjectDialog(mode='create'){state.projectDialogMode=mode;const titles={copy:'Копировать с контекстом',move:'Перенести в проект'};$('projectDialogTitle').textContent=titles[mode]||'Создать в проекте';const currentDirectory=directory(state.selected);const projects=state.projects.filter((p)=>p.id!==QUICK_PROJECT_ID&&!(mode==='move'&&(p.id===state.selected?.projectID||p.canonical===currentDirectory)));$('projectChoices').hidden=false;$('projectBrowser')?.setAttribute('hidden','');$('projectChoices').innerHTML=projects.map((p)=>`<button class="choice" data-project="${escapeHtml(p.id)}"><div class="choice-title">${escapeHtml(projectLabel(p))}</div><div class="choice-meta">${escapeHtml(p.canonical||p.id)}</div></button>`).join('')||'<div class="empty">Проекты не найдены.</div>';$('projectChoices').querySelectorAll('button[data-project]').forEach((b)=>b.addEventListener('click',()=>chooseProject(b.dataset.project)));$('projectDialog').showModal()}
-async function selectProjectTarget(project){if(!project?.canonical)return;$('projectDialog').close();if(state.projectDialogMode==='copy'||state.projectDialogMode==='move')await continueInProject(project,state.projectDialogMode==='move');else try{await createAt(project.canonical,'Новая сессия')}catch(e){toast(`Создание: ${e.message}`)}}
+function openProjectDialog(mode='create') {
+  if (state.projectDialogPending) return
+  state.projectDialogMode=mode
+  const titles={copy:'Копировать с контекстом',move:'Перенести в проект'}
+  $('projectDialogTitle').textContent=titles[mode]||'Создать в проекте'
+  $('projectSelectionStatus').hidden=true
+  $('projectSelectionStatus').textContent=''
+  $('projectPathError')?.setAttribute('hidden','')
+  const currentDirectory=directory(state.selected)
+  const projects=state.projects.filter((p)=>p.id!==QUICK_PROJECT_ID&&!(mode==='move'&&(p.id===state.selected?.projectID||p.canonical===currentDirectory)))
+  $('projectChoices').hidden=false
+  $('projectBrowser')?.setAttribute('hidden','')
+  $('projectChoices').innerHTML=projects.map((p)=>`<button type="button" class="choice" data-project="${escapeHtml(p.id)}"><div class="choice-title">${escapeHtml(projectLabel(p))}</div><div class="choice-meta">${escapeHtml(p.canonical||p.id)}</div></button>`).join('')||'<div class="empty">Проекты не найдены.</div>'
+  $('projectChoices').querySelectorAll('button[data-project]').forEach((b)=>b.addEventListener('click',()=>chooseProject(b.dataset.project)))
+  $('projectDialog').showModal()
+}
+async function selectProjectTarget(project) {
+  if(!project?.canonical || state.projectDialogPending)return
+  const dialog=$('projectDialog'), mode=state.projectDialogMode
+  if(mode==='copy'||mode==='move') {
+    dialog.close()
+    return continueInProject(project,mode==='move')
+  }
+  state.projectDialogPending=true
+  const status=$('projectSelectionStatus')
+  const controls=[...dialog.querySelectorAll('button, input')].map((element)=>[element,element.disabled])
+  for(const [element] of controls)element.disabled=true
+  dialog.setAttribute('aria-busy','true')
+  status.dataset.state='pending'
+  status.textContent='Создаётся сессия…'
+  status.hidden=false
+  try {
+    const session=await createAt(project.canonical,'Новая сессия')
+    dialog.close()
+    $('input').focus()
+    return session
+  } catch(error) {
+    status.dataset.state='error'
+    status.textContent=`Не удалось создать сессию: ${error.message}`
+    status.focus()
+    return null
+  } finally {
+    state.projectDialogPending=false
+    dialog.removeAttribute('aria-busy')
+    for(const [element,disabled] of controls)element.disabled=disabled
+  }
+}
 async function chooseProject(projectID){await selectProjectTarget(state.projects.find((p)=>p.id===projectID))}
 window.CustomOpenCodeProjects={selectDirectory:async(directory)=>selectProjectTarget({canonical:directory,name:String(directory).split(/[\\/]/).filter(Boolean).at(-1)||directory})}
 function handoffText(sourceSession,sourceContext){const rows=sourceContext.slice(-40).map((m)=>`${(m.type||m.role)==='user'?'USER':'ASSISTANT'}:\n${messagePlainText(m)}`).join('\n\n');const clippedRows=rows.length>24000?rows.slice(-24000):rows;return `Продолжи работу из предыдущей OpenCode-сессии. Это перенос контекста, а не новая независимая задача.\n\nИсходная сессия: ${sourceSession?.id}\nИсходная директория: ${directory(sourceSession)}\n\nПоследний контекст:\n${clippedRows}`}
@@ -1141,7 +1197,8 @@ function bindEvents(){
   $('form').addEventListener('submit',sendMessage);$('stop').addEventListener('click',stopSelected);$('input').addEventListener('input',()=>{notePromptInput();autosizeInput();scheduleDraftSave()});$('input').addEventListener('keydown',(e)=>{if(e.key==='ArrowUp'&&navigatePromptHistory(-1,e)){e.preventDefault();return}if(e.key==='ArrowDown'&&navigatePromptHistory(1,e)){e.preventDefault();return}if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!window.matchMedia('(max-width: 760px)').matches){e.preventDefault();$('form').requestSubmit()}})
   $('attachButton').addEventListener('click',()=> $('fileInput').click());$('fileInput').addEventListener('change',(e)=>{addFiles(e.target.files);e.target.value=''});$('input').addEventListener('paste',(e)=>{const files=[...(e.clipboardData?.items||[])].filter((i)=>i.kind==='file').map((i)=>i.getAsFile()).filter(Boolean);if(files.length){e.preventDefault();addFiles(files)}})
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.addEventListener('click',()=>{state.deliveryMode=b.dataset.delivery;renderRunControls()}));$('gitButton').addEventListener('click',openGitDialog);$('usageButton').addEventListener('click',()=>{$('usageDialog').showModal()});$('notifyButton').addEventListener('click',toggleNotifications)
-  $('renameForm').addEventListener('submit',(e)=>{e.preventDefault();renameCurrent()});document.querySelectorAll('[data-close]').forEach((b)=>b.addEventListener('click',()=>$(b.dataset.close).close()));document.querySelectorAll('dialog').forEach((d)=>d.addEventListener('click',(e)=>{if(e.target===d)d.close()}))
+  $('renameForm').addEventListener('submit',(e)=>{e.preventDefault();renameCurrent()});document.querySelectorAll('[data-close]').forEach((b)=>b.addEventListener('click',()=>$(b.dataset.close).close()));document.querySelectorAll('dialog').forEach((d)=>d.addEventListener('click',(e)=>{if(e.target===d&&!(d.id==='projectDialog'&&state.projectDialogPending))d.close()}))
+  $('projectDialog').addEventListener('cancel',(event)=>{if(state.projectDialogPending)event.preventDefault()})
   const messagesView=$('messages')
   const maybeLoadOlderFromUser=()=>{
     if(!historyPaginationIntent||initialMessageScrollSession===state.selected?.id||messagesView.scrollTop>80)return

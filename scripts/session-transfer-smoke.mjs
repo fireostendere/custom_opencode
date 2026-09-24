@@ -21,7 +21,7 @@ function makeElement() {
     classList: { add() {}, remove() {}, toggle() {}, contains() { return false } },
     addEventListener() {}, focus() {}, showModal() {}, close() {}, setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end },
     querySelector() { return null }, querySelectorAll() { return [] },
-    setAttribute(name, value) { this[name] = value },
+    setAttribute(name, value) { this[name] = value }, removeAttribute(name) { delete this[name] },
     contains() { return false }, closest() { return null },
   }
 }
@@ -65,7 +65,7 @@ assert.ok(!source.includes("from './refresh-coalescer.js'"), 'refresh-coalescer 
 const bootIndex = source.lastIndexOf('initialize().catch')
 assert.ok(bootIndex > 0, 'app.js boot call not found')
 source = source.slice(0, bootIndex)
-  + 'globalThis.__smoke.exports = { primaryAgentFor, transferSessionToProject, forkWithFallback, sessionWithControls, handoffText, messagePlainText, changeAgent, changeModel, loadSessionsNow, selectSession, resetPromptHistory, navigatePromptHistory, syncRunStatuses, renderSessionShortcuts, state, seedDraft: (id, value) => { drafts[id] = value }, draftOf: (id) => drafts[id] }\n'
+  + 'globalThis.__smoke.exports = { primaryAgentFor, transferSessionToProject, forkWithFallback, sessionWithControls, handoffText, messagePlainText, changeAgent, changeModel, loadSessionsNow, selectSession, createAt, selectProjectTarget, resetPromptHistory, navigatePromptHistory, syncRunStatuses, renderSessionShortcuts, state, seedDraft: (id, value) => { drafts[id] = value }, draftOf: (id) => drafts[id] }\n'
 
 await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
 const app = globalThis.__smoke.exports
@@ -80,6 +80,7 @@ const error = (status, message = 'boom') => Object.assign(new Error(message), { 
 function reset() {
   storage.clear()
   events.length = 0
+  state.projectDialogPending = false
   state.sessions = []
   state.selected = null
   state.context = []
@@ -522,5 +523,41 @@ for(const count of [0,1,10,11]){
   assert.deepEqual(ids,recentChats.slice(0,count).reverse().slice(0,10).map(session=>session.id),`Recent limit at ${count} chats`)
   assert.equal(state.sessions.length,count,'The limit affects only the mirror')
 }
+
+// Creation invalidates a list read that started before POST committed.
+reset()
+globalThis.location = {hash:''}
+globalThis.history = {pushState(_state,_unused,hash){location.hash=hash}}
+state.sessions = [{id:'before_create',location:{directory:'/old'}}]
+const oldList = deferred()
+handlers.listSessions = () => oldList.promise
+const oldRefresh = app.loadSessionsNow({background:true})
+handlers.createSession = async () => ({id:'fresh_create',title:'New chat',location:{directory:'/chosen'},projectID:'proj_chosen'})
+document.getElementById('search').value='filter that hides a new chat'
+localStorage.setItem('opencode:web:project-collapse-v1',JSON.stringify(['proj_chosen','unrelated']))
+await app.createAt('/chosen','New chat')
+oldList.resolve([{id:'before_create'}])
+await oldRefresh
+assert.equal(state.selected.id,'fresh_create')
+assert.ok(state.sessions.some(session=>session.id==='fresh_create'),'stale list erased the created session')
+assert.equal(location.hash,'#/session/fresh_create')
+assert.equal(document.getElementById('search').value,'')
+assert.deepEqual(JSON.parse(localStorage.getItem('opencode:web:project-collapse-v1')),['unrelated'])
+
+// All project selection entry points share an in-flight guard and visible error.
+reset()
+const pendingCreate = deferred()
+handlers.createSession = () => {calls.createSession.push({});return pendingCreate.promise}
+const choosing = app.selectProjectTarget({canonical:'/chosen'})
+assert.equal(state.projectDialogPending,true)
+assert.equal(document.getElementById('projectSelectionStatus').dataset.state,'pending')
+await app.selectProjectTarget({canonical:'/chosen'})
+assert.equal(calls.createSession.length,1)
+pendingCreate.reject(new Error('directory unavailable'))
+await choosing
+assert.equal(state.projectDialogPending,false)
+assert.equal(document.getElementById('projectSelectionStatus').dataset.state,'error')
+assert.match(document.getElementById('projectSelectionStatus').textContent,/directory unavailable/)
+assert.equal(state.selected,null)
 
 console.log('Session transfer smoke passed: handoff safety + history/draft isolation + model guards + full active snapshots + root-only conversation mirrors')

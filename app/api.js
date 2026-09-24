@@ -60,7 +60,12 @@ export async function createSession({ directory, title, agent, model }) {
   if (model) body.model = model
   let created = dataOf(await request('/api/session', { method: 'POST', body: JSON.stringify(body) }))
   if (title && created?.id && created.title !== title) {
-    try { created = await renameSession(created.id, title) || { ...created, title } } catch {}
+    // Rename is a command: native V2 may return an acknowledgement, not a
+    // Session. Never replace the created record (and its id/location) with it.
+    try {
+      const renamed = await renameSession(created.id, title)
+      created = { ...created, title: typeof renamed?.title === 'string' ? renamed.title : title }
+    } catch {} // Creation succeeded; a cosmetic rename must not hide the chat.
   }
   return created
 }
