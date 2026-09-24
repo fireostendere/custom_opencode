@@ -1,0 +1,70 @@
+name: Native session contract probe
+on:
+  push:
+    branches: ['fix/web-new-session-20260924']
+    paths: ['.github/workflows/web-session-native-probe.yml']
+permissions:
+  contents: read
+jobs:
+  native-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      OPENCODE_DISABLE_AUTOUPDATE: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: {node-version: '22'}
+      - name: Install pinned native engine
+        run: |
+          npm install -g @opencode-ai/cli@0.0.0-beta-19271
+          if ! opencode2 --version; then node "$(npm root -g)/@opencode-ai/cli/postinstall.mjs"; fi
+          opencode2 --version
+      - name: Inspect create and rename responses in an isolated home
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, shutil, socket, subprocess, tempfile
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError
+          binary=shutil.which('opencode2')
+          report={}
+          with tempfile.TemporaryDirectory(prefix='session-contract-') as tmp:
+              home=Path(tmp)/'home'; cfg=home/'.config/opencode'; cfg.mkdir(parents=True)
+              project=home/'project'; project.mkdir()
+              other=home/'another project'; other.mkdir()
+              with socket.socket() as sock:
+                  sock.bind(('127.0.0.1',0)); port=sock.getsockname()[1]
+              (cfg/'service.json').write_text(json.dumps({'hostname':'127.0.0.1','port':port,'password':'isolated-session-fixture'}))
+              (cfg/'opencode.json').write_text(json.dumps({'update':'disable','providers':{'fixture':{'package':'aisdk:@ai-sdk/openai-compatible','name':'Local fixture','settings':{'baseURL':'http://127.0.0.1:1/v1','apiKey':'fixture'},'models':{'fixture':{'name':'Fixture','capabilities':{'tools':True,'input':['text'],'output':['text']},'limit':{'context':32000,'output':2048}}}}},'model':'fixture/fixture'}))
+              env={k:v for k,v in os.environ.items() if not k.startswith(('OPENCODE_','CUSTOM_OPENCODE_','XDG_'))}
+              env.update(HOME=str(home),OPENCODE_DISABLE_AUTOUPDATE='1')
+              for key,folder in [('CONFIG','.config'),('DATA','.local/share'),('STATE','.local/state'),('CACHE','.cache')]: env['XDG_'+key+'_HOME']=str(home/folder)
+              try:
+                  subprocess.run([binary,'service','start'],env=env,cwd=project,check=True,timeout=120)
+                  service=json.loads((home/'.local/state/opencode/service.json').read_text())
+                  headers={'Authorization':'Basic '+base64.b64encode(('opencode:'+service['password']).encode()).decode(),'Content-Type':'application/json'}
+                  def request(method,path,body=None):
+                      req=Request(service['url'].rstrip('/')+path,method=method,headers=headers,data=None if body is None else json.dumps(body).encode())
+                      try:
+                          with urlopen(req,timeout=40) as response: return {'status':response.status,'body':response.read().decode()}
+                      except HTTPError as error: return {'status':error.code,'body':error.read().decode()}
+                  report['create']=request('POST','/api/session',{'title':'Новая сессия','model':{'providerID':'fixture','id':'fixture'},'location':{'directory':str(other)}})
+                  created=json.loads(report['create']['body']).get('data',{})
+                  if created.get('id'):
+                      sid=created['id']
+                      report['rename']=request('POST','/api/session/'+sid+'/rename',{'title':'Новая сессия'})
+                      report['detail']=request('GET','/api/session/'+sid)
+                  report['no_explicit_model']=request('POST','/api/session',{'title':'Новая сессия','location':{'directory':str(project)}})
+                  report['paidModelCalls']=0
+              finally:
+                  subprocess.run([binary,'service','stop'],env=env,cwd=project,timeout=30,check=False)
+                  Path('native-session-contract.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
+          print(json.dumps(report,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: native-session-contract
+          path: native-session-contract.json
+          retention-days: 3
