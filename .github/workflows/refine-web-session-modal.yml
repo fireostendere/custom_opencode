@@ -1,0 +1,94 @@
+name: Validate atomic project modal navigation
+on:
+  push:
+    branches: ['fix/web-new-session-20260924']
+    paths: ['.github/workflows/refine-web-session-modal.yml']
+permissions:
+  contents: write
+jobs:
+  modal-navigation:
+    if: github.ref == 'refs/heads/fix/web-new-session-20260924'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      OPENCODE_DISABLE_AUTOUPDATE: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: {node-version: '22'}
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.12'}
+      - name: Remove eager modal replay and commit scoped repair
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('app/modal-ui.js')
+          s=p.read_text()
+          start=s.index('function isActionSelection(')
+          end=s.index('if (window.HTMLDialogElement)',start)
+          s=s[:start]+'''// A successful action owns navigation. Consume the chooser's history entry
+          // instead of dismissing it and replaying its click before the POST finishes.
+          function navigate(url) {
+            const dialog = currentDialog()
+            const token = dialog && modalToken(dialog)
+            if (!token || history.state?.[MODAL_STATE_KEY] !== token) return false
+            const next = { ...(history.state || {}) }
+            delete next[MODAL_STATE_KEY]
+            history.replaceState(Object.keys(next).length ? next : null, '', url)
+            pendingClose = null
+            return true
+          }
+
+          '''+s[end:]
+          start=s.index("  const actionDialog = target?.closest?.('dialog')")
+          end=s.index('  const closeButton =',start)
+          s=s[:start]+s[end:]
+          s=s.replace("document.addEventListener('DOMContentLoaded', installProjectBridgeWrapper, { once:true })\n",'')
+          s=s.replace('  if (dialog?.open) dialog.close()',"  if (dialog?.open && dialog.getAttribute('aria-busy') !== 'true') dialog.close()",1)
+          s=s.replace('window.CustomOpenCodeModal = {','window.CustomOpenCodeModal = {\n  navigate,')
+          p.write_text(s)
+          p=Path('app/app.js')
+          s=p.read_text()
+          old="if(location.hash!==next) history.pushState(null,'',next)"
+          assert s.count(old)==1
+          s=s.replace(old,"if(location.hash!==next&&!window.CustomOpenCodeModal?.navigate(next)) history.pushState(null,'',next)")
+          p.write_text(s)
+          p=Path('scripts/web-session-create-e2e.py')
+          s=p.read_text()
+          s=s.replace('    # The bridge itself must reject duplicate creation, not just disable the UI.', '''    page.mouse.click(2, 2)
+              expect(page.locator("#projectDialog")).to_be_visible()
+              # The bridge itself must reject duplicate creation, not just disable the UI.''')
+          s=s.replace('    Backend.controls_release.set()\n    assert assert_empty(page, target, reload=True) == sid', '''    Backend.controls_release.set()
+              # Back returns to the previous chat once, not a stale hidden-modal entry.
+              page.go_back()
+              page.wait_for_function("hash => location.hash === hash", arg=old_hash)
+              expect(page.locator("#input")).to_have_value("Сохранить старый черновик")
+              page.go_forward()
+              page.wait_for_function("id => location.hash.endsWith(id)", arg=sid)
+              assert assert_empty(page, target, reload=True) == sid''')
+          p.write_text(s)
+          PY
+          node --check app/app.js
+          node --check app/modal-ui.js
+          node scripts/web-smoke.mjs
+          node scripts/session-transfer-smoke.mjs
+          python -m py_compile scripts/web-session-create-e2e.py
+          git add app/app.js app/modal-ui.js scripts/web-session-create-e2e.py
+          git rm .github/workflows/refine-web-session-modal.yml
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix(web): let session creation own modal completion and navigation'
+          git push origin HEAD:refs/heads/fix/web-new-session-20260924
+      - name: Install isolated browser/native test dependencies
+        run: |
+          npm install -g @opencode-ai/cli@0.0.0-beta-19271
+          if ! opencode2 --version; then node "$(npm root -g)/@opencode-ai/cli/postinstall.mjs"; fi
+          python -m pip install playwright==1.57.0
+          python -m playwright install --with-deps chromium
+      - name: Test production dialogs and native creation
+        run: |
+          python scripts/audit-regression.py --suite web-session-create --suite web-session-native --suite web-production-frontend --output validation/web-session-modal --timeout 180
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: web-session-modal-results
+          path: validation/web-session-modal
+          retention-days: 3
