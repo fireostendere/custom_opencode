@@ -184,7 +184,13 @@ class Backend(BaseHTTPRequestHandler):
             with FixtureState.lock:
                 created_session = FixtureState.created_sessions.get(path.split("/")[3])
         if path == "/api/project":
-            self.send_json({"data": [{"id": "proj_fixture", "name": "Fixture", "canonical": project}, {"id": "proj_other", "name": "Other", "canonical": os.environ["FIXTURE_OTHER_PROJECT"]}]})
+            self.send_json({"data": [
+                {"id": "proj_fixture", "name": "Fixture", "canonical": project},
+                {"id": "proj_other", "name": "Other", "canonical": os.environ["FIXTURE_OTHER_PROJECT"]},
+                {"id": "proj_probe", "name": "odm-opencode-config-probe", "canonical": "/tmp/odm-opencode-config-probe"},
+                {"id": "proj_benchmark", "name": "odm-opencode-benchmark-fixture", "canonical": "/tmp/odm-opencode-benchmark-fixture"},
+                {"id": "proj_canary", "name": "custom-opencode-model-canary", "canonical": "/tmp/custom-opencode-model-canary"},
+            ]})
         elif path == "/api/session":
             if "limit=100" in parsed.query:
                 with FixtureState.lock:

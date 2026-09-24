@@ -53,6 +53,10 @@ def new_dialog(page):
         page.locator("#menu").click()
     page.locator("#newSession").click()
     expect(page.locator("#projectDialog")).to_be_visible()
+    # Internal probe/benchmark/canary workspaces must never pollute the user project chooser.
+    expect(page.locator('#projectChoices [data-project="proj_probe"]')).to_have_count(0)
+    expect(page.locator('#projectChoices [data-project="proj_benchmark"]')).to_have_count(0)
+    expect(page.locator('#projectChoices [data-project="proj_canary"]')).to_have_count(0)
 
 
 def assert_empty(page, directory, *, reload=False):
