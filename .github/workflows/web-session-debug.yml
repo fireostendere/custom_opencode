@@ -1,0 +1,20 @@
+name: Web session debug snapshot
+on:
+  push:
+    branches: ['fix/web-new-session-20260924']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Capture tracked source
+        run: git archive --format=tar.gz --output=web-session-source.tar.gz HEAD
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-session-source
+          path: web-session-source.tar.gz
+          retention-days: 1
