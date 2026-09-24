@@ -114,7 +114,7 @@ test('model resolution uses catalog variants, supports explicit mapping, and nev
   assert.equal(resolveModel(models, 'luna').model, 'gpt-6-luna')
   assert.equal(resolveModel(models, 'astra', 'max').effort, 'max')
   const reduced = [{ ...models[2], variants: { xhigh: {}, high: {} } }]
-  assert.equal(resolveModel(reduced, 'astra', 'max').effort, 'xhigh')
+  assert.throws(() => resolveModel(reduced, 'astra', 'max'), /required reasoning effort max/)
   assert.throws(() => resolveModel(models.slice(0, 2), 'astra', 'max'), /unavailable/)
   assert.throws(() => resolveModel([{ ...models[0], variants: [] }], 'luna'), /refusing to guess/)
   assert.throws(() => resolveModel([{ ...models[0], enabled: false }], 'luna'), /unavailable/)
@@ -245,6 +245,8 @@ test('filter keeps hardware/KB/CAD discovery; excludes game/coding writes and hi
 test('native manifest registers alias, prompt, tools and slash status without changing project instructions', async t => {
   const h = await harness(t)
   assert.equal(h.aliases.get(HARDWARE_MODEL).modelID, 'gpt-6-luna')
+  assert.equal(h.aliases.get(HARDWARE_MODEL).variants, undefined)
+  assert.equal(h.aliases.get(HARDWARE_MODEL).settings?.reasoningEffort, undefined)
   assert.equal(h.commands.has('hardware-status'), true)
   const event = { model: eventModel, agent: 'build', system: [{ type: 'text', text: 'PROJECT CONSTRAINTS' }], tools: ['hardware_consult', 'shell'] }
   await h.hooks.get('context')(event); await h.hooks.get('context')(event)
