@@ -79,6 +79,14 @@ export function managedOrchestration(event) {
   return managed.get(modelKey(event)) || null
 }
 
+/** These agents already receive the trusted, output-specific ODM role prompt.
+ * They are not the direct interactive DM: replacing their system instructions
+ * with that DM's tool-use prompt breaks JSON answers and adds duplicate skills.
+ */
+export function isIsolatedNarratorRole(event) {
+  return /^narrator-(referee|writer|ask|actor)$/.test(String(event?.agent || ""))
+}
+
 export function isDndLane(event) {
   const agent = String(event?.agent || "")
   const modelID = event?.model?.id || event?.model?.modelID
@@ -133,7 +141,7 @@ export function resolveContextPolicy(event) {
     return {
       contextClass: "bare",
       lane: "dnd",
-      clearNative: true,
+      clearNative: !isIsolatedNarratorRole(event),
       engineering: false,
       ponytail: false,
       planPrompt: false,
@@ -147,7 +155,7 @@ export function resolveContextPolicy(event) {
       automaticReview: false,
       automaticSubagents: false,
       genericTools: false,
-      dndMinimalContext: true,
+      dndMinimalContext: !isIsolatedNarratorRole(event),
     }
   if (isHardwareLane(event))
     return {
