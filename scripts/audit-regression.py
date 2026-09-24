@@ -39,6 +39,8 @@ SUITES = [
     ("panel-submit", ["node", "scripts/panel-submit-regression.mjs"]),
     ("stream-render", ["node", "scripts/stream-render-smoke.mjs"]),
     ("queue-badges-browser", [sys.executable, "scripts/queue-badge-convergence.py"]),
+    ("web-session-create", [sys.executable, "scripts/web-session-create-e2e.py"]),
+    ("web-session-native", [sys.executable, "scripts/web-session-native-e2e.py"]),
     ("web-fixtures-browser", [sys.executable, "scripts/web-fixture-e2e.py"]),
     ("web-production-frontend", [sys.executable, "scripts/local-web-harness.py", "test"]),
     ("web-critical-controls", [sys.executable, "scripts/web-critical-controls-e2e.py"]),
