@@ -470,7 +470,7 @@ function clearSelection() {
   window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:null}}))
   renderSessions();renderHeader();renderMessages();renderAttachments();restoreDraft();loadDraftControls()
 }
-function setSessionHash(id) { const next=`#/session/${encodeURIComponent(id)}`; if(location.hash!==next) history.pushState(null,'',next) }
+function setSessionHash(id) { const next=`#/session/${encodeURIComponent(id)}`; if(location.hash!==next&&!window.CustomOpenCodeModal?.navigate(next)) history.pushState(null,'',next) }
 function sessionIdFromHash() { const match=/^#\/session\/([^/?]+)/.exec(location.hash); return match?decodeURIComponent(match[1]):null }
 function contextMessages(messages) { return (Array.isArray(messages)?messages:[]).filter((message)=>['user','assistant'].includes(message?.type)||['user','assistant'].includes(message?.role)) }
 function messageKey(message) {

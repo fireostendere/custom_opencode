@@ -97,6 +97,8 @@ def exercise(browser, base_url, root, mobile=False):
     expect(page.locator("#projectSelectionStatus")).to_contain_text("Создаётся")
     page.keyboard.press("Escape")
     expect(page.locator("#projectDialog")).to_be_visible()
+    page.mouse.click(2, 2)
+    expect(page.locator("#projectDialog")).to_be_visible()
     # The bridge itself must reject duplicate creation, not just disable the UI.
     page.evaluate("directory => { void window.CustomOpenCodeProjects.selectDirectory(directory) }", target)
     Backend.create_release.set()
@@ -118,6 +120,12 @@ def exercise(browser, base_url, root, mobile=False):
     assert Backend.attempts == count + 2
     assert page.locator("#input").evaluate("el => el === document.activeElement")
     Backend.controls_release.set()
+    # Back returns to the previous chat once, not a stale hidden-modal entry.
+    page.go_back()
+    page.wait_for_function("hash => location.hash === hash", arg=old_hash)
+    expect(page.locator("#input")).to_have_value("Сохранить старый черновик")
+    page.go_forward()
+    page.wait_for_function("id => location.hash.endsWith(id)", arg=sid)
     assert assert_empty(page, target, reload=True) == sid
     saved = page.evaluate("JSON.parse(localStorage.getItem('opencode:web:drafts-v2'))")
     assert saved["ses_fixture"] == "Сохранить старый черновик", saved
