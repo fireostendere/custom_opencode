@@ -1,3 +1,5 @@
+import { isHardwareLane } from "./hardware-core.js"
+
 const VALID = new Set(["bare", "lite", "normal", "full"])
 const managed = new Map()
 const sessions = new Map()
@@ -103,7 +105,7 @@ export function setSessionContextClass(sessionID, value) {
 }
 
 export function resolveContextClass(event) {
-  if (isDndLane(event)) return "bare"
+  if (isDndLane(event) || isHardwareLane(event)) return "bare"
   const sessionID = String(event?.sessionID || "")
   if (sessionID && sessions.has(sessionID)) return sessions.get(sessionID)
 
@@ -146,6 +148,24 @@ export function resolveContextPolicy(event) {
       automaticSubagents: false,
       genericTools: false,
       dndMinimalContext: true,
+    }
+  if (isHardwareLane(event))
+    return {
+      contextClass: "bare",
+      lane: "hardware",
+      // Keep project/user instructions. Only the owned automatic coding stack
+      // is removed by context-lanes; hardware evidence is fetched explicitly.
+      clearNative: false,
+      engineering: false,
+      ponytail: false,
+      planPrompt: false,
+      runtime: false,
+      runtimeBudgetChars: 0,
+      semanticRepo: false,
+      rag: false,
+      automaticReview: false,
+      automaticSubagents: false,
+      dndMinimalContext: false,
     }
   const contextClass = resolveContextClass(event)
   if (contextClass === "bare")
