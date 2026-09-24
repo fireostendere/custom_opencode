@@ -84,8 +84,17 @@ export default {
       catalogDraft.model.update("openai", HARDWARE_MODEL, draft => {
         Object.assign(draft, structuredClone(base), {
           id: HARDWARE_MODEL, modelID: base.modelID || base.id,
-          name: "GPT-6 · Hardware Edition", settings: { ...base.settings, reasoningEffort: "xhigh" },
+          name: "GPT-6 · Hardware Edition",
         })
+        // The Edition is a routing alias, not a reasoning model. Hide inherited
+        // effort variants/settings; the selected worker receives its effort
+        // only after routing (Luna/Sol XHIGH, Astra MAX).
+        delete draft.variants
+        if (draft.settings && typeof draft.settings === "object") {
+          draft.settings = { ...draft.settings }
+          delete draft.settings.reasoningEffort
+          delete draft.settings.reasoning_effort
+        }
       })
     }))
 
@@ -153,7 +162,7 @@ export default {
       })
       tools.add({
         name: "hardware_consult",
-        description: "Read-only specialist with a fresh evidence-only context: design/vision=Luna XHIGH, independent pcb_review=Sol XHIGH, critical_design/critical_review=highest supported Astra. No CAD writes or recursive agents. Exact current-turn requests are deduplicated. Max 4 consultations/turn, 2 concurrently.",
+        description: "Read-only specialist with a fresh evidence-only context: design/vision=Luna XHIGH, independent pcb_review=Sol XHIGH, critical_design/critical_review=Astra MAX. No CAD writes or recursive agents. Exact current-turn requests are deduplicated. Max 4 consultations/turn, 2 concurrently.",
         input: { type: "object", additionalProperties: false, required: ["role", "packet"], properties: {
           role: { enum: Object.keys(ROLES) }, packet: PACKET_SCHEMA,
           imageIndices: { type: "array", maxItems: 4, items: { type: "integer", minimum: 0 } },
