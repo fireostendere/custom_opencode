@@ -1,0 +1,29 @@
+name: Hardware orchestration
+on:
+  pull_request:
+    paths:
+      - 'config/plugins/hardware-orchestrator.js'
+      - 'config/plugins/tui/lib/hardware-core.js'
+      - 'config/plugins/tui/lib/context-policy.js'
+      - 'config/plugins/context-lanes.js'
+      - 'scripts/hardware-orchestrator-regression.mjs'
+      - '.github/workflows/hardware-orchestration.yml'
+  push:
+    branches: [main, astra-hardware-orchestration]
+    paths:
+      - 'config/plugins/**'
+      - 'scripts/hardware-orchestrator-regression.mjs'
+      - '.github/workflows/hardware-orchestration.yml'
+permissions:
+  contents: read
+jobs:
+  offline-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test scripts/hardware-orchestrator-regression.mjs
+      - run: node scripts/context-lanes-regression.mjs
