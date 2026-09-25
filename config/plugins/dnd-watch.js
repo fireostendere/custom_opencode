@@ -141,7 +141,7 @@ export default {
         if (session.parentID || session.agent !== context.agent || session.location?.directory !== ctx.location.directory) throw new Error("Watcher session changed")
         const narrator = await getNarrator()
         // The native MCP executor still checks this session/agent's permissions.
-        return decodeResult(await narrator.execute(query, { ...context, progress: async () => {} }))
+        return decodeResult(await narrator.execute(query, { ...context, odmBackgroundRead: true, progress: async () => {} }))
       },
       wake: async (sessionID, result, signal) => {
         signal.throwIfAborted()

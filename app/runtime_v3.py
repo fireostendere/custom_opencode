@@ -1646,6 +1646,9 @@ class ToolGateway:
             # changing the repository directory mtime. Drop the cheap snapshot
             # cache so the next context sees those writes immediately.
             invalidate_git_snapshot(root)
+        threshold = int(os.environ.get("OPENCODE_TOOL_ARTIFACT_THRESHOLD", "131072"))
+        if len(serialized.encode()) <= threshold:
+            return {"replace": False}
         digest = hashlib.sha256(serialized.encode()).hexdigest()
         cache_key = f"{task_id or sid}:{tool}:{digest}"
         duplicate = self.store.cache_get("tool-result-dedupe", cache_key)
@@ -1655,7 +1658,6 @@ class ToolGateway:
             and duplicate.get("artifactID")
         ):
             return {"replace": True, "result": {**duplicate["result"], "deduplicated": True}}
-        threshold = int(os.environ.get("OPENCODE_TOOL_ARTIFACT_THRESHOLD", "24000"))
         if len(serialized.encode()) > threshold:
             artifact = self.artifacts.put(
                 task_id=task_id,

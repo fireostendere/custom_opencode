@@ -189,6 +189,11 @@ with tempfile.TemporaryDirectory() as temp:
     assert large["replace"] and large["result"]["artifactID"]
     duplicate = gateway.after({"sessionID": "s1", "tool": "grep", "result": "x" * 2000})
     assert duplicate["replace"] and duplicate["result"].get("deduplicated") is True
+    del os.environ["OPENCODE_TOOL_ARTIFACT_THRESHOLD"]
+    assert not gateway.after({"sessionID": "s1", "tool": "grep", "result": "x" * 2000})["replace"], "raising the threshold must invalidate old clipped-result reuse"
+    assert not gateway.after({"sessionID": "s1", "tool": "read", "result": "я" * 65536})["replace"], "128 KiB must stay inline (UTF-8 bytes)"
+    assert gateway.after({"sessionID": "s1", "tool": "read", "result": "я" * 65537})["replace"], "larger results still use bounded artifacts"
+    os.environ["OPENCODE_TOOL_ARTIFACT_THRESHOLD"] = "256"
     small = gateway.after({"sessionID": "s1", "tool": "read", "result": "small"})
     assert not small["replace"]
     assert not gateway.after({"sessionID": "s1", "tool": "read", "result": "small"})["replace"]
