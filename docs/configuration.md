@@ -107,6 +107,21 @@ the project's read-only `dnd_knowledge_*` tools. Campaign continuity comes from
 ODM state, not the general `kb_knowledge_*` engineering corpus, which DnD agents
 cannot use. The DnD corpus must be connected in the game project for lookup.
 
+Для явного ожидания игроков primary-ведущему доступен `dnd_watch`:
+`start` принимает `campaignId`, `afterSeq` последнего фактически обработанного
+хода/события и необязательный `timeoutSeconds` (по умолчанию час, максимум сутки).
+После подтверждения `waiting` модель завершает ответ. Плагин раз в 3 секунды
+читает ODM через существующий MCP с проверкой прав, без вызовов модели.
+Ход игрока, pending Ask, whisper, новое событие броска или готовности раунда
+однократно возобновляют сессию; ведущий перечитывает ODM и затем ставит новое
+ожидание. Текст игроков и приватные вопросы в уведомление не копируются.
+`/dnd-watch status` и `/dnd-watch stop` работают без inference; те же действия
+есть у инструмента. Новый запрос оператора, перенос сессии, смена модели/агента,
+остановка исполнения, ошибка чтения, таймаут или перезапуск сервиса прекращают
+ожидание. После перезапуска его нужно поставить снова. Плагин устанавливается
+обычным `./scripts/install.sh`; проверка на настоящем движке с локальными
+MCP/model fixtures: `python3 scripts/dnd-watch-live.py`.
+
 Alibaba-роли provider-locked на Alibaba Cloud/Bailian, а SOL и DnD-роли provider-locked
 на официальный OpenAI provider. Ни одна роль из orchestration stack не должна
 автоматически уходить на другой gateway/provider.
