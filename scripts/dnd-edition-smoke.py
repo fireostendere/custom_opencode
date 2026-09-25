@@ -67,6 +67,8 @@ for name, model in expected_agents.items():
     assert agents[name]["model"] == model
     assert agents[name]["permissions"][0] == {"action": "*", "resource": "*", "effect": "deny"}
 assert agents["dnd-narrator"]["mode"] == "primary"
+assert {"action": "dnd_watch", "resource": "*", "effect": "allow"} in agents["dnd-narrator"]["permissions"]
+assert all(not any(rule["action"] == "dnd_watch" for rule in agents[name]["permissions"]) for name in expected_agents if name != "dnd-narrator")
 skill_rules = {(item["resource"], item["effect"]) for item in agents["dnd-narrator"]["permissions"] if item["action"] == "skill"}
 assert skill_rules == {("odm-dm-policy", "allow"), ("odm-narrator", "allow"), ("dnd-*", "allow")}
 for name in ("dnd-memory", "dnd-reader"):

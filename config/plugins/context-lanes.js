@@ -5,6 +5,7 @@ import { join } from "node:path"
 import {
   managedOrchestration,
   isDndLane,
+  isIsolatedNarratorRole,
   resolveContextPolicy,
   setSessionContextClass,
 } from "./tui/lib/context-policy.js"
@@ -54,6 +55,9 @@ function textOf(item) {
 }
 
 function orchestrationFor(event) {
+  // The isolated host installs a role-specific JSON/prose system contract.
+  // Do not append the interactive DM prompt, even for a D&D Edition model ID.
+  if (isIsolatedNarratorRole(event)) return null
   if (isDndLane(event)) {
     const path = process.env.OPENCODE_DND_EDITION_PROMPT || join(CONFIG_DIR, "prompts", "dnd-edition.md")
     let prompt = staticPromptCache.get("dnd-lane")
