@@ -122,6 +122,15 @@ cannot use. The DnD corpus must be connected in the game project for lookup.
 обычным `./scripts/install.sh`; проверка на настоящем движке с локальными
 MCP/model fixtures: `python3 scripts/dnd-watch-live.py`.
 
+Клиентский `dnd-state-cache` передаёт `knownStateRevision` автоматически после
+полностью полученного `read`/`readAfter`. Кеш изолирован по сессии, кампании и
+проекции; хранит только ревизии, не игровые данные, и не заменяет свежий MCP-read.
+Неполные страницы, обрезанные ответы и фоновые чтения watcher не подтверждают
+baseline модели. При compaction/reconnect кеш сбрасывается. Каталог без точного
+`action` по умолчанию возвращает список действий; `summaryOnly:false` сохраняет
+доступ к полным схемам. Проверки: `node scripts/dnd-state-cache-regression.mjs`
+и локальный native fixture `python3 scripts/dnd-watch-live.py`.
+
 Alibaba-роли provider-locked на Alibaba Cloud/Bailian, а SOL и DnD-роли provider-locked
 на официальный OpenAI provider. Ни одна роль из orchestration stack не должна
 автоматически уходить на другой gateway/provider.
@@ -262,7 +271,7 @@ OPENCODE_REPO_EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2
 
 ```text
 OPENCODE_MCP_RATE_LIMIT=120
-OPENCODE_TOOL_ARTIFACT_THRESHOLD=24000
+OPENCODE_TOOL_ARTIFACT_THRESHOLD=131072
 OPENCODE_LOOP_LIMIT=3
 OPENCODE_VERIFY_PIPELINE=auto
 OPENCODE_VERIFY_TIMEOUT=120

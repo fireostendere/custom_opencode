@@ -201,8 +201,11 @@ class Fixes(unittest.TestCase):
     def test_tail_and_duplicate_preserve_diagnostic(self):
         gateway = self.gateway()
         text = "x" * 30000 + "\nERROR_SENTINEL_AT_TAIL"
-        first = gateway.after({"sessionID": "s", "tool": "bash", "result": text})["result"]
-        second = gateway.after({"sessionID": "s", "tool": "bash", "result": text})["result"]
+        # Exercise the artifact path independently from the 128 KiB production
+        # inline threshold; changing the default must not change this fixture.
+        with patch.dict(os.environ, {"OPENCODE_TOOL_ARTIFACT_THRESHOLD": "24000"}):
+            first = gateway.after({"sessionID": "s", "tool": "bash", "result": text})["result"]
+            second = gateway.after({"sessionID": "s", "tool": "bash", "result": text})["result"]
         self.assertIn("ERROR_SENTINEL_AT_TAIL", first["preview"])
         self.assertIn("ERROR_SENTINEL_AT_TAIL", second["preview"])
         self.assertEqual(first["artifactID"], second["artifactID"])

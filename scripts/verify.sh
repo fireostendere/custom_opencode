@@ -81,6 +81,7 @@ done
 "$NODE" "$ROOT/scripts/config-manager-regression.mjs"
 "$NODE" "$ROOT/scripts/context-lanes-regression.mjs"
 "$NODE" "$ROOT/scripts/dnd-watch-regression.mjs"
+"$NODE" "$ROOT/scripts/dnd-state-cache-regression.mjs"
 "$NODE" "$ROOT/scripts/visible-plan-regression.mjs"
 "$NODE" "$ROOT/scripts/ponytail-v2-regression.mjs"
 "$NODE" "$ROOT/scripts/gemini-rate-limit-regression.mjs"
