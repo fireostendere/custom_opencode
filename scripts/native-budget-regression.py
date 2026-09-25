@@ -202,6 +202,8 @@ def main():
             OPENCODE_PROJECT_ROOTS=str(home),
             OPENCODE_SCRATCH_DIRECTORY=str(project),
             OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS="5000",
+            # This wire fixture specifically verifies the bounded artifact-read path.
+            OPENCODE_TOOL_ARTIFACT_THRESHOLD="24000",
             CUSTOM_OPENCODE_RUNTIME_DB=str(home / "runtime.sqlite3"),
             # The strip above drops OPENCODE_*; re-add the updater gate so no bare CLI
             # launch detaches `npm install --global` against the pinned tree mid-run.
