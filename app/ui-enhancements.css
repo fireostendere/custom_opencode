@@ -4,3 +4,20 @@
 .project-selection-status { margin: 8px 0; padding: 10px 12px; border-radius: 8px; overflow-wrap: anywhere; }
 .project-selection-status[data-state="error"] { color: var(--danger, #ff8585); background: rgba(255, 80, 80, 0.08); }
 .project-selection-status[data-state="pending"] { color: var(--muted, #aaa); }
+
+
+/* Model catalog management */
+.model-modal-head{gap:8px}
+.model-dialog-actions{display:flex;gap:6px;margin-left:auto;min-width:0}
+.model-dialog-actions .wizard-link{white-space:nowrap}
+.model-search{width:100%;margin:0 0 10px}
+.model-remove-toggle{display:inline-flex;align-items:center;justify-content:center;margin-left:8px;min-width:28px;min-height:28px;border-radius:7px;font-size:18px;line-height:1;opacity:.64;vertical-align:middle}
+.model-remove-toggle:hover,.model-remove-toggle:focus{opacity:1;background:var(--surface-hover,rgba(127,127,127,.14))}
+.model-hidden-choice{opacity:.58}
+@media (max-width:760px){
+  .model-modal-head{align-items:flex-start;flex-wrap:wrap}
+  .model-modal-head h3{width:calc(100% - 44px)}
+  .model-dialog-actions{order:3;width:100%;overflow-x:auto;padding-bottom:2px}
+  .model-dialog-actions .wizard-link{min-height:38px}
+  .model-search{font-size:16px;min-height:44px}
+}
