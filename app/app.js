@@ -13,6 +13,8 @@ const PROJECT_ORDER_KEY = 'opencode:web:project-order-v1'
 const SESSION_TREE_KEY = 'opencode:web:session-tree-v1'
 const NOTIFY_KEY = 'opencode:web:notifications'
 const LAST_MODEL_KEY = 'opencode:web:last-model-v1'
+const CUSTOM_MODELS_KEY = 'opencode:web:custom-models-v1'
+const HIDDEN_MODELS_KEY = 'opencode:web:hidden-models-v1'
 const PERSONAL_PRO_LIMITS = { fiveHour: 12000, sevenDay: 40000 }
 const CONTEXT_PAGE_SIZE = 80
 const QWEN_SUFFIX_RE = /\s·\sQwen\s+(OK|exhausted→([^·]+))\s*$/
@@ -67,6 +69,7 @@ let statusSyncGeneration = 0
 let sessionSyncGeneration = 0
 let rateLimitSyncGeneration = 0
 let messageRenderFrame = null
+let showHiddenModels = false
 const sessionModelVersions = new Map()
 const sessionModelOverrides = new Map()
 const sessionModelQueues = new Map()
@@ -75,6 +78,57 @@ function loadJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || '') || fallback } catch { return fallback }
 }
 function saveJson(key, value) { localStorage.setItem(key, JSON.stringify(value)) }
+function modelKey(model){const provider=String(model?.providerID||model?.provider||'').trim(),id=String(model?.id||model?.modelID||'').trim();return provider&&id?`${provider}/${id}`:''}
+function loadCustomModels(){
+  const rows=loadJson(CUSTOM_MODELS_KEY,[])
+  if(!Array.isArray(rows))return[]
+  const seen=new Set(),result=[]
+  for(const raw of rows){
+    const providerID=String(raw?.providerID||'').trim(),id=String(raw?.id||'').trim()
+    if(!providerID||!id||/\s/.test(providerID)||providerID.includes('/'))continue
+    const key=`${providerID}/${id}`
+    if(seen.has(key))continue
+    seen.add(key)
+    result.push({providerID,id,name:String(raw?.name||id).trim()||id,enabled:true,status:'custom',custom:true})
+  }
+  return result
+}
+function saveCustomModels(rows){saveJson(CUSTOM_MODELS_KEY,rows.map(({providerID,id,name})=>({providerID,id,name})))}
+function mergeCustomModels(models){
+  const result=[...(Array.isArray(models)?models:[])],seen=new Set(result.map(modelKey))
+  for(const model of loadCustomModels()){const key=modelKey(model);if(key&&!seen.has(key)){seen.add(key);result.push(model)}}
+  return result
+}
+function hiddenModelKeys(){const rows=loadJson(HIDDEN_MODELS_KEY,[]);return new Set(Array.isArray(rows)?rows.filter((key)=>typeof key==='string'&&key):[])}
+function setModelHidden(key,hidden){const keys=hiddenModelKeys();hidden?keys.add(key):keys.delete(key);saveJson(HIDDEN_MODELS_KEY,[...keys])}
+function addCustomModel(providerID,id,name){
+  providerID=String(providerID||'').trim();id=String(id||'').trim();name=String(name||'').trim()
+  if(!providerID||!id||/\s/.test(providerID)||providerID.includes('/')||/\s/.test(id))throw new Error('Укажите provider ID и model ID без пробелов.')
+  const key=`${providerID}/${id}`,existing=state.models.find((model)=>modelKey(model)===key)
+  setModelHidden(key,false)
+  if(existing&&!existing.custom)return existing
+  const rows=loadCustomModels().filter((model)=>modelKey(model)!==key)
+  const model={providerID,id,name:name||id,enabled:true,status:'custom',custom:true}
+  rows.push(model);saveCustomModels(rows)
+  state.models=mergeCustomModels(state.models.filter((item)=>!(item.custom&&modelKey(item)===key)))
+  return model
+}
+function removeModelFromPicker(key){
+  const custom=loadCustomModels(),isCustom=custom.some((model)=>modelKey(model)===key)
+  if(isCustom){
+    saveCustomModels(custom.filter((model)=>modelKey(model)!==key))
+    state.models=state.models.filter((model)=>!(model.custom&&modelKey(model)===key))
+    favorites.delete(key);saveJson(FAV_KEY,[...favorites])
+    setModelHidden(key,false)
+    return 'removed'
+  }
+  setModelHidden(key,true)
+  return 'hidden'
+}
+function renderModelManagerButtons(){
+  const hidden=hiddenModelKeys().size,button=$('modelHiddenButton')
+  if(button){button.textContent=showHiddenModels?`Скрытые: ${hidden} · скрыть`:`Скрытые: ${hidden}`;button.classList.toggle('active',showHiddenModels)}
+}
 function meta(id) { return sessionMeta[id] ||= { pinned:false } }
 function saveMeta() { saveJson(META_KEY, sessionMeta) }
 function draftKey() { return state.selected?.id || '__new__' }
@@ -568,10 +622,10 @@ async function loadControls() {
 async function loadDraftControls() {
   if(state.selected||!state.clientConfig?.scratchDirectory)return
   state.draftModel ||= loadLastModel()
-  try { const catalog=await api.getControls(state.clientConfig.scratchDirectory); if(state.selected)return; state.draftAgent ||= catalog.agents.find((a)=>a.id==='build-direct')?.id||catalog.agents.find((a)=>a.id==='build')?.id||catalog.agents[0]?.id; if(state.draftModel&&!catalog.models.some((m)=>m.id===state.draftModel.id&&m.providerID===state.draftModel.providerID))state.draftModel=null; state.draftModel ||= catalog.fallback && {id:catalog.fallback.id,providerID:catalog.fallback.providerID}; applyControls(catalog) }
+  try { const catalog=await api.getControls(state.clientConfig.scratchDirectory); if(state.selected)return; const knownModels=mergeCustomModels(catalog.models); state.draftAgent ||= catalog.agents.find((a)=>a.id==='build-direct')?.id||catalog.agents.find((a)=>a.id==='build')?.id||catalog.agents[0]?.id; if(state.draftModel&&!knownModels.some((m)=>m.id===state.draftModel.id&&m.providerID===state.draftModel.providerID))state.draftModel=null; state.draftModel ||= catalog.fallback && {id:catalog.fallback.id,providerID:catalog.fallback.providerID}; applyControls({...catalog,models:knownModels}) }
   catch(error){toast(`Настройки: ${error.message}`)}
 }
-function applyControls(catalog){state.agents=catalog.agents;state.models=catalog.models;state.providers=catalog.providers;state.defaultModel=catalog.fallback;renderControls();renderUsage()}
+function applyControls(catalog){state.agents=catalog.agents;state.models=mergeCustomModels(catalog.models);state.providers=catalog.providers;state.defaultModel=catalog.fallback;renderControls();renderUsage()}
 function modelVariants(model){
   const source=model?.variants??model?.options?.variants??{}
   const variants=Array.isArray(source)?source.map((v)=>({...v})):Object.entries(source).map(([id,v])=>({id,...(v&&typeof v==='object'?v:{})}))
@@ -619,17 +673,19 @@ function isNightPromoModel(modelID, providerID){
 }
 
 function renderModelChoices(){
-  const query=$('modelSearch').value.trim().toLowerCase(), current=activeModelRef()
-  const models=state.models.filter((m)=>`${m.name||''} ${m.id} ${m.providerID}`.toLowerCase().includes(query))
+  const query=$('modelSearch').value.trim().toLowerCase(), current=activeModelRef(),currentKey=modelKey(current),hidden=hiddenModelKeys()
+  const models=state.models.filter((m)=>`${m.name||''} ${m.id} ${m.providerID}`.toLowerCase().includes(query)).filter((m)=>showHiddenModels||!hidden.has(modelKey(m))||modelKey(m)===currentKey)
   const groups=new Map(); for(const m of models){if(!groups.has(m.providerID))groups.set(m.providerID,[]);groups.get(m.providerID).push(m)}
   const favKey=(m)=>`${m.providerID}/${m.id}`
   const nightActive=isNightPromoActive()
   $('modelChoices').innerHTML=[...groups.entries()].sort((a,b)=>providerName(a[0]).localeCompare(providerName(b[0]))).map(([pid,items])=>`<div class="project">${escapeHtml(providerName(pid))}</div>${items.sort((a,b)=>Number(favorites.has(favKey(b)))-Number(favorites.has(favKey(a)))||(a.name||a.id).localeCompare(b.name||b.id)).map((m)=>{
-    const promo=isNightPromoModel(m.id,m.providerID)
+    const promo=isNightPromoModel(m.id,m.providerID),key=favKey(m),isHidden=hidden.has(key)
     const promoClass=promo?(nightActive?'night-promo-active':'night-promo-inactive'):''
     const promoBadge=promo?`<span class="night-promo-badge ${nightActive?'active':'inactive'}">${nightActive?'🌙 −50%':'☀ −50%'}</span>`:''
-    return `<button class="choice ${promoClass}" data-model="${escapeHtml(m.id)}" data-provider="${escapeHtml(m.providerID)}" data-promo="${promo?1:0}"><div class="choice-title">${escapeHtml(m.name||m.id)}${current?.id===m.id&&current?.providerID===m.providerID?' · ✓':''}</div><div class="choice-meta">${promoBadge ? promoBadge + ' · ' : ''}${escapeHtml(m.id)} · <span data-fav="${escapeHtml(favKey(m))}">${favorites.has(favKey(m))?'★':'☆'}</span></div></button>`
+    const actionLabel=isHidden?'Вернуть в список':m.custom?'Удалить модель':'Скрыть модель'
+    return `<button class="choice ${promoClass}${isHidden?' model-hidden-choice':''}" data-model="${escapeHtml(m.id)}" data-provider="${escapeHtml(m.providerID)}" data-custom="${m.custom?1:0}" data-promo="${promo?1:0}"><div class="choice-title">${escapeHtml(m.name||m.id)}${current?.id===m.id&&current?.providerID===m.providerID?' · ✓':''}</div><div class="choice-meta">${promoBadge ? promoBadge + ' · ' : ''}${escapeHtml(m.id)} · <span data-fav="${escapeHtml(key)}">${favorites.has(key)?'★':'☆'}</span><span class="model-remove-toggle" data-model-remove="${escapeHtml(key)}" role="button" aria-label="${escapeHtml(actionLabel)}" title="${escapeHtml(actionLabel)}">${isHidden?'↩':'×'}</span></div></button>`
   }).join('')}`).join('')||'<div class="empty">Модели не найдены.</div>'
+  renderModelManagerButtons()
 }
 
 function renderHeader(){
@@ -1202,7 +1258,7 @@ function bindEvents(){
   $('sessions').addEventListener('click',event=>{const button=event.target.closest('[data-session-shortcut]');if(button)selectSession(button.dataset.sessionShortcut)})
    $('newSession').addEventListener('click',()=>openProjectDialog('create'))
   $('chooseProject').addEventListener('click',()=>openProjectDialog('create'));$('refresh').addEventListener('click',()=>{loadSessions();if(state.selected)loadContext({force:true})});$('search').addEventListener('input',renderSessions)
-  $('menu').addEventListener('click',()=> $('sidebar').classList.toggle('open'));$('sessionActions').addEventListener('click',()=>openSessionActions());$('modelButton').addEventListener('click',()=>{renderModelChoices();$('modelDialog').showModal();$('modelSearch').focus()});$('modelSearch').addEventListener('input',renderModelChoices);$('modelChoices').addEventListener('click',(event)=>{const fav=event.target.closest?.('[data-fav]');if(fav){event.preventDefault();event.stopPropagation();const key=fav.dataset.fav;favorites.has(key)?favorites.delete(key):favorites.add(key);saveJson(FAV_KEY,[...favorites]);renderModelChoices();return}const button=event.target.closest?.('[data-model][data-provider]');if(!button)return;$('modelDialog').close();changeModel({id:button.dataset.model,providerID:button.dataset.provider})})
+  $('menu').addEventListener('click',()=> $('sidebar').classList.toggle('open'));$('sessionActions').addEventListener('click',()=>openSessionActions());$('modelButton').addEventListener('click',()=>{renderModelChoices();$('modelDialog').showModal();if(!window.matchMedia('(max-width: 760px)').matches)$('modelSearch').focus()});$('modelSearch').addEventListener('input',renderModelChoices);$('modelAddButton').addEventListener('click',()=>{$('modelAddForm').reset();$('modelAddDialog').showModal();$('modelAddProvider').focus()});$('modelHiddenButton').addEventListener('click',()=>{showHiddenModels=!showHiddenModels;renderModelChoices()});$('modelAddForm').addEventListener('submit',(event)=>{event.preventDefault();try{const model=addCustomModel($('modelAddProvider').value,$('modelAddID').value,$('modelAddName').value);$('modelAddDialog').close();showHiddenModels=false;renderModelChoices();toast(`Модель ${model.name||model.id} добавлена`)}catch(error){toast(error.message||String(error),4200)}});$('modelChoices').addEventListener('click',(event)=>{const fav=event.target.closest?.('[data-fav]');if(fav){event.preventDefault();event.stopPropagation();const key=fav.dataset.fav;favorites.has(key)?favorites.delete(key):favorites.add(key);saveJson(FAV_KEY,[...favorites]);renderModelChoices();return}const remove=event.target.closest?.('[data-model-remove]');if(remove){event.preventDefault();event.stopPropagation();const key=remove.dataset.modelRemove;if(modelKey(activeModelRef())===key){toast('Сначала выберите другую модель.');return}if(hiddenModelKeys().has(key))setModelHidden(key,false);else removeModelFromPicker(key);renderModelChoices();return}const button=event.target.closest?.('[data-model][data-provider]');if(!button)return;$('modelDialog').close();changeModel({id:button.dataset.model,providerID:button.dataset.provider})})
   $('variantSelect').addEventListener('change',(e)=>{const ref=activeModelRef();if(!ref)return;const model={id:ref.id,providerID:ref.providerID};if(e.target.value)model.variant=e.target.value;changeModel(model)})
   $('form').addEventListener('submit',sendMessage);$('stop').addEventListener('click',stopSelected);$('input').addEventListener('input',()=>{notePromptInput();autosizeInput();scheduleDraftSave()});$('input').addEventListener('keydown',(e)=>{if(e.key==='ArrowUp'&&navigatePromptHistory(-1,e)){e.preventDefault();return}if(e.key==='ArrowDown'&&navigatePromptHistory(1,e)){e.preventDefault();return}if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!window.matchMedia('(max-width: 760px)').matches){e.preventDefault();$('form').requestSubmit()}})
   $('attachButton').addEventListener('click',()=> $('fileInput').click());$('fileInput').addEventListener('change',(e)=>{addFiles(e.target.files);e.target.value=''});$('input').addEventListener('paste',(e)=>{const files=[...(e.clipboardData?.items||[])].filter((i)=>i.kind==='file').map((i)=>i.getAsFile()).filter(Boolean);if(files.length){e.preventDefault();addFiles(files)}})

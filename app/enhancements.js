@@ -1,5 +1,7 @@
 const $ = (id) => document.getElementById(id)
 const COMMAND_CACHE_MS = 60_000
+const OPENAI_LIMITS_CACHE_KEY = 'opencode:web:openai-limits-last-good-v1'
+const OPENAI_LIMITS_CACHE_MAX_AGE_MS = 2 * 60 * 60 * 1000
 const RETIRED_COMMANDS = new Set(['doctor'])
 const commandCache = new Map()
 let paletteItems = []
@@ -81,17 +83,46 @@ function quotaTone(remaining) {
   return remaining <= 10 ? 'danger' : remaining <= 25 ? 'warn' : ''
 }
 
+function cachedOpenAILimits() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(OPENAI_LIMITS_CACHE_KEY) || 'null')
+    if (!cached?.value?.available || !Number.isFinite(cached.at) || Date.now() - cached.at > OPENAI_LIMITS_CACHE_MAX_AGE_MS) return null
+    return { ...cached.value, stale:true, staleSource:'browser' }
+  } catch {
+    return null
+  }
+}
+
+function stableOpenAILimits(value) {
+  if (value?.available) {
+    if (!value.stale) {
+      try { localStorage.setItem(OPENAI_LIMITS_CACHE_KEY, JSON.stringify({ at:Date.now(), value })) } catch {}
+    }
+    return value
+  }
+  const cached = cachedOpenAILimits()
+  return cached ? { ...cached, liveReason:value?.reason || 'snapshot-unavailable' } : value
+}
+
 function renderOpenAIQuota(value) {
   if (!value?.available) {
-    return `<section class="quota-provider"><div class="quota-provider-head"><strong>OpenAI</strong><span class="quota-muted">недоступно</span></div><div class="quota-note">${escapeHtml(value?.reason === 'codex-not-found' ? 'Codex CLI не найден' : 'Нет rate-limit snapshot')}</div></section>`
+    const reasons = {
+      'codex-not-found':'Codex CLI не найден',
+      'codex-auth-required':'Требуется обновить вход ChatGPT в Codex CLI',
+      'no-rate-limit-snapshot':'ChatGPT usage snapshot не вернулся',
+      'codex-rate-limits-unavailable':'Не удалось прочитать ChatGPT usage',
+    }
+    return `<section class="quota-provider"><div class="quota-provider-head"><strong>ChatGPT / OpenAI</strong><span class="quota-muted">недоступно</span></div><div class="quota-note">${escapeHtml(reasons[value?.reason] || 'Нет rate-limit snapshot')}</div></section>`
   }
   const windows = [value.primary, value.secondary].filter(Boolean).sort((a, b) => (a.windowDurationMins || 0) - (b.windowDurationMins || 0))
+  const state = value.stale ? 'последние данные' : (value.planType || 'OK')
   return `<section class="quota-provider">
-    <div class="quota-provider-head"><strong>OpenAI</strong><span class="quota-muted">${escapeHtml(value.planType || '')}</span></div>
+    <div class="quota-provider-head"><strong>ChatGPT / OpenAI</strong><span class="${value.stale ? 'quota-muted' : 'quota-good'}">${escapeHtml(state)}</span></div>
     ${windows.map((window) => {
       const remaining = Number(window.remainingPercent)
       return `<div class="quota-row"><div class="quota-label"><span>${escapeHtml(windowLabel(window.windowDurationMins))}</span><strong>${Number.isFinite(remaining) ? `${remaining}%` : '—'}</strong></div>${progress(remaining, quotaTone(remaining))}<div class="quota-reset">${escapeHtml(resetText(window.resetsAt))}</div></div>`
     }).join('') || '<div class="quota-note">Rate-limit окна не возвращены.</div>'}
+    ${value.stale ? '<div class="quota-note">Live-опрос временно недоступен; показан последний успешный snapshot.</div>' : ''}
   </section>`
 }
 
@@ -161,14 +192,14 @@ async function refreshLimits() {
   if (!panel._lastMarkup) panel.classList.add('loading-limits')
   try {
     const value = await request('/client-limits.json')
-    const markup = `${renderQwenQuota(value?.qwen)}${renderOpenAIQuota(value?.openai)}${renderGeminiQuota(value?.gemini)}`
+    const openai = stableOpenAILimits(value?.openai)
+    const markup = `${renderQwenQuota(value?.qwen)}${renderOpenAIQuota(openai)}${renderGeminiQuota(value?.gemini)}`
     if (panel._lastMarkup !== markup) {
       panel._lastMarkup = markup
       panel.innerHTML = markup
     }
   } catch (error) {
-    panel._lastMarkup = ''
-    panel.innerHTML = `<div class="quota-note">Не удалось обновить: ${escapeHtml(error.message)}</div>`
+    if (!panel._lastMarkup) panel.innerHTML = `<div class="quota-note">Не удалось обновить: ${escapeHtml(error.message)}</div>`
   } finally {
     panel.classList.remove('loading-limits')
   }

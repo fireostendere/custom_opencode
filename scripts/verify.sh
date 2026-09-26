@@ -182,8 +182,10 @@ for css in ("/enhancements.css", "/ui-enhancements.css", "/runtime-dashboard.css
         bad.append(f"index.html missing stylesheet: {css}")
 if 'id="providerLimits"' not in index or 'id="slashPalette"' not in index:
     bad.append("index.html must expose provider limits and slash palette surfaces")
-if '<input type="hidden" id="modelSearch"' not in index:
-    bad.append("model picker search must stay hidden to avoid mobile keyboard pop-up")
+if 'id="modelSearch" placeholder="Поиск моделей…"' not in index:
+    bad.append("model picker must expose searchable catalog")
+if "if(!window.matchMedia('(max-width: 760px)').matches)$('modelSearch').focus()" not in (root / "app/app.js").read_text(encoding="utf-8"):
+    bad.append("model picker must not auto-open the mobile keyboard")
 inline = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", index, re.S | re.I)
 if any(chunk.strip() for chunk in inline):
     bad.append("index.html must not contain inline application JavaScript")

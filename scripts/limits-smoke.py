@@ -31,6 +31,7 @@ with tempfile.TemporaryDirectory() as temp:
         "for line in sys.stdin:\n"
         " r=json.loads(line)\n"
         " if r.get('method')=='initialize': print(json.dumps({'id':r['id'],'result':{'ok':True}}),flush=True)\n"
+        " elif r.get('method')=='account/read': print(json.dumps({'id':r['id'],'result':{'account':{'type':'chatgpt'},'requiresOpenaiAuth':False}}),flush=True)\n"
         " elif r.get('method')=='account/rateLimits/read': print(json.dumps({'id':r['id'],'result':{'rateLimits':{},'rateLimitsByLimitId':{'codex':{'planType':'plus','primary':{'usedPercent':37,'windowDurationMins':300,'resetsAt':2000000000},'secondary':{'usedPercent':72,'windowDurationMins':10080,'resetsAt':2000100000}}}}}),flush=True)\n",
         encoding="utf-8",
     )
@@ -62,6 +63,24 @@ with tempfile.TemporaryDirectory() as temp:
     assert codex["primary"]["windowDurationMins"] == 300
     assert codex["secondary"]["remainingPercent"] == 28
     assert codex["secondary"]["windowDurationMins"] == 10080
+    assert codex["capturedAt"] > 0
+
+    fake_codex.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json,sys\n"
+        "for line in sys.stdin:\n"
+        " r=json.loads(line)\n"
+        " if r.get('method')=='initialize': print(json.dumps({'id':r['id'],'result':{'ok':True}}),flush=True)\n"
+        " elif r.get('method')=='account/read': print(json.dumps({'id':r['id'],'result':{'account':{'type':'chatgpt'},'requiresOpenaiAuth':False}}),flush=True)\n"
+        " elif r.get('method')=='account/rateLimits/read': print(json.dumps({'id':r['id'],'error':{'message':'temporary quota failure'}}),flush=True)\n",
+        encoding="utf-8",
+    )
+    server_ext._codex_cache.update(at=0.0, value=None)
+    stale_codex = server_ext.query_codex_rate_limits()
+    assert stale_codex["available"] is True
+    assert stale_codex["stale"] is True
+    assert stale_codex["liveReason"] == "codex-rate-limits-unavailable"
+    assert stale_codex["primary"]["remainingPercent"] == 63
 
     qwen = server_ext.query_qwen_status()
     assert qwen["available"] is True

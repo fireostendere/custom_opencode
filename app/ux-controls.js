@@ -239,24 +239,41 @@ function endModelTransition(pending, profile) {
   setTransitionControls(false)
   syncAgentSurface(); syncModelSurface()
 }
+function cancelModelTransition(pending) {
+  if (modelTransition !== pending) return
+  modelTransition = null
+  delete document.documentElement.dataset.modelTransition
+  setTransitionControls(false)
+  syncAgentSurface(); syncModelSurface()
+}
 async function chooseModel(profile, model) {
-  if (modelTransition || !window.CustomOpenCodeControls) return
+  if (modelTransition || !window.CustomOpenCodeControls) return false
   const pending = beginModelTransition(profile, model)
   const valid = () => modelTransition === pending && pending.sessionID === profileSessionKey()
-  const changed = await window.CustomOpenCodeControls.changeModel(model)
-  if (!valid()) { setTransitionControls(false); return }
-  if (!changed) { endModelTransition(pending, pending.previousProfile); return }
-  pending.agent = targetAgent(currentMode(), profile)
-  const agentChanged = await window.CustomOpenCodeControls.changeAgent(pending.agent)
-  if (!valid()) { setTransitionControls(false); return }
-  if (agentChanged) {
-    if (profile !== 'direct') document.documentElement.dataset.orchestratedModel = model.id
-    else delete document.documentElement.dataset.orchestratedModel
-    endModelTransition(pending, profile)
-    return
+  try {
+    const changed = await window.CustomOpenCodeControls.changeModel(model)
+    if (!valid()) { cancelModelTransition(pending); return false }
+    if (!changed) { endModelTransition(pending, pending.previousProfile); return false }
+    pending.agent = targetAgent(currentMode(), profile)
+    const agentChanged = await window.CustomOpenCodeControls.changeAgent(pending.agent)
+    if (!valid()) { cancelModelTransition(pending); return false }
+    if (agentChanged) {
+      if (profile !== 'direct') document.documentElement.dataset.orchestratedModel = model.id
+      else delete document.documentElement.dataset.orchestratedModel
+      endModelTransition(pending, profile)
+      return true
+    }
+    if (pending.previousModel) await window.CustomOpenCodeControls.changeModel(pending.previousModel)
+    if (valid()) endModelTransition(pending, pending.previousProfile)
+    return false
+  } catch (error) {
+    console.warn('model transition failed', error)
+    if (valid()) endModelTransition(pending, pending.previousProfile)
+    else cancelModelTransition(pending)
+    return false
+  } finally {
+    if (modelTransition === pending && pending.sessionID !== profileSessionKey()) cancelModelTransition(pending)
   }
-  if (pending.previousModel) await window.CustomOpenCodeControls.changeModel(pending.previousModel)
-  if (valid()) endModelTransition(pending, pending.previousProfile)
 }
 function finishModelTransition(detail) {
   const pending = modelTransition, model = detail?.model || {}
@@ -269,7 +286,7 @@ function finishAgentTransition(detail) {
   if (!pending || pending.sessionID !== profileSessionKey() || detail?.agent !== pending.agent) return
   if (detail?.sessionID !== (pending.sessionID === '__new__' ? null : pending.sessionID)) return
 }
-function chooseOrchestrated(model = ORCHESTRATED_MODEL) { chooseModel(profileForModel(model), model) }
+function chooseOrchestrated(model = ORCHESTRATED_MODEL) { return chooseModel(profileForModel(model), model) }
 function chooseDirect() {
   const model = window.CustomOpenCodeControls?.directModel?.()
   if (model) return chooseModel('direct', model)
@@ -315,20 +332,16 @@ function installModelProfileProxy() {
       event.preventDefault()
       event.stopImmediatePropagation()
       const model = ORCHESTRATED_MODELS.find((item) => item.id === orchestrated.dataset.model)
-      if (model) {
-        $('modelDialog')?.close()
-        chooseOrchestrated(model)
-      }
+      if (model) void chooseOrchestrated(model).then((changed) => { if (changed) $('modelDialog')?.close() })
       return
     }
     const native = event.target.closest('[data-model][data-provider]')
-    if (!native || event.target.closest('[data-fav]')) return
+    if (!native || event.target.closest('[data-fav],[data-model-remove]')) return
     event.preventDefault()
     event.stopImmediatePropagation()
-    $('modelDialog')?.close()
     const model = { id:native.dataset.model, providerID:native.dataset.provider }
     const profile = profileForModel(ORCHESTRATED_MODELS.find((item) => item.providerID === model.providerID && item.id === model.id))
-    chooseModel(profile, model)
+    void chooseModel(profile, model).then((changed) => { if (changed) $('modelDialog')?.close() })
   }, true)
 
   new MutationObserver(() => queueMicrotask(syncOrchestratedChoiceLabel)).observe(root, { childList:true, subtree:true })
