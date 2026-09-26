@@ -665,6 +665,16 @@ if (!appSource.includes("PROJECT_COLLAPSE_KEY") || !appSource.includes('class="p
   throw new Error("Session folders must remain collapsible")
 if (!appSource.includes("$('modelChoices').addEventListener('click'"))
   throw new Error("Favorites must use a stable model-picker click delegate")
+for (const marker of ["CUSTOM_MODELS_KEY", "HIDDEN_MODELS_KEY", "modelAddButton", "data-model-remove"]) {
+  if (!appSource.includes(marker))
+    throw new Error(`Model catalog management marker missing: ${marker}`)
+}
+if (!index.includes('id="modelAddDialog"') || !index.includes('id="modelSearch" placeholder="Поиск моделей…"'))
+  throw new Error("Model catalog management UI missing")
+if (!uxControls.includes("cancelModelTransition") || !uxControls.includes("if (changed) $('modelDialog')?.close()"))
+  throw new Error("Model selection must recover from stale transitions and close only after success")
+if (!uiSource.includes("search.type = 'search'"))
+  throw new Error("Model search must remain visible")
 for (const marker of [
   "id: '__favorites__'",
   "label: 'Избранное'",
