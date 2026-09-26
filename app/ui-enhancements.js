@@ -303,9 +303,9 @@ async function decorateModelChoices() {
 function installModelPickerEnhancements() {
   const search = $('modelSearch')
   if (search) {
-    search.type = 'hidden'
-    search.value = ''
-    search.tabIndex = -1
+    search.type = 'search'
+    search.tabIndex = 0
+    search.placeholder = 'Поиск моделей…'
   }
   const root = $('modelChoices')
   if (root) {
