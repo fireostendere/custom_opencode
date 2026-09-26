@@ -27,6 +27,7 @@ except ValueError:
     LIMITS_CACHE_SECONDS = 60.0
 
 _codex_cache: dict[str, object] = {"at": 0.0, "value": None}
+_codex_last_good: dict[str, object] = {"value": None}
 _codex_lock = threading.Lock()
 _bailian_cache: dict[str, object] = {"at": 0.0, "value": None}
 _bailian_lock = threading.Lock()
@@ -171,8 +172,22 @@ def query_codex_rate_limits() -> dict[str, object]:
             })
             _rpc_wait(process, 1, 5.0)
             _rpc_write(process, {"method": "initialized", "params": {}})
-            _rpc_write(process, {"method": "account/rateLimits/read", "id": 2, "params": {}})
-            value = _normalize_codex_result(_rpc_wait(process, 2, 10.0))
+
+            # Proactively refresh ChatGPT auth before asking for quota. Newer Codex
+            # app-server builds support refreshToken; older builds may reject this
+            # request, in which case the legacy rate-limit read below still works.
+            account: object = None
+            try:
+                _rpc_write(process, {"method": "account/read", "id": 2, "params": {"refreshToken": True}})
+                account = _rpc_wait(process, 2, 10.0)
+            except (RuntimeError, TimeoutError):
+                account = None
+
+            if isinstance(account, dict) and account.get("requiresOpenaiAuth") is True and not account.get("account"):
+                value = {"available": False, "reason": "codex-auth-required"}
+            else:
+                _rpc_write(process, {"method": "account/rateLimits/read", "id": 3, "params": {}})
+                value = _normalize_codex_result(_rpc_wait(process, 3, 10.0))
         except (OSError, RuntimeError, TimeoutError):
             value = {"available": False, "reason": "codex-rate-limits-unavailable"}
         finally:
@@ -186,6 +201,19 @@ def query_codex_rate_limits() -> dict[str, object]:
                     except OSError:
                         pass
 
+        if value.get("available") is True:
+            value["capturedAt"] = int(time.time())
+            value.pop("stale", None)
+            value.pop("liveReason", None)
+            _codex_last_good["value"] = dict(value)
+        else:
+            last_good = _codex_last_good.get("value")
+            if isinstance(last_good, dict):
+                value = {
+                    **last_good,
+                    "stale": True,
+                    "liveReason": value.get("reason"),
+                }
         _codex_cache.update(at=now, value=value)
         return value
 
