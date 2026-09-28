@@ -85,6 +85,7 @@ done
 "$NODE" "$ROOT/scripts/context-lanes-regression.mjs"
 "$NODE" "$ROOT/scripts/dnd-watch-regression.mjs"
 "$NODE" "$ROOT/scripts/dnd-state-cache-regression.mjs"
+DND_FAST_TIER_SELF_CHECK=1 "$NODE" "$ROOT/config/plugins/dnd-fast-tier.js"
 "$NODE" "$ROOT/scripts/visible-plan-regression.mjs"
 "$NODE" "$ROOT/scripts/ponytail-v2-regression.mjs"
 "$NODE" "$ROOT/scripts/gemini-rate-limit-regression.mjs"
