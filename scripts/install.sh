@@ -26,9 +26,9 @@ if [[ -z "$PYTHON3" ]]; then
   exit 1
 fi
 
-set -a
-source "$ENV_FILE"
-set +a
+source "$ROOT/scripts/user-config.sh"
+custom_opencode_load_env "$ROOT"
+USER_CONFIG=${CUSTOM_OPENCODE_USER_CONFIG:-}
 
 if [[ ${OPENCODE_TOOL_FABRIC:-0} == 1 ]]; then
   FABRIC_PYTHON=${OPENCODE_FABRIC_PYTHON:-"$PYTHON3"}
@@ -277,11 +277,16 @@ if [[ "$PONYTAIL_ENABLED" == 1 ]]; then
 fi
 
 install -d "$UNIT_DIR" "$BIN_DIR" "$SCRATCH_DIR" "$(dirname "$AUTH_FILE")"
-"$PYTHON3" - "$ROOT/systemd/opencode-web-client.service" "$UNIT_DIR/opencode-web-client.service" "$ROOT" "$PYTHON3" <<'PY'
+USER_SETTINGS_FILE=""
+[[ -z "$USER_CONFIG" ]] || USER_SETTINGS_FILE="$USER_CONFIG/settings.env"
+"$PYTHON3" - "$ROOT/systemd/opencode-web-client.service" "$UNIT_DIR/opencode-web-client.service" "$ROOT" "$PYTHON3" "$USER_SETTINGS_FILE" <<'PY'
 from pathlib import Path
 import sys
-source, target, root, python3 = sys.argv[1:]
+source, target, root, python3, user_settings = sys.argv[1:]
 text = Path(source).read_text(encoding="utf-8")
+if not user_settings:
+    text = "".join(line for line in text.splitlines(keepends=True) if "__CUSTOM_OPENCODE_USER_SETTINGS__" not in line)
+text = text.replace("__CUSTOM_OPENCODE_USER_SETTINGS__", user_settings)
 text = text.replace("__CUSTOM_OPENCODE_ROOT__", root).replace("__PYTHON3__", python3)
 if "__CUSTOM_OPENCODE_ROOT__" in text or "__PYTHON3__" in text:
     raise SystemExit("Unresolved systemd template placeholder")
@@ -379,20 +384,75 @@ if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
     done < <(cd "$ROOT/config/plugins/tui" && find . -type f -print0)
   fi
   install -m 0644 "$ROOT"/config/themes/*.json "$CONFIG_DIR/themes/"
-  "$PYTHON3" - "$ROOT/config/opencode.json.template" "$CONFIG_DIR/opencode.json" "$CONFIG_DIR" "$ROOT" "$RAG_DISABLED" "$PONYTAIL_PLUGIN_PATH" "$DIPTRACE_DISABLED" "$DIPTRACE_BIN" "$DIPTRACE_ROOT" "$DIPTRACE_WORKSPACE" "$DIPTRACE_ALLOWED_ROOTS" "$DIPTRACE_STATE_DIR" <<'PY'
+  # Private user-config files: same-named prompts, plugins and themes replace
+  # the public ones, new ones are added. The manifest removes files a later
+  # private revision dropped, so rolling that repository back rolls this back.
+  USER_CONFIG_MANIFEST="$CONFIG_DIR/.user-config-files"
+  declare -A USER_CONFIG_FILES=()
+  if [[ -n "$USER_CONFIG" ]]; then
+    for file in "$USER_CONFIG"/prompts/* "$USER_CONFIG"/plugins/*.js "$USER_CONFIG"/themes/*.json; do
+      [[ -f "$file" ]] || continue
+      [[ ! -L "$file" ]] || { echo "refusing symlinked user-config file: $file" >&2; exit 1; }
+      rel=${file#"$USER_CONFIG"/}
+      install -m 0644 "$file" "$CONFIG_DIR/$rel"
+      USER_CONFIG_FILES[$rel]=1
+    done
+  fi
+  if [[ -f "$USER_CONFIG_MANIFEST" && ! -L "$USER_CONFIG_MANIFEST" ]]; then
+    while IFS= read -r rel; do
+      [[ "$rel" =~ ^(prompts/[^/]+|plugins/[^/]+\.js|themes/[^/]+\.json)$ ]] || continue
+      [[ -z "${USER_CONFIG_FILES[$rel]:-}" && ! -e "$ROOT/config/$rel" ]] || continue
+      rm -f "$CONFIG_DIR/$rel"
+    done <"$USER_CONFIG_MANIFEST"
+  fi
+  if (( ${#USER_CONFIG_FILES[@]} )); then
+    printf '%s\n' "${!USER_CONFIG_FILES[@]}" >"$USER_CONFIG_MANIFEST"
+  else
+    rm -f "$USER_CONFIG_MANIFEST"
+  fi
+  USER_CONFIG_OVERLAY=""
+  if [[ -n "$USER_CONFIG" && -e "$USER_CONFIG/opencode.overlay.json" ]]; then
+    USER_CONFIG_OVERLAY="$USER_CONFIG/opencode.overlay.json"
+    [[ -f "$USER_CONFIG_OVERLAY" && ! -L "$USER_CONFIG_OVERLAY" ]] || {
+      echo "refusing unsafe config overlay: $USER_CONFIG_OVERLAY" >&2
+      exit 1
+    }
+  fi
+  "$PYTHON3" - "$ROOT/config/opencode.json.template" "$CONFIG_DIR/opencode.json" "$CONFIG_DIR" "$ROOT" "$RAG_DISABLED" "$PONYTAIL_PLUGIN_PATH" "$DIPTRACE_DISABLED" "$DIPTRACE_BIN" "$DIPTRACE_ROOT" "$DIPTRACE_WORKSPACE" "$DIPTRACE_ALLOWED_ROOTS" "$DIPTRACE_STATE_DIR" "$USER_CONFIG_OVERLAY" <<'PY'
 import json, os, shutil, sys
 from pathlib import Path
 (source, target, config_dir, root, rag_disabled, ponytail_plugin, diptrace_disabled,
  diptrace_bin, diptrace_root, diptrace_workspace, diptrace_allowed_roots,
- diptrace_state_dir) = sys.argv[1:]
-text = open(source, encoding="utf-8").read()
+ diptrace_state_dir, overlay_path) = sys.argv[1:]
 def json_string_value(value):
     return json.dumps(value, ensure_ascii=False)[1:-1]
-text = text.replace("__CONFIG_DIR__", json_string_value(config_dir))
-text = text.replace("__CUSTOM_OPENCODE_ROOT__", json_string_value(root))
-text = text.replace("__RAG_DISABLED__", rag_disabled)
-text = text.replace("__PONYTAIL_PLUGIN_PATH__", json_string_value(ponytail_plugin))
-config = json.loads(text)
+def render(path):
+    text = open(path, encoding="utf-8").read()
+    text = text.replace("__CONFIG_DIR__", json_string_value(config_dir))
+    text = text.replace("__CUSTOM_OPENCODE_ROOT__", json_string_value(root))
+    text = text.replace("__RAG_DISABLED__", rag_disabled)
+    text = text.replace("__PONYTAIL_PLUGIN_PATH__", json_string_value(ponytail_plugin))
+    return json.loads(text)
+def merge(base, overlay):
+    # Objects merge per key, null deletes a key, anything else (arrays too) replaces.
+    for key, value in overlay.items():
+        if value is None:
+            base.pop(key, None)
+        elif isinstance(value, dict) and isinstance(base.get(key), dict):
+            merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+config = render(source)
+if overlay_path:
+    try:
+        overlay = render(overlay_path)
+    except ValueError as exc:
+        raise SystemExit(f"invalid config overlay {overlay_path}: {exc}") from exc
+    if not isinstance(overlay, dict):
+        raise SystemExit(f"config overlay must be a JSON object: {overlay_path}")
+    # Applied before the provider switch and runtime invariants below, which win.
+    merge(config, overlay)
 if os.environ.get("OPENCODE_ALIBABA_ENABLED", "1").strip().lower() in {"0", "off", "false", "no"}:
     # Unpaid Alibaba Token Plan: drop the cloud provider (Qwen/DeepSeek/GLM and
     # the Qwen orchestration alias) and every agent routed to it, so nothing
@@ -445,6 +505,28 @@ with temporary.open("x", encoding="utf-8") as handle:
 os.chmod(temporary, 0o600)
 os.replace(temporary, target)
 PY
+  # Tool Fabric rejects policy inside any tool workspace, so the private
+  # repository is only its source: deploy a copy to OPENCODE_FABRIC_CONFIG's
+  # directory instead of pointing the loader into the checkout.
+  if [[ -n "$USER_CONFIG" && -d "$USER_CONFIG/tool-fabric" ]]; then
+    if [[ "${OPENCODE_FABRIC_CONFIG:-}" != /* ]]; then
+      echo "warning: $USER_CONFIG/tool-fabric not deployed: OPENCODE_FABRIC_CONFIG is not an absolute path" >&2
+    else
+      FABRIC_DIR=$(dirname "$OPENCODE_FABRIC_CONFIG")
+      case "$FABRIC_DIR/" in
+        "$ROOT"/*|"$USER_CONFIG"/*)
+          echo "OPENCODE_FABRIC_CONFIG must live outside both repositories: $OPENCODE_FABRIC_CONFIG" >&2
+          exit 1
+          ;;
+      esac
+      if [[ -n $(find "$USER_CONFIG/tool-fabric" -type l -print -quit) ]]; then
+        echo "refusing symlinks in $USER_CONFIG/tool-fabric" >&2
+        exit 1
+      fi
+      install -d -m 0700 "$FABRIC_DIR"
+      cp -R "$USER_CONFIG/tool-fabric/." "$FABRIC_DIR/"
+    fi
+  fi
 fi
 "$PYTHON3" - "$AUTH_FILE" <<'PY'
 import json, os, sys, time
@@ -508,9 +590,8 @@ cat >"$BIN_DIR/custom-opencode-policy" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 export CUSTOM_OPENCODE_ROOT="$ROOT"
-set -a
-source "$ROOT/.env"
-set +a
+source "$ROOT/scripts/user-config.sh"
+custom_opencode_load_env "$ROOT"
 export OPENCODE_POLICY_PORT="\${OPENCODE_POLICY_PORT:-$OPENCODE_POLICY_PORT}"
 exec "$PYTHON3" "$ROOT/app/policy_server.py" "\$@"
 EOF
@@ -521,9 +602,8 @@ cat >"$BIN_DIR/custom-opencode" <<EOF
 set -euo pipefail
 export PATH="$BIN_DIR:\$PATH"
 export CUSTOM_OPENCODE_ROOT="$ROOT"
-set -a
-source "$ROOT/.env"
-set +a
+source "$ROOT/scripts/user-config.sh"
+custom_opencode_load_env "$ROOT"
 # Native standalone servers remove OPENCODE_SERVER_PASSWORD before plugins load.
 export OPENCODE_RUNTIME_PLUGIN_TOKEN="\${OPENCODE_RUNTIME_PLUGIN_TOKEN:-\${OPENCODE_SERVER_PASSWORD:-}}"
 export OPENCODE_POLICY_COMMAND="\${OPENCODE_POLICY_COMMAND:-$BIN_DIR/custom-opencode-policy}"
@@ -584,9 +664,8 @@ cat >"$BIN_DIR/custom-opencode-webserver" <<EOF
 set -euo pipefail
 export CUSTOM_OPENCODE_ROOT="$ROOT"
 export CUSTOM_OPENCODE_SERVICE_MODE="$SERVICE_MODE"
-set -a
-source "$ROOT/.env"
-set +a
+source "$ROOT/scripts/user-config.sh"
+custom_opencode_load_env "$ROOT"
 exec "$PYTHON3" "$ROOT/scripts/webserver-control.py" "\$@"
 EOF
 chmod 0755 "$BIN_DIR/custom-opencode-webserver"
@@ -677,9 +756,8 @@ cat >"$BIN_DIR/custom-opencode-serve" <<EOF
 set -euo pipefail
 export PATH="$BIN_DIR:\$PATH"
 export CUSTOM_OPENCODE_ROOT="$ROOT"
-set -a
-source "$ROOT/.env"
-set +a
+source "$ROOT/scripts/user-config.sh"
+custom_opencode_load_env "$ROOT"
 timeout 45s env -u OPENCODE_CONFIG_DIR opencode2 service start >/dev/null
 exec "$PYTHON3" "$ROOT/app/server_workflow.py"
 EOF
@@ -714,6 +792,9 @@ if [[ "$SELFTEST" != 0 ]]; then
 fi
 
 echo "Installed. Start OpenCode with: custom-opencode"
+if [[ -n "$USER_CONFIG" ]]; then
+  echo "User config: $USER_CONFIG"
+fi
 if [[ "$SERVICE_MODE" == manual ]]; then
   echo "Manual supervision: run custom-opencode-serve in a separate terminal (no autostart configured)."
 fi

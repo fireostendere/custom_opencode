@@ -34,9 +34,12 @@ keyword stems are rejected rather than silently overridden. Layers cannot contai
 permission grants; those belong exclusively to the operator config. Inline `tools`
 and `keywords` in the operator config also work. No config means no enabled tools.
 
-The old engineering catalog is retained only as an ignored local reference under
-`.private/tool-fabric/legacy_catalog.py`; it is not shipped or imported. No user's
-actual device configuration is generated, migrated, or published automatically.
+The old engineering catalog is not shipped or imported; keep any copy as reference
+material in your private config, not here. No user's actual device configuration is
+generated, migrated, or published automatically. With a
+[private user config](configuration.md#private-user-config), its `tool-fabric/`
+directory is the versioned source and the installer deploys a copy to
+`OPENCODE_FABRIC_CONFIG`'s directory, outside every workspace.
 
 The external tool list is stable:
 

@@ -3,9 +3,8 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 if [[ -f "$ROOT/.env" ]]; then
-  set -a
-  source "$ROOT/.env"
-  set +a
+  source "$ROOT/scripts/user-config.sh"
+  custom_opencode_load_env "$ROOT"
 fi
 
 RAG_ROOT=${MCP_RAG_ROOT:-}

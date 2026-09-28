@@ -15,3 +15,5 @@ node_modules/
 .mcp-artifacts/
 # Project-local links to separately installed skills are machine-specific.
 /.opencode/skills
+# Machine-local Codex CLI settings.
+.codex/

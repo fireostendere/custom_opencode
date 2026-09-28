@@ -237,7 +237,7 @@ Installer по умолчанию выполняет pre-install verification и
 Основные разделы:
 
 - [Установка, миграция и обновление](docs/installation.md)
-- [Конфигурация `.env`](docs/configuration.md)
+- [Конфигурация `.env`](docs/configuration.md) и [приватный user config](docs/configuration.md#private-user-config)
 - [Web UI, авторизация и оформление](docs/web-ui.md)
 - [Архитектура и возможности](docs/architecture.md)
 - [Server Runtime V2](docs/server-runtime-v2.md)

@@ -330,6 +330,27 @@ CUSTOM_OPENCODE_INSTALL_SELFTEST=1
 
 Для shared OpenCode V2 `OPENCODE_CONFIG_DIR` обычно остаётся пустым, чтобы использовать canonical global config. Меняйте `OPENCODE_CLI_PACKAGE` только вместе с прогоном полного regression suite.
 
+## Private user config
+
+Публичный репозиторий содержит механизм и примеры: агентов, оркестрацию, D&D narrator. Личная конфигурация может жить в отдельном приватном checkout, версионироваться и откатываться независимо. Подключается одной строкой в `.env`:
+
+```text
+CUSTOM_OPENCODE_USER_CONFIG=/path/to/opencode_config
+```
+
+Относительный путь считается от корня `custom_opencode`. Каталог и `settings.env` должны принадлежать текущему пользователю; symlink на `settings.env` отклоняется.
+
+| Файл в приватном checkout | Что делает installer |
+|---|---|
+| `settings.env` | загружается перед `.env`, затем `.env` ещё раз, поэтому локальные значения выигрывают. Его читают installer, все `custom-opencode*` wrappers, `rag-mcp.sh` и web service (`EnvironmentFile`). Только строки `KEY=VALUE` без `$VAR`: systemd их не раскрывает |
+| `opencode.overlay.json` | накладывается на `config/opencode.json.template`: объекты сливаются по ключам, `null` удаляет ключ, массивы и скаляры заменяются. Плейсхолдеры `__CUSTOM_OPENCODE_ROOT__`/`__CONFIG_DIR__` работают. Инварианты installer (`compaction`, `tool_output`, `mcp.servers.kb.codemode`, `mcp.servers.diptrace`, отключение Alibaba) применяются после overlay |
+| `prompts/*`, `plugins/*.js`, `themes/*.json` | копируются поверх публичных: одноимённый файл заменяет публичный, новый добавляется. Манифест `$CONFIG_DIR/.user-config-files` удаляет файлы, которые исчезли из приватной ревизии |
+| `tool-fabric/` | копируется в каталог `OPENCODE_FABRIC_CONFIG` (абсолютный путь вне обоих репозиториев), потому что loader отклоняет policy внутри workspace |
+
+Секреты держите только в локальном `.env`, не в приватном репозитории. Одноимённый приватный prompt или plugin перестаёт получать изменения из публичного репозитория. Если нужно поправить одно поле агента, достаточно overlay.
+
+Применить изменения или откатиться: `git checkout <rev>` в приватном checkout, затем `./scripts/install.sh`.
+
 ## Optional OpenCode auth backup
 
 ```text
