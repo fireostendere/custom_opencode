@@ -485,6 +485,105 @@ assert files(source) == files(target)
 for rel in files(source): assert (source/rel).read_bytes() == (target/rel).read_bytes(), rel
 PY
 
+# Private user config: settings.env under .env, a JSON overlay onto the public
+# template, same-named and extra prompts/plugins, Tool Fabric deployment, and
+# removal of overlay files a later private revision dropped.
+mkdir -p "$TMP/opencode_config"
+USER_CONFIG_DIR=$(cd "$TMP/opencode_config" && pwd -P)
+FABRIC_CONFIG="$HOME_DIR/.config/custom-opencode/tool-fabric/tool-fabric.json"
+USER_PROMPT="$HOME_DIR/.config/opencode/prompts/private.md"
+USER_PLUGIN="$HOME_DIR/.config/opencode/plugins/private-plugin.js"
+mkdir -p "$USER_CONFIG_DIR/prompts" "$USER_CONFIG_DIR/plugins" "$USER_CONFIG_DIR/tool-fabric/layers"
+cat >"$USER_CONFIG_DIR/settings.env" <<'EOF'
+OPENCODE_DND_NARRATOR_MODEL=openai/private-narrator
+OPENCODE_WEB_PORT=4999
+EOF
+cat >"$USER_CONFIG_DIR/opencode.overlay.json" <<'EOF'
+{
+  "agents": {
+    "role-builder": {"model": "openai/private-builder"},
+    "title": null,
+    "private-agent": {"mode": "subagent", "model": "openai/private-builder", "system": "root=__CUSTOM_OPENCODE_ROOT__"}
+  },
+  "compaction": {"auto": false}
+}
+EOF
+printf '%s\n' '# private engineering policy' >"$USER_CONFIG_DIR/prompts/engineering.md"
+printf '%s\n' '# private prompt' >"$USER_CONFIG_DIR/prompts/private.md"
+printf '%s\n' 'export default async function privatePlugin() { return {} }' >"$USER_CONFIG_DIR/plugins/private-plugin.js"
+printf '%s\n' '{"layers": ["layers/private.json"]}' >"$USER_CONFIG_DIR/tool-fabric/tool-fabric.json"
+printf '%s\n' '{"tools": []}' >"$USER_CONFIG_DIR/tool-fabric/layers/private.json"
+cp "$COPY/.env" "$TMP/env-before-user-config"
+cat >>"$COPY/.env" <<EOF
+CUSTOM_OPENCODE_USER_CONFIG=$USER_CONFIG_DIR
+OPENCODE_FABRIC_CONFIG=$FABRIC_CONFIG
+EOF
+run_install() {
+  env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+    bash "$COPY/scripts/install.sh" >"$1" 2>&1
+}
+run_install "$TMP/user-config-install.out"
+grep -Fxq "User config: $USER_CONFIG_DIR" "$TMP/user-config-install.out"
+python3 - "$CONFIG" "$SERVICE_CONFIG" "$COPY" <<'PY'
+import json, sys
+config = json.load(open(sys.argv[1], encoding="utf-8"))
+service = json.load(open(sys.argv[2], encoding="utf-8"))["env"]
+agents = config["agents"]
+assert agents["role-builder"]["model"] == "openai/private-builder", agents["role-builder"]
+assert agents["role-builder"]["system"], "the overlay must merge into a public agent, not replace it"
+assert "title" not in agents, "null in the overlay must delete a public agent"
+assert agents["private-agent"]["system"] == "root=" + sys.argv[3], agents["private-agent"]
+assert config["compaction"]["auto"] is True, "installer runtime invariants must win over the overlay"
+assert service["OPENCODE_DND_NARRATOR_MODEL"] == "openai/private-narrator", service
+assert service["OPENCODE_WEB_PORT"] == "4098", "the local .env must win over settings.env"
+PY
+cmp -s "$USER_CONFIG_DIR/prompts/engineering.md" "$ENGINEERING_PROMPT" || { echo "private prompt did not replace the public one" >&2; exit 1; }
+[[ -f "$USER_PROMPT" && -f "$USER_PLUGIN" ]] || { echo "private prompt/plugin was not installed" >&2; exit 1; }
+FABRIC_LAYER="$(dirname "$FABRIC_CONFIG")/layers/private.json"
+cmp -s "$USER_CONFIG_DIR/tool-fabric/layers/private.json" "$FABRIC_LAYER" && [[ $(stat -c %a "$FABRIC_LAYER") == 600 ]] || {
+  echo "private Tool Fabric policy was not deployed outside the checkout" >&2
+  exit 1
+}
+diff <(grep '^EnvironmentFile=' "$SERVICE") \
+  <(printf '%s\n' "EnvironmentFile=-$USER_CONFIG_DIR/settings.env" "EnvironmentFile=-$COPY/.env") || {
+  echo "web service must read settings.env before the local .env" >&2
+  exit 1
+}
+grep -Fq "custom_opencode_load_env \"$COPY\"" "$WRAPPER"
+env -i HOME="$HOME_DIR" PATH="$PATH" bash -euc 'source "$1/scripts/user-config.sh"; custom_opencode_load_env "$1"
+  [[ $OPENCODE_DND_NARRATOR_MODEL == openai/private-narrator && $OPENCODE_WEB_PORT == 4098 && $CUSTOM_OPENCODE_USER_CONFIG == "$2" ]]' \
+  -- "$COPY" "$USER_CONFIG_DIR"
+
+# Rolling the private repository back must roll the install back too.
+rm "$USER_CONFIG_DIR/plugins/private-plugin.js" "$USER_CONFIG_DIR/prompts/engineering.md"
+run_install "$TMP/user-config-rollback.out"
+[[ ! -e "$USER_PLUGIN" ]] || { echo "dropped private plugin stayed installed" >&2; exit 1; }
+cmp -s "$COPY/config/prompts/engineering.md" "$ENGINEERING_PROMPT" || { echo "public prompt was not restored" >&2; exit 1; }
+[[ -f "$USER_PROMPT" ]] || { echo "a still-present private prompt was removed" >&2; exit 1; }
+
+# The private settings file is sourced shell: a symlink must fail closed.
+mv "$USER_CONFIG_DIR/settings.env" "$USER_CONFIG_DIR/settings.real"
+ln -s settings.real "$USER_CONFIG_DIR/settings.env"
+if run_install "$TMP/user-config-symlink.out"; then
+  echo "installer accepted a symlinked settings.env" >&2
+  exit 1
+fi
+grep -Fq 'refusing unsafe user settings file' "$TMP/user-config-symlink.out"
+rm "$USER_CONFIG_DIR/settings.env"
+mv "$USER_CONFIG_DIR/settings.real" "$USER_CONFIG_DIR/settings.env"
+
+# Disconnecting the private config removes everything it installed.
+cp "$TMP/env-before-user-config" "$COPY/.env"
+run_install "$TMP/user-config-off.out"
+[[ ! -e "$USER_PROMPT" ]] || { echo "disconnected private prompt stayed installed" >&2; exit 1; }
+[[ ! -e "$HOME_DIR/.config/opencode/.user-config-files" ]] || { echo "stale user-config manifest" >&2; exit 1; }
+[[ $(grep -c '^EnvironmentFile=' "$SERVICE") == 1 ]] || { echo "unit kept the user settings line" >&2; exit 1; }
+python3 - "$CONFIG" <<'PY'
+import json, sys
+agents = json.load(open(sys.argv[1], encoding="utf-8"))["agents"]
+assert "title" in agents and "private-agent" not in agents, sorted(agents)
+PY
+
 # Enabled Ponytail install: provision a local upstream and verify the V2
 # plugins entry point plus first-install-only mode persistence.
 rm -f "$FAKE_BIN/git"

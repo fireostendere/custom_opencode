@@ -184,9 +184,15 @@ def configure_qwen_token_plan(api_key: str, model: str) -> None:
         raise RuntimeError("OpenCode не принял обновление ключа") from exc
 
 
-BASE_ENV = {
+_LOCAL_ENV = {
     **read_env_file(ROOT.parent / ".env"),
     **read_env_file(ROOT / ".env"),
+}
+_USER_CONFIG = os.environ.get("CUSTOM_OPENCODE_USER_CONFIG") or _LOCAL_ENV.get("CUSTOM_OPENCODE_USER_CONFIG")
+# Private user-config settings first (scripts/user-config.sh); the local .env wins.
+BASE_ENV = {
+    **(read_env_file(ROOT.parent / Path(_USER_CONFIG).expanduser() / "settings.env") if _USER_CONFIG else {}),
+    **_LOCAL_ENV,
 }
 _legacy_auth_value = os.environ.get("OPENCODE_LEGACY_AUTH_FILE") or BASE_ENV.get("OPENCODE_LEGACY_AUTH_FILE")
 LEGACY_AUTH_FILE = Path(_legacy_auth_value).expanduser() if _legacy_auth_value else DEFAULT_LEGACY_AUTH_FILE
