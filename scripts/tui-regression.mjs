@@ -473,6 +473,7 @@ assert.ok(
       "cleanup model-selector.jsx",
       "cleanup server-wizard.js",
       "cleanup webserver-wizard.js",
+      "cleanup dnd-watch-panel.jsx",
       "cleanup effort-indicator.jsx",
       "cleanup location-recovery.jsx",
       "cleanup installCompactionRecovery",
@@ -484,6 +485,7 @@ assert.ok(
 }
 for (const source of [
   "add-wizard.js",
+  "dnd-watch-panel.jsx",
   "effort-indicator.jsx",
   "location-recovery.jsx",
   "model-selector.jsx",
