@@ -118,11 +118,25 @@ def server_secret() -> str:
     return secret
 
 
+def _utf8(value: str) -> bytes:
+    """Bytes for hashing and constant-time comparison.
+
+    hmac.compare_digest() raises TypeError for non-ASCII str: comparing text
+    directly made every Cyrillic password fail with an exception, after the
+    PBKDF2 work and outside the login throttle.
+    """
+    return str(value).encode("utf-8", "surrogatepass")
+
+
+def _same(left: str, right: str) -> bool:
+    return hmac.compare_digest(_utf8(left), _utf8(right))
+
+
 def _hash_password(password: str, salt: str, iterations: int = DEFAULT_ITERATIONS) -> str:
     """PBKDF2-SHA256 hash, returns hex digest."""
     return hashlib.pbkdf2_hmac(
         "sha256",
-        password.encode("utf-8"),
+        _utf8(password),
         bytes.fromhex(salt),
         iterations,
     ).hex()
@@ -228,18 +242,30 @@ def _write_users(users: list[dict[str, Any]]) -> None:
 def authenticate(username: str, password: str) -> bool:
     """Authenticate user against env or store.
 
-    Always performs exactly one PBKDF2 hash to equalize timing.
+    Always performs exactly one PBKDF2 hash to equalize timing. Never raises:
+    any verifier error is a failed attempt.
     """
+    try:
+        return _authenticate(username, password)
+    except Exception:
+        return False
+
+
+def _authenticate(username: str, password: str) -> bool:
     env_user, env_password = _env_credentials()
 
     # Check if this is an env user
-    is_env_user = hmac.compare_digest(username, env_user)
+    is_env_user = _same(username, env_user)
 
     if is_env_user:
         # For env users, do a dummy hash for timing, then check password
         dummy_salt = "0" * 32  # 16 bytes as hex
         _hash_password(password, dummy_salt, DEFAULT_ITERATIONS)
-        return hmac.compare_digest(password, env_password)
+        if not env_password.strip():
+            # An unset admin password must never turn into "log in with an
+            # empty password".
+            return False
+        return _same(password, env_password)
 
     # For store users
     try:
@@ -253,7 +279,7 @@ def authenticate(username: str, password: str) -> bool:
     # Look for user in store
     found_user = None
     for user in users:
-        if hmac.compare_digest(user["username"], username):
+        if _same(user["username"], username):
             found_user = user
             break
 
@@ -265,7 +291,7 @@ def authenticate(username: str, password: str) -> bool:
 
     # User found - hash with real salt
     computed = _hash_password(password, found_user["salt"], found_user["iterations"])
-    return hmac.compare_digest(computed, found_user["hash"])
+    return _same(computed, found_user["hash"])
 
 
 def user_exists(username: str) -> bool:
@@ -274,7 +300,7 @@ def user_exists(username: str) -> bool:
     Store read errors → env check only.
     """
     env_user, _ = _env_credentials()
-    if hmac.compare_digest(username, env_user):
+    if _same(username, env_user):
         return True
     try:
         users = read_users()
@@ -295,7 +321,7 @@ def add_user(username: str, password: str) -> list[dict[str, Any]]:
         raise UsersError(f"password too short (minimum {MIN_PASSWORD_LENGTH} characters)")
 
     env_user, _ = _env_credentials()
-    if hmac.compare_digest(username, env_user):
+    if _same(username, env_user):
         raise UsersError(f"user {username!r} already exists (environment user)")
 
     try:
@@ -329,7 +355,7 @@ def remove_user(username: str) -> list[dict[str, Any]]:
     Returns list_users() after removing.
     """
     env_user, _ = _env_credentials()
-    if hmac.compare_digest(username, env_user):
+    if _same(username, env_user):
         raise UsersError("environment user is managed via .env")
 
     try:

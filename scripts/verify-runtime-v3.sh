@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Contract tests describe the whole product. A local .env (install.sh sources
+# it) may switch optional paid providers off; fixtures must not depend on it.
+export OPENCODE_ALIBABA_ENABLED=1 OPENCODE_LIMITS_QWEN=1
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PYTHON3=$(command -v python3 || true)
 NODE=$(command -v node || true)

@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import selectors
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -28,27 +30,174 @@ except ValueError:
 
 _codex_cache: dict[str, object] = {"at": 0.0, "value": None}
 _codex_last_good: dict[str, object] = {"value": None}
-_codex_lock = threading.Lock()
 _bailian_cache: dict[str, object] = {"at": 0.0, "value": None}
-_bailian_lock = threading.Lock()
+_codex_binary: dict[str, object] = {"at": 0.0, "key": None, "path": None}
+_SETUP_REASONS = {"codex-not-found", "codex-auth-required", "bailian-cli-not-found", "session-expired", "disabled"}
+LIMITS_SETUP_RETRY_SECONDS = 1800.0
+BINARY_RESOLVE_SECONDS = 600.0
+_VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+# Provider CLIs need their own login state, never the web/backend secrets that
+# live in this process' environment.
+_CHILD_ENV_KEYS = {
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TZ", "TMPDIR",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "CODEX_HOME",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "no_proxy", "all_proxy",
+    "WSL_DISTRO_NAME", "WSL_INTEROP", "GIT_TERMINAL_PROMPT",
+}
+
+
+def _child_env(binary: str | None = None) -> dict[str, str]:
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        # GIT_CONFIG_*: keep server.py's git hardening (fsmonitor/hooks off)
+        # for any git the CLIs run.
+        if key in _CHILD_ENV_KEYS or key.startswith(("LC_", "BAILIAN_", "BL_", "GIT_CONFIG_"))
+    }
+    if binary:
+        # npm-installed CLIs are "#!/usr/bin/env node" scripts: run them with the
+        # node that sits next to them (nvm), not an older system node.
+        env["PATH"] = os.pathsep.join(filter(None, [os.path.dirname(binary), env.get("PATH", "")]))
+    return env
+
+
+def _neutral_cwd() -> str:
+    """Run provider CLIs outside the (agent-writable) repository."""
+    home = base.Path.home()
+    return str(home) if home.is_dir() else "/"
+
+
+def _user_binary_candidates(executable: str) -> list[str]:
+    home = base.Path.home()
+    candidates = [shutil.which(executable)]
+    candidates += [
+        str(home / f"{directory}/{executable}")
+        for directory in (".local/bin", ".npm-global/bin", ".bun/bin", "bin")
+    ]
+    candidates += [str(path) for path in sorted((home / ".nvm/versions/node").glob(f"*/bin/{executable}"), reverse=True)]
+    unique: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
+            continue
+        real = os.path.realpath(candidate)
+        if real not in seen:
+            seen.add(real)
+            unique.append(candidate)
+    return unique
 
 
 def _resolve_user_binary(setting_name: str, executable: str) -> str | None:
     configured = base.setting(setting_name)
     if configured:
         return configured
-    found = shutil.which(executable)
-    if found:
-        return found
-    home = base.Path.home()
-    candidates = [
-        home / f".local/bin/{executable}",
-        home / f".npm-global/bin/{executable}",
-        home / f".bun/bin/{executable}",
-        home / f"bin/{executable}",
-    ]
-    candidates.extend(sorted((home / ".nvm/versions/node").glob(f"*/bin/{executable}"), reverse=True))
-    return next((str(path) for path in candidates if path.is_file()), None)
+    candidates = _user_binary_candidates(executable)
+    return candidates[0] if candidates else None
+
+
+def _binary_version(path: str) -> tuple[int, ...]:
+    try:
+        result = subprocess.run(
+            [path, "--version"], capture_output=True, text=True, timeout=10.0,
+            env=_child_env(path), check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ()
+    match = _VERSION_RE.search(result.stdout or "")
+    return tuple(int(part) for part in match.groups()) if match else ()
+
+
+def _resolve_codex_binary() -> str | None:
+    """Newest installed Codex CLI unless CODEX_BIN pins one.
+
+    A systemd PATH used to find an ancient /usr/local/bin/codex first, whose
+    usage decoder rejects newer ChatGPT plan types, so the web lost its limits.
+    """
+    configured = base.setting("CODEX_BIN")
+    if configured:
+        return configured
+    candidates = _user_binary_candidates("codex")
+    key = tuple(candidates)
+    now = time.monotonic()
+    if _codex_binary.get("key") == key and now - float(_codex_binary.get("at") or 0.0) < BINARY_RESOLVE_SECONDS:
+        return _codex_binary.get("path")  # type: ignore[return-value]
+    best = max(candidates, key=lambda path: (_binary_version(path), -candidates.index(path)), default=None)
+    _codex_binary.update(at=now, key=key, path=best)
+    return best
+
+
+class _StaleWhileRevalidate:
+    """Serve the last snapshot at once and refresh expired ones in the background.
+
+    Provider CLIs take seconds to answer; the limits endpoint must not block a
+    page render on them after the first successful read.
+    """
+
+    def __init__(self, cache: dict[str, object], loader) -> None:
+        self.cache = cache
+        self.loader = loader
+        self.lock = threading.Lock()
+        self.refresh_lock = threading.Lock()
+        self.refreshing = False
+
+    def _fresh(self) -> dict[str, object] | None:
+        value = self.cache.get("value")
+        if not isinstance(value, dict):
+            return None
+        # A missing CLI or an expired login does not fix itself within a
+        # minute: re-check rarely instead of spawning the CLI on every poll.
+        ttl = LIMITS_CACHE_SECONDS
+        if not value.get("available") and value.get("reason") in _SETUP_REASONS:
+            ttl = max(ttl, LIMITS_SETUP_RETRY_SECONDS)
+        if time.monotonic() - float(self.cache.get("at") or 0.0) < ttl:
+            return value
+        return None
+
+    def get(self) -> dict[str, object]:
+        with self.lock:
+            fresh = self._fresh()
+            if fresh is not None:
+                return fresh
+            stale = self.cache.get("value")
+            if isinstance(stale, dict):
+                if not self.refreshing:
+                    self.refreshing = True
+                    threading.Thread(target=self._background, daemon=True).start()
+                return stale
+        return self.refresh()
+
+    def _background(self) -> None:
+        try:
+            self.refresh()
+        finally:
+            with self.lock:
+                self.refreshing = False
+
+    def refresh(self) -> dict[str, object]:
+        with self.refresh_lock:
+            with self.lock:
+                fresh = self._fresh()
+            if fresh is not None:
+                return fresh
+            value = self.loader()
+            with self.lock:
+                self.cache.update(at=time.monotonic(), value=value)
+            return value
+
+
+def _terminate_group(process: subprocess.Popen[str]) -> None:
+    """Stop a CLI and its children (the npm launcher spawns a native binary)."""
+    for sig, wait in ((signal.SIGTERM, 1.0), (signal.SIGKILL, 1.0)):
+        try:
+            os.killpg(process.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            return
+        try:
+            process.wait(timeout=wait)
+            return
+        except subprocess.TimeoutExpired:
+            continue
 
 
 def _rpc_write(process: subprocess.Popen[str], payload: dict[str, object]) -> None:
@@ -135,87 +284,88 @@ def _normalize_codex_result(result: object) -> dict[str, object]:
     }
 
 
-def query_codex_rate_limits() -> dict[str, object]:
-    with _codex_lock:
-        now = time.monotonic()
-        cached = _codex_cache.get("value")
-        cached_at = float(_codex_cache.get("at") or 0.0)
-        if isinstance(cached, dict) and now - cached_at < LIMITS_CACHE_SECONDS:
-            return cached
+def _read_codex_rate_limits(process: subprocess.Popen[str]) -> dict[str, object]:
+    _rpc_write(process, {"method": "account/rateLimits/read", "id": 3, "params": {}})
+    return _normalize_codex_result(_rpc_wait(process, 3, 10.0))
 
-        codex = _resolve_user_binary("CODEX_BIN", "codex")
-        if not codex:
-            value = {"available": False, "reason": "codex-not-found"}
-            _codex_cache.update(at=now, value=value)
-            return value
 
-        process: subprocess.Popen[str] | None = None
+def _load_codex_rate_limits() -> dict[str, object]:
+    codex = _resolve_codex_binary()
+    if not codex:
+        return {"available": False, "reason": "codex-not-found"}
+    process: subprocess.Popen[str] | None = None
+    try:
+        process = subprocess.Popen(
+            [codex, "app-server"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+            env=_child_env(codex),
+            cwd=_neutral_cwd(),
+            start_new_session=True,
+        )
+        _rpc_write(process, {
+            "method": "initialize",
+            "id": 1,
+            "params": {
+                "clientInfo": {
+                    "name": "custom_opencode_web",
+                    "title": "custom_opencode web limits",
+                    "version": "1",
+                }
+            },
+        })
+        _rpc_wait(process, 1, 5.0)
+        _rpc_write(process, {"method": "initialized", "params": {}})
         try:
-            process = subprocess.Popen(
-                [codex, "app-server"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                bufsize=1,
-            )
-            _rpc_write(process, {
-                "method": "initialize",
-                "id": 1,
-                "params": {
-                    "clientInfo": {
-                        "name": "custom_opencode_web",
-                        "title": "custom_opencode web limits",
-                        "version": "1",
-                    }
-                },
-            })
-            _rpc_wait(process, 1, 5.0)
-            _rpc_write(process, {"method": "initialized", "params": {}})
-
-            # Proactively refresh ChatGPT auth before asking for quota. Newer Codex
-            # app-server builds support refreshToken; older builds may reject this
-            # request, in which case the legacy rate-limit read below still works.
+            value = _read_codex_rate_limits(process)
+        except (RuntimeError, TimeoutError):
+            value = {"available": False, "reason": "codex-rate-limits-unavailable"}
+        if value.get("available") is not True:
+            # Refresh ChatGPT auth only after a failed read: forcing a token
+            # refresh on every poll races the user's own Codex sessions.
             account: object = None
             try:
                 _rpc_write(process, {"method": "account/read", "id": 2, "params": {"refreshToken": True}})
                 account = _rpc_wait(process, 2, 10.0)
             except (RuntimeError, TimeoutError):
                 account = None
-
             if isinstance(account, dict) and account.get("requiresOpenaiAuth") is True and not account.get("account"):
                 value = {"available": False, "reason": "codex-auth-required"}
             else:
-                _rpc_write(process, {"method": "account/rateLimits/read", "id": 3, "params": {}})
-                value = _normalize_codex_result(_rpc_wait(process, 3, 10.0))
-        except (OSError, RuntimeError, TimeoutError):
-            value = {"available": False, "reason": "codex-rate-limits-unavailable"}
-        finally:
-            if process is not None:
                 try:
-                    process.terminate()
-                    process.wait(timeout=1.0)
-                except (OSError, subprocess.TimeoutExpired):
-                    try:
-                        process.kill()
-                    except OSError:
-                        pass
+                    value = _read_codex_rate_limits(process)
+                except (RuntimeError, TimeoutError):
+                    value = {"available": False, "reason": "codex-rate-limits-unavailable"}
+    except (OSError, RuntimeError, TimeoutError):
+        value = {"available": False, "reason": "codex-rate-limits-unavailable"}
+    finally:
+        if process is not None:
+            _terminate_group(process)
 
-        if value.get("available") is True:
-            value["capturedAt"] = int(time.time())
-            value.pop("stale", None)
-            value.pop("liveReason", None)
-            _codex_last_good["value"] = dict(value)
-        else:
-            last_good = _codex_last_good.get("value")
-            if isinstance(last_good, dict):
-                value = {
-                    **last_good,
-                    "stale": True,
-                    "liveReason": value.get("reason"),
-                }
-        _codex_cache.update(at=now, value=value)
-        return value
+    if value.get("available") is True:
+        value["capturedAt"] = int(time.time())
+        value.pop("stale", None)
+        value.pop("liveReason", None)
+        _codex_last_good["value"] = dict(value)
+    else:
+        last_good = _codex_last_good.get("value")
+        if isinstance(last_good, dict):
+            value = {
+                **last_good,
+                "stale": True,
+                "liveReason": value.get("reason"),
+            }
+    return value
+
+
+_codex_limits = _StaleWhileRevalidate(_codex_cache, _load_codex_rate_limits)
+
+
+def query_codex_rate_limits() -> dict[str, object]:
+    return _codex_limits.get()
 
 
 def _bailian_window(ratio: object, reset_time_ms: object, limit: int, minutes: int) -> dict[str, object] | None:
@@ -239,19 +389,20 @@ def _bailian_window(ratio: object, reset_time_ms: object, limit: int, minutes: i
     }
 
 
-def query_bailian_token_plan() -> dict[str, object]:
-    with _bailian_lock:
-        now = time.monotonic()
-        cached = _bailian_cache.get("value")
-        cached_at = float(_bailian_cache.get("at") or 0.0)
-        if isinstance(cached, dict) and now - cached_at < LIMITS_CACHE_SECONDS:
-            return cached
+def qwen_limits_enabled() -> bool:
+    """OPENCODE_LIMITS_QWEN=0 hides Qwen/Token Plan limits (e.g. no subscription)."""
+    off = {"0", "off", "false", "no"}
+    if str(base.setting("OPENCODE_ALIBABA_ENABLED", "1") or "1").strip().lower() in off:
+        return False
+    return str(base.setting("OPENCODE_LIMITS_QWEN", "1") or "1").strip().lower() not in off
 
+
+def _load_bailian_token_plan() -> dict[str, object]:
+        if not qwen_limits_enabled():
+            return {"available": False, "reason": "disabled"}
         bailian = _resolve_user_binary("BAILIAN_CLI_BIN", "bl")
         if not bailian:
-            value = {"available": False, "reason": "bailian-cli-not-found"}
-            _bailian_cache.update(at=now, value=value)
-            return value
+            return {"available": False, "reason": "bailian-cli-not-found"}
 
         try:
             result = subprocess.run(
@@ -261,6 +412,8 @@ def query_bailian_token_plan() -> dict[str, object]:
                 text=True,
                 timeout=12.0,
                 check=False,
+                env=_child_env(bailian),
+                cwd=_neutral_cwd(),
             )
             if result.returncode != 0:
                 try:
@@ -271,14 +424,12 @@ def query_bailian_token_plan() -> dict[str, object]:
                             code = err.get("code")
                             msg = str(err.get("message") or "")
                             if code == 3 or "expired" in msg.lower() or "not logged in" in msg.lower():
-                                value = {
+                                return {
                                     "available": False,
                                     "state": "expired",
                                     "reason": "session-expired",
                                     "hint": err.get("hint") or "bl auth login --console",
                                 }
-                                _bailian_cache.update(at=now, value=value)
-                                return value
                 except Exception:
                     pass
                 raise RuntimeError("Bailian Token Plan usage command failed")
@@ -307,9 +458,14 @@ def query_bailian_token_plan() -> dict[str, object]:
             }
         except (OSError, RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError):
             value = {"available": False, "reason": "bailian-token-plan-usage-unavailable"}
-
-        _bailian_cache.update(at=now, value=value)
         return value
+
+
+_bailian_limits = _StaleWhileRevalidate(_bailian_cache, _load_bailian_token_plan)
+
+
+def query_bailian_token_plan() -> dict[str, object]:
+    return _bailian_limits.get()
 
 
 def _qwen_probe_status() -> tuple[str, str | None]:
@@ -337,6 +493,8 @@ def _qwen_probe_status() -> tuple[str, str | None]:
 
 
 def query_qwen_status() -> dict[str, object]:
+    if not qwen_limits_enabled():
+        return {"available": False, "state": "disabled", "reason": "disabled"}
     usage = query_bailian_token_plan()
     probe_state, probe_reset = _qwen_probe_status()
     if usage.get("available"):

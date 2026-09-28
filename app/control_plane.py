@@ -36,6 +36,14 @@ SENSITIVE_PATH_RE = re.compile(
     r"id_(?:rsa|ed25519)(?:\.|$)|credentials?(?:\.|$)|secrets?(?:\.|$))",
     re.IGNORECASE,
 )
+# Git metadata can make server-side and user git run programs: .git/config
+# (core.fsmonitor, diff.external, filters, gpg.program), hooks, a `.git` file
+# redirecting gitdir, .gitattributes selecting filter/diff drivers and
+# .gitmodules. NTFS aliases (GIT~1, trailing dots/spaces, ::$DATA) count too.
+GIT_METADATA_NAME_RE = re.compile(
+    r"(?:\.git|git~\d+|\.gitattributes|gitatt~\d+|\.gitmodules|gitmod~\d+)",
+    re.IGNORECASE,
+)
 SHELL_META_RE = re.compile(r"[;&|><`\n]|\$\(")
 SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(token|api[_-]?key|password|secret|authorization)\s*=\s*([^\s,;]+)"
@@ -89,6 +97,31 @@ def _resource_strings(request: dict[str, Any]) -> list[str]:
 
 def _looks_sensitive(value: str) -> bool:
     return bool(SENSITIVE_PATH_RE.search(value.replace("\\", "/")))
+
+
+def _git_metadata_parts(parts: Any) -> bool:
+    for part in parts:
+        name = str(part).split(":", 1)[0].rstrip(" .")
+        if GIT_METADATA_NAME_RE.fullmatch(name):
+            return True
+    return False
+
+
+def git_metadata_path(value: str, workspace: str | None = None) -> bool:
+    """True when a path names git metadata (lexically or through a symlink)."""
+    normalized = str(value).replace("\\", "/")
+    if _git_metadata_parts(normalized.split("/")):
+        return True
+    if not workspace:
+        return False
+    try:
+        root = Path(workspace).expanduser().resolve(strict=False)
+        candidate = Path(normalized).expanduser()
+        resolved = candidate.resolve(strict=False) if candidate.is_absolute() else (root / candidate).resolve(strict=False)
+        inner = resolved.relative_to(root).parts
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+    return _git_metadata_parts(inner)
 
 
 def _path_within_workspace(value: str, workspace: str | None) -> bool:
@@ -174,6 +207,8 @@ def _shell_risk(command: str, preset: str, workspace: str | None) -> tuple[str, 
     if executable in {"python", "python3", "node", "npm", "pnpm", "bun", "git"} and len(argv) == 2 and argv[1] in {"--version", "-V"}:
         return "R0", True, "version probe"
 
+    if any(git_metadata_path(arg, workspace) for arg in argv[1:] if arg and not arg.startswith("-")):
+        return "R4", False, "command may modify git metadata (config/hooks/attributes)"
     return "R3", False, "command can mutate state or produce external side effects"
 
 
@@ -218,6 +253,12 @@ def classify_permission(
             return decision
         if any(_looks_sensitive(value) for value in resources):
             decision.update(risk="R4", reason="sensitive file mutation requires confirmation")
+            return decision
+        if any(git_metadata_path(value, workspace) for value in resources):
+            decision.update(
+                risk="R4",
+                reason="git metadata mutation (config/hooks/attributes/modules) can run programs; requires confirmation",
+            )
             return decision
         inside = all(_path_within_workspace(value, workspace) for value in resources)
         if not inside:
@@ -323,7 +364,7 @@ def snapshot() -> dict[str, Any]:
             },
             "alwaysInteractive": [
                 "R3 boundary/destructive/ambiguous actions",
-                "R4 sensitive files or credentials",
+                "R4 sensitive files, credentials or git metadata (config/hooks/attributes/modules)",
                 "compound shell commands",
                 "external directories and subagent escalation",
                 "RAG ingestion",

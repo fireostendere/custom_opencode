@@ -114,7 +114,8 @@ async function managed(context) {
     command: "managed",
     text: JSON.stringify({ requestID }),
   })
-  return readConfigReceipt(context.client, current, requestID)
+  const on = typeof context.data?.on === "function" ? (type, handler) => context.data.on(type, handler) : undefined
+  return readConfigReceipt(context.client, current, requestID, { on })
 }
 
 async function multiple(context, title, options, initial = []) {

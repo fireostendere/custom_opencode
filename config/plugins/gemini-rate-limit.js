@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
@@ -57,6 +57,18 @@ export function writeRateLimitState(data) {
     renameSync(temporary, STATE_FILE)
   } catch {}
 }
+
+export function readRateLimitState() {
+  try {
+    const value = JSON.parse(readFileSync(STATE_FILE, "utf8"))
+    return value && typeof value === "object" ? value : null
+  } catch {
+    return null
+  }
+}
+
+const liveCountdown = (state) =>
+  state?.active === true && Number(state.until) > Date.now() ? state : null
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -205,10 +217,37 @@ export function createRetryFetch(origFetch, { sleepFn = sleep } = {}) {
 export default {
   id: "gemini-rate-limit",
   setup: async (ctx) => {
-    writeRateLimitState({ active: false, seconds: 0 })
     // Exactly one retry owner: the native scheduler. Global fetch wrappers
     // replay outside request hooks and otherwise evade the root-call budget.
     let timer
+    const countdown = ({ until, total, message }) => {
+      clearInterval(timer)
+      const render = () => {
+        const remaining = Math.max(0, Math.ceil((until - Date.now()) / 1000))
+        writeRateLimitState({
+          active: remaining > 0,
+          provider: "google",
+          seconds: remaining,
+          total,
+          until,
+          ...(remaining > 0 ? { message: message(remaining) } : {}),
+        })
+        if (!remaining) clearInterval(timer)
+      }
+      render()
+      timer = setInterval(render, 1000)
+      timer.unref?.()
+    }
+    // A plugin (re)load must not wipe a live 429 countdown owned by the host's
+    // scheduled retry: resume it until expiry. Only a stale active flag is cleared.
+    const existing = readRateLimitState()
+    if (liveCountdown(existing))
+      countdown({
+        until: Number(existing.until),
+        total: existing.total,
+        message: (remaining) => `Лимит Gemini (429): повтор через ${remaining}с…`,
+      })
+    else if (existing?.active) writeRateLimitState({ active: false, seconds: 0 })
     const registration = await ctx.session.hook("retry", async (event) => {
       if (event.model?.providerID !== "google") return
       const status = Number(event.error?.status)
@@ -221,26 +260,18 @@ export default {
       const seconds = Math.max(1, Math.min(30, parseRetrySeconds(message, null) || 5))
       const until = Date.now() + seconds * 1000
       event.decision = { retry: true, delay: seconds * 1000 }
-      clearInterval(timer)
-      const render = () => {
-        const remaining = Math.max(0, Math.ceil((until - Date.now()) / 1000))
-        writeRateLimitState({
-          active: remaining > 0,
-          provider: "google",
-          seconds: remaining,
-          total: seconds,
-          until,
-          message: `Лимит Gemini (429): повтор через ${remaining}с…`,
-        })
-        if (!remaining) clearInterval(timer)
-      }
-      render()
-      timer = setInterval(render, 1000)
-      timer.unref?.()
+      countdown({
+        until,
+        total: seconds,
+        message: (remaining) => `Лимит Gemini (429): повтор через ${remaining}с…`,
+      })
     })
     return async () => {
       clearInterval(timer)
-      writeRateLimitState({ active: false, seconds: 0 })
+      // The host still performs a scheduled retry after unload: keep a live
+      // countdown for the next instance; clear only an expired active flag.
+      const current = readRateLimitState()
+      if (current?.active && !liveCountdown(current)) writeRateLimitState({ active: false, seconds: 0 })
       await registration.dispose()
     }
   },

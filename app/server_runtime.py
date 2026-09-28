@@ -29,7 +29,7 @@ from repo_services import (
     git_snapshot,
     review_decision,
 )
-from runtime_store import RuntimeStore, TASK_STATES, now_ms
+from runtime_store import PROGRESS_CHECKPOINTS_PER_TASK, RuntimeStore, TASK_STATES, now_ms
 from runtime_lease import WorkerLease
 
 STORE = RuntimeStore()
@@ -83,6 +83,46 @@ def _profile_id(value: Any) -> str:
     return profile
 
 
+# Hidden legacy agent IDs. The native TUI only honours a session's model while
+# the session agent is a visible primary agent; with a hidden agent it shows and
+# then commits the config default model. They must never be assigned again and
+# are migrated to their visible counterparts whenever a session is dispatched.
+LEGACY_AGENT_ALIASES = {"build-direct": "build", "plan-direct": "plan"}
+# The web composer reports only these coarse profiles. For them the session's
+# selected model is authoritative (see _profile_for_selected_model).
+CLIENT_PROFILES = {"direct", "orchestrated"}
+MODEL_OWNED_PROFILES = ("dnd-edition", "architect", "sol-orchestrated")
+
+
+def _profile_for_selected_model(requested: Any, selected: str | None) -> str:
+    """Resolve a coarse client profile against the session's selected model.
+
+    Only a session whose selected model *is* a routed alias receives that
+    alias' profile; its cloudModel then equals the selection, so dispatch never
+    swaps the model. Everything else, including stale client guesses such as
+    "orchestrated" for a GPT Sol/Astra alias, stays on the selected model.
+    """
+    value = str(requested or "direct")
+    if value not in CLIENT_PROFILES:
+        return _profile_id(value)
+    base = (selected or "").split("#", 1)[0]
+    if base:
+        profiles = REGISTRY.profiles()
+        for profile_id in MODEL_OWNED_PROFILES:
+            routed = str((profiles.get(profile_id) or {}).get("cloudModel") or "")
+            if routed.split("#", 1)[0] == base:
+                return profile_id
+    return "direct"
+
+
+def _direct_agent(current: str, mode: str) -> str:
+    """Visible native agent for the task mode; custom user agents are kept."""
+    agent = LEGACY_AGENT_ALIASES.get(current, current)
+    if not agent or agent in {"build", "plan", "dnd-narrator"}:
+        return "plan" if mode == "plan" else "build"
+    return agent
+
+
 def _model_ref(session: dict[str, Any]) -> str | None:
     model = session.get("model")
     if isinstance(model, str):
@@ -134,6 +174,8 @@ def _public(task: dict[str, Any]) -> dict[str, Any]:
     metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
     route = task.get("route") if isinstance(task.get("route"), dict) else {}
     verification = task.get("verification") if isinstance(task.get("verification"), dict) else {}
+    # Projected rows (list endpoints) carry names only, never the payload.
+    names = task.get("file_names")
     return {
         "id": task.get("id"),
         "sessionID": task.get("session_id"),
@@ -143,11 +185,15 @@ def _public(task: dict[str, Any]) -> dict[str, Any]:
         "priority": task.get("priority"),
         "state": task.get("state"),
         "text": str(task.get("text") or "")[:1000],
-        "files": [
-            str((item or {}).get("name") or "file")
-            for item in (task.get("files") or [])
-            if isinstance(item, dict)
-        ],
+        "files": (
+            list(names)
+            if isinstance(names, list)
+            else [
+                str((item or {}).get("name") or "file")
+                for item in (task.get("files") or [])
+                if isinstance(item, dict)
+            ]
+        ),
         "dependencies": task.get("dependencies") or [],
         "createdAt": task.get("created_at"),
         "updatedAt": task.get("updated_at"),
@@ -171,7 +217,9 @@ def _counts(tasks: list[dict[str, Any]]) -> dict[str, int]:
 
 def queue_snapshot(session_id: str | None = None) -> dict[str, Any]:
     if session_id:
-        tasks = STORE.list_tasks(session_id=session_id, states=QUEUE_STATES, limit=200)
+        tasks = STORE.list_tasks(
+            session_id=session_id, states=QUEUE_STATES, limit=200, projection="public"
+        )
         items = [_public(task) for task in tasks]
         errors = [task.get("last_error") for task in tasks if task.get("last_error")]
         return {
@@ -180,7 +228,7 @@ def queue_snapshot(session_id: str | None = None) -> dict[str, Any]:
             "items": items,
             "error": errors[-1] if errors else None,
         }
-    tasks = STORE.list_tasks(states=QUEUE_STATES, limit=1000)
+    tasks = STORE.list_tasks(states=QUEUE_STATES, limit=1000, projection="light")
     counts: dict[str, int] = {}
     for task in tasks:
         sid = str(task.get("session_id") or "")
@@ -297,10 +345,16 @@ def enqueue_prompt(features: Any, payload: dict[str, Any]) -> dict[str, Any]:
     files = payload.get("files") if isinstance(payload.get("files"), list) else []
     if not text.strip() and not files:
         raise ValueError("empty queue item")
-    profile = _profile_id(payload.get("profile") or payload.get("modelProfile") or "direct")
+    requested = str(payload.get("profile") or payload.get("modelProfile") or "direct")
+    _profile_id(requested)  # reject unknown profiles before any backend call
     session = features._session_info(sid)
     selected = _model_ref(session)
     REGISTRY.refresh(_catalog(features, directory))
+    profile = _profile_for_selected_model(requested, selected)
+    if profile not in REGISTRY.profiles():
+        # A provider switched off (e.g. unpaid Alibaba Token Plan) removes its
+        # routed profiles; a stale Task Center choice keeps the selected model.
+        profile = "direct"
     profile_data = REGISTRY.profiles().get(profile, REGISTRY.profiles()["direct"])
     decision = SCHEDULER.decide(profile_data, selected_model=selected)
     metadata = {
@@ -309,6 +363,9 @@ def enqueue_prompt(features: Any, payload: dict[str, Any]) -> dict[str, Any]:
         "sandbox": profile_data.get("sandbox", "repo-write"),
         "handoff": payload.get("handoff") if isinstance(payload.get("handoff"), dict) else None,
     }
+    if requested in CLIENT_PROFILES:
+        # Queued prompts re-resolve at dispatch: the model may change meanwhile.
+        metadata["profileRequest"] = requested
     task = STORE.create_task(
         session_id=sid,
         project_dir=directory,
@@ -361,8 +418,17 @@ def _switch_session(features: Any, task: dict[str, Any]) -> dict[str, Any]:
     mode = str(metadata.get("modeAtCreate") or _mode(session))
     selected = _model_ref(session)
     profiles = REGISTRY.profiles()
-    profile_id = _profile_id(task.get("profile"))
+    requested = metadata.get("profileRequest")
+    profile_id = (
+        _profile_for_selected_model(requested, selected)
+        if requested in CLIENT_PROFILES
+        else _profile_id(task.get("profile"))
+    )
     profile = profiles.get(profile_id)
+    if not isinstance(profile, dict) and profile_id in PROFILE_IDS:
+        # Its provider is switched off (e.g. unpaid Alibaba Token Plan): run on
+        # the session's selected model instead of failing the task.
+        profile_id, profile = "direct", profiles["direct"]
     if not isinstance(profile, dict):
         raise ValueError(f"task profile is not configured: {profile_id}")
     dnd_lane = bool(profile.get("dndMinimalContext"))
@@ -375,12 +441,14 @@ def _switch_session(features: Any, task: dict[str, Any]) -> dict[str, Any]:
     model = decision.selected_model
     # A native plan session must retain its selected model.  Agent and model are
     # independent V2 controls; changing both loses the caller's provider/variant.
-    if (
-        (role_task or mode != "plan")
-        and profile.get("route") != "selected"
-        and model
-        and model != selected
-    ):
+    # User sessions compare base refs: a routed alias without "#variant" must
+    # not strip the effort the user selected for that very model. Role tasks
+    # own their session and pin the exact routed variant.
+    if role_task:
+        differs = model != selected
+    else:
+        differs = bool(model) and model.split("#", 1)[0] != (selected or "").split("#", 1)[0]
+    if (role_task or mode != "plan") and profile.get("route") != "selected" and model and differs:
         provider, sep, remainder = model.partition("/")
         ident, has_variant, variant = remainder.partition("#")
         if sep and provider and ident:
@@ -393,10 +461,13 @@ def _switch_session(features: Any, task: dict[str, Any]) -> dict[str, Any]:
                 {"model": pinned},
                 timeout=12.0,
             )
+    current_agent = str(session.get("agent") or "")
     agent = profile.get("agentPlan") if mode == "plan" else profile.get("agentBuild")
     if role_task:
         agent = "plan-direct"
-    if agent and agent != str(session.get("agent") or ""):
+    elif profile.get("route") == "selected":
+        agent = _direct_agent(current_agent, mode)
+    if agent and agent != current_agent:
         try:
             features._backend_request_json(
                 "POST",
@@ -409,7 +480,11 @@ def _switch_session(features: Any, task: dict[str, Any]) -> dict[str, Any]:
     STORE.update_task(
         task["id"],
         route=decision.as_dict(),
-        metadata_patch={"runtimeModel": model or selected, "runtimeAgent": agent},
+        metadata_patch={
+            "runtimeModel": model or selected,
+            "runtimeAgent": agent,
+            "runtimeProfile": profile_id,
+        },
     )
     return decision.as_dict()
 
@@ -417,7 +492,9 @@ def _switch_session(features: Any, task: dict[str, Any]) -> dict[str, Any]:
 def context_envelope(
     features: Any, session_id: str, project_instructions: str = ""
 ) -> dict[str, Any]:
-    active = STORE.list_tasks(session_id=session_id, states=ACTIVE_STATES, limit=10)
+    active = STORE.list_tasks(
+        session_id=session_id, states=ACTIVE_STATES, limit=10, projection="summary"
+    )
     task = active[0] if active else None
     directory = features._session_directory(session_id)
     return CONTEXT.envelope(
@@ -592,10 +669,19 @@ def _permission_pending(features: Any, task: dict[str, Any]) -> bool:
     )
 
 
+PATCH_CONFLICTS_KEPT = 50
+PROGRESS_CHECKPOINTS_KEPT = PROGRESS_CHECKPOINTS_PER_TASK
+# Progress polls are throttled in memory: persisting the poll time rewrote the
+# whole task row (inline attachments included) every few seconds.
+_PROGRESS_CHECKED_AT: dict[str, int] = {}
+
+
 def _monitor_progress(features: Any, task: dict[str, Any]) -> None:
     current = _usage_totals(features, task["session_id"])
     repo = git_snapshot(task["project_dir"])
-    signature = f"{current.get('signature')}:{repo.get('statusHash')}"
+    # trackedHash is identical for fast (tracked-only) and complete snapshots;
+    # statusHash flips between them and recorded phantom progress.
+    signature = f"{current.get('signature')}:{repo.get('trackedHash') or repo.get('statusHash')}"
     metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
     old = str(metadata.get("progressSignature") or "")
     repeats = int(metadata.get("progressRepeats") or 0)
@@ -606,6 +692,7 @@ def _monitor_progress(features: Any, task: dict[str, Any]) -> None:
             "progress",
             summary="Agent progress changed",
             data={"messageSignature": current.get("signature"), "repo": repo},
+            keep=PROGRESS_CHECKPOINTS_KEPT,
         )
     tools = _tool_signatures(features, task["session_id"])
     loop = len(tools) >= 6 and (tools[-3:] == tools[-6:-3] or len(set(tools[-5:])) == 1)
@@ -613,15 +700,16 @@ def _monitor_progress(features: Any, task: dict[str, Any]) -> None:
     baseline = set((task.get("baseline") or {}).get("changed") or [])
     owned = [path for path in (repo.get("changed") or []) if path not in baseline]
     conflicts = STORE.ownership_replace(owner, task["id"], owned)
-    STORE.update_task(
-        task["id"],
-        metadata_patch={
-            "progressSignature": signature,
-            "progressRepeats": repeats,
-            "lastTools": tools[-8:],
-            "patchConflicts": conflicts,
-        },
-    )
+    patch = {
+        "progressSignature": signature,
+        "progressRepeats": repeats,
+        "lastTools": tools[-8:],
+        "patchConflicts": conflicts[:PATCH_CONFLICTS_KEPT],
+        "patchConflictCount": len(conflicts),
+    }
+    # update_task also skips unchanged columns; checking here saves the read.
+    if any(metadata.get(key) != value for key, value in patch.items()):
+        STORE.update_task(task["id"], metadata_patch=patch)
     if loop and not metadata.get("loopReported"):
         STORE.event(
             kind="agent.loop_detected",
@@ -913,7 +1001,11 @@ def _verify_finish(features: Any, task_id: str) -> None:
 
 def _monitor_active(features: Any, statuses: dict[str, Any]) -> None:
     current = now_ms()
-    for task in STORE.list_tasks(states=ACTIVE_STATES, limit=500):
+    tasks = STORE.list_tasks(states=ACTIVE_STATES, limit=500, projection="summary")
+    live = {str(task["id"]) for task in tasks}
+    for task_id in [item for item in _PROGRESS_CHECKED_AT if item not in live]:
+        _PROGRESS_CHECKED_AT.pop(task_id, None)
+    for task in tasks:
         busy = features._status_busy(statuses.get(task["session_id"]))
         state = str(task.get("state"))
         if state == "recovering":
@@ -949,12 +1041,18 @@ def _monitor_active(features: Any, statuses: dict[str, Any]) -> None:
         if busy:
             if state == "submitted":
                 STORE.transition(task["id"], "running", event="task.running", data={})
-            STORE.update_task(task["id"], metadata_patch={"backendObservedBusy": True})
             metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
-            last = int(metadata.get("progressCheckedAt") or 0)
+            # Written once per task: an unchanged heartbeat used to rewrite the
+            # row (multi-MB with inline attachments) every 1.5 s poll.
+            if metadata.get("backendObservedBusy") is not True:
+                STORE.update_task(task["id"], metadata_patch={"backendObservedBusy": True})
+            last = max(
+                _PROGRESS_CHECKED_AT.get(str(task["id"]), 0),
+                int(metadata.get("progressCheckedAt") or 0),
+            )
             if current - last > 7000:
-                STORE.update_task(task["id"], metadata_patch={"progressCheckedAt": current})
-                _monitor_progress(features, STORE.get_task(task["id"]) or task)
+                _PROGRESS_CHECKED_AT[str(task["id"])] = current
+                _monitor_progress(features, task)
             continue
         metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
         started = int(task.get("started_at") or 0)
@@ -966,8 +1064,8 @@ def _monitor_active(features: Any, statuses: dict[str, Any]) -> None:
             features, task["session_id"]
         ).get("signature") != baseline_usage.get("signature")
         settled = current - max(started, accepted) > 2500
-        queued_successor = state == "submitted" and bool(
-            STORE.list_tasks(session_id=task["session_id"], states=QUEUE_STATES, limit=1)
+        queued_successor = state == "submitted" and STORE.has_tasks(
+            states=QUEUE_STATES, session_id=task["session_id"]
         )
         # A short backend run can start and finish entirely between 1.5 s worker polls.
         # If the dispatch grace has elapsed, the backend is authoritatively idle and a
@@ -980,14 +1078,15 @@ def _monitor_active(features: Any, statuses: dict[str, Any]) -> None:
                 event="task.agent_idle",
                 data={"reconciledForQueue": bool(queued_successor and not progressed)},
             )
-            _finish_async(features, STORE.get_task(task["id"]) or task)
+            # The finalizer re-reads the task by id; do not decode it here.
+            _finish_async(features, task)
 
 
 def _dispatch_ready(features: Any, statuses: dict[str, Any]) -> None:
-    queued = STORE.list_tasks(states=["queued", "blocked"], limit=500)
+    queued = STORE.list_tasks(states=["queued", "blocked"], limit=500, projection="light")
     for sid in sorted({str(task["session_id"]) for task in queued}):
-        if features._status_busy(statuses.get(sid)) or STORE.list_tasks(
-            session_id=sid, states=ACTIVE_STATES, limit=1
+        if features._status_busy(statuses.get(sid)) or STORE.has_tasks(
+            states=ACTIVE_STATES, session_id=sid
         ):
             continue
         task = STORE.next_ready(session_id=sid)
@@ -1049,23 +1148,101 @@ def _migrate(features: Any) -> None:
         pass
 
 
-def _refresh_indexes() -> None:
-    projects = sorted(
-        {
-            str(task.get("project_dir") or "")
-            for task in STORE.list_tasks(states=ACTIVE_STATES | QUEUE_STATES, limit=500)
-            if task.get("project_dir")
-        }
-    )
+LEGACY_INDEX_INTERVAL_SECONDS = 300.0
+# Periodic work that must run in exactly one process: the holder of the worker
+# lease (web server or private policy server, whichever owns the database).
+# Hooks run sequentially on one background thread, so a slow hook (backend
+# replay fetch, repository indexing) never delays dispatch in the worker loop.
+MAINTENANCE_HOOKS: dict[str, tuple[int, Any]] = {}
+_MAINTENANCE_LOCK = threading.Lock()
+_MAINTENANCE_THREAD: threading.Thread | None = None
+_MAINTENANCE_LAST_AT = 0.0
+_MAINTENANCE_ERRORS: dict[str, tuple[str, float]] = {}
+
+
+def register_maintenance(name: str, hook: Any, *, order: int = 100) -> None:
+    """Run ``hook()`` roughly every maintenance interval in the lease holder."""
+    with _MAINTENANCE_LOCK:
+        MAINTENANCE_HOOKS[str(name)] = (int(order), hook)
+
+
+def _maintenance_interval() -> float:
+    try:
+        return max(1.0, float(os.environ.get("OPENCODE_RUNTIME_MAINTENANCE_SECONDS") or 12.0))
+    except ValueError:
+        return 12.0
+
+
+def run_maintenance() -> dict[str, str]:
+    """Run every registered hook once; failures are isolated and rate-limited."""
+    with _MAINTENANCE_LOCK:
+        hooks = sorted(MAINTENANCE_HOOKS.items(), key=lambda item: (item[1][0], item[0]))
+    results: dict[str, str] = {}
+    for name, (_order, hook) in hooks:
+        try:
+            hook()
+            results[name] = "ok"
+            _MAINTENANCE_ERRORS.pop(name, None)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"[:1000]
+            results[name] = error
+            previous = _MAINTENANCE_ERRORS.get(name)
+            current = time.monotonic()
+            if previous is None or previous[0] != error or current - previous[1] > 600:
+                _MAINTENANCE_ERRORS[name] = (error, current)
+                try:
+                    STORE.event(
+                        kind="runtime.maintenance_error", data={"hook": name, "error": error}
+                    )
+                except Exception:
+                    pass
+    return results
+
+
+def _schedule_maintenance() -> bool:
+    """Start one maintenance pass if due and none is running (worker only)."""
+    global _MAINTENANCE_THREAD, _MAINTENANCE_LAST_AT
     current = time.monotonic()
-    for directory in projects[:30]:
-        if current - LAST_INDEX_AT.get(directory, 0.0) < 30.0:
+    with _MAINTENANCE_LOCK:
+        if not MAINTENANCE_HOOKS:
+            return False
+        if _MAINTENANCE_THREAD is not None and _MAINTENANCE_THREAD.is_alive():
+            return False
+        if current - _MAINTENANCE_LAST_AT < _maintenance_interval():
+            return False
+        _MAINTENANCE_LAST_AT = current
+        thread = threading.Thread(
+            target=run_maintenance, name="custom-opencode-runtime-maintenance", daemon=True
+        )
+        _MAINTENANCE_THREAD = thread
+    thread.start()
+    return True
+
+
+def _join_maintenance(timeout: float) -> None:
+    thread = _MAINTENANCE_THREAD
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(max(0.0, timeout))
+
+
+def _refresh_indexes() -> None:
+    """Prewarm the legacy RepoIndexer for active projects (maintenance thread).
+
+    It only backs /client-repo-index.json and global search; every rebuild
+    reads the whole tree, so it runs at most every few minutes per project.
+    """
+    current = time.monotonic()
+    for directory in STORE.project_dirs(ACTIVE_STATES | QUEUE_STATES)[:30]:
+        if current - LAST_INDEX_AT.get(directory, 0.0) < LEGACY_INDEX_INTERVAL_SECONDS:
             continue
         LAST_INDEX_AT[directory] = current
         try:
             INDEXER.refresh(directory)
         except Exception:
             pass
+
+
+register_maintenance("legacy-repo-index", _refresh_indexes, order=900)
 
 
 def worker(features: Any) -> None:
@@ -1078,18 +1255,24 @@ def worker(features: Any) -> None:
         if stop.is_set():
             return
         STORE.prune()
+        LAST_PRUNE_AT = time.monotonic()
         recovered = STORE.recover_inflight()
         if recovered:
             STORE.event(kind="runtime.recovery_scan", data={"tasks": recovered})
         while not stop.is_set():
+            # Non-blocking and first: a slow backend call or a failing step
+            # below must not starve lease-scoped maintenance.
+            try:
+                _schedule_maintenance()
+            except Exception:
+                pass
             try:
                 _migrate(features)
-                active = STORE.list_tasks(states=ACTIVE_STATES | QUEUE_STATES, limit=1000)
-                statuses = features._status_payload() if active else {}
+                pending = STORE.has_tasks(states=ACTIVE_STATES | QUEUE_STATES)
+                statuses = features._status_payload() if pending else {}
                 _monitor_active(features, statuses)
                 _dispatch_ready(features, statuses)
                 features._apply_permission_policies()
-                _refresh_indexes()
                 if time.monotonic() - LAST_PRUNE_AT > 3600:
                     STORE.prune()
                     LAST_PRUNE_AT = time.monotonic()
@@ -1103,6 +1286,8 @@ def worker(features: Any) -> None:
         # owns it. Service managers may kill an unresponsive process explicitly.
         while VERIFYING:
             time.sleep(0.05)
+        # Lease-scoped maintenance must not overlap the next lease holder's.
+        _join_maintenance(10.0)
     finally:
         lease.release()
 
@@ -1259,7 +1444,7 @@ def create_task_request(features: Any, payload: dict[str, Any]) -> dict[str, Any
         body = {
             "location": {"directory": task_dir},
             "title": str(payload.get("title") or "Isolated server task")[:200],
-            "agent": "plan-direct" if metadata["modeAtCreate"] == "plan" else "build-direct",
+            "agent": "plan" if metadata["modeAtCreate"] == "plan" else "build",
         }
         if base:
             try:
@@ -1637,16 +1822,15 @@ def session_plan_document(session_id: str) -> dict[str, Any] | None:
 
 
 def runtime_snapshot(features: Any, directory: str | None = None) -> dict[str, Any]:
-    tasks = (
-        STORE.list_tasks(project_dir=directory, limit=500)
-        if directory
-        else STORE.list_tasks(limit=500)
-    )
+    # Counts need scalar columns only; just the rendered first 100 rows need
+    # the public projection. Neither decodes attachments or metadata blobs.
+    counted = STORE.list_tasks(project_dir=directory or None, limit=500, projection="light")
+    tasks = STORE.list_tasks(project_dir=directory or None, limit=100, projection="public")
     return {
         "version": 2,
         "store": str(STORE.paths.db),
-        "taskCounts": _counts(tasks),
-        "tasks": [_public(task) for task in tasks[:100]],
+        "taskCounts": _counts(counted),
+        "tasks": [_public(task) for task in tasks],
         "usage": STORE.usage_summary(),
         "routing": resource_snapshot(),
         "secretBroker": SECRETS.snapshot(),
@@ -1744,6 +1928,7 @@ def handle_get(handler: Any, parsed: Any, features: Any) -> bool:
                 project_dir=directory,
                 states=states or None,
                 limit=int((params.get("limit") or [200])[0]),
+                projection="public",
             )
             handler.json_response(
                 {"ok": True, "tasks": [_public(item) for item in rows], "counts": _counts(rows)}

@@ -13,14 +13,25 @@ from urllib.parse import parse_qs
 
 from runtime_store import now_ms
 
-_LOCK=threading.Lock(); _STARTED=False; _NOTIFIED:dict[str,str]={}; _INDEXED:dict[str,float]={}
+_LOCK=threading.Lock(); _REGISTERED=False
 _NOTIFY={"waiting_permission","needs_attention","failed","completed"}
 _ACTIVE={"queued","blocked","paused","submitted","running","waiting_permission","verifying","recovering","needs_attention"}
 _WRITE_TOOLS={"edit","write","apply_patch","patch","multiedit"}
+# Durable notifier/replay watermark (meta table). The window is re-scanned with
+# an overlap so a transaction committed just after its timestamp is not missed;
+# task_notifications makes the rescan idempotent across ticks and restarts.
+_WATERMARK_KEY="runtime-v3.maintenance.watermark"
+_WATERMARK_OVERLAP_MS=60_000
+# Replays are captured for recently finished tasks only. The lookback must stay
+# far below the regenerable-artifact retention or pruned replays would return.
+_REPLAY_LOOKBACK_MS=24*3600_000
+_REPLAY_PER_TICK=4
+_REPLAY_MAX_FAILURES=6
+_REPLAY_BACKOFF:dict[str,tuple[int,float]]={}
 
 
 def install(runtime:Any,v3mod:Any,features:Any)->None:
-    global _STARTED
+    global _REGISTERED
     v3=v3mod.instance(runtime,features)
     original=runtime.SCHEDULER.snapshot
     if not getattr(runtime.SCHEDULER,"_v3_snapshot_wrapped",False):
@@ -32,38 +43,52 @@ def install(runtime:Any,v3mod:Any,features:Any)->None:
     # Keep the marker for older integration checks; do not double-wrap mutations.
     v3.gateway._ownership_root_wrapped = True
     with _LOCK:
-        if _STARTED: return
-        threading.Thread(target=_worker,args=(runtime,v3,features),name="custom-opencode-v3-maintenance",daemon=True).start(); _STARTED=True
+        if _REGISTERED: return
+        # Never start work at import: server_workflow is imported by both the
+        # web server and the private policy server. Only the worker-lease
+        # holder runs maintenance (server_runtime.worker schedules the hooks).
+        register=getattr(runtime,"register_maintenance",None)
+        if callable(register): register("runtime-v3",lambda: maintenance_tick(runtime,v3,features),order=100)
+        _REGISTERED=True
 
 
-def _has_replay(v3:Any,task_id:str)->bool:
-    try: return any(item.get("kind")=="run-replay" for item in v3.replay.artifacts.list(task_id,100))
-    except Exception: return False
-
-
-def _worker(runtime:Any,v3:Any,features:Any)->None:
-    while True:
-        try:
-            tasks=runtime.STORE.list_tasks(limit=500); now=time.monotonic(); projects=set()
-            for task in tasks:
-                project=str(task.get("project_dir") or ""); state=str(task.get("state") or "")
-                if project and state in _ACTIVE: projects.add(project)
-                if state in _NOTIFY and _NOTIFIED.get(str(task["id"]))!=state:
-                    _NOTIFIED[str(task["id"])]=state
-                    event={"type":"task.state","taskID":task["id"],"sessionID":task.get("session_id"),"projectDir":project,"state":state,"kind":task.get("kind"),"profile":task.get("profile"),"error":task.get("last_error"),"at":now_ms()}
-                    v3.notifier.send(event); runtime.STORE.event(kind="notification.sent",task_id=task["id"],session_id=task.get("session_id"),project_dir=project,data={"state":state})
-                if state in {"completed","failed"} and not _has_replay(v3,str(task["id"])):
-                    try: v3.replay.capture(features,task)
-                    except Exception as exc: runtime.STORE.event(kind="replay.capture_error",task_id=task["id"],session_id=task.get("session_id"),project_dir=project,data={"error":f"{type(exc).__name__}: {exc}"[:500]})
-            for project in sorted(projects)[:40]:
-                if now-_INDEXED.get(project,0.)<30.: continue
-                _INDEXED[project]=now
-                try: v3.indexer.refresh(project)
-                except Exception as exc: runtime.STORE.event(kind="repo.index_error",project_dir=project,data={"error":f"{type(exc).__name__}: {exc}"[:500]})
+def maintenance_tick(runtime:Any,v3:Any,features:Any)->dict[str,int]:
+    """One lease-holder pass: durable notifications, run replays, repo indexes."""
+    store=runtime.STORE; result={"notified":0,"replays":0,"indexScheduled":0}
+    stamp=now_ms(); raw=store.meta_get(_WATERMARK_KEY)
+    try: watermark=int(raw) if raw is not None else None
+    except ValueError: watermark=None
+    if watermark is None or watermark>stamp+_WATERMARK_OVERLAP_MS:
+        # First durable run (or the clock moved back): the previous in-memory
+        # notifier already announced everything that is currently terminal.
+        store.seed_notifications(_NOTIFY); watermark=stamp; store.meta_set(_WATERMARK_KEY,str(watermark))
+    rows=store.tasks_updated_since(watermark-_WATERMARK_OVERLAP_MS,limit=5000)
+    newest=max([watermark,*(int(row.get("updated_at") or 0) for row in rows)])
+    for task in store.claim_notifications([row for row in rows if str(row.get("state") or "") in _NOTIFY]):
+        project=str(task.get("project_dir") or ""); state=str(task.get("state") or "")
+        event={"type":"task.state","taskID":task["id"],"sessionID":task.get("session_id"),"projectDir":project,"state":state,"kind":task.get("kind"),"profile":task.get("profile"),"error":task.get("last_error"),"at":now_ms()}
+        v3.notifier.send(event); store.event(kind="notification.sent",task_id=task["id"],session_id=task.get("session_id"),project_dir=project,data={"state":state})
+        result["notified"]+=1
+    if newest!=watermark: store.meta_set(_WATERMARK_KEY,str(newest))
+    candidates=store.tasks_missing_artifact("run-replay",states={"completed","failed"},since_ms=stamp-_REPLAY_LOOKBACK_MS,limit=100)
+    known={str(task["id"]) for task in candidates}; clock=time.monotonic()
+    for task_id in [item for item in _REPLAY_BACKOFF if item not in known]: _REPLAY_BACKOFF.pop(task_id,None)
+    for task in candidates:
+        if result["replays"]>=_REPLAY_PER_TICK: break
+        task_id=str(task["id"]); failures,retry_at=_REPLAY_BACKOFF.get(task_id,(0,0.))
+        if failures>=_REPLAY_MAX_FAILURES or clock<retry_at: continue
+        try: artifact=v3.replay.capture(features,task)
         except Exception as exc:
-            try: runtime.STORE.event(kind="runtime.v3_maintenance_error",data={"error":f"{type(exc).__name__}: {exc}"[:1000]})
-            except Exception: pass
-        time.sleep(3.)
+            artifact=None; store.event(kind="replay.capture_error",task_id=task["id"],session_id=task.get("session_id"),project_dir=task.get("project_dir"),data={"error":f"{type(exc).__name__}: {exc}"[:500],"attempt":failures+1})
+        if artifact: _REPLAY_BACKOFF.pop(task_id,None); result["replays"]+=1
+        else: _REPLAY_BACKOFF[task_id]=(failures+1,clock+min(3600.,30.*2**failures))
+    for project in store.project_dirs(_ACTIVE)[:40]:
+        # Non-blocking: rebuilds are single-flight per project, run on a
+        # background thread and respect the indexer's minimum interval.
+        try:
+            if v3.indexer.schedule_refresh(project): result["indexScheduled"]+=1
+        except Exception as exc: store.event(kind="repo.index_error",project_dir=project,data={"error":f"{type(exc).__name__}: {exc}"[:500]})
+    return result
 
 
 def _directory(features:Any,payload:dict[str,Any])->str:
@@ -80,7 +105,7 @@ def _worktree_merge(runtime:Any,task:dict[str,Any],cleanup:bool=False)->dict[str
     if not worktree or not owner: raise ValueError("task is not an isolated managed worktree")
     if not Path(worktree).is_dir() or not Path(owner).is_dir(): raise ValueError("worktree/root missing")
     base=str((task.get("baseline") or {}).get("head") or "HEAD")
-    changed_proc=_run_git(worktree,["diff","--name-only","-z",base]); untracked_proc=_run_git(worktree,["ls-files","--others","--exclude-standard","-z"])
+    changed_proc=_run_git(worktree,["diff","--no-ext-diff","--no-textconv","--name-only","-z",base]); untracked_proc=_run_git(worktree,["ls-files","--others","--exclude-standard","-z"])
     if changed_proc.returncode!=0 or untracked_proc.returncode!=0: raise RuntimeError((changed_proc.stderr or untracked_proc.stderr).strip() or "worktree status failed")
     tracked=[item for item in changed_proc.stdout.split("\0") if item]; untracked=[item for item in untracked_proc.stdout.split("\0") if item]
     paths=sorted(dict.fromkeys([*tracked,*untracked]))
@@ -99,7 +124,9 @@ def _worktree_merge(runtime:Any,task:dict[str,Any],cleanup:bool=False)->dict[str
         if source.is_symlink() or not source.is_file(): raise RuntimeError(f"untracked path is not a regular file: {relative}")
         if target.exists(): raise RuntimeError(f"target already exists for untracked file: {relative}")
         sources.append((relative,source,target))
-    patch=_run_git(worktree,["diff","--binary",base,"--"],timeout=60.)
+    # Repo-defined diff drivers/textconv must never run server-side (and would
+    # corrupt the patch applied to the target root).
+    patch=_run_git(worktree,["diff","--no-ext-diff","--no-textconv","--binary",base,"--"],timeout=60.)
     if patch.returncode!=0: raise RuntimeError(patch.stderr.strip() or "worktree diff failed")
     if patch.stdout:
         checked=_run_git(owner,["apply","--check","--3way","--whitespace=nowarn","-"],patch.stdout,60.)

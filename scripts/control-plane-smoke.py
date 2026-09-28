@@ -54,6 +54,58 @@ def main() -> None:
             {"action":"read", "resources":["src/*"]},
         )
 
+        # Git metadata can make server-side git run programs (fsmonitor, hooks,
+        # filters, gpg): never an automatic workspace write.
+        (workspace / "sub").mkdir()
+        (workspace / "gitdir-link").symlink_to(workspace / ".git", target_is_directory=True)
+        for target in (
+            ".git/config", ".git/hooks/post-checkout", str(workspace / ".git" / "config"),
+            "sub/.git", "sub/.git/info/attributes", ".gitattributes", "sub/.gitattributes",
+            ".gitmodules", ".GIT/config", ".git./config", "GIT~1/config", ".git::$INDEX_ALLOCATION/config",
+            "gitdir-link/config", "sub\\.git\\hooks\\pre-commit",
+        ):
+            for action in ("edit", "write", "patch"):
+                decision = expect({"action": action, "resources": [target]}, effect="ask", risk="R4", workspace=str(workspace))
+                assert "git metadata" in decision["reason"], decision
+            expect({"action": "edit", "resources": [target]}, effect="ask", risk="R4", workspace=str(workspace), preset="autonomous")
+        for ordinary in (".github/workflows/ci.yml", ".gitignore", "src/git.py", "docs/.gitkeep", "legit/config"):
+            expect({"action": "edit", "resources": [ordinary]}, effect="allow", risk="R2", workspace=str(workspace))
+        expect({"action": "shell", "resources": ["cp evil.sh .git/hooks/pre-commit"]}, effect="ask", risk="R4", workspace=str(workspace))
+        expect({"action": "shell", "resources": ["touch .gitattributes"]}, effect="ask", risk="R4", workspace=str(workspace))
+        expect({"action": "shell", "resources": ["git status --short"]}, effect="allow", risk="R0", workspace=str(workspace))
+
+        # A saved project allow rule cannot punch through the git-metadata R4.
+        original_rule_settings = server_control.features.project_settings
+        try:
+            server_control.features.project_settings = lambda directory: {
+                "permissionRules": [{"action":"edit", "resource":"*", "effect":"allow"}]
+            }
+            decision = server_control.decision_for({"action":"edit", "resources":[".git/config"]}, str(workspace))
+            assert decision["effect"] == "ask" and decision["risk"] == "R4" and not decision["auto"], decision
+        finally:
+            server_control.features.project_settings = original_rule_settings
+
+        # Idle backoff: without busy sessions the worker scans all known
+        # workspaces at most once per IDLE_SCAN_SECONDS, busy ones every tick.
+        original_active = server_control._active_directories
+        original_known = server_control._known_directories
+        try:
+            server_control._active_directories = lambda: []
+            server_control._known_directories = lambda: ["/idle/workspace"]
+            server_control.NEXT_IDLE_SCAN_AT = 0.0
+            assert server_control._permission_directories() == ["/idle/workspace"]
+            assert server_control._permission_directories() == []
+            assert server_control.NEXT_IDLE_SCAN_AT - __import__("time").monotonic() > 5
+            server_control._active_directories = lambda: ["/busy/workspace"]
+            assert server_control._permission_directories() == ["/busy/workspace"]
+            assert server_control._permission_directories() == ["/busy/workspace"]
+            server_control._active_directories = lambda: []
+            server_control.NEXT_IDLE_SCAN_AT = 0.0
+            assert server_control._permission_directories() == ["/idle/workspace"]
+        finally:
+            server_control._active_directories = original_active
+            server_control._known_directories = original_known
+
         original_settings = server_control.features.project_settings
         original_reply = server_control.features._permission_reply
         original_directory = server_control.features._session_directory
@@ -119,7 +171,7 @@ def main() -> None:
         event = json.loads(audit_path.read_text(encoding="utf-8").splitlines()[-1])
         assert "do-not-store" not in json.dumps(event), event
 
-    print("Control-plane smoke passed: R0-R2 automation + project overrides + hard R3/R4 boundary")
+    print("Control-plane smoke passed: R0-R2 automation + project overrides + hard R3/R4 boundary + git metadata R4 + idle scan backoff")
 
 
 if __name__ == "__main__":

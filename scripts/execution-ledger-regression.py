@@ -294,6 +294,43 @@ class LedgerTests(unittest.TestCase):
         # Neither a caller-provided boolean nor an unrelated receipt is a grant.
         self.assertFalse(self.ledger.extension_check(forms,"root", "rejected")["granted"])
 
+    def test_summary_sql_matches_reference_loop(self):
+        # /client-runtime-v3.json aggregates in SQLite; the result must be the
+        # reference Python loop's, including bool/float/string/null usage
+        # values, NULL/''/"unknown" model refs and first-seen model order.
+        import random
+
+        rng = random.Random(7)
+        with self.store.transaction() as db:
+            values = [None, 0, 1, 7, 2.5, True, False, "12", {"x": 1}, [1], None]
+            for index in range(400):
+                usage = {}
+                for key in ("input", "output", "reasoning", "cacheRead", "cacheWrite"):
+                    if rng.random() < 0.7:
+                        usage[key] = rng.choice(values)
+                raw = None if rng.random() < 0.1 else json.dumps(usage)
+                db.execute(
+                    "INSERT INTO execution_requests(id,root_id,session_id,model_ref,started_at,state,reserved,usage_json) VALUES(?,?,?,?,?,?,?,?)",
+                    (
+                        f"r{index}",
+                        rng.choice(["root-a", "root-b"]),
+                        "s",
+                        rng.choice([None, "", "unknown", "p/m1", "p/m2"]),
+                        index,
+                        "completed",
+                        10,
+                        raw,
+                    ),
+                )
+        self.assertTrue(self.store.json_sql_available())
+        for root in (None, "root-a"):
+            expected = self.ledger._summary_python(root)
+            actual = self.ledger.summary(root)
+            self.assertEqual(actual, expected)
+            self.assertEqual(list(actual["byModel"]), list(expected["byModel"]))
+        self.store._json_sql = False  # SQLite without JSON1: reference path
+        self.assertEqual(self.ledger.summary(), self.ledger._summary_python())
+
     def test_review_same_change_has_one_owner(self):
         self.assertTrue(self.ledger.claim_review(self.root["rootID"], "diff", "orchestrator"))
         self.assertFalse(self.ledger.claim_review(self.root["rootID"], "diff", "server"))

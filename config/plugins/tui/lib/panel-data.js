@@ -45,3 +45,12 @@ export function normalizeFamilyIDs(rootID, family) {
   for (const member of members) add(member)
   return ids
 }
+
+/** Insert/refresh `key` as most recent and evict the least recently saved
+ * entries beyond `limit` (Map iteration order is insertion order). */
+export function rememberBounded(map, key, value, limit = 100) {
+  map.delete(key)
+  map.set(key, value)
+  while (map.size > Math.max(1, limit)) map.delete(map.keys().next().value)
+  return map
+}

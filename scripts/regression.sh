@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Contract tests describe the whole product. A local .env (install.sh sources
+# it) may switch optional paid providers off; fixtures must not depend on it.
+export OPENCODE_ALIBABA_ENABLED=1 OPENCODE_LIMITS_QWEN=1
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
@@ -98,6 +101,7 @@ PY
   then
     python3 scripts/queue-badge-convergence.py
     python3 scripts/web-critical-controls-e2e.py
+    python3 scripts/web-ux-regression-e2e.py
     python3 scripts/web-panel-scroll-e2e.py
     python3 scripts/web-runtime-status-e2e.py
     python3 scripts/web-fixture-e2e.py

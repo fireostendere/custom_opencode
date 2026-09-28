@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import tempfile
 import threading
@@ -21,6 +22,7 @@ from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
 from uuid import uuid4
 
+import control_plane
 import server_plus as baseplus
 
 # Re-export server_plus helpers used by the composed production entrypoint.
@@ -44,6 +46,16 @@ MAX_QUEUE_ITEM_BYTES = 10 * 1024 * 1024
 MAX_QUEUE_ITEMS_PER_SESSION = 50
 INSTRUCTION_LIMIT = 12_000
 RULE_LIMIT = 100
+# Nearly every session-scoped request resolves its workspace: a backend GET
+# plus a 9P path resolution (roots + directory) on /mnt/c. Sessions can move
+# (TUI /move), so the location itself is always read from the backend; only
+# the costly canonicalization of an unchanged, in-root location string is
+# cached briefly. A moved session (new string) is re-validated at once, and
+# missing or out-of-root results are never cached.
+CANONICAL_DIRECTORY_TTL_SECONDS = 10.0
+CANONICAL_DIRECTORY_CACHE_LIMIT = 512
+_CANONICAL_DIRECTORY_LOCK = threading.Lock()
+_CANONICAL_DIRECTORY_CACHE: dict[str, tuple[float, str]] = {}
 
 
 def _state_path() -> Path:
@@ -132,7 +144,23 @@ def _session_directory(session_id: str) -> str:
     directory = ((session.get("location") or {}).get("directory"))
     if not isinstance(directory, str) or not directory:
         raise ValueError("session has no directory")
-    return _canonical_directory(directory)
+    now = time.monotonic()
+    with _CANONICAL_DIRECTORY_LOCK:
+        cached = _CANONICAL_DIRECTORY_CACHE.get(directory)
+    if cached is not None and 0 <= now - cached[0] < CANONICAL_DIRECTORY_TTL_SECONDS:
+        return cached[1]
+    # Raises for missing or out-of-root directories: never cached.
+    canonical = _canonical_directory(directory)
+    with _CANONICAL_DIRECTORY_LOCK:
+        if directory not in _CANONICAL_DIRECTORY_CACHE and len(_CANONICAL_DIRECTORY_CACHE) >= CANONICAL_DIRECTORY_CACHE_LIMIT:
+            _CANONICAL_DIRECTORY_CACHE.pop(min(_CANONICAL_DIRECTORY_CACHE, key=lambda key: _CANONICAL_DIRECTORY_CACHE[key][0]), None)
+        _CANONICAL_DIRECTORY_CACHE[directory] = (now, canonical)
+    return canonical
+
+
+def _forget_session_directory() -> None:
+    with _CANONICAL_DIRECTORY_LOCK:
+        _CANONICAL_DIRECTORY_CACHE.clear()
 
 
 def _resolve_directory(payload: dict[str, Any] | None = None, params: dict[str, list[str]] | None = None) -> str:
@@ -519,19 +547,39 @@ def _stop_worker(timeout: float = 30.0) -> bool:
         return stopped
 
 
-def _git_path(directory: str, relative: str) -> tuple[Path, Path]:
-    root = Path(_canonical_directory(directory)).resolve(strict=True)
-    if not relative or relative.startswith(("/", "\\")):
+def _git_path(directory: str, relative: str) -> tuple[Path, str, str]:
+    """(work-tree root, root-relative path, directory prefix) for one file.
+
+    The path stays relative to the session directory, but every Git call runs
+    at the real work-tree root: a directory outside any repository (where
+    `ls-files` fails for every path) is refused instead of treating arbitrary
+    files as untracked.
+    """
+    base = Path(_canonical_directory(directory)).resolve(strict=True)
+    if not relative or relative.startswith("/") or "\\" in relative or "\x00" in relative:
         raise ValueError("invalid file path")
-    target = (root / relative).resolve(strict=False)
-    if not baseplus._inside(target, root):
-        raise ValueError("file outside project")
-    return root, target
+    parts = relative.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError("invalid file path")
+    if control_plane.git_metadata_path(relative):
+        raise ValueError("git metadata cannot be reverted")
+    probe = _run_git(base, ["rev-parse", "--show-toplevel"])
+    toplevel = probe.stdout.strip() if probe.returncode == 0 else ""
+    if not toplevel:
+        raise ValueError("directory is not inside a git work tree")
+    root = Path(toplevel).resolve(strict=True)
+    if not baseplus._inside(base, root):
+        raise ValueError("directory is not inside its git work tree")
+    prefix = base.relative_to(root).as_posix()
+    pathspec = relative if prefix == "." else f"{prefix}/{relative}"
+    return root, pathspec, "" if prefix == "." else prefix
 
 
-def _run_git(root: Path, args: list[str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+def _run_git(root: Path, args: list[str], input_text: str | None = None, *,
+             literal: bool = False) -> subprocess.CompletedProcess[str]:
+    # --literal-pathspecs: a path such as "*" must never match other files.
     return subprocess.run(
-        ["git", "-C", str(root), *args],
+        ["git", *(["--literal-pathspecs"] if literal else []), "-C", str(root), *args],
         input=input_text,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -541,22 +589,74 @@ def _run_git(root: Path, args: list[str], input_text: str | None = None) -> subp
     )
 
 
+def _git_tracked(root: Path, pathspec: str) -> bool:
+    """Exactly this file is in the index or in HEAD (directories never match)."""
+    cached = _run_git(root, ["ls-files", "-z", "--cached", "--", pathspec], literal=True)
+    if cached.returncode == 0 and pathspec in cached.stdout.split("\0"):
+        return True
+    head = _run_git(root, ["ls-tree", "-z", "HEAD", "--", pathspec])
+    if head.returncode != 0:
+        return False
+    for record in head.stdout.split("\0"):
+        meta, _, name = record.partition("\t")
+        if name == pathspec and meta.split(" ")[1:2] == ["blob"]:
+            return True
+    return False
+
+
+def _unlink_untracked_file(root: Path, pathspec: str) -> None:
+    """Remove one regular file below root without following any symlink."""
+    parts = pathspec.split("/")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if os.open not in os.supports_dir_fd or os.unlink not in os.supports_dir_fd:
+        target = root.joinpath(*parts)
+        if target.is_symlink() or not target.is_file() or target.resolve(strict=True) != target:
+            raise ValueError("untracked path is not a regular file")
+        target.unlink()
+        return
+    try:
+        fd = os.open(root, flags)
+    except OSError as exc:
+        raise ValueError("work tree is not accessible") from exc
+    try:
+        for part in parts[:-1]:
+            try:
+                next_fd = os.open(part, flags, dir_fd=fd)
+            except OSError as exc:
+                raise ValueError("untracked path is below a symlink or missing directory") from exc
+            os.close(fd)
+            fd = next_fd
+        try:
+            details = os.stat(parts[-1], dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise ValueError("untracked path does not exist") from exc
+        # Symlinks, directories and special files are never unlinked.
+        if not stat.S_ISREG(details.st_mode):
+            raise ValueError("untracked path is not a regular file")
+        os.unlink(parts[-1], dir_fd=fd)
+    finally:
+        os.close(fd)
+
+
 def git_revert(payload: dict[str, Any]) -> dict[str, Any]:
     directory = str(payload.get("directory") or "")
     relative = str(payload.get("path") or "")
     mode = str(payload.get("mode") or "file")
-    root, target = _git_path(directory, relative)
+    root, pathspec, prefix = _git_path(directory, relative)
     if mode == "file":
-        tracked = _run_git(root, ["ls-files", "--error-unmatch", "--", relative])
-        if tracked.returncode == 0:
-            result = _run_git(root, ["restore", "--source=HEAD", "--staged", "--worktree", "--", relative])
+        if _git_tracked(root, pathspec):
+            result = _run_git(root, ["restore", "--source=HEAD", "--staged", "--worktree", "--", pathspec], literal=True)
             if result.returncode != 0:
                 raise RuntimeError(result.stderr.strip() or "git restore failed")
             return {"ok": True, "mode": "file", "path": relative, "action": "restored"}
-        if target.is_file() or target.is_symlink():
-            target.unlink()
-            return {"ok": True, "mode": "file", "path": relative, "action": "removed-untracked"}
-        raise ValueError("untracked path is not a file")
+        # Delete only what Git itself lists as untracked and not ignored:
+        # ignored files (.env, build output) and files outside any work tree
+        # are never removed.
+        untracked = _run_git(root, ["ls-files", "-z", "--others", "--exclude-standard", "--", pathspec], literal=True)
+        if untracked.returncode != 0 or pathspec not in untracked.stdout.split("\0"):
+            raise ValueError("path is neither tracked nor an untracked, non-ignored file")
+        _unlink_untracked_file(root, pathspec)
+        return {"ok": True, "mode": "file", "path": relative, "action": "removed-untracked"}
     if mode != "hunk":
         raise ValueError("unknown revert mode")
     patch = str(payload.get("patch") or "")
@@ -564,6 +664,19 @@ def git_revert(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("invalid patch")
     header_paths: list[str] = []
     for line in patch.splitlines():
+        # Extended headers could retarget the patch (rename/copy) or turn the
+        # file into a symlink/gitlink when reversed.
+        if line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")):
+            raise ValueError("patch renames or copies files")
+        if line.startswith(("new file mode ", "deleted file mode ", "old mode ", "new mode ")) and (
+            "120000" in line or "160000" in line
+        ):
+            raise ValueError("patch changes a symlink or submodule")
+        if line.startswith("diff --git ") and line not in (
+            f"diff --git a/{relative} b/{relative}",
+            f"diff --git {relative} {relative}",
+        ):
+            raise ValueError("patch touches another file")
         if line.startswith("--- ") or line.startswith("+++ "):
             value = line[4:].split("\t", 1)[0].strip()
             if value == "/dev/null":
@@ -573,7 +686,11 @@ def git_revert(payload: dict[str, Any]) -> dict[str, Any]:
             header_paths.append(value)
     if header_paths and any(value != relative for value in header_paths):
         raise ValueError("patch touches another file")
-    result = _run_git(root, ["apply", "-R", "--recount", "--unidiff-zero", "-"], patch)
+    # Patch paths are relative to the session directory; apply them there.
+    args = ["apply", "-R", "--recount", "--unidiff-zero"]
+    if prefix:
+        args.append(f"--directory={prefix}")
+    result = _run_git(root, [*args, "-"], patch)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "git apply -R failed")
     return {"ok": True, "mode": "hunk", "path": relative}

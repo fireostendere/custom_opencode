@@ -93,6 +93,9 @@ def ensure() -> None:
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
                 close_fds=True,
+                # glibc reads this only at start: few malloc arenas keep the
+                # long-lived multi-threaded daemon's heap from ballooning.
+                env={**os.environ, "MALLOC_ARENA_MAX": os.environ.get("MALLOC_ARENA_MAX", "2")},
             )
         finally:
             os.close(logfd)
@@ -119,13 +122,30 @@ def serve() -> None:
     from runtime_v3 import _internal_auth, handle_post
 
     runtime, features = production.runtime, production.features
+    base = production.rag.plus.ext.base
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "OpenCodePrivatePolicy/1"
+        # A stalled local client must not pin a handler thread.
+        timeout = 10
 
         def log_message(self, fmt, *args):
             # Paths/status only; request bodies and credentials are never logged.
             sys.stderr.write((fmt % args) + "\n")
+
+        def _local_plugin_request(self):
+            """Plugins call 127.0.0.1 without browser headers. A web page can
+            still reach this loopback port (DNS rebinding, other local sites),
+            which would turn it into a token oracle."""
+            if self.headers.get("Origin") is not None:
+                return False
+            if str(self.headers.get("Sec-Fetch-Site", "")).strip().lower() not in ("", "none"):
+                return False
+            try:
+                host = urlsplit(f"//{str(self.headers.get('Host', '')).strip()}").hostname or ""
+            except ValueError:
+                return False
+            return base.is_loopback(host)
 
         def json_response(self, value, status=200):
             data = json.dumps(value, ensure_ascii=False, default=str).encode()
@@ -147,6 +167,10 @@ def serve() -> None:
             )
 
         def do_GET(self):
+            if not self._local_plugin_request():
+                return self.json_response({"ok": False, "error": "forbidden"}, 403)
+            if production.internal_token_throttled(self):
+                return
             if not _internal_auth(self):
                 return self.json_response({"ok": False, "error": "forbidden"}, 403)
             if self.path != "/internal/runtime/health":
@@ -164,11 +188,19 @@ def serve() -> None:
             parsed = urlsplit(self.path)
             if not parsed.path.startswith("/internal/runtime/"):
                 return self.json_response({"ok": False, "error": "not found"}, 404)
+            if not self._local_plugin_request():
+                return self.json_response({"ok": False, "error": "forbidden"}, 403)
+            if production.internal_token_throttled(self):
+                return
             if not handle_post(self, parsed, runtime, features):
                 self.json_response({"ok": False, "error": "not found"}, 404)
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", port()), Handler)
-    httpd.daemon_threads = True
+    class PolicyHTTPServer(ThreadingHTTPServer):
+        daemon_threads = True
+        # socketserver's default listen backlog of 5 drops bursts of tool hooks.
+        request_queue_size = 128
+
+    httpd = PolicyHTTPServer(("127.0.0.1", port()), Handler)
     # Holding this lock avoids stale PID files and two private processes.
     fd = os.open(
         state_dir() / f"server-{port()}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600

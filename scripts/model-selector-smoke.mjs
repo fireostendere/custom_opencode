@@ -16,6 +16,16 @@ source = source.replace(
   './lib/limits-helper.js',
   new URL('config/plugins/tui/lib/limits-helper.js', root).href,
 )
+source = source.replace(
+  './lib/agent-sync.js',
+  new URL('config/plugins/tui/lib/agent-sync.js', root).href,
+)
+// Solid's reactive scheduler is outside this smoke; effects run eagerly and
+// are re-run explicitly through rerunEffects().
+source = source.replace(
+  'import { createEffect } from "solid-js"',
+  'const createEffect = (fn) => { (globalThis.__effects ||= []).push(fn); fn() }',
+)
 source = source.replace(/<span[^>]*>\{([^}]+)\}<\/span>/g, '$1')
 assert.ok(!source.includes('@opencode-ai/plugin/tui'), 'plugin import replacement failed')
 for (const modelID of ['gpt-6-astra', 'gpt-6-astra-orchestrated', 'gpt-6-sol-orchestrated', 'gpt-6-dnd-edition', 'gpt-6-sol-direct', 'gpt-6-luna-direct']) {
@@ -52,6 +62,20 @@ let simulateFavorite = false
 let failSwitch = false
 let createResponse = { id: 'ses_home' }
 let freshRecent = null
+let modelChoice = { providerID: 'bailian-cli', modelID: 'qwen-flash' }
+let currentAgent = 'build'
+const agentChanges = []
+let sessionStatus = 'idle'
+let sessionParent
+let sessionModel = null
+let agentChoice = 'plan'
+const agentList = [
+  { id: 'build', mode: 'primary' },
+  { id: 'general', mode: 'subagent' },
+  { id: 'plan', mode: 'primary' },
+  { id: 'build-direct', mode: 'primary', hidden: true },
+  { id: 'dnd-narrator', mode: 'primary', model: { providerID: 'openai', id: 'gpt-6-dnd-edition', variant: 'auto' } },
+]
 const toasts = []
 let route = { type: 'session', sessionID: 'ses_test' }
 const current = { providerID: 'bailian-cli', modelID: 'qwen3.8-max' }
@@ -73,7 +97,7 @@ const models = [
   { providerID: 'openai', id: 'gpt-6-astra', name: 'GPT-6 Astra', enabled: true, status: 'active', cost: [{ input: 1 }] },
   { providerID: 'openai', id: 'gpt-6-astra-orchestrated', name: 'GPT-6 Astra · Orchestrated', enabled: true, status: 'active', cost: [{ input: 1 }] },
   { providerID: 'openai', id: 'gpt-6-sol-orchestrated', name: 'GPT-6 Sol · Orchestrated', enabled: true, status: 'active', cost: [{ input: 1 }] },
-  { providerID: 'openai', id: 'gpt-6-dnd-edition', name: 'GPT-6 · DnD Edition', enabled: true, status: 'active', cost: [{ input: 1 }] },
+  { providerID: 'openai', id: 'gpt-6-dnd-edition', name: 'GPT-6 · DnD Edition', enabled: true, status: 'active', cost: [{ input: 1 }], variants: [{ id: 'auto' }] },
   { providerID: 'opencode', id: 'free-model', name: 'Free Model', enabled: true, status: 'active', cost: [{ input: 0 }] },
   { providerID: 'other', id: 'z-model', name: 'Z Model', enabled: true, status: 'active', cost: [{ input: 1 }] },
   { providerID: 'other', id: 'old-model', name: 'Old Model', enabled: false, status: 'deprecated', cost: [{ input: 0.5 }] },
@@ -116,6 +140,7 @@ const context = {
         if (value.title === 'Toggle Favorite') {
           return { ...toggleFavoriteChoice }
         }
+        if (value.title === 'Select Agent') return agentChoice
         if (simulateFavorite && selectCalls === 1) {
           const favoriteToggle = commands.find((item) => item.id === 'model-selector.favorite-toggle')
           assert.ok(favoriteToggle, 'favorite-toggle command was not registered')
@@ -132,7 +157,7 @@ const context = {
           return undefined
         }
         // Choose Qwen Flash to exercise persistence + switchModel.
-        return { providerID: 'bailian-cli', modelID: 'qwen-flash' }
+        return modelChoice
       },
       clear() {
         cleared++
@@ -145,8 +170,19 @@ const context = {
     },
   },
   data: {
-    session: { get: () => ({ model: { providerID: current.providerID, id: current.modelID } }) },
-    location: { default: () => ({ directory: '/tmp/project' }) },
+    session: {
+      get: () => ({
+        agent: currentAgent,
+        parentID: sessionParent,
+        location: { directory: '/tmp/project' },
+        model: sessionModel ? { ...sessionModel } : { providerID: current.providerID, id: current.modelID },
+      }),
+      status: () => sessionStatus,
+    },
+    location: {
+      default: () => ({ directory: '/tmp/project' }),
+      agent: { list: () => agentList },
+    },
   },
   client: {
     model: {
@@ -155,10 +191,15 @@ const context = {
     },
     provider: { list: async () => ({ data: providers }) },
     session: {
+      switchAgent: async ({ agent }) => {
+        currentAgent = agent
+        agentChanges.push(agent)
+      },
       switchModel: async (value) => {
         if (failSwitch) throw new Error('switch failed')
         if (freshRecent) recentState.models = freshRecent
         switched = value
+        if (sessionModel) sessionModel = { ...value.model }
       },
       create: async (value) => {
         created = value
@@ -244,6 +285,28 @@ assert.deepEqual(
   ['qwen-flash'],
 )
 
+// A single-variant routed alias must pass its valid variant explicitly
+// instead of relying on the old session model's variant.
+simulateJump = false
+modelChoice = { providerID: 'openai', modelID: 'gpt-6-dnd-edition' }
+switched = null
+selectCalls = 0
+command.run()
+await poll(() => switched !== null)
+assert.deepEqual(switched, {
+  sessionID: 'ses_test',
+  model: { id: 'gpt-6-dnd-edition', providerID: 'openai', variant: 'auto' },
+})
+assert.equal(currentAgent, 'dnd-narrator')
+assert.deepEqual(agentChanges, ['dnd-narrator'])
+await poll(() => recentState.models[0]?.modelID === 'gpt-6-dnd-edition')
+recentState.models = [
+  { providerID: 'bailian-cli', modelID: 'qwen-flash' },
+  { providerID: 'openai', modelID: 'gpt-test' },
+  { providerID: 'bailian-cli', modelID: 'qwen3.8-max' },
+]
+modelChoice = { providerID: 'bailian-cli', modelID: 'qwen-flash' }
+
 const qwenMaxOpt = dialogOptions.find((item) => item.value.modelID === 'qwen3.8-max')
 assert.ok(qwenMaxOpt, 'qwen3.8-max option missing')
 assert.match(qwenMaxOpt.footer, /^[🌙☀] −50%$/u, 'qwen3.8-max must display night promo footer')
@@ -270,6 +333,13 @@ assert.deepEqual(created, {
 })
 assert.deepEqual(navigated, { type: 'session', sessionID: 'ses_home' })
 
+modelChoice = { providerID: 'openai', modelID: 'gpt-6-dnd-edition' }
+created = null
+command.run()
+await poll(() => created !== null)
+assert.equal(created.agent, 'dnd-narrator', 'a home DnD choice must create a narrator session')
+modelChoice = { providerID: 'bailian-cli', modelID: 'qwen-flash' }
+
 // ── Scenario 3: Alt+Up from an unknown category lands on the last section ──
 route = { type: 'session', sessionID: 'ses_test' }
 simulateJump = false
@@ -292,6 +362,7 @@ command.run()
 await poll(() => switched !== null)
 assert.equal(cleared, 2, 'Alt+Up must also reopen via ui.dialog.clear()')
 assert.deepEqual(dialogCurrents[1], { providerID: 'other', modelID: 'z-model' })
+assert.equal(currentAgent, 'build', 'choosing another model must leave narrator mode')
 context.ui.dialog.select = originalSelect
 
 // ── Scenario 4: Ctrl+F mirrors a favorite without removing its normal row ──
@@ -422,13 +493,16 @@ assert.deepEqual(switched, {
 // ── Scenario 9: failed choices must not become the next startup default ──
 route = { type: 'session', sessionID: 'ses_test' }
 failSwitch = true
+modelChoice = { providerID: 'openai', modelID: 'gpt-6-dnd-edition' }
 persisted = null
 toasts.length = 0
 command.run()
 await poll(() => toasts.length > 0)
 assert.equal(persisted, null, 'failed switch must not persist a recent model')
 assert.ok(toasts.some((item) => item.message === 'Failed to switch model'))
+assert.equal(currentAgent, 'build', 'a failed model switch must restore the prior agent')
 failSwitch = false
+modelChoice = { providerID: 'bailian-cli', modelID: 'qwen-flash' }
 
 route = { type: 'home' }
 createResponse = {}
@@ -453,8 +527,106 @@ assert.deepEqual(persisted, [
 ], 'recent persistence must start from the fresh storage draft')
 freshRecent = null
 
+// ── Scenario 11: hidden legacy agents migrate once, preserving the model ──
+const rerunEffects = () => { for (const effect of globalThis.__effects || []) effect() }
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20))
+route = { type: 'session', sessionID: 'ses_legacy' }
+currentAgent = 'build-direct'
+agentChanges.length = 0
+switched = null
+rerunEffects()
+await poll(() => agentChanges.length === 1)
+assert.deepEqual(agentChanges, ['build'], 'legacy build-direct must migrate to the visible build agent')
+assert.equal(switched, null, 'migration must not touch the session model')
+currentAgent = 'build-direct'
+rerunEffects()
+await settle()
+assert.deepEqual(agentChanges, ['build'], 'migration runs at most once per session')
+
+route = { type: 'session', sessionID: 'ses_child' }
+sessionParent = 'ses_root'
+rerunEffects()
+await settle()
+assert.deepEqual(agentChanges, ['build'], 'child sessions keep their orchestration agent')
+sessionParent = undefined
+route = { type: 'session', sessionID: 'ses_busy' }
+sessionStatus = 'running'
+rerunEffects()
+await settle()
+assert.deepEqual(agentChanges, ['build'], 'a running turn must not change agent')
+sessionStatus = 'idle'
+rerunEffects()
+await poll(() => agentChanges.length === 2)
+
+// ── Scenario 12: agent cycling persists the agent and keeps the model ──
+const cycle = commands.find((item) => item.id === 'agent.cycle')
+const cycleReverse = commands.find((item) => item.id === 'agent.cycle.reverse')
+assert.ok(cycle && cycleReverse, 'agent cycle commands must override the native draft switch')
+route = { type: 'session', sessionID: 'ses_cycle' }
+currentAgent = 'build'
+sessionModel = { providerID: 'openai', id: 'gpt-test', variant: 'high' }
+agentChanges.length = 0
+switched = null
+assert.equal(cycle.run(), undefined)
+await poll(() => agentChanges.length === 1)
+await settle()
+assert.deepEqual(agentChanges, ['plan'])
+assert.equal(switched, null, 'Build → Plan must keep the selected model and effort')
+cycle.run()
+await poll(() => agentChanges.length === 2 && switched !== null)
+assert.deepEqual(agentChanges.at(-1), 'dnd-narrator')
+assert.deepEqual(switched.model, { providerID: 'openai', id: 'gpt-6-dnd-edition', variant: 'auto' }, 'the narrator brings its own model')
+switched = null
+cycle.run()
+await poll(() => agentChanges.length === 3 && switched !== null)
+assert.deepEqual(agentChanges.at(-1), 'build')
+assert.deepEqual(switched.model, { providerID: 'openai', id: 'gpt-test', variant: 'high' }, 'leaving the narrator restores the previous model')
+switched = null
+cycleReverse.run()
+await poll(() => agentChanges.length === 4 && switched !== null)
+assert.deepEqual(agentChanges.at(-1), 'dnd-narrator')
+switched = null
+cycleReverse.run()
+await poll(() => agentChanges.length === 5 && switched !== null)
+assert.deepEqual(agentChanges.at(-1), 'plan')
+assert.deepEqual(switched.model, { providerID: 'openai', id: 'gpt-test', variant: 'high' })
+
+// ── Scenario 13: home and busy sessions keep the native draft behaviour ──
+route = { type: 'home' }
+assert.equal(cycle.run(), false)
+route = { type: 'session', sessionID: 'ses_cycle' }
+sessionStatus = 'running'
+assert.equal(cycle.run(), false)
+sessionStatus = 'idle'
+
+// ── Scenario 14: /agents lists visible primary agents and persists the choice ──
+const agentListCommand = commands.find((item) => item.id === 'agent.list')
+assert.deepEqual(agentListCommand.slash, { name: 'agents' })
+currentAgent = 'build'
+agentChoice = 'plan'
+agentChanges.length = 0
+switched = null
+agentListCommand.run()
+await poll(() => agentChanges.length === 1)
+await settle()
+assert.deepEqual(dialogOptions.map((item) => item.value), ['build', 'plan', 'dnd-narrator'])
+assert.deepEqual(agentChanges, ['plan'])
+assert.equal(switched, null)
+
+// ── Scenario 15: choosing a model in a legacy session migrates its agent ──
+sessionModel = null
+route = { type: 'session', sessionID: 'ses_pick' }
+currentAgent = 'plan-direct'
+agentChanges.length = 0
+switched = null
+modelChoice = { providerID: 'openai', modelID: 'gpt-test' }
+command.run()
+await poll(() => switched !== null)
+assert.deepEqual(agentChanges, ['plan'], 'a hidden plan alias must become the visible plan agent')
+modelChoice = { providerID: 'bailian-cli', modelID: 'qwen-flash' }
+
 cleanup()
-console.log('TUI model selector smoke passed: native dialog + favorites mirror + fresh recent persistence + failed selection rejection')
+console.log('TUI model selector smoke passed: native dialog + favorites mirror + fresh recent persistence + failed selection rejection + persisted agent switches')
 
 async function poll(check) {
   for (let i = 0; i < 200 && !check(); i++) {

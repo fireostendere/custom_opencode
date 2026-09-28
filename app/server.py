@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import MutableMapping
+from dataclasses import dataclass
 import functools
+import gzip
 import hashlib
 import hmac
 import http.client
@@ -12,12 +15,12 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
-import mimetypes
 import os
 from pathlib import Path
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -26,6 +29,69 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 from urllib.parse import SplitResult
 
 import server_users
+
+
+# Server-side Git (status/ls-files/diff/log/worktree in the runtime, repo and
+# workflow helpers) runs unsandboxed, with this process' secrets, inside
+# agent-writable repositories whose .git/config may name programs. Every child
+# git inherits command-scope overrides, which outrank repository config:
+# - core.fsmonitor runs a hook on status/diff/ls-files;
+# - core.hooksPath=/dev/null disables hooks such as post-checkout on
+#   `git worktree add`;
+# - log.showSignature=false stops `git log` from running gpg.program.
+# diff.external is deliberately absent: an empty value makes every porcelain
+# `git diff` fail ("external diff died") instead of disabling it, so diff call
+# sites must pass --no-ext-diff/--no-textconv. filter.<driver>.clean/smudge
+# (selected through .gitattributes) cannot be disabled globally at all.
+GIT_HARDENING = (
+    ("core.fsmonitor", "false"),
+    ("core.hooksPath", "/dev/null"),
+    ("log.showSignature", "false"),
+)
+
+
+def harden_git_environment(environ: MutableMapping[str, str] | None = None) -> dict[str, str | None]:
+    """Append the GIT_CONFIG_* overrides, keeping pre-existing entries.
+
+    Idempotent. Returns the previous value (None: unset) of every variable it
+    changed, so a child that must not inherit the hardening can undo it.
+    """
+    environ = os.environ if environ is None else environ
+    previous: dict[str, str | None] = {}
+
+    def assign(name: str, value: str) -> None:
+        if environ.get(name) == value:
+            return
+        previous.setdefault(name, environ.get(name))
+        environ[name] = value
+
+    try:
+        count = int(environ.get("GIT_CONFIG_COUNT") or "0")
+    except ValueError:
+        count = -1
+    if not 0 <= count <= 1000 or any(
+        f"GIT_CONFIG_KEY_{index}" not in environ or f"GIT_CONFIG_VALUE_{index}" not in environ
+        for index in range(count)
+    ):
+        # git refuses to run at all with a malformed list; start a new one.
+        count = 0
+    effective = {
+        environ[f"GIT_CONFIG_KEY_{index}"].strip().lower(): environ[f"GIT_CONFIG_VALUE_{index}"]
+        for index in range(count)
+    }
+    for key, value in GIT_HARDENING:
+        if effective.get(key.lower()) == value:
+            continue
+        assign(f"GIT_CONFIG_KEY_{count}", key)
+        assign(f"GIT_CONFIG_VALUE_{count}", value)
+        effective[key.lower()] = value
+        count += 1
+    assign("GIT_CONFIG_COUNT", str(count))
+    assign("GIT_TERMINAL_PROMPT", "0")
+    return previous
+
+
+GIT_HARDENING_UNDO = harden_git_environment()
 
 
 ROOT = Path(__file__).resolve().parent
@@ -93,6 +159,13 @@ def configure_qwen_token_plan(api_key: str, model: str) -> None:
     write_env_value(CUSTOM_ENV_FILE, "TOKEN_PLAN_PROBE_MODEL", model)
     env = os.environ.copy()
     env.pop("OPENCODE_CONFIG_DIR", None)
+    # The backend service (and agent shells it spawns) must not silently
+    # inherit this web process' Git hardening, e.g. disabled commit hooks.
+    for name, value in GIT_HARDENING_UNDO.items():
+        if value is None:
+            env.pop(name, None)
+        else:
+            env[name] = value
     binary = shutil.which("opencode2")
     if not binary:
         raise RuntimeError("opencode2 не найден в PATH")
@@ -155,8 +228,17 @@ def load_backend() -> tuple[str, str]:
 
 CLIENT_USER = setting("OPENCODE_SERVER_USERNAME", "opencode")
 CLIENT_PASSWORD = setting("OPENCODE_SERVER_PASSWORD")
-if not CLIENT_PASSWORD:
+if not CLIENT_PASSWORD or not CLIENT_PASSWORD.strip():
     raise SystemExit("Не задан OPENCODE_SERVER_PASSWORD в .env")
+if CLIENT_PASSWORD.strip() == "CHANGE_ME":
+    raise SystemExit("OPENCODE_SERVER_PASSWORD в .env всё ещё CHANGE_ME: задайте настоящий пароль")
+# server_users reads the env user from os.environ at call time. Keep it on the
+# credential validated above even when that came from an env file, otherwise
+# it would see an empty admin password.
+for _name, _value in (("OPENCODE_SERVER_USERNAME", CLIENT_USER), ("OPENCODE_SERVER_PASSWORD", CLIENT_PASSWORD)):
+    if not os.environ.get(_name):
+        os.environ[_name] = _value
+del _name, _value
 
 BACKEND_URL, BACKEND_PASSWORD = load_backend()
 BACKEND_USER = setting("OPENCODE_BACKEND_USERNAME", "opencode")
@@ -176,6 +258,294 @@ AUTH_REMEMBER_SECONDS = max(AUTH_SESSION_SECONDS, int(setting("OPENCODE_AUTH_REM
 AUTH_COOKIE_SECURE = setting("OPENCODE_AUTH_COOKIE_SECURE", "auto").strip().lower()
 SCRATCH_ROOT = Path(setting("OPENCODE_SCRATCH_DIRECTORY", str(Path.home() / "opencode-scratch"))).expanduser().resolve()
 SCRATCH_DIRECTORY = str(SCRATCH_ROOT)
+FORWARDING_HEADER_NAMES = ("Forwarded", "X-Forwarded-For", "X-Real-IP", "X-Forwarded-Proto")
+STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# Endpoint namespaces. Another site may navigate to an application page, but
+# it never reaches these (fetch-metadata resource isolation).
+ENDPOINT_PREFIXES = ("/api/", "/client-", "/auth/", "/internal/")
+
+
+def parse_origin(value: str) -> tuple[str, str, int] | None:
+    """(scheme, host, port) of a browser Origin header; None when opaque."""
+    try:
+        parsed = urlsplit(value.strip())
+        port = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return None
+    if parsed.path or parsed.query or parsed.fragment or parsed.username is not None:
+        return None
+    return parsed.scheme, parsed.hostname.rstrip(".").lower(), port or (443 if parsed.scheme == "https" else 80)
+
+
+def parse_authority(value: str) -> tuple[str, int | None] | None:
+    """(host, port) of a Host/X-Forwarded-Host value."""
+    value = value.strip()
+    if not value or any(char in value for char in "/?#@ \t\\"):
+        return None
+    try:
+        parsed = urlsplit(f"//{value}")
+        port = parsed.port
+    except ValueError:
+        return None
+    if not parsed.hostname:
+        return None
+    return parsed.hostname.rstrip(".").lower(), port
+
+
+def origin_matches_authority(origin: tuple[str, str, int], authority: tuple[str, int | None]) -> bool:
+    scheme, host, port = origin
+    authority_host, authority_port = authority
+    if host != authority_host:
+        return False
+    if authority_port is None:
+        return port == (443 if scheme == "https" else 80)
+    return port == authority_port
+
+
+# Reverse proxies that rewrite Host without X-Forwarded-Host (nginx default)
+# must list their public origin, e.g. https://phone.example.ts.net.
+ALLOWED_ORIGINS = frozenset(
+    origin
+    for item in re.split(r"[\s,]+", setting("OPENCODE_WEB_ALLOWED_ORIGINS", "") or "")
+    if item and (origin := parse_origin(item.rstrip("/")))
+)
+
+
+# Static client files come from the slow /mnt/c 9P filesystem: serve only
+# known asset types from memory, revalidating the file stamp at most every
+# STATIC_REVALIDATE_SECONDS. Cache-Control stays no-cache with a strong ETag,
+# so browsers revalidate each use and deployments apply immediately.
+STATIC_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".webmanifest": "application/manifest+json",
+}
+STATIC_COMPRESSIBLE = frozenset({".html", ".js", ".css", ".svg", ".webmanifest"})
+STATIC_SEGMENT_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
+STATIC_REVALIDATE_SECONDS = 2.0
+STATIC_CACHE_LIMIT = 512
+_INLINE_SCRIPT_RE = re.compile(rb"<script(?![^>]*\bsrc\s*=)[^>]*>(.*?)</script\s*>", re.S | re.I)
+
+
+def content_security_policy(html: bytes) -> str:
+    """CSP for an app page; its own inline scripts are allowed by hash only."""
+    hashes = []
+    for match in _INLINE_SCRIPT_RE.finditer(html):
+        # Browsers hash the parsed text, after CRLF/CR normalization.
+        text = match.group(1).replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        if text.strip():
+            digest = base64.b64encode(hashlib.sha256(text).digest()).decode("ascii")
+            hashes.append(f"'sha256-{digest}'")
+    return "; ".join((
+        "default-src 'self'",
+        # The app never evaluates strings, but browser automation used by the
+        # e2e suites (Playwright wait_for_function) does. Injected inline
+        # scripts, event-handler attributes and javascript: URLs stay blocked.
+        "script-src " + " ".join(["'self'", *hashes, "'unsafe-eval'"]),
+        # Inline style attributes are used by rendered progress bars/swatches.
+        "style-src 'self' 'unsafe-inline'",
+        "img-src * data: blob:",
+        "font-src 'self' data:",
+        "media-src 'self' data: blob:",
+        "connect-src 'self'",
+        "worker-src 'self'",
+        "manifest-src 'self'",
+        "frame-src 'none'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    ))
+
+
+@dataclass
+class StaticAsset:
+    path: Path
+    stamp: tuple[int, int]
+    checked: float
+    body: bytes
+    gzip_body: bytes | None
+    etag: str
+    content_type: str
+    csp: str | None
+
+
+_static_cache: dict[str, StaticAsset] = {}
+_static_lock = threading.Lock()
+
+
+def static_relative_path(path: str) -> str | None:
+    """Canonical app-relative asset name, or None when it must not be served.
+
+    Dotfiles, __pycache__, Python sources and any non-asset type are never
+    served, and every name has exactly one spelling (bounded cache keys).
+    """
+    if path in ("", "/"):
+        path = "/index.html"
+    if not path.startswith("/"):
+        return None
+    segments = path[1:].split("/")
+    if any(segment == "__pycache__" or not STATIC_SEGMENT_RE.fullmatch(segment) for segment in segments):
+        return None
+    if os.path.splitext(segments[-1])[1] not in STATIC_TYPES:
+        return None
+    return "/".join(segments)
+
+
+def _load_static_asset(relative: str) -> StaticAsset | None:
+    segments = relative.split("/")
+    directory = ROOT
+    try:
+        for segment in segments:
+            # Exact names only: a case-insensitive filesystem must not map
+            # unboundedly many spellings onto one cached file.
+            if segment not in os.listdir(directory):
+                return None
+            directory = directory / segment
+        resolved = directory.resolve(strict=True)
+        inner = resolved.relative_to(ROOT).parts
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not inner or any(part.startswith(".") or part == "__pycache__" for part in inner):
+        return None
+    suffix = resolved.suffix
+    if suffix not in STATIC_TYPES:
+        return None
+    try:
+        with open(resolved, "rb") as handle:
+            details = os.fstat(handle.fileno())
+            if not stat.S_ISREG(details.st_mode):
+                return None
+            body = handle.read()
+    except OSError:
+        return None
+    digest = hashlib.sha256(body).hexdigest()[:32]
+    compressed = None
+    if suffix in STATIC_COMPRESSIBLE and len(body) >= 256:
+        candidate = gzip.compress(body, compresslevel=6, mtime=0)
+        if len(candidate) < len(body):
+            compressed = candidate
+    return StaticAsset(
+        path=resolved,
+        stamp=(details.st_mtime_ns, details.st_size),
+        checked=time.monotonic(),
+        body=body,
+        gzip_body=compressed,
+        etag=f'"{digest}"',
+        content_type=STATIC_TYPES[suffix],
+        csp=content_security_policy(body) if suffix == ".html" else None,
+    )
+
+
+def static_asset(relative: str) -> StaticAsset | None:
+    now = time.monotonic()
+    with _static_lock:
+        asset = _static_cache.get(relative)
+    if asset is not None:
+        if now - asset.checked < STATIC_REVALIDATE_SECONDS:
+            return asset
+        try:
+            details = os.stat(asset.path)
+            if stat.S_ISREG(details.st_mode) and (details.st_mtime_ns, details.st_size) == asset.stamp:
+                asset.checked = now
+                return asset
+        except OSError:
+            pass
+    asset = _load_static_asset(relative)
+    with _static_lock:
+        if asset is None:
+            _static_cache.pop(relative, None)
+        else:
+            if relative not in _static_cache and len(_static_cache) >= STATIC_CACHE_LIMIT:
+                _static_cache.clear()
+            _static_cache[relative] = asset
+    return asset
+
+
+def accepts_gzip(header: str) -> bool:
+    quality: dict[str, float] = {}
+    for item in header.split(","):
+        name, _, parameters = item.partition(";")
+        name = name.strip().lower()
+        if not name:
+            continue
+        value = 1.0
+        for parameter in parameters.split(";"):
+            key, _, raw = parameter.partition("=")
+            if key.strip().lower() == "q":
+                try:
+                    value = float(raw.strip())
+                except ValueError:
+                    value = 0.0
+        quality[name] = value
+    for name in ("gzip", "x-gzip", "*"):
+        if name in quality:
+            return quality[name] > 0
+    return False
+
+
+def etag_matches(header: str | None, etag: str) -> bool:
+    """Weak comparison, as required for If-None-Match."""
+    if not header:
+        return False
+    if header.strip() == "*":
+        return True
+    wanted = etag[2:] if etag.startswith("W/") else etag
+    for candidate in header.split(","):
+        candidate = candidate.strip()
+        if candidate.startswith("W/"):
+            candidate = candidate[2:]
+        if candidate == wanted:
+            return True
+    return False
+
+
+class BodyCountingReader:
+    """rfile proxy counting request-body bytes consumed by a handler.
+
+    Keep-alive is only safe when the whole body was read; leftover bytes would
+    otherwise be parsed as the next request on the connection.
+    """
+
+    def __init__(self, raw: object) -> None:
+        self._raw = raw
+        self.body_consumed = 0
+
+    def read(self, size: int = -1) -> bytes:
+        data = self._raw.read(size)
+        self.body_consumed += len(data)
+        return data
+
+    def read1(self, size: int = -1) -> bytes:
+        data = self._raw.read1(size)
+        self.body_consumed += len(data)
+        return data
+
+    def readline(self, size: int = -1) -> bytes:
+        data = self._raw.readline(size)
+        self.body_consumed += len(data)
+        return data
+
+    def readinto(self, buffer: bytearray) -> int:
+        count = self._raw.readinto(buffer) or 0
+        self.body_consumed += count
+        return count
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._raw, name)
+
+
+class ThreadingWebServer(ThreadingHTTPServer):
+    """Threaded listener with a deeper accept backlog than socketserver's 5."""
+
+    daemon_threads = True
+    request_queue_size = 128
 
 
 def basic_value(user: str, password: str) -> str:
@@ -583,6 +953,25 @@ def transform_json_response(method: str, path: str, body: bytes) -> bytes:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
+# Consent, credential and destructive boundaries (state-changing requests
+# only). They decide what the agent may do next (permission replies, budget
+# approvals, permission rules, sandbox, worktree merge), change credentials or
+# tool configuration (provider keys, MCP/config, slash-command config) or
+# destroy work (git revert). The loopback convenience bypass is reachable by
+# every local process, including the agent's own shell, so only a real login
+# session may perform them.
+HUMAN_ONLY_ROUTES = frozenset({
+    "/client-git-revert.json",
+    "/client-project-settings.json",
+    "/client-provider-config.json",
+    "/client-remote-action.json",
+    "/client-task-sandbox.json",
+    "/client-worktree-merge.json",
+})
+HUMAN_ONLY_API_ROOTS = frozenset({"auth", "config", "mcp", "provider"})
+HUMAN_ONLY_API_SEGMENTS = frozenset({"command", "permission", "permissions"})
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     # Bound every client-socket read/write so a stalled or slow-loris peer
@@ -591,6 +980,100 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write(f"{fmt % args}\n")
+
+    def setup(self) -> None:
+        super().setup()
+        self.rfile = BodyCountingReader(self.rfile)
+
+    def handle(self) -> None:
+        try:
+            super().handle()
+        except (ConnectionResetError, BrokenPipeError):
+            # A browser dropping an idle keep-alive connection is not an error.
+            self.close_connection = True
+
+    def parse_request(self) -> bool:
+        if not super().parse_request():
+            return False
+        # Everything read so far was the request line and headers.
+        if isinstance(self.rfile, BodyCountingReader):
+            self.rfile.body_consumed = 0
+        rejection = self.request_rejection()
+        if rejection is not None:
+            status, message = rejection
+            self.json_response({"ok": False, "error": message}, status=status)
+            return False
+        return True
+
+    def request_rejection(self) -> tuple[int, str] | None:
+        """Central policy applied to every request before any route handler."""
+        if self.headers.get("Transfer-Encoding") is not None:
+            # Bodies are framed by Content-Length only; an unread chunked body
+            # would be parsed as the next keep-alive request (smuggling).
+            return 400, "Transfer-Encoding не поддерживается"
+        lengths = self.headers.get_all("Content-Length") or []
+        if len(lengths) > 1 or (lengths and not re.fullmatch(r"[0-9]{1,18}", lengths[0].strip())):
+            return 400, "Некорректный Content-Length"
+        if self.cross_origin_request():
+            # Fetch-metadata resource isolation: another site or localhost port
+            # may navigate to an application page, never call an endpoint.
+            path = urlsplit(self.path).path
+            navigation = (
+                self.command in ("GET", "HEAD")
+                and str(self.headers.get("Sec-Fetch-Mode", "")).strip().lower() == "navigate"
+                and not path.startswith(ENDPOINT_PREFIXES)
+            )
+            if not navigation:
+                return 403, "Запрос с другого сайта отклонён"
+        if self.command in STATE_CHANGING_METHODS and lengths and int(lengths[0]) > 0:
+            # Cross-site "simple" requests can only send form or text bodies.
+            media_type = str(self.headers.get("Content-Type", "")).split(";", 1)[0].strip().lower()
+            if media_type != "application/json":
+                return 415, "Ожидается Content-Type: application/json"
+        return None
+
+    def cross_origin_request(self) -> bool:
+        """A browser-marked request initiated by another origin (site or port)."""
+        site = str(self.headers.get("Sec-Fetch-Site", "")).strip().lower()
+        if site and site not in ("same-origin", "none"):
+            return True
+        origin = self.headers.get("Origin")
+        return origin is not None and not self.origin_allowed(str(origin))
+
+    def origin_allowed(self, value: str) -> bool:
+        origin = parse_origin(value)
+        if origin is None:
+            return False
+        if origin in ALLOWED_ORIGINS:
+            return True
+        return any(origin_matches_authority(origin, authority) for authority in self.request_authorities())
+
+    def request_authorities(self) -> list[tuple[str, int | None]]:
+        values = [str(self.headers.get("Host", ""))]
+        if is_loopback(self.client_address[0]):
+            # Only a same-host reverse proxy may name the public host it serves.
+            values.append(str(self.headers.get("X-Forwarded-Host", "")).split(",", 1)[0])
+            for item in str(self.headers.get("Forwarded", "")).split(",", 1)[0].split(";"):
+                key, _, value = item.partition("=")
+                if key.strip().lower() == "host":
+                    values.append(value.strip().strip('"'))
+        return [authority for value in values if (authority := parse_authority(value))]
+
+    def request_body_pending(self) -> bool:
+        headers = getattr(self, "headers", None)
+        if headers is None:
+            return False
+        try:
+            expected = int(headers.get("Content-Length") or 0)
+        except ValueError:
+            return True
+        return getattr(self.rfile, "body_consumed", expected) < expected
+
+    def end_headers(self) -> None:
+        if not self.close_connection and self.request_body_pending():
+            # An unread request body would be parsed as the next request.
+            self.send_header("Connection", "close")
+        super().end_headers()
 
     def cookie_token(self) -> str:
         header = self.headers.get("Cookie", "")
@@ -610,13 +1093,15 @@ class Handler(BaseHTTPRequestHandler):
         A local reverse proxy also connects from 127.0.0.1, so trusting the TCP
         peer alone would turn every proxied LAN request into localhost.
         Forwarding headers or a non-loopback Host therefore disable bypass.
+        A page on another site or localhost port also makes loopback requests
+        through the browser: requests the browser marks as cross-origin never
+        qualify, only local tools and this app's own same-origin pages.
         """
         if not ALLOW_LOCAL or not is_loopback(self.client_address[0]):
             return False
-        if any(
-            self.headers.get(name)
-            for name in ("Forwarded", "X-Forwarded-For", "X-Real-IP", "X-Forwarded-Proto")
-        ):
+        if any(self.headers.get(name) for name in FORWARDING_HEADER_NAMES):
+            return False
+        if self.cross_origin_request():
             return False
         host_header = str(self.headers.get("Host", "")).strip()
         try:
@@ -625,7 +1110,26 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return is_loopback(host)
 
+    def requires_human_session(self) -> bool:
+        """Consent/credential/destructive request: a login cookie is required."""
+        if self.command not in STATE_CHANGING_METHODS:
+            return False
+        route = self.normalized_route(self.path)
+        if not route:
+            return True  # Unparseable security route: fail closed.
+        lowered = route.lower()
+        if lowered in HUMAN_ONLY_ROUTES:
+            return True
+        parts = lowered.split("/")
+        if len(parts) > 2 and parts[1] == "api" and (
+            parts[2] in HUMAN_ONLY_API_ROOTS or any(part in HUMAN_ONLY_API_SEGMENTS for part in parts[2:])
+        ):
+            return True
+        return self.form_reply_requires_human(route)
+
     def authenticated(self) -> bool:
+        if self.requires_human_session():
+            return self.authenticated_human()
         if self.local_bypass():
             return True
         return self.authenticated_human()
@@ -647,7 +1151,7 @@ class Handler(BaseHTTPRequestHandler):
                 decoded = base64.b64decode(encoded).decode("utf-8")
                 username, _, password = decoded.partition(":")
                 return server_users.authenticate(username, password)
-            except (ValueError, UnicodeDecodeError):
+            except Exception:
                 return False
         return False
 
@@ -719,7 +1223,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        self.json_response({"ok": False, "error": "Требуется авторизация"}, status=401)
+        error = "Требуется авторизация"
+        if self.requires_human_session() and self.local_bypass():
+            error = "Требуется вход по паролю: локальный доступ без пароля не подтверждает это действие"
+        self.json_response({"ok": False, "error": error}, status=401)
 
     def read_json_body(self, *, limit: int = 8192) -> dict[str, object] | None:
         try:
@@ -742,7 +1249,11 @@ class Handler(BaseHTTPRequestHandler):
         username = str(payload.get("username", ""))
         password = str(payload.get("password", ""))
         remember = bool(payload.get("remember", False))
-        if not server_users.authenticate(username, password):
+        try:
+            accepted = server_users.authenticate(username, password)
+        except Exception:
+            accepted = False
+        if not accepted:
             time.sleep(0.35)
             self.json_response({"ok": False, "error": "Неверный логин или пароль"}, status=401)
             return
@@ -848,6 +1359,8 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True,
                 "user": username,
                 "localBypass": self.local_bypass(),
+                # A real login session; consent actions need it even locally.
+                "human": self.authenticated_human(),
             })
             return
         if path in PUBLIC_PATHS:
@@ -903,10 +1416,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/auth/logout":
             self.logout()
             return
-        # Sensitive native forms opt out of the convenience loopback bypass.
-        # Ordinary native questions retain their existing local UX.
-        protected_form_reply = self.form_reply_requires_human(self.normalized_route(self.path))
-        if not (self.authenticated_human() if protected_form_reply else self.authenticated()):
+        # authenticated() refuses the loopback bypass for consent boundaries,
+        # including budget-approval forms; ordinary native questions keep it.
+        if not self.authenticated():
             self.unauthorized()
             return
         if path == "/client-provider-config.json":
@@ -933,31 +1445,40 @@ class Handler(BaseHTTPRequestHandler):
         self.proxy()
 
     def static_file(self, path: str, head_only: bool = False) -> None:
-        if path in ("", "/"):
-            path = "/index.html"
-        candidate = (ROOT / path.lstrip("/")).resolve()
-        if ROOT not in candidate.parents and candidate != ROOT:
-            self.send_error(403)
-            return
-        if not candidate.is_file():
+        relative = static_relative_path(path)
+        asset = static_asset(relative) if relative is not None else None
+        if asset is None:
             self.send_error(404)
             return
-        try:
-            body = candidate.read_bytes()
-        except OSError as exc:
-            self.send_error(500, str(exc))
-            return
-        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
+        compressed = asset.gzip_body is not None and accepts_gzip(str(self.headers.get("Accept-Encoding", "")))
+        # Each representation needs its own strong validator.
+        etag = f'{asset.etag[:-1]}-gz"' if compressed else asset.etag
+        status = 304 if etag_matches(self.headers.get("If-None-Match"), etag) else 200
+        self.send_response(status)
+        if status == 200:
+            self.send_header("Content-Type", asset.content_type)
+            if compressed:
+                self.send_header("Content-Encoding", "gzip")
+        self.send_header("ETag", etag)
         self.send_header("Cache-Control", "no-cache")
+        if asset.gzip_body is not None:
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "same-origin")
         self.send_header("X-Frame-Options", "DENY")
+        if asset.csp:
+            self.send_header("Content-Security-Policy", asset.csp)
+        if status == 304:
+            self.end_headers()
+            return
+        body = asset.gzip_body if compressed else asset.body
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if not head_only:
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
 
     def json_response(self, value: object, *, status: int = 200) -> None:
         body = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -1044,9 +1565,7 @@ class Handler(BaseHTTPRequestHandler):
             streaming = content_type.startswith("text/event-stream")
             if streaming:
                 self.send_response(response.status, response.reason)
-                for key, value in response.getheaders():
-                    if key.lower() not in HOP_BY_HOP and key.lower() != "content-length":
-                        self.send_header(key, value)
+                self.send_backend_headers(response)
                 self.send_header("Connection", "close")
                 self.end_headers()
                 response_started = True
@@ -1080,9 +1599,7 @@ class Handler(BaseHTTPRequestHandler):
                 response_body = transform_json_response(self.command, parsed.path, response_body)
 
             self.send_response(response.status, response.reason)
-            for key, value in response.getheaders():
-                if key.lower() not in HOP_BY_HOP and key.lower() != "content-length":
-                    self.send_header(key, value)
+            self.send_backend_headers(response)
             self.send_header("Content-Length", str(len(response_body)))
             self.end_headers()
             response_started = True
@@ -1096,11 +1613,22 @@ class Handler(BaseHTTPRequestHandler):
             if connection is not None:
                 connection.close()
 
+    def send_backend_headers(self, response: http.client.HTTPResponse) -> None:
+        has_sniff_guard = False
+        for key, value in response.getheaders():
+            lowered = key.lower()
+            if lowered in HOP_BY_HOP or lowered == "content-length":
+                continue
+            has_sniff_guard = has_sniff_guard or lowered == "x-content-type-options"
+            self.send_header(key, value)
+        if not has_sniff_guard:
+            # Proxied bodies (e.g. file contents) must never be sniffed as HTML.
+            self.send_header("X-Content-Type-Options", "nosniff")
+
 
 def main() -> None:
     SCRATCH_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
-    server = ThreadingHTTPServer((WEB_HOST, WEB_PORT), Handler)
-    server.daemon_threads = True
+    server = ThreadingWebServer((WEB_HOST, WEB_PORT), Handler)
     print(f"OpenCode web client started on configured port {WEB_PORT}", flush=True)
     try:
         server.serve_forever()

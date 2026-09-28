@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createDndStateCache } from '../config/plugins/dnd-state-cache.js'
+import plugin, { createDndStateCache } from '../config/plugins/dnd-state-cache.js'
 
 const campaignId = '11111111-1111-4111-8111-111111111111'
 const epoch = 'e'.repeat(64), revision = 'a'.repeat(64), nextRevision = 'b'.repeat(64)
@@ -84,3 +84,38 @@ cache.reset('one')
 finish(result(baseline)); await pending
 assert.equal(cache.prepare('one', query).knownStateRevision, undefined)
 console.log('D&D state cache regression passed: isolation, paging, readAfter, clipping and command identity')
+
+// Plugin wiring: compaction is observed through native session events.
+{
+  let emit
+  const events = new ReadableStream({ start(controller) { emit = (event) => controller.enqueue(event) } })
+  let wrapped
+  const hooks = []
+  const inputs = []
+  const cleanup = await plugin.setup({
+    tool: { transform: async (apply) => {
+      apply({
+        get: (name) => name === 'odm_narrator' ? {} : undefined,
+        update: (name, update) => {
+          const tool = { execute: async (input) => { inputs.push(input); return result(inputs.length === 1 ? baseline : { ...baseline, sheets: undefined, stateDelta: { ...baseline.stateDelta, full: false, baseRevision: revision, revision: nextRevision, checksum: nextRevision } }) } }
+          update(tool)
+          wrapped = tool.execute
+        },
+      })
+      return { dispose: async () => {} }
+    } },
+    session: { hook: async (name) => { hooks.push(name); return { dispose: async () => {} } } },
+    event: { subscribe: () => events.values() },
+  })
+  assert.deepEqual(hooks, [], 'no hook on a name the native host never fires')
+  const session = { sessionID: 'compacted' }
+  await wrapped(query, session)
+  await wrapped(query, session)
+  assert.equal(inputs.at(-1).knownStateRevision, revision, 'baseline acknowledged before compaction')
+  emit({ type: 'session.compaction.started', data: { sessionID: 'compacted', reason: 'auto' } })
+  await new Promise((resolve) => setImmediate(resolve))
+  await wrapped(query, session)
+  assert.equal(inputs.at(-1).knownStateRevision, undefined, 'compaction discards the acknowledged baseline')
+  await cleanup()
+}
+console.log('D&D state cache plugin wiring passed: compaction events reset the baseline')

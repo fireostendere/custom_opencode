@@ -1,76 +1,98 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
-import { dirname, resolve } from "node:path"
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { register } from "node:module"
 
 register("./opencode-plugin-stub-hooks.mjs", import.meta.url)
 process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN = "test-token"
-process.env.OPENCODE_CONTEXT_HOT_PATH_WAIT_MS = "40"
+// One bounded wait per user turn (production default 2000 ms).
+process.env.OPENCODE_CONTEXT_HOT_PATH_WAIT_MS = "250"
+process.env.OPENCODE_POLICY_HEALTH_TTL_MS = "100"
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const source = readFileSync(resolve(root, "config/plugins/server-runtime-guard.js"), "utf8")
 assert.ok(!source.includes("/internal/runtime/tool-cache"))
+assert.ok(!source.includes("structuredClone(body)"), "request bodies must not be deep-cloned per step")
 
 const calls = []
 let contextFailure = false
-let delayedContext = false
+let contextDelayMs = 0
+let contextText = "fresh snapshot"
 let catalogCalls = 0
 let recoveredBudget = false
 let delayedContextBudget = false
 let contextBudgetAborted = false
+let budgetState = null // null = healthy root
+let approvalGranted = false
+let requestBeforeFailure = null
+let requestAfterGate = null
+const json = (value, status = 200) =>
+  new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } })
 const originalFetch = globalThis.fetch
 globalThis.fetch = async (url, init) => {
-  if (contextFailure && String(url).endsWith('/internal/runtime/context'))
-    throw new DOMException('The operation timed out.', 'TimeoutError')
-  calls.push({ url: String(url), payload: JSON.parse(init.body) })
-  if (delayedContext && String(url).endsWith('/internal/runtime/context'))
+  const path = String(url)
+  if (contextFailure && path.endsWith("/internal/runtime/context"))
+    throw new DOMException("The operation timed out.", "TimeoutError")
+  calls.push({ url: path, payload: JSON.parse(init.body), at: Date.now() })
+  if (path.endsWith("/internal/runtime/context"))
     return await new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => resolve(new Response(JSON.stringify({ text: 'fresh snapshot' }), { status: 200, headers: { 'content-type': 'application/json' } })),
-        180,
-      )
-      init.signal.addEventListener('abort', () => {
+      const timer = setTimeout(() => resolve(json({ text: contextText })), contextDelayMs)
+      init.signal.addEventListener("abort", () => {
         clearTimeout(timer)
         reject(init.signal.reason)
       }, { once: true })
     })
-  if (delayedContextBudget && String(url).endsWith('/internal/runtime/context-budget'))
+  if (delayedContextBudget && path.endsWith("/internal/runtime/context-budget"))
     return await new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => resolve(new Response(JSON.stringify({ granted: false, state: 'pending' }), { status: 200, headers: { 'content-type': 'application/json' } })),
-        2100,
-      )
-      init.signal.addEventListener('abort', () => {
+      const timer = setTimeout(() => resolve(json({ granted: false, state: "pending" })), 2100)
+      init.signal.addEventListener("abort", () => {
         contextBudgetAborted = true
         clearTimeout(timer)
         reject(init.signal.reason)
       }, { once: true })
     })
-  if (String(url).endsWith('/internal/runtime/execution-budget'))
-    return new Response(JSON.stringify({ granted: recoveredBudget, state: recoveredBudget ? 'granted' : 'pending' }), { status: 200, headers: { 'content-type': 'application/json' } })
-  const exhausted = recoveredBudget && String(url).endsWith('/internal/runtime/bind')
-  return new Response(
-    JSON.stringify({
-      maxOutputTokens: 1024,
-      tools: exhausted ? 10 : 0,
-      calls: exhausted ? 10 : 0,
-      output_reserved: 0,
-      started_at: Date.now(),
-      limits: { toolAttempts: 10, calls: 10, outputTokens: 4096, finishTokens: 256, seconds: 60 },
-      command: "wrapped",
-      cwd: "/repo",
-      shell: "/bin/sh",
-      env: {
-        OPENCODE_SERVER_PASSWORD: "must-not-be-regranted",
-        OPENCODE_RUNTIME_PLUGIN_TOKEN: "must-not-be-regranted",
-      },
-    }),
-    {
-      status: 200,
-      headers: { "content-type": "application/json" },
+  if (path.endsWith("/internal/runtime/execution-budget")) {
+    const granted = recoveredBudget || approvalGranted
+    return json({ granted, state: granted ? "granted" : "pending" })
+  }
+  if (path.endsWith("/internal/runtime/request-before") && requestBeforeFailure)
+    return json({ ok: false, error: requestBeforeFailure }, 503)
+  if (path.endsWith("/internal/runtime/request-after") && requestAfterGate) await requestAfterGate
+  const exhausted = recoveredBudget && path.endsWith("/internal/runtime/bind")
+  return json({
+    maxOutputTokens: 1024,
+    tools: exhausted ? 10 : 0,
+    calls: exhausted ? 10 : 0,
+    output_reserved: 0,
+    finish_used: 0,
+    started_at: Date.now(),
+    limits: { toolAttempts: 10, calls: 10, outputTokens: 4096, finishTokens: 256, seconds: 60 },
+    ...(path.endsWith("/internal/runtime/bind") && budgetState ? budgetState : {}),
+    command: "wrapped",
+    cwd: "/repo",
+    shell: "/bin/sh",
+    env: {
+      OPENCODE_SERVER_PASSWORD: "must-not-be-regranted",
+      OPENCODE_RUNTIME_PLUGIN_TOKEN: "must-not-be-regranted",
     },
-  )
+  })
 }
+const count = (suffix, sessionID) =>
+  calls.filter((entry) => entry.url.endsWith(suffix) && (!sessionID || entry.payload.sessionID === sessionID)).length
+const warnings = []
+const originalWarn = console.warn
+console.warn = (...args) => warnings.push(args.join(" "))
+const MANAGED = "Server runtime context (deduplicated, budgeted, checkpoint/RAG/repo aware):\n"
+const request = (sessionID, extra = {}, url = "https://api.openai.com/v1/responses") => ({
+  sessionID,
+  model: { providerID: "openai", id: "gpt-6-luna" },
+  request: new Request(url, {
+    method: "POST",
+    body: JSON.stringify({ input: [], tools: [{ type: "function", name: "ordinary_tool" }], max_output_tokens: 4096 }),
+  }),
+  ...extra,
+})
 
 try {
   const plugin = (
@@ -125,6 +147,66 @@ try {
     assert.equal((await requestEvent.request.json()).max_output_tokens, expected)
   }
   assert.equal(catalogCalls, 1, 'catalog refresh must be cached across hooks')
+  // A body already inside the allocation is forwarded as the same Request.
+  const untouched = {
+    sessionID: "ses_request_budget",
+    model: { providerID: "openai", id: "gpt-6-luna" },
+    request: new Request("https://api.openai.com/v1/responses", { method: "POST", body: JSON.stringify({ input: [], max_output_tokens: 512 }) }),
+  }
+  const untouchedRequest = untouched.request
+  await hooks["session:http.request"](untouched)
+  assert.equal(untouched.request, untouchedRequest, "an unchanged body must not be re-serialized")
+  const untouchedResponse = { request: untouched.request, response: new Response("data: [DONE]\n\n") }
+  await hooks["session:http.response"](untouchedResponse)
+  assert.equal(await untouchedResponse.response.text(), "data: [DONE]\n\n")
+
+  for (const id of ['msg_turn_1', 'msg_turn_2']) {
+    await hooks['session:context']({
+      sessionID: 'ses_turn_budget',
+      agent: 'dnd-narrator',
+      model: { providerID: 'openai', id: 'gpt-6-dnd-edition' },
+      messages: [{ id, role: 'user', content: [{ type: 'text', text: 'ход' }] }],
+      system: [],
+    })
+    const event = {
+      sessionID: 'ses_turn_budget',
+      model: { providerID: 'openai', id: 'gpt-6-dnd-edition' },
+      request: new Request('https://api.openai.com/v1/responses', {
+        method: 'POST', body: JSON.stringify({ input: [], max_output_tokens: 4096 }),
+      }),
+    }
+    await hooks['session:http.request'](event)
+  }
+  assert.deepEqual(
+    calls.filter((entry) => entry.url.endsWith('/internal/runtime/bind') && entry.payload.sessionID === 'ses_turn_budget').map((entry) => entry.payload.turnID),
+    ['msg_turn_1', 'msg_turn_2'],
+    'each user message must receive a fresh root budget',
+  )
+
+  // One /bind per model step: the provider request reuses the step's binding,
+  // a repeated context hook for the same step does not bind again, and media
+  // payloads never inflate the transcript estimate.
+  const image = { type: "media", mediaType: "image/png", data: "A".repeat(1_000_000) }
+  const stepMessages = [
+    { id: "msg_step", role: "user", content: [{ type: "text", text: "describe" }, image] },
+  ]
+  const stepContext = { sessionID: "ses_steps", agent: "build", model: { providerID: "openai", id: "gpt-6-luna" }, messages: stepMessages, system: [] }
+  contextDelayMs = 0
+  await hooks["session:context"](stepContext)
+  await hooks["session:context"]({ ...stepContext, messages: stepMessages, system: [] })
+  await hooks["session:http.request"](request("ses_steps"))
+  assert.equal(count("/internal/runtime/bind", "ses_steps"), 1, "one bind per (session, turn, message count)")
+  const stepBind = calls.find((entry) => entry.url.endsWith("/internal/runtime/bind") && entry.payload.sessionID === "ses_steps")
+  assert.ok(stepBind.payload.activeContextTokens < 2000, `base64 media must not count by size (${stepBind.payload.activeContextTokens})`)
+  assert.equal(stepBind.payload.query, "describe")
+  await hooks["session:context"]({ ...stepContext, messages: [...stepMessages, { role: "assistant", content: [{ type: "text", text: "ok" }] }], system: [] })
+  assert.equal(count("/internal/runtime/bind", "ses_steps"), 2, "a new step re-binds")
+  // A compaction prompt (id-less user message) keeps the turn and its query.
+  await hooks["session:context"]({ ...stepContext, messages: [...stepMessages, { role: "user", content: "Summarize the conversation." }], system: [] })
+  const compactionBind = calls.filter((entry) => entry.url.endsWith("/internal/runtime/bind") && entry.payload.sessionID === "ses_steps").at(-1)
+  assert.equal(compactionBind.payload.turnID, "msg_step")
+  assert.equal(compactionBind.payload.query, "describe")
+
   recoveredBudget = true
   const recoveredRequest = {
     sessionID: 'ses_recovered_budget',
@@ -136,6 +218,72 @@ try {
   await hooks['session:http.request'](recoveredRequest)
   assert.deepEqual((await recoveredRequest.request.json()).tools, [{ type: 'function', name: 'ordinary_tool' }], 'approved extension must restore ordinary tools')
   recoveredBudget = false
+
+  // A spent completion reserve fails at once with a readable message instead
+  // of polling a human form for 45 s and dying on a raw BudgetExceeded.
+  budgetState = { finish_used: 1 }
+  const spentStarted = Date.now()
+  const checksBefore = calls.filter((entry) => entry.payload.action === "check").length
+  await assert.rejects(
+    hooks["session:http.request"](request("ses_reserve_spent")),
+    (error) => error.name === "BudgetExceeded" && /Бюджет хода исчерпан: резерв на финальный ответ/.test(error.message) && !error.message.includes("{"),
+  )
+  assert.ok(Date.now() - spentStarted < 1000, "spent reserve must not wait for an approval")
+  assert.equal(calls.filter((entry) => entry.payload.action === "check").length, checksBefore, "no approval polling")
+  assert.equal(count("/internal/runtime/request-before", "ses_reserve_spent"), 0)
+  // An approval that already exists is still applied without waiting.
+  approvalGranted = true
+  const approved = request("ses_reserve_approved")
+  await hooks["session:http.request"](approved)
+  assert.deepEqual((await approved.request.json()).tools, [{ type: "function", name: "ordinary_tool" }])
+  assert.ok(calls.some((entry) => entry.payload.sessionID === "ses_reserve_approved" && entry.payload.action === "apply"))
+  approvalGranted = false
+  // Titles, compaction and generation are never gated, polled or failed.
+  for (const kind of ["title", "compaction", "generate"]) {
+    const auxiliary = request(`ses_aux_${kind}`, { kind })
+    const executionBefore = count("/internal/runtime/execution-budget")
+    await hooks["session:http.request"](auxiliary)
+    assert.equal(count("/internal/runtime/execution-budget"), executionBefore, `${kind} must skip gating`)
+    const reservation = calls.filter((entry) => entry.url.endsWith("/internal/runtime/request-before")).at(-1)
+    assert.equal(reservation.payload.finishOnly, false)
+  }
+  budgetState = null
+  requestBeforeFailure = "BudgetExceeded: model call budget exhausted; durable budget checkpoint saved"
+  const titleRequest = request("ses_aux_title", { kind: "title" })
+  await hooks["session:http.request"](titleRequest)
+  const titleResponse = { request: titleRequest.request, response: new Response("data: {}\n\n") }
+  await hooks["session:http.response"](titleResponse)
+  assert.equal(await titleResponse.response.text(), "data: {}\n\n", "an unreserved auxiliary request still completes")
+  await assert.rejects(
+    hooks["session:http.request"](request("ses_primary_exhausted")),
+    (error) => error.name === "BudgetExceeded" && error.message.includes("исчерпан лимит вызовов модели") && !error.message.includes("durable"),
+  )
+  requestBeforeFailure = null
+  // Lost bookkeeping never fails a finished provider call.
+  const lost = { request: new Request("https://api.openai.com/v1/responses"), response: new Response("data: [DONE]\n\n") }
+  await hooks["session:http.response"](lost)
+  assert.equal(await lost.response.text(), "data: [DONE]\n\n")
+  assert.ok(warnings.some((line) => line.includes("lost its request budget identity")))
+
+  // The terminal SSE chunk is delivered while the ledger write is still pending.
+  let releaseAfter
+  requestAfterGate = new Promise((resolve) => { releaseAfter = resolve })
+  const streamed = request("ses_stream")
+  await hooks["session:http.request"](streamed)
+  const streamResponse = { request: streamed.request, response: new Response('data: {"usage":{"output_tokens":3}}\n\ndata: [DONE]\n\n') }
+  await hooks["session:http.response"](streamResponse)
+  const text = await Promise.race([
+    streamResponse.response.text(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("final chunk waited for request-after")), 500)),
+  ])
+  assert.ok(text.includes("[DONE]"))
+  releaseAfter()
+  requestAfterGate = null
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  const after = calls.filter((entry) => entry.url.endsWith("/internal/runtime/request-after") && entry.payload.sessionID === "ses_stream")
+  assert.equal(after.length, 1)
+  assert.equal(after[0].payload.usage.output, 3)
+
   // Compaction consumes final text; Qwen can otherwise finish in reasoning only.
   for (const [agent, providerID, id, expected] of [
     ['compaction', 'ollama', 'qwen3.8-heretic:27b', 'none'],
@@ -231,29 +379,76 @@ try {
   assert.equal(event.env.OPENCODE_WEB_PORT, "4098")
   assert.equal(event.command, "wrapped")
 
-  // Runtime context is additive and stale-while-revalidate. A cold repo/RAG
-  // build must leave the provider hot path after the small configured budget.
-  delayedContext = true
-  const coldContext = {
-    sessionID: 'ses_context_swr',
-    model: { providerID: 'openai', id: 'gpt-6-luna' },
-    system: [],
-  }
-  const coldStarted = Date.now()
-  await hooks['session:context'](coldContext)
-  assert.ok(Date.now() - coldStarted < 140, 'cold context refresh blocked the provider hot path')
-  assert.equal(coldContext.system.length, 0, 'unfinished cold context must not inject partial data')
-  await new Promise((resolve) => setTimeout(resolve, 220))
+  // Runtime context: fetched once per user turn and attached to that turn's
+  // user message. The system prompt and history stay byte-identical.
+  const userTurn = (id, text = "fix the parser") => ({ id, role: "user", content: [{ type: "text", text }] })
+  const contextStep = (sessionID, messages) => ({
+    sessionID,
+    agent: "build",
+    model: { providerID: "openai", id: "gpt-6-luna" },
+    system: [{ type: "text", text: "NATIVE SYSTEM" }],
+    messages,
+  })
+  const contextCalls = (sessionID) => count("/internal/runtime/context", sessionID)
+  contextDelayMs = 50
+  const turnOne = [userTurn("msg_ctx_1")]
+  const first = contextStep("ses_context_turn", turnOne)
+  await hooks["session:context"](first)
+  assert.deepEqual(first.system, [{ type: "text", text: "NATIVE SYSTEM" }], "system prompt must stay untouched")
+  assert.equal(first.messages.at(-1).content[0].text, `${MANAGED}fresh snapshot`)
+  assert.equal(first.messages.at(-1).content[1].text, "fix the parser", "user bytes are preserved after the block")
+  assert.equal(turnOne[0].content.length, 1, "the host transcript object is never mutated")
+  const firstBlock = JSON.stringify(first.messages)
+  contextText = "changed snapshot"
+  const secondStep = contextStep("ses_context_turn", [...turnOne, { role: "assistant", content: [{ type: "text", text: "reading" }] }, { role: "tool", content: [{ type: "tool-result", id: "c1", name: "read", result: { type: "text", value: "file" } }] }])
+  await hooks["session:context"](secondStep)
+  assert.equal(JSON.stringify(secondStep.messages.slice(0, 1)), firstBlock, "the block is frozen for the whole turn")
+  assert.equal(contextCalls("ses_context_turn"), 1, "no refresh inside a turn")
+  const normalContextCall = calls.find((entry) => entry.url.endsWith("/internal/runtime/context") && entry.payload.sessionID === "ses_context_turn")
+  assert.equal(normalContextCall?.payload.contextClass, "normal")
+  // Idempotent on a re-observed event: exactly one block.
+  await hooks["session:context"](secondStep)
+  assert.equal(JSON.stringify(secondStep.messages).split(MANAGED.slice(0, 22)).length - 1, 1)
+  // A new user message starts a new turn with a fresh envelope.
+  const nextTurn = contextStep("ses_context_turn", [...turnOne, { role: "assistant", content: [{ type: "text", text: "done" }] }, userTurn("msg_ctx_2", "and the tests")])
+  await hooks["session:context"](nextTurn)
+  assert.equal(contextCalls("ses_context_turn"), 2)
+  assert.equal(nextTurn.messages.at(-1).content[0].text, `${MANAGED}changed snapshot`)
+  assert.equal(nextTurn.messages[0].content.length, 1, "earlier turns carry no block")
+  contextText = "fresh snapshot"
+
+  // A slow envelope never appears mid-turn: the first step waits once, then
+  // the empty result is frozen until the next user message.
+  contextDelayMs = 400
+  const slowTurn = [userTurn("msg_slow_1")]
+  const slow = contextStep("ses_context_slow", slowTurn)
+  const slowStarted = Date.now()
+  await hooks["session:context"](slow)
+  const waited = Date.now() - slowStarted
+  assert.ok(waited >= 200 && waited < 380, `first step waits once for the bounded budget (${waited} ms)`)
+  assert.equal(slow.messages.at(-1).content.length, 1, "unfinished context must not inject partial data")
+  await new Promise((resolve) => setTimeout(resolve, 450))
+  const slowSecond = contextStep("ses_context_slow", [...slowTurn, { role: "assistant", content: [{ type: "text", text: "step" }] }])
   const warmStarted = Date.now()
-  await hooks['session:context'](coldContext)
-  assert.ok(Date.now() - warmStarted < 80, 'warmed context must be served from memory')
-  assert.equal(coldContext.system.at(-1)?.text, 'Server runtime context (deduplicated, budgeted, checkpoint/RAG/repo aware):\nfresh snapshot')
-  const normalContextCall = calls.find(
-    (entry) =>
-      entry.url.endsWith('/internal/runtime/context') &&
-      entry.payload.sessionID === coldContext.sessionID,
-  )
-  assert.equal(normalContextCall?.payload.contextClass, 'normal')
+  await hooks["session:context"](slowSecond)
+  assert.ok(Date.now() - warmStarted < 80, "later steps of the turn never wait")
+  assert.equal(slowSecond.messages[0].content.length, 1, "a late envelope must not change the prefix mid-turn")
+  assert.equal(contextCalls("ses_context_slow"), 1)
+  contextDelayMs = 50
+  const slowNext = contextStep("ses_context_slow", [...slowTurn, userTurn("msg_slow_2")])
+  await hooks["session:context"](slowNext)
+  assert.equal(slowNext.messages.at(-1).content[0].text, `${MANAGED}fresh snapshot`)
+
+  // Compaction/generate prompts are id-less user messages: no enrichment.
+  const compaction = contextStep("ses_context_compaction", [userTurn("msg_c1"), { role: "user", content: [{ type: "text", text: "Summarize." }] }])
+  await hooks["session:context"](compaction)
+  assert.equal(contextCalls("ses_context_compaction"), 0)
+  assert.equal(compaction.messages.at(-1).content.length, 1)
+
+  // Adapters without a user message keep a frozen typed system block.
+  const legacy = { sessionID: "ses_context_legacy", model: { providerID: "openai", id: "gpt-6-luna" }, system: [] }
+  await hooks["session:context"](legacy)
+  assert.equal(legacy.system.at(-1)?.text, `${MANAGED}fresh snapshot`)
 
   const contextCallsBeforeBare = calls.filter((entry) =>
     entry.url.endsWith('/internal/runtime/context'),
@@ -281,20 +476,26 @@ try {
     contextCallsBeforeBare,
     'bare lane must not request repo/RAG runtime context',
   )
-  delayedContext = false
 
-  // A failed index/RAG refresh must preserve the previous managed snapshot.
+  // A failed index/RAG refresh is logged (rate-limited), injects nothing, and
+  // backs off instead of re-querying a failing endpoint on every turn.
   contextFailure = true
-  const contextEvent = {
-    sessionID: 'ses_context_timeout',
-    model: { providerID: 'openai', id: 'gpt-6-luna' },
-    system: [{ type: 'text', text: 'Server runtime context (deduplicated, budgeted, checkpoint/RAG/repo aware):\nprevious snapshot' }],
-  }
-  await hooks['session:context'](contextEvent)
-  assert.equal(contextEvent.system[0].text, 'Server runtime context (deduplicated, budgeted, checkpoint/RAG/repo aware):\nprevious snapshot')
+  warnings.length = 0
+  const failed = contextStep("ses_context_timeout", [userTurn("msg_fail_1")])
+  await hooks["session:context"](failed)
+  assert.equal(failed.messages.at(-1).content.length, 1)
+  const failedAgain = contextStep("ses_context_timeout_2", [userTurn("msg_fail_2")])
+  await hooks["session:context"](failedAgain)
+  assert.equal(warnings.filter((line) => line.includes("runtime context unavailable")).length, 1, "failures are logged with rate limiting")
+  contextFailure = false
+  const beforeBackoff = contextCalls("ses_context_timeout")
+  const backoff = contextStep("ses_context_timeout", [userTurn("msg_fail_1"), userTurn("msg_fail_3")])
+  await hooks["session:context"](backoff)
+  assert.equal(contextCalls("ses_context_timeout"), beforeBackoff, "a failing session backs off")
+  assert.equal(backoff.messages.at(-1).content.length, 1)
   const requestAfterContextTimeout = {
     sessionID: 'ses_context_timeout',
-    model: contextEvent.model,
+    model: { providerID: 'openai', id: 'gpt-6-luna' },
     request: new Request('https://api.openai.com/v1/responses', {
       method: 'POST',
       body: JSON.stringify({ input: [], max_output_tokens: 4096 }),
@@ -302,10 +503,35 @@ try {
   }
   await hooks['session:http.request'](requestAfterContextTimeout)
   assert.equal((await requestAfterContextTimeout.request.json()).max_output_tokens, 1024)
-  contextFailure = false
+
+  // Any 2xx refreshes sidecar health: `ensure` is not re-spawned while calls succeed.
+  const scratch = mkdtempSync(join(tmpdir(), "guard-ensure-"))
+  try {
+    const counter = join(scratch, "count")
+    const command = join(scratch, "ensure.sh")
+    writeFileSync(command, `#!/bin/sh\necho "$1" >> '${counter}'\n`)
+    chmodSync(command, 0o700)
+    process.env.OPENCODE_POLICY_COMMAND = command
+    // Let the 100 ms health TTL lapse so the first call runs one speculative ensure.
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    for (let index = 0; index < 5; index += 1) {
+      await hooks["tool:execute.before"]({ sessionID: "ses_health", tool: "read", input: {} })
+      await new Promise((resolve) => setTimeout(resolve, 60))
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    let spawned = 0
+    try {
+      spawned = readFileSync(counter, "utf8").trim().split("\n").filter(Boolean).length
+    } catch {}
+    assert.equal(spawned, 1, `ensure must run once at first use, not per health TTL (${spawned})`)
+  } finally {
+    delete process.env.OPENCODE_POLICY_COMMAND
+    rmSync(scratch, { recursive: true, force: true })
+  }
   console.log(
-    "Server runtime guard regression OK: session-scoped shell policy, secret scrub, class-aware nonblocking context refresh, bare bypass",
+    "Server runtime guard regression OK: per-turn frozen user-message context, one bind per step, fast readable budget failures, ungated auxiliary requests, non-blocking usage, lost-identity passthrough, health reuse, shell policy, secret scrub",
   )
 } finally {
   globalThis.fetch = originalFetch
+  console.warn = originalWarn
 }

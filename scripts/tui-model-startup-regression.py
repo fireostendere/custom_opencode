@@ -102,4 +102,19 @@ with tempfile.TemporaryDirectory() as temporary:
     run(state)
     assert not native.exists()
 
-print("TUI model startup regression passed: TUI args, XDG fallback, restore, concurrent-write skip, malformed state")
+    # A fresh install has no selector history: seed the configured default so
+    # the TUI never starts on an arbitrary catalog model.
+    custom.unlink()
+    run(state)
+    assert json.loads(native.read_text())["recent"] == [{"providerID": "openai", "modelID": "gpt-6-luna-direct"}]
+    native.unlink()
+    subprocess.run([sys.executable, str(HELPER)], env=os.environ | {"XDG_STATE_HOME": str(state), "HOME": str(state / "home"), "OPENCODE_DEFAULT_MODEL": "openai/luna#high"}, check=True)
+    assert json.loads(native.read_text())["recent"] == [{"providerID": "openai", "modelID": "luna"}]
+    dump(native, {"recent": [{"providerID": "openai", "modelID": "astra"}]})
+    run(state)
+    assert json.loads(native.read_text())["recent"] == [{"providerID": "openai", "modelID": "astra"}], "existing native history must win over the seed"
+    dump(custom, {"models": []})
+    run(state)
+    assert json.loads(native.read_text())["recent"] == [{"providerID": "openai", "modelID": "astra"}]
+
+print("TUI model startup regression passed: TUI args, XDG fallback, restore, concurrent-write skip, malformed state, default seed")

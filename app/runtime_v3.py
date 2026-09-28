@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
 import hashlib
@@ -128,6 +128,34 @@ def _embedding(texts: list[str]) -> tuple[str, list[list[float]]]:
     return "hashed-unicode-lexical-v2", [_hash_embedding(text) for text in texts]
 
 
+def _semantic_match_lines(hits: list[dict[str, Any]]) -> list[str]:
+    """Prompt-cache-stable rendering of search hits.
+
+    Scores and line numbers change on every edit/step and would invalidate the
+    provider prompt cache for the whole block; the hit *set* is what matters,
+    so it is rendered without them, de-duplicated and ordered by path.
+    """
+    rows = []
+    for hit in hits:
+        kind = str(hit.get("type") or "match")
+        name = str(hit.get("qualified") or hit.get("name") or "")
+        path = str(hit.get("path") or "")
+        text = f"- {kind}: {name} · {path}" if name and path and name != path else f"- {kind}: {name or path}"
+        rows.append(((path, name, kind), text))
+    return list(dict.fromkeys(text for _, text in sorted(rows)))
+
+
+def _changed_symbol_lines(symbols: list[dict[str, Any]], limit: int) -> list[str]:
+    rows = sorted(
+        (
+            (str(item.get("path") or ""), str(item.get("qualified") or item.get("name") or "")),
+            f"- {item.get('qualified') or item.get('name')} · {item.get('path')}",
+        )
+        for item in symbols
+    )
+    return list(dict.fromkeys(text for _, text in rows))[: max(1, int(limit))]
+
+
 def _resolve_relative_import(source: str, target: str, files: set[str]) -> str | None:
     if not target.startswith("."):
         return None
@@ -173,13 +201,203 @@ class SemanticRepoIndexer:
         ".sh",
     }
 
+    CACHE_NAMESPACE = "repo-index-v4"
+    META_NAMESPACE = "repo-index-v4-meta"
+    CACHE_TTL_SECONDS = 21600
+
     def __init__(self, store: RuntimeStore):
         self.store = store
-        # ponytail: one hot project avoids repeated multi-MB JSON decode; use an LRU only if concurrent projects show cache churn.
-        self._hot_index: tuple[str, str, dict[str, Any]] | None = None
+        # Small LRU of decoded indexes (a 10 MB index is ~50 MB of heap and
+        # ~0.8 s to decode); one slot thrashed with two active projects.
+        self._hot: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._lock = threading.Lock()
+        self._build_locks: dict[str, threading.Lock] = {}
+        self._scheduled: set[str] = set()
+        self._last_build: dict[str, float] = {}
+        self._errors: dict[str, tuple[str, float]] = {}
+        self._search_cache: OrderedDict[tuple[Any, ...], list[Any]] = OrderedDict()
+        self._diff_cache: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
 
     def _key(self, project_dir: str) -> str:
         return hashlib.sha256(project_dir.encode()).hexdigest()
+
+    @staticmethod
+    def _env_number(name: str, default: float, low: float, high: float) -> float:
+        try:
+            value = float(os.environ.get(name) or default)
+        except ValueError:
+            value = default
+        return max(low, min(high, value))
+
+    def _hot_slots(self) -> int:
+        return int(self._env_number("OPENCODE_REPO_INDEX_HOT_SLOTS", 2, 1, 4))
+
+    def _min_interval(self) -> float:
+        return self._env_number("OPENCODE_REPO_INDEX_MIN_INTERVAL_SECONDS", 60, 0, 3600)
+
+    def _fingerprint(self, snap: dict[str, Any]) -> str:
+        # The tool-call generation counter is deliberately absent: it changed on
+        # every edit/shell call and forced full rebuilds of unchanged trees.
+        # trackedHash is stable between fast and complete snapshots; untracked
+        # files are compared separately (_matches) when both sides know them.
+        tracked = snap.get("trackedHash") or snap.get("statusHash")
+        # worktreeStamp (root dir + HEAD) replaces treeStamp, which also moved
+        # whenever `git status` merely refreshed .git/index.
+        stamp = snap.get("worktreeStamp") or snap.get("treeStamp")
+        return (
+            f"v{self.VERSION}:{snap.get('head')}:{tracked}:{stamp}:"
+            f"{os.environ.get('OPENCODE_REPO_EMBEDDINGS','hash')}:"
+            f"{os.environ.get('OPENCODE_REPO_EMBED_MODEL','sentence-transformers/all-MiniLM-L6-v2')}"
+        )
+
+    @staticmethod
+    def _matches(entry: dict[str, Any], fingerprint: str, untracked: Any) -> bool:
+        if entry.get("fingerprint") != fingerprint:
+            return False
+        known = entry.get("untrackedHash")
+        return untracked is None or known is None or known == untracked
+
+    def _hot_get(self, key: str) -> dict[str, Any] | None:
+        with self._lock:
+            index = self._hot.get(key)
+            if index is not None:
+                self._hot.move_to_end(key)
+            return index
+
+    def _hot_put(self, key: str, index: dict[str, Any]) -> None:
+        with self._lock:
+            self._hot[key] = index
+            self._hot.move_to_end(key)
+            while len(self._hot) > self._hot_slots():
+                self._hot.popitem(last=False)
+
+    def _build_lock(self, key: str) -> threading.Lock:
+        with self._lock:
+            return self._build_locks.setdefault(key, threading.Lock())
+
+    def _write_meta(self, key: str, index: dict[str, Any]) -> None:
+        self.store.cache_set(
+            self.META_NAMESPACE,
+            key,
+            {
+                "fingerprint": index.get("fingerprint"),
+                "untrackedHash": index.get("untrackedHash"),
+                "generatedAt": index.get("generatedAt"),
+                "projectDir": index.get("projectDir"),
+                "files": index.get("files"),
+            },
+            ttl_seconds=self.CACHE_TTL_SECONDS,
+        )
+
+    def _lookup(
+        self, key: str, fingerprint: str, untracked: Any, *, want_stale: bool
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Return (index, fresh) without decoding a blob that cannot be used."""
+        hot = self._hot_get(key)
+        if hot is not None:
+            if self._matches(hot, fingerprint, untracked):
+                return hot, True
+            # The hot copy is stale. Another process may have rebuilt the index
+            # meanwhile: compare the small meta row before decoding its blob.
+            meta = self.store.cache_get(self.META_NAMESPACE, key)
+            newer = (
+                isinstance(meta, dict)
+                and self._matches(meta, fingerprint, untracked)
+                and meta.get("generatedAt") != hot.get("generatedAt")
+            )
+            if not newer:
+                return (hot, False) if want_stale else (None, False)
+        else:
+            meta = self.store.cache_get(self.META_NAMESPACE, key)
+            if (
+                isinstance(meta, dict)
+                and not self._matches(meta, fingerprint, untracked)
+                and not want_stale
+            ):
+                return None, False
+        blob = self.store.cache_get(self.CACHE_NAMESPACE, key)
+        if not isinstance(blob, dict) or blob.get("version") != self.VERSION:
+            return (hot, False) if hot is not None and want_stale else (None, False)
+        if not isinstance(meta, dict) or meta.get("generatedAt") != blob.get("generatedAt"):
+            self._write_meta(key, blob)  # blob written by an older runtime
+        self._hot_put(key, blob)
+        return blob, self._matches(blob, fingerprint, untracked)
+
+    def _placeholder(self, root: Path, fingerprint: str) -> dict[str, Any]:
+        return {
+            "version": self.VERSION,
+            "projectDir": str(root),
+            "fingerprint": None,
+            "requestedFingerprint": fingerprint,
+            "files": 0,
+            "symbols": [],
+            "dependencies": [],
+            "dependencyGraph": [],
+            "gitGraph": [],
+            "embeddingBackend": "none",
+            "fileEmbeddings": [],
+            "symbolEmbeddings": [],
+            "indexedBytes": 0,
+            "generatedAt": None,
+            "cacheHit": False,
+            "stale": True,
+            "building": True,
+        }
+
+    def schedule_refresh(self, project_dir: str) -> bool:
+        """Rebuild in the background if due; never blocks the caller.
+
+        Single-flight per project and at most one rebuild per minimum interval
+        (measured from the end of the previous attempt) in this process.
+        """
+        key = self._key(str(Path(project_dir).resolve(strict=False)))
+        with self._lock:
+            if key in self._scheduled:
+                return False
+            if time.monotonic() - self._last_build.get(key, -1e12) < self._min_interval():
+                return False
+            self._scheduled.add(key)
+        try:
+            threading.Thread(
+                target=self._background_refresh,
+                args=(str(project_dir), key),
+                name="custom-opencode-repo-index",
+                daemon=True,
+            ).start()
+        except Exception:
+            with self._lock:
+                self._scheduled.discard(key)
+            raise
+        return True
+
+    def _background_refresh(self, project_dir: str, key: str) -> None:
+        try:
+            root = Path(project_dir).resolve(strict=True)
+            # Complete snapshot (untracked files included) so the stored index
+            # carries an untracked digest and later fast snapshots agree with it.
+            snap = git_snapshot(str(root), refresh=True)
+            fingerprint = self._fingerprint(snap)
+            with self._build_lock(key):
+                index, fresh = self._lookup(
+                    key, fingerprint, snap.get("untrackedHash"), want_stale=False
+                )
+                if index is None or not fresh:
+                    self._build(root, key, snap, fingerprint)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"[:500]
+            previous = self._errors.get(key)
+            if previous is None or previous[0] != error or time.monotonic() - previous[1] > 600:
+                self._errors[key] = (error, time.monotonic())
+                try:
+                    self.store.event(
+                        kind="repo.index_error", project_dir=project_dir, data={"error": error}
+                    )
+                except Exception:
+                    pass
+        finally:
+            with self._lock:
+                self._scheduled.discard(key)
+                self._last_build[key] = time.monotonic()
 
     def _files(self, root: Path) -> list[str]:
         try:
@@ -335,30 +553,56 @@ class SemanticRepoIndexer:
         *,
         force: bool = False,
         snapshot: dict[str, Any] | None = None,
+        allow_stale: bool = False,
     ) -> dict[str, Any]:
+        """Return the index for ``project_dir``.
+
+        Default (explicit callers): rebuild synchronously when stale, single-
+        flight per project. ``allow_stale`` (interactive hot path): serve the
+        last index immediately -- or an empty placeholder before the first
+        build -- and rebuild in the background (schedule_refresh).
+        """
         root = Path(project_dir).resolve(strict=True)
         snap = snapshot or git_snapshot(str(root), fresh=force)
-        fingerprint = f"v{self.VERSION}:{snap.get('head')}:{snap.get('statusHash')}:{snap.get('treeStamp')}:{snap.get('generation')}:{os.environ.get('OPENCODE_REPO_EMBEDDINGS','hash')}:{os.environ.get('OPENCODE_REPO_EMBED_MODEL','sentence-transformers/all-MiniLM-L6-v2')}"
+        fingerprint = self._fingerprint(snap)
+        untracked = snap.get("untrackedHash")
         key = self._key(str(root))
-        if not force and self._hot_index and self._hot_index[:2] == (key, fingerprint):
-            return {**self._hot_index[2], "cacheHit": True}
-        cached = self.store.cache_get("repo-index-v4", key)
-        if not force and isinstance(cached, dict) and cached.get("fingerprint") == fingerprint:
-            self._hot_index = (key, fingerprint, cached)
-            return {**cached, "cacheHit": True}
-        files = [
-            relative for relative in self._files(root) if safe_repo_file(root, relative) is not None
-        ]
+        if allow_stale and not force:
+            index, fresh = self._lookup(key, fingerprint, untracked, want_stale=True)
+            if index is not None and fresh:
+                return {**index, "cacheHit": True}
+            scheduled = self.schedule_refresh(str(root))
+            if index is None:
+                return self._placeholder(root, fingerprint)
+            return {**index, "cacheHit": True, "stale": True, "rebuilding": scheduled}
+        with self._build_lock(key):
+            if not force:
+                index, fresh = self._lookup(key, fingerprint, untracked, want_stale=False)
+                if index is not None and fresh:
+                    return {**index, "cacheHit": True}
+            try:
+                return self._build(root, key, snap, fingerprint)
+            finally:
+                with self._lock:
+                    self._last_build[key] = time.monotonic()
+
+    def _build(
+        self, root: Path, key: str, snap: dict[str, Any], fingerprint: str
+    ) -> dict[str, Any]:
+        # One containment check per file: the resolved path is reused below.
+        entries = []
+        for relative in self._files(root):
+            path = safe_repo_file(root, relative)
+            if path is not None:
+                entries.append((relative, path))
+        files = [relative for relative, _ in entries]
         file_set = set(files)
         symbols = []
         dependency_edges = []
         manifests = []
         file_docs = []
         indexed_bytes = 0
-        for relative in files:
-            path = safe_repo_file(root, relative)
-            if path is None:
-                continue
+        for relative, path in entries:
             try:
                 size = path.stat().st_size
             except OSError:
@@ -446,6 +690,7 @@ class SemanticRepoIndexer:
             "version": self.VERSION,
             "projectDir": str(root),
             "fingerprint": fingerprint,
+            "untrackedHash": snap.get("untrackedHash"),
             "snapshot": snap,
             "files": len(files),
             "symbols": symbols[:40000],
@@ -459,8 +704,9 @@ class SemanticRepoIndexer:
             "generatedAt": now_ms(),
             "cacheHit": False,
         }
-        self.store.cache_set("repo-index-v4", key, index, ttl_seconds=21600)
-        self._hot_index = (key, fingerprint, index)
+        self.store.cache_set(self.CACHE_NAMESPACE, key, index, ttl_seconds=self.CACHE_TTL_SECONDS)
+        self._write_meta(key, index)
+        self._hot_put(key, index)
         self.store.event(
             kind="repo.indexed",
             project_dir=str(root),
@@ -475,9 +721,30 @@ class SemanticRepoIndexer:
         limit: int = 40,
         *,
         snapshot: dict[str, Any] | None = None,
+        allow_stale: bool = False,
     ) -> dict[str, Any]:
-        index = self.refresh(project_dir, snapshot=snapshot)
+        index = self.refresh(project_dir, snapshot=snapshot, allow_stale=allow_stale)
         q = query.strip()
+        size = max(1, min(200, int(limit)))
+        summary = {
+            k: index.get(k) for k in ("files", "generatedAt", "fingerprint", "embeddingBackend")
+        }
+        # Scoring every vector is ~0.1 s of pure Python on a large repo; the
+        # same query against the same index (every step of a task) is cached.
+        cache_key = (
+            index.get("projectDir"),
+            index.get("fingerprint"),
+            index.get("generatedAt"),
+            q,
+            size,
+        )
+        if index.get("generatedAt") is not None:
+            with self._lock:
+                cached = self._search_cache.get(cache_key)
+                if cached is not None:
+                    self._search_cache.move_to_end(cache_key)
+            if cached is not None:
+                return {"query": q, "hits": [dict(hit) for hit in cached], "index": summary}
         terms = _tokenize(q)
         hits = []
         # Never compare vectors from different spaces when a local optional
@@ -511,16 +778,13 @@ class SemanticRepoIndexer:
         hits.sort(
             key=lambda item: (-item[0], str(item[1].get("path")), str(item[1].get("qualified", "")))
         )
-        return {
-            "query": q,
-            "hits": [
-                {**item, "score": round(score, 4)}
-                for score, item in hits[: max(1, min(200, int(limit)))]
-            ],
-            "index": {
-                k: index.get(k) for k in ("files", "generatedAt", "fingerprint", "embeddingBackend")
-            },
-        }
+        ranked = [{**item, "score": round(score, 4)} for score, item in hits[:size]]
+        if index.get("generatedAt") is not None:
+            with self._lock:
+                self._search_cache[cache_key] = ranked
+                while len(self._search_cache) > 64:
+                    self._search_cache.popitem(last=False)
+        return {"query": q, "hits": [dict(hit) for hit in ranked], "index": summary}
 
     def semantic_diff(
         self,
@@ -528,12 +792,35 @@ class SemanticRepoIndexer:
         baseline: dict[str, Any] | None = None,
         *,
         snapshot: dict[str, Any] | None = None,
+        allow_stale: bool = False,
     ) -> dict[str, Any]:
         root = Path(project_dir).resolve(strict=False)
         baseline = baseline or {}
         current = snapshot or git_snapshot(str(root))
         base_head = baseline.get("head")
-        args = ["git", "diff", "--unified=0", str(base_head or "HEAD"), "--"]
+        index = self.refresh(str(root), snapshot=current, allow_stale=allow_stale)
+        # `git diff` costs hundreds of ms on 9P/NTFS and is repeated on every
+        # context request; its inputs are the baseline, the working tree state
+        # the snapshot fingerprints, and the index used to map symbols.
+        cache_key = (
+            str(root),
+            str(base_head or "HEAD"),
+            current.get("head"),
+            current.get("trackedHash") or current.get("statusHash"),
+            current.get("untrackedHash"),
+            current.get("treeStamp"),
+            tuple(current.get("changed") or ()),
+            index.get("fingerprint"),
+            index.get("generatedAt"),
+        )
+        with self._lock:
+            cached = self._diff_cache.get(cache_key)
+            if cached is not None:
+                self._diff_cache.move_to_end(cache_key)
+        if cached is not None:
+            return {**cached, "baseline": baseline, "current": current, "cacheHit": True}
+        # A repository-defined diff driver/textconv must never execute here.
+        args = ["git", "diff", "--no-ext-diff", "--no-textconv", "--unified=0", str(base_head or "HEAD"), "--"]
         try:
             proc = _run(root, args, 12.0)
         except subprocess.TimeoutExpired:
@@ -553,7 +840,6 @@ class SemanticRepoIndexer:
         for relative in current.get("changed") or []:
             if relative not in changed_lines:
                 changed_lines[relative].append((1, 2**31 - 1))
-        index = self.refresh(str(root), snapshot=current)
         impacted = []
         for symbol in index.get("symbols") or []:
             ranges = changed_lines.get(str(symbol.get("path"))) or []
@@ -567,7 +853,7 @@ class SemanticRepoIndexer:
                     }
                 )
         changed_files = sorted(changed_lines)
-        return {
+        result = {
             "baseline": baseline,
             "current": current,
             "changedFiles": changed_files,
@@ -575,6 +861,13 @@ class SemanticRepoIndexer:
             "changedLineRanges": {k: v[:100] for k, v in changed_lines.items()},
             "summary": f"{len(changed_files)} files / {len(impacted)} impacted symbols",
         }
+        # A failed/timed-out git diff is not cached: the next request retries.
+        if proc is not None and proc.returncode == 0:
+            with self._lock:
+                self._diff_cache[cache_key] = result
+                while len(self._diff_cache) > 32:
+                    self._diff_cache.popitem(last=False)
+        return result
 
 
 RESERVED_SECRET_NAMES = frozenset(
@@ -1039,6 +1332,7 @@ class DynamicContextManager:
                     "queued",
                 ],
                 limit=10,
+                projection="summary",
             )
             task = tasks[0] if tasks else None
         return self._session_task(features, runtime, sid, task)
@@ -1365,6 +1659,7 @@ class DynamicContextManager:
             session_id=sid,
             states=["submitted", "running", "waiting_permission", "verifying", "recovering"],
             limit=10,
+            projection="summary",
         )
         task = tasks[0] if tasks else None
         compact = self.maybe_compact(features, runtime, sid, task)
@@ -1404,28 +1699,27 @@ class DynamicContextManager:
             hit_limit = 20 if context_class == "full" else 8
             diff_limit = 80 if context_class == "full" else 32
             try:
-                repo = self.indexer.search(directory, query, limit=hit_limit, snapshot=snapshot)
+                # Interactive path: never wait for a (19-32 s on 9P) rebuild;
+                # the previous index is served while a new one builds.
+                repo = self.indexer.search(
+                    directory, query, limit=hit_limit, snapshot=snapshot, allow_stale=True
+                )
                 hits = repo.get("hits") or []
                 if hits:
                     parts.append(
                         "Semantic repository matches:\n"
-                        + "\n".join(
-                            f"- {h.get('type')}: {h.get('qualified') or h.get('path')} (score {h.get('score')})"
-                            for h in hits[:hit_limit]
-                        )
+                        + "\n".join(_semantic_match_lines(hits[:hit_limit]))
                     )
                 diff = self.indexer.semantic_diff(
                     directory,
                     task.get("baseline") if task else None,
                     snapshot=snapshot,
+                    allow_stale=True,
                 )
                 if diff.get("changedSymbols"):
                     parts.append(
                         "Changed symbols since task baseline:\n"
-                        + "\n".join(
-                            f"- {s.get('qualified')} · {s.get('path')}:{s.get('line')}"
-                            for s in diff["changedSymbols"][:diff_limit]
-                        )
+                        + "\n".join(_changed_symbol_lines(diff["changedSymbols"], diff_limit))
                     )
             except Exception as exc:
                 self.store.event(
@@ -1500,7 +1794,10 @@ class ToolGateway:
 
     def _task(self, session_id: str | None, cwd: str | None) -> dict[str, Any] | None:
         if session_id:
-            rows = self.store.list_tasks(session_id=session_id, states=EXECUTION_STATES, limit=2)
+            # Every tool call passes here: never decode the attachment payload.
+            rows = self.store.list_tasks(
+                session_id=session_id, states=EXECUTION_STATES, limit=2, projection="summary"
+            )
             if len(rows) > 1:
                 raise PermissionError(
                     "multiple active tasks own this session; reconcile before executing tools"
@@ -1510,7 +1807,10 @@ class ToolGateway:
             return rows[0] if rows else None
         if cwd:
             rows = self.store.list_tasks(
-                project_dir=str(Path(cwd).resolve(strict=False)), states=EXECUTION_STATES, limit=2
+                project_dir=str(Path(cwd).resolve(strict=False)),
+                states=EXECUTION_STATES,
+                limit=2,
+                projection="summary",
             )
             if len(rows) > 1:
                 raise PermissionError("ambiguous task context: sessionID is required")
@@ -1809,6 +2109,8 @@ class ReplayService:
             ),
             summary="Recorded messages/tool results for zero-token replay",
             mime="application/json",
+            # Transcripts compress ~10x; ArtifactStore.get() inflates them.
+            compress=True,
         )
         self.store.event(
             kind="replay.captured",
@@ -1847,7 +2149,7 @@ class BranchStateService:
         )
         if not isinstance(value, dict) or not value.get("id"):
             raise RuntimeError("session fork failed")
-        source = self.store.list_tasks(session_id=session_id, limit=100)
+        source = self.store.list_tasks(session_id=session_id, limit=100, projection="light")
         self.store.event(
             kind="session.branch_created",
             session_id=session_id,
@@ -1866,8 +2168,8 @@ class BranchStateService:
     def merge(
         self, features: Any, source_session: str, target_session: str, *, include_state: bool = True
     ) -> dict[str, Any]:
-        source = self.store.list_tasks(session_id=source_session, limit=200)
-        target = self.store.list_tasks(session_id=target_session, limit=200)
+        source = self.store.list_tasks(session_id=source_session, limit=200, projection="light")
+        target = self.store.list_tasks(session_id=target_session, limit=200, projection="light")
         copied = []
         if include_state and source:
             source_project = str(source[0].get("project_dir") or "")
@@ -2071,8 +2373,12 @@ def handle_get(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
             if not directory:
                 raise ValueError("directory/sessionID required")
             query = (params.get("query") or [""])[0]
+            # Stale-while-rebuild: a UI poll must not hold a request thread for
+            # a full rebuild; the response carries stale/rebuilding flags.
             handler.json_response(
-                v3.indexer.search(directory, query, 80) if query else v3.indexer.refresh(directory)
+                v3.indexer.search(directory, query, 80, allow_stale=True)
+                if query
+                else v3.indexer.refresh(directory, allow_stale=True)
             )
         elif parsed.path == "/client-replay.json":
             task_id = str((params.get("taskID") or [""])[0])
@@ -2133,7 +2439,9 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
             directory = str(Path(str(payload.get("directory") or "")).resolve(strict=True))
             if not payload.get("directory"):
                 raise ValueError("Native directory required")
-            active = runtime.STORE.list_tasks(session_id=sid, states=runtime.ACTIVE_STATES, limit=1)
+            active = runtime.STORE.list_tasks(
+                session_id=sid, states=runtime.ACTIVE_STATES, limit=1, projection="summary"
+            )
             result = v3.ledger.bind(
                 session_id=sid,
                 turn_id=str(payload.get("turnID") or ""),

@@ -343,7 +343,10 @@ assert diptrace.get('environment') == {
 }
 assert diptrace.get('command') == ['diptrace-mcp']
 assert diptrace.get('cwd') == str(root)
-assert config.get('model') == 'bailian-cli/qwen3.8-max'
+# A config-level model would outrank the TUI's recent models; the default
+# lives in config-manager's catalog instead.
+assert 'model' not in config
+assert (config.get('agents') or {}).get('title', {}).get('model') == 'openai/gpt-6-luna-direct#none'
 assert config.get('compaction') == {'auto': True, 'keep': {'tokens': 4096}, 'buffer': 2048}
 assert config.get('tool_output') == {'max_lines': 1600, 'max_bytes': 48000}
 assert str(root / 'scripts' / 'rag-mcp.sh') in (kb.get('command') or [])
@@ -369,6 +372,25 @@ for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY'):
     assert name not in env, (name, env)
 PY
 grep -Fq 'DipTrace MCP: intentionally disabled (DIPTRACE_MCP_ENABLED=0)' "$TMP/install.out"
+
+# An unpaid Alibaba Token Plan removes the cloud provider and every agent routed
+# to it; local Ollama models and the OpenAI stack stay.
+printf 'OPENCODE_ALIBABA_ENABLED=0\n' >>"$COPY/.env"
+env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+  bash "$COPY/scripts/install.sh" >"$TMP/alibaba-off.out"
+python3 - "$CONFIG" <<'PY'
+import json, sys
+config = json.load(open(sys.argv[1], encoding='utf-8'))
+assert 'bailian-cli' not in config['providers'], 'unpaid Alibaba provider must not be rendered'
+assert 'ollama' in config['providers'] and 'openai' in config['providers']
+agents = config['agents']
+assert not [key for key, value in agents.items() if str(value.get('model') or '').startswith('bailian-cli/')], 'no agent may route to Alibaba'
+for gone in ('fast-reader', 'role-builder', 'role-reviewer', 'role-long-horizon'):
+    assert gone not in agents, gone
+for kept in ('title', 'sol-fast-reader', 'sol-role-builder', 'sol-role-reviewer', 'dnd-narrator', 'build-direct'):
+    assert kept in agents, kept
+PY
+sed -i '/^OPENCODE_ALIBABA_ENABLED=/d' "$COPY/.env"
 
 # Auto mode without the sibling checkout remains disabled; it never reaches into
 # HOME or inherits arbitrary environment variables.

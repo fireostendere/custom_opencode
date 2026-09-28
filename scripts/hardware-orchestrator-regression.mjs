@@ -381,3 +381,31 @@ test('same packet in two sessions is never served from another session cache', a
   await h.consult('design', packet(), {}, 'a'); await h.consult('design', packet(), {}, 'b')
   assert.equal(h.calls.length, 2)
 })
+
+test('specialist calls reserve and settle on the root budget ledger; exhaustion refuses before any provider call', async t => {
+  let refuse = false
+  const h = await harness(t, { fetcher: async (request, init, body) => {
+    const url = typeof request === 'string' || request instanceof URL ? String(request) : request.url
+    if (url.endsWith('/internal/runtime/request-before'))
+      return refuse
+        ? Response.json({ ok: false, error: 'BudgetExceeded: model call budget exhausted; durable budget checkpoint saved' }, { status: 503 })
+        : Response.json({ requestID: body.requestID, maxOutputTokens: 1200 })
+    if (url.endsWith('/internal/runtime/request-after')) return Response.json({ ok: true })
+    return answer()
+  } })
+  process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN = 'fixture-not-real'
+  await h.request(parent())
+  await h.consult('design')
+  await new Promise(resolve => setTimeout(resolve, 10))
+  const ledger = h.calls.filter(call => call.url.includes('/internal/runtime/'))
+  const provider = h.calls.filter(call => !call.url.includes('/internal/runtime/'))
+  assert.deepEqual(ledger.map(call => call.url.split('/').at(-1)), ['request-before', 'request-after'])
+  assert.equal(ledger[0].body.sessionID, 's1')
+  assert.equal(ledger[1].body.requestID, ledger[0].body.requestID)
+  assert.deepEqual(ledger[1].body.usage, { input: 100, output: 20 })
+  assert.equal(provider.length, 1)
+  assert.equal('max_output_tokens' in provider[0].body, false, 'ChatGPT OAuth endpoint keeps no wire cap; usage is settled afterwards')
+  refuse = true
+  await assert.rejects(h.consult('design', { ...packet(), task: 'another block' }), error => error.name === 'BudgetExceeded' && /лимит вызовов модели/.test(error.message))
+  assert.equal(h.calls.filter(call => !call.url.includes('/internal/runtime/')).length, 1, 'a refused reservation never reaches the provider')
+})

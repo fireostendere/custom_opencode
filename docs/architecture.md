@@ -99,22 +99,16 @@ Git revert дополнительно проверяет целевой relative
 
 ## Web Build, TUI Plan и model profiles
 
-В web пользовательский execution mode зафиксирован на `Build`; переключатель режима не показывается.
+Web и TUI работают с одними и теми же сессиями, поэтому используют одни и те же видимые агенты `build`/`plan` (и `dnd-narrator` для DnD Edition). Web не показывает переключатель режима и никогда не меняет агента при просмотре чата; чат, переведённый в Plan из TUI, помечается чипом с кнопкой возврата в Build.
 
-Compatibility layer сохраняет `plan`/`plan-direct` для TUI/CLI, а `access-fix.js`:
-
-- скрывает внутренние agent controls;
-- синхронизирует web session с `build`/`build-direct`;
-- не меняет выбранные provider/model/variant.
-
-Model picker отдельно выбирает profile:
+Выбор модели меняет агента только там, где модель к нему привязана:
 
 ```text
-обычная модель                    → build-direct (или native build)
-Qwen 3.8 Max · Оркестрированная   → build
+DnD Edition                        → dnd-narrator
+другая модель из dnd-narrator      → build
+build-direct / plan-direct (legacy) → build / plan
+остальное                          → агент не меняется
 ```
-
-В TUI режим `Plan` использует `plan-direct` (или native `plan`) для direct-сессий и native `plan` для orchestrated-сессий.
 
 Локальный provider остаётся ordinary direct model choice только при реальном ручном выборе пользователя. Project defaults, persistent queue и workflow worker не имеют automatic `ollama/*` route.
 

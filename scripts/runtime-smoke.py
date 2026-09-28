@@ -372,16 +372,88 @@ with tempfile.TemporaryDirectory() as temp:
         baseline=git_snapshot(str(project)),
     )
     server_runtime._switch_session(fake, direct_task)
-    assert fake.agent_switches == [
-        {"agent": "build-direct"}
-    ], "direct dispatch must select the deny-delegation agent"
+    assert fake.agent_switches == [], "direct dispatch must keep the visible build agent"
+    # Hidden legacy agents make the native TUI drop the session model, so a
+    # direct dispatch migrates them; user agents are kept, a stale narrator
+    # (the model is no longer D&D) returns to Build.
+    for before, after in (("build-direct", "build"), ("plan-direct", "plan"), ("dnd-narrator", "build"), ("army-labeler", None)):
+        fake.session = {"agent": before, "model": {"providerID": "openai", "id": "gpt-6-luna", "variant": "high"}}
+        fake.agent_switches.clear()
+        fake.model_switches.clear()
+        legacy_task = store.create_task(
+            session_id=f"ses_legacy_{before}",
+            project_dir=str(project),
+            text="direct",
+            profile="direct",
+            kind="prompt",
+            baseline=git_snapshot(str(project)),
+        )
+        server_runtime._switch_session(fake, legacy_task)
+        assert fake.agent_switches == ([{"agent": after}] if after else []), (before, fake.agent_switches)
+        assert fake.model_switches == [], f"direct dispatch rewrote the model of a {before} session"
+    fake.session = {"agent": "build", "model": {"providerID": "openai", "id": "gpt-6-luna", "variant": "high"}}
+    fake.agent_switches.clear()
+    # With the Alibaba Token Plan switched off its routed profiles disappear; a
+    # task created for one (Task Center, isolated task) runs on the selected model.
+    os.environ["OPENCODE_ALIBABA_ENABLED"] = "0"
+    try:
+        assert "build" not in server_runtime.REGISTRY.profiles()
+        fake.model_switches.clear()
+        off_task = store.create_task(
+            session_id="ses_alibaba_off",
+            project_dir=str(project),
+            text="build without alibaba",
+            profile="build",
+            kind="prompt",
+            baseline=git_snapshot(str(project)),
+        )
+        route = server_runtime._switch_session(fake, off_task)
+        assert fake.model_switches == [], "a disabled provider's profile must not switch the model"
+        assert route["profile"] == "direct", route
+    finally:
+        os.environ.pop("OPENCODE_ALIBABA_ENABLED", None)
+    fake.session = {"agent": "build", "model": {"providerID": "openai", "id": "gpt-6-luna", "variant": "high"}}
+    fake.agent_switches.clear()
+    # Coarse web profiles follow the session's selected model: a GPT Sol/Astra
+    # alias must never be re-pinned to the Qwen architect route, and a routed
+    # alias without "#variant" must keep the user's effort.
+    resolve = server_runtime._profile_for_selected_model
+    assert resolve("orchestrated", "openai/gpt-6-sol-orchestrated#xhigh") == "sol-orchestrated"
+    assert resolve("orchestrated", "openai/gpt-6-astra-orchestrated#xhigh") == "direct"
+    assert resolve("orchestrated", "bailian-cli/qwen3.8-orchestrated") == "architect"
+    assert resolve("direct", "bailian-cli/qwen3.8-orchestrated#high") == "architect"
+    assert resolve("direct", "openai/gpt-6-dnd-edition#auto") == "dnd-edition"
+    assert resolve("orchestrated", "openai/gpt-6-luna#high") == "direct"
+    assert resolve("orchestrated", None) == "direct"
+    assert resolve("build", "openai/gpt-6-luna") == "build", "explicit runtime profiles keep their routing"
+    for selected, request in (
+        ({"providerID": "openai", "id": "gpt-6-astra-orchestrated", "variant": "xhigh"}, "orchestrated"),
+        ({"providerID": "openai", "id": "gpt-6-sol-orchestrated", "variant": "xhigh"}, "orchestrated"),
+        ({"providerID": "bailian-cli", "id": "qwen3.8-orchestrated", "variant": "high"}, "direct"),
+    ):
+        fake.session = {"agent": "build", "model": dict(selected)}
+        fake.model_switches.clear()
+        web_task = store.create_task(
+            session_id=f"ses_web_{selected['id']}",
+            project_dir=str(project),
+            text="web",
+            profile="architect" if request == "orchestrated" else "direct",
+            kind="prompt",
+            metadata={"profileRequest": request},
+            baseline=git_snapshot(str(project)),
+        )
+        server_runtime._switch_session(fake, web_task)
+        assert fake.model_switches == [], f"web dispatch replaced {selected}"
+        assert fake.session["model"] == selected
+    fake.session = {"agent": "build", "model": {"providerID": "openai", "id": "gpt-6-luna", "variant": "high"}}
+    fake.agent_switches.clear()
     # Plan routing changes the agent only: Qwen alias, SOL alias and a direct
     # model with a variant all retain their exact model selection.
     for profile, model, expected_agent in (
         ("architect", {"providerID": "bailian-cli", "id": "qwen3.8-orchestrated"}, "plan"),
         ("sol-orchestrated", {"providerID": "openai", "id": "gpt-6-sol-orchestrated"}, "plan"),
         ("dnd-edition", {"providerID": "openai", "id": "gpt-6-dnd-edition"}, "dnd-narrator"),
-        ("direct", {"providerID": "custom", "id": "manual", "variant": "precise"}, "plan-direct"),
+        ("direct", {"providerID": "custom", "id": "manual", "variant": "precise"}, "plan"),
     ):
         fake.session = {"agent": "build", "model": dict(model)}
         fake.model_switches.clear()
@@ -407,7 +479,7 @@ with tempfile.TemporaryDirectory() as temp:
     fake.model_switches.clear()
     original_profiles = server_runtime.REGISTRY.profiles
     server_runtime.REGISTRY.profiles = lambda: {
-        "direct": {"id": "direct", "route": "selected", "agentBuild": "build-direct"},
+        "direct": {"id": "direct", "route": "selected", "agentBuild": "build"},
         "build": {
             "id": "build",
             "route": "cloud",

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises"
+import { mkdtemp, mkdir, writeFile, rm, symlink, utimes } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -47,10 +47,14 @@ try {
   ).default
   const hooks = {}
   const gameSkills = []
+  let skillLists = 0
   let command
+  let emit
+  const events = new ReadableStream({ start(controller) { emit = (event) => controller.enqueue(event) } })
   const registration = () => ({ dispose: async () => {} })
-  await plugin.setup({
-    skill: { list: async () => ({ data: gameSkills }) },
+  const cleanup = await plugin.setup({
+    event: { subscribe: () => events.values() },
+    skill: { list: async () => { skillLists += 1; return { data: gameSkills } } },
     session: {
       hook: async (name, fn) => {
         hooks[name] = fn
@@ -125,11 +129,19 @@ try {
     ["Custom DnD Edition policy:\nSTATIC DND"],
     "DnD Edition must receive only its own policy",
   )
-  gameSkills.push({ id: 'odm-narrator', content: 'NARRATOR' }, { id: 'odm-dm-policy', content: 'POLICY' }, { id: 'odm-development', content: 'CODING' })
+  gameSkills.push({ id: 'odm-narrator', content: 'NARRATOR' }, { id: 'yolo-dm', content: 'YOLO' }, { id: 'odm-dm-policy', content: 'POLICY' }, { id: 'odm-development', content: 'CODING' })
+  // Skill reload invalidates the cached pair; ordinary steps never re-list the catalog.
+  emit({ type: 'skill.updated', data: {} })
+  await new Promise((resolve) => setImmediate(resolve))
+  const listsBeforeSteps = skillLists
   await hooks.context(dnd)
-  assert.deepEqual(dnd.system.slice(-2).map(item => item.text), ['Required game skill already loaded: odm-dm-policy\nPOLICY', 'Required game skill already loaded: odm-narrator\nNARRATOR'])
+  for (let step = 0; step < 5; step++) await hooks.context({ ...dnd, system: [] })
+  assert.equal(skillLists, listsBeforeSteps + 1, 'D&D steps must reuse the cached game skills')
+  assert.deepEqual(dnd.system.slice(-3).map(item => item.text), ['Required game skill already loaded: odm-dm-policy\nPOLICY', 'Required game skill already loaded: odm-narrator\nNARRATOR', 'Required game skill already loaded: yolo-dm\nYOLO'])
   assert.ok(!dnd.system.some(item => item.text.includes('CODING')), 'preloading must stay game-only')
   gameSkills.length = 0
+  emit({ type: 'skill.updated', data: {} })
+  await new Promise((resolve) => setImmediate(resolve))
 
   const dndPinnedModel = {
     sessionID: "dnd-pinned",
@@ -194,7 +206,52 @@ try {
   await hooks.context(normal)
   assert.ok(normal.system.length > 1)
 
-  console.log("Context lanes regression passed: managed/static bare isolation, DnD-only policy, lite kernel, normal/full layering, override")
+  // Readers build nothing: no Ponytail even when a class override grants "full".
+  await command.execute({ sessionID: "reader", prompt: { text: "full" } })
+  const reader = { sessionID: "reader", agent: "sol-fast-reader", model: { providerID: "openai", id: "gpt-6-luna-direct" }, system: [] }
+  await hooks.context(reader)
+  assert.ok(reader.system.some((x) => x.text.includes("FULL ENGINEERING")))
+  assert.ok(!reader.system.some((x) => x.text.includes("PONYTAIL")), "readers must not receive Ponytail")
+  assert.equal(policy.resolveContextPolicy({ agent: "fast-reader", model: { providerID: "openai", id: "gpt-6-sol-direct" } }).ponytail, false)
+  assert.equal(policy.resolveContextPolicy({ agent: "build", model: { providerID: "openai", id: "gpt-6-sol-direct" } }).ponytail, true)
+
+  // Ponytail state is cached by mtime; a bad state file or checkout never fails a request.
+  const stateFile = join(process.env.XDG_CONFIG_HOME, "opencode", ".ponytail-active")
+  await mkdir(join(process.env.XDG_CONFIG_HOME, "opencode"), { recursive: true })
+  const ponytailText = async () => {
+    const event = { sessionID: "ponytail", agent: "build", model: { providerID: "openai", id: "gpt-6-sol-direct" }, system: [] }
+    await hooks.context(event)
+    return event.system.find((x) => x.text.startsWith("Ponytail V2 engineering policy"))?.text || ""
+  }
+  const warnings = []
+  const warn = console.warn
+  console.warn = (...args) => warnings.push(args.join(" "))
+  try {
+    await writeFile(stateFile, "ultra\n")
+    assert.ok((await ponytailText()).includes("PONYTAIL ultra"))
+    await writeFile(stateFile, "lite\n")
+    await utimes(stateFile, new Date(), new Date(Date.now() + 5000))
+    assert.ok((await ponytailText()).includes("PONYTAIL lite"), "a changed mode file is picked up")
+    await writeFile(stateFile, "bogus\n")
+    await utimes(stateFile, new Date(), new Date(Date.now() + 10000))
+    assert.ok((await ponytailText()).includes("PONYTAIL full"), "an invalid mode falls back to the default")
+    assert.equal(warnings.filter((line) => line.includes("Invalid Ponytail mode")).length, 1)
+    await ponytailText()
+    assert.equal(warnings.filter((line) => line.includes("Invalid Ponytail mode")).length, 1, "the unchanged bad file is not re-read or re-logged")
+    await rm(stateFile)
+    await writeFile(join(tmp, "elsewhere"), "ultra\n")
+    await symlink(join(tmp, "elsewhere"), stateFile)
+    assert.ok((await ponytailText()).includes("PONYTAIL full"), "an unsafe symlink falls back to the default")
+    await rm(stateFile)
+    process.env.PONYTAIL_CHECKOUT_DIR = join(tmp, "missing-checkout")
+    assert.equal(await ponytailText(), "", "a missing checkout drops Ponytail instead of failing the request")
+    process.env.PONYTAIL_CHECKOUT_DIR = join(tmp, "ponytail")
+  } finally {
+    console.warn = warn
+  }
+  await cleanup()
+
+  console.log("Context lanes regression passed: managed/static bare isolation, DnD-only policy, cached game skills, lite kernel, normal/full layering, override, reader/Ponytail fallbacks")
 } finally {
   for (const key of Object.keys(process.env)) if (!(key in original)) delete process.env[key]
   Object.assign(process.env, original)

@@ -633,13 +633,28 @@ class ExecutionLedger:
                 == 1
             )
 
-    def summary(self, root_id: str | None = None) -> dict:
-        query = "SELECT * FROM execution_requests"
+    USAGE_KEYS = ("input", "output", "reasoning", "cacheRead", "cacheWrite")
+
+    @staticmethod
+    def _summary_result(requests: int, unknown: int, totals: dict, by_model: dict) -> dict:
+        return {
+            "requests": requests,
+            "usageUnknownRequests": unknown,
+            "knownUsage": totals,
+            "byModel": by_model,
+            "cost": None,
+            "costReason": "Provider charges are not inferred from reservations",
+            "reasoningIncludedInOutput": True,
+        }
+
+    def _summary_python(self, root_id: str | None = None) -> dict:
+        """Reference implementation (also the fallback without SQLite JSON1)."""
+        query = "SELECT model_ref,usage_json FROM execution_requests"
         args = ()
         if root_id:
             query += " WHERE root_id=?"
             args = (root_id,)
-        totals = {key: 0 for key in ("input", "output", "reasoning", "cacheRead", "cacheWrite")}
+        totals = {key: 0 for key in self.USAGE_KEYS}
         by_model = {}
         unknown = 0
         with self.store.connect() as db:
@@ -657,12 +672,57 @@ class ExecutionLedger:
                 if isinstance(value, (int, float)):
                     totals[key] += value
                     model[key] += value
-        return {
-            "requests": len(rows),
-            "usageUnknownRequests": unknown,
-            "knownUsage": totals,
-            "byModel": by_model,
-            "cost": None,
-            "costReason": "Provider charges are not inferred from reservations",
-            "reasoningIncludedInOutput": True,
-        }
+        return self._summary_result(len(rows), unknown, totals, by_model)
+
+    def summary(self, root_id: str | None = None) -> dict:
+        """Aggregate request accounting in SQLite (no per-row JSON decoding).
+
+        Numeric JSON values count, JSON true counts as 1 (Python bool is an
+        int), and a request without an "output" key is usage-unknown -- the
+        exact semantics of the reference loop in _summary_python().
+        """
+        if not self.store.json_sql_available():
+            return self._summary_python(root_id)
+
+        def number(key: str) -> str:
+            # json_extract yields 1/0 for true/false, text for strings and
+            # nested values: exactly isinstance(value, (int, float)).
+            value = f"json_extract(usage_json,'$.{key}')"
+            return (
+                f"SUM(CASE typeof({value}) WHEN 'integer' THEN {value} "
+                f"WHEN 'real' THEN {value} ELSE 0 END)"
+            )
+
+        # Malformed usage_json raises here and in the reference loop alike.
+        query = (
+            "SELECT model_ref,COUNT(*) AS calls,"
+            "SUM(CASE WHEN usage_json IS NULL OR usage_json='' THEN 1 "
+            "WHEN json_type(usage_json,'$.output') IS NULL THEN 1 ELSE 0 END) AS unknown,"
+            + ",".join(f"{number(key)} AS \"{key}\"" for key in self.USAGE_KEYS)
+            + " FROM execution_requests"
+        )
+        args = ()
+        if root_id:
+            query += " WHERE root_id=?"
+            args = (root_id,)
+        query += " GROUP BY model_ref ORDER BY MIN(rowid)"
+        try:
+            with self.store.connect() as db:
+                rows = db.execute(query, args).fetchall()
+        except Exception:
+            return self._summary_python(root_id)
+        totals = {key: 0 for key in self.USAGE_KEYS}
+        by_model: dict = {}
+        requests = unknown = 0
+        for row in rows:
+            requests += int(row["calls"] or 0)
+            unknown += int(row["unknown"] or 0)
+            model = by_model.setdefault(
+                row["model_ref"] or "unknown", {"calls": 0, **{key: 0 for key in totals}}
+            )
+            model["calls"] += int(row["calls"] or 0)
+            for key in totals:
+                value = row[key] or 0
+                totals[key] += value
+                model[key] += value
+        return self._summary_result(requests, unknown, totals, by_model)

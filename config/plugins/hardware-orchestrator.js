@@ -1,12 +1,37 @@
+import { randomUUID } from "node:crypto"
 import {
   HARDWARE_MODEL, KERNEL, ROLES, PACKET_SCHEMA, BoundedMap, JevRouter,
   digest, isHardwareLane, resolveModel, routeBody, userTurn, validatePacket,
   workerBody, readProvider,
 } from "./tui/lib/hardware-core.js"
+import { capRequestBody, normalizeUsage } from "./tui/lib/request-budget.js"
+import { budgetError, runtimeCall } from "./server-runtime-guard.js"
 
 const MARKER = "Custom Hardware Edition policy:"
 const CORE_TOOLS = new Set(["skill", "mcp_discover", "read", "glob", "grep", "list", "code", "codemode", "mcp", "kb", "knowledge", "diptrace", "fabric"])
 const SUPPORT = new Set(["title", "summary", "compaction"])
+const WORKER_OUTPUT_LIMIT = 16384
+// Worker calls bypass the native http hooks, so they reserve and settle on the
+// same durable root ledger as the parent turn whenever the runtime is configured.
+const ledgerEnabled = () => Boolean(process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN || process.env.OPENCODE_SERVER_PASSWORD)
+async function reserveWorker(sessionID) {
+  const requestID = randomUUID()
+  try {
+    const allocation = await runtimeCall("/internal/runtime/request-before", {
+      sessionID, requestID, outputLimit: WORKER_OUTPUT_LIMIT, finishOnly: false,
+    })
+    return { sessionID, requestID, maxOutputTokens: allocation.maxOutputTokens }
+  } catch (error) {
+    throw String(error?.message || error).includes("BudgetExceeded") ? budgetError(error) : error
+  }
+}
+function settleWorker(reservation, usage, status, error) {
+  if (!reservation) return
+  const { maxOutputTokens: _allocation, ...tracking } = reservation
+  void runtimeCall("/internal/runtime/request-after", {
+    ...tracking, usage: usage ? normalizeUsage({ usage }) : null, status: status ?? null, error: error ?? null,
+  }, { timeoutMs: 5000, repair: false }).catch(() => {})
+}
 
 function toolName(tool) {
   return typeof tool === "string" ? tool : tool?.function?.name || tool?.name || tool?.id || tool?.tool || ""
@@ -182,7 +207,7 @@ export default {
           if (record.calls >= 4) throw new Error("Hardware consultation budget exhausted (4 per user turn)")
           if (record.active >= 2) throw new Error("Two hardware specialists already running; collect them before delegating more")
           if (!record.transport) throw new Error("Hardware native provider transport is unavailable")
-          const body = workerBody(record.parent, input.role, packet, images, target, record.transport.url)
+          let body = workerBody(record.parent, input.role, packet, images, target, record.transport.url)
           const controller = new AbortController()
           const nativeSignal = context.signal || context.abortSignal
           const signals = [controller.signal, record.transport.signal, AbortSignal.timeout(spec.family === "astra" ? 240000 : 120000)]
@@ -197,11 +222,19 @@ export default {
           record.controllers.add(controller); record.calls++; record.active++
           const started = Date.now()
           const run = (async () => {
+            let reservation = null, status
             try {
+              if (ledgerEnabled()) {
+                reservation = await reserveWorker(context.sessionID)
+                body = capRequestBody(body, reservation.maxOutputTokens, false, "openai", record.transport.url)
+              }
               const response = await fetch(new Request(record.transport.url, {
                 method: "POST", headers, body: JSON.stringify(body), redirect: "error", signal: AbortSignal.any(signals),
               }))
+              status = response.status
               const result = await readProvider(response, 14000, started)
+              settleWorker(reservation, result.usage, status)
+              reservation = null
               if (sessions.get(context.sessionID) !== record) throw new Error("Discarded stale hardware worker result")
               const receipt = {
                 receipt: key, role: input.role, model: target.model, effort: target.effort,
@@ -213,6 +246,9 @@ export default {
               }
               record.usage.push({ role: input.role, model: target.model, elapsedMs: receipt.elapsedMs, ttftMs: receipt.ttftMs, usage: result.usage })
               return { content: JSON.stringify(receipt) }
+            } catch (error) {
+              settleWorker(reservation, null, status, String(error?.message || error).slice(0, 300))
+              throw error
             } finally { record.active--; record.controllers.delete(controller) }
           })()
           // Cache errors as well: an automatic retry must not spend another

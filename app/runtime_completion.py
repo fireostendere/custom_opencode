@@ -223,8 +223,8 @@ def _wrap_branch_merge(runtime: Any, v3mod: Any) -> None:
         )
         if not include_state:
             return result
-        source = runtime.STORE.list_tasks(session_id=source_session, limit=200)
-        target = runtime.STORE.list_tasks(session_id=target_session, limit=200)
+        source = runtime.STORE.list_tasks(session_id=source_session, limit=200, projection="summary")
+        target = runtime.STORE.list_tasks(session_id=target_session, limit=200, projection="light")
         target_task = target[0] if target else None
         state = []
         for task in source[:40]:
@@ -320,9 +320,9 @@ def handle_get(handler: Any, parsed: Any, runtime: Any, control: Any, features: 
         params = parse_qs(parsed.query)
         sid = str((params.get("sessionID") or [""])[0])
         tasks = (
-            runtime.STORE.list_tasks(session_id=sid, limit=100)
+            runtime.STORE.list_tasks(session_id=sid, limit=100, projection="public")
             if sid
-            else runtime.STORE.list_tasks(limit=100)
+            else runtime.STORE.list_tasks(limit=100, projection="public")
         )
         permissions = []
         if sid:

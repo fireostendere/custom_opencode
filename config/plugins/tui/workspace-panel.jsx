@@ -8,6 +8,7 @@ import { createEffect, For, onCleanup, Show } from "solid-js"
 import { PANEL_DEFS, PANEL_IDS, createPanelViews } from "./lib/panel-views.jsx"
 import { PANEL_SIDES, PANEL_VIEWS } from "./lib/panel-command.js"
 import { sessionInterruptCommand } from "./lib/session-interrupt.js"
+import { rememberBounded } from "./lib/panel-data.js"
 
 const HANDLE = 1
 const DEFAULT_SIDE_SIZE = 36
@@ -17,6 +18,8 @@ const SIDE_LABEL = { left: "LEFT", right: "RIGHT", top: "TOP", bottom: "BOTTOM" 
 const COLLAPSE_ICON = { left: "◂", right: "▸", top: "▴", bottom: "▾" }
 const EXPAND_ICON = { left: "▸", right: "◂", top: "▾", bottom: "▴" }
 const PIN_ICON = "📌"
+// Scroll positions are keyed by side/session/view; keep the most recent ones.
+const SCROLL_POSITION_LIMIT = 100
 
 function freshZones() {
   return {
@@ -265,7 +268,7 @@ export default Plugin.define({
       if (!key || !node || node.isDestroyed) return
       const top = Number(node.scrollTop ?? 0)
       const max = Math.max(0, Number(node.scrollHeight ?? 0) - Number(node.viewport?.height ?? 0))
-      scrollPositions.set(key, { top, atBottom: top >= max })
+      rememberBounded(scrollPositions, key, { top, atBottom: top >= max }, SCROLL_POSITION_LIMIT)
     }
     function scrollToEnd(node) {
       if (typeof node?.scrollTo === "function") node.scrollTo(Number.MAX_SAFE_INTEGER)

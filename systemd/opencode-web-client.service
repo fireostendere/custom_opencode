@@ -4,6 +4,9 @@ After=opencode.service
 
 [Service]
 WorkingDirectory=__CUSTOM_OPENCODE_ROOT__/app
+# glibc creates up to 8 malloc arenas per core for a threaded server; two keep
+# freed request/JSON memory reusable instead of fragmenting RSS (.env may override).
+Environment=MALLOC_ARENA_MAX=2
 EnvironmentFile=-__CUSTOM_OPENCODE_ROOT__/.env
 # server_workflow.py composes the existing app/server_rag.py lifecycle with persistent workflow features.
 ExecStart=__PYTHON3__ __CUSTOM_OPENCODE_ROOT__/app/server_workflow.py

@@ -2,6 +2,7 @@ import { createRequire } from "node:module"
 import { lstatSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { startEvents } from "../events.js"
 import {
   managedOrchestration,
   isDndLane,
@@ -16,7 +17,10 @@ const DATA_DIR = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share")
 const ENGINEERING = readFileSync(join(CONFIG_DIR, "prompts", "engineering.md"), "utf8").trim()
 const ENGINEERING_LITE = readFileSync(join(CONFIG_DIR, "prompts", "engineering-lite.md"), "utf8").trim()
 const PLAN_POLICY =
-  "Use plan_update only for complex or risky multi-step work. Keep 1-7 outcome-oriented items, update meaningful milestones, and never expose private reasoning."
+  "Use plan_update only for complex or risky multi-step work. Keep 1-7 outcome-oriented items, update only at meaningful milestones in the same step as other tool calls (never a plan-only step), and never expose private reasoning."
+const GAME_SKILLS = ["odm-dm-policy", "odm-narrator", "yolo-dm"]
+const GAME_SKILL_TTL_MS = 5 * 60_000
+const GAME_SKILL_RETRY_MS = 30_000
 const PLAN_AGENTS = new Set(["build", "build-direct", "plan", "plan-direct"])
 const OWN_MARKERS = [
   "Custom engineering policy",
@@ -86,25 +90,53 @@ function orchestrationFor(event) {
   return { marker: staticItem.marker, prompt }
 }
 
-function ponytailPolicy() {
-  if (process.env.PONYTAIL_ENABLED === "0") return ""
-  const root = process.env.PONYTAIL_CHECKOUT_DIR || join(DATA_DIR, "opencode", "ponytail")
-  const { getPonytailInstructions } = require(join(root, "hooks", "ponytail-instructions.js"))
-  const { getDefaultMode, normalizePersistedMode } = require(join(root, "hooks", "ponytail-config.js"))
-  const stateDir = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode")
-  const target = join(stateDir, ".ponytail-active")
+let ponytailCache = null
+
+function statKey(path) {
+  try {
+    const info = lstatSync(path)
+    return `${info.isFile() && !info.isSymbolicLink() ? "file" : "other"}:${info.mtimeMs}:${info.size}`
+  } catch (error) {
+    return error.code === "ENOENT" ? "missing" : `error:${error.code}`
+  }
+}
+
+function buildPonytailPolicy(root, target) {
+  let upstream
+  try {
+    upstream = {
+      ...require(join(root, "hooks", "ponytail-instructions.js")),
+      ...require(join(root, "hooks", "ponytail-config.js")),
+    }
+  } catch (error) {
+    console.warn(`[context-lanes] Ponytail checkout unavailable; policy skipped: ${error?.message ?? error}`)
+    return ""
+  }
   let mode
   try {
     const info = lstatSync(target)
     if (!info.isFile() || info.isSymbolicLink()) throw new Error("Unsafe Ponytail state path")
-    mode = normalizePersistedMode(readFileSync(target, "utf8").trim())
+    mode = upstream.normalizePersistedMode(readFileSync(target, "utf8").trim())
+    if (!["off", "lite", "full", "ultra"].includes(mode)) throw new Error("Invalid Ponytail mode in state file")
   } catch (error) {
-    if (error.code !== "ENOENT") throw error
-    mode = getDefaultMode()
+    // A bad state file must never fail every model request.
+    if (error.code !== "ENOENT") console.warn(`[context-lanes] ${error.message}; using the default Ponytail mode`)
+    mode = upstream.getDefaultMode()
   }
   if (mode === "off") return ""
-  if (!["lite", "full", "ultra"].includes(mode)) throw new Error("Invalid Ponytail mode in state file")
-  return `Ponytail V2 engineering policy (${mode}):\n${getPonytailInstructions(mode)}`
+  if (!["lite", "full", "ultra"].includes(mode)) return ""
+  return `Ponytail V2 engineering policy (${mode}):\n${upstream.getPonytailInstructions(mode)}`
+}
+
+/** Rebuilt only when the mode file or the upstream skill changes (mtime/size). */
+function ponytailPolicy() {
+  if (process.env.PONYTAIL_ENABLED === "0") return ""
+  const root = process.env.PONYTAIL_CHECKOUT_DIR || join(DATA_DIR, "opencode", "ponytail")
+  const stateDir = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode")
+  const target = join(stateDir, ".ponytail-active")
+  const key = JSON.stringify([root, target, statKey(target), statKey(join(root, "skills", "ponytail", "SKILL.md"))])
+  if (ponytailCache?.key !== key) ponytailCache = { key, text: buildPonytailPolicy(root, target) }
+  return ponytailCache.text
 }
 
 function removeOwned(parts) {
@@ -118,6 +150,26 @@ export default {
   id: "custom.context-lanes",
   async setup(ctx) {
     const registrations = []
+    // The skill catalog is 0.5-0.8 MB: fetch the two game skills once and
+    // refresh them only on skill reload (or a bounded TTL as a safety net).
+    let gameSkills = null
+    const requiredGameSkills = async () => {
+      if (gameSkills && Date.now() < gameSkills.until) return gameSkills.items
+      const catalog = await ctx.skill.list()
+      const skills = Array.isArray(catalog) ? catalog : catalog?.data || []
+      const items = GAME_SKILLS.flatMap((id) => {
+        const content = skills.find((item) => item.id === id)?.content
+        return content ? [[id, content]] : []
+      })
+      const complete = items.length === GAME_SKILLS.length
+      gameSkills = { items, until: Date.now() + (complete ? GAME_SKILL_TTL_MS : GAME_SKILL_RETRY_MS) }
+      return items
+    }
+    const stopEvents = ctx.event?.subscribe
+      ? startEvents(ctx, (event) => {
+          if (event?.type === "skill.updated") gameSkills = null
+        })
+      : () => {}
     registrations.push(
       await ctx.session.hook("context", async (event) => {
         if (!Array.isArray(event.system)) return
@@ -155,12 +207,8 @@ export default {
             text: `${orchestration.marker}:\n${orchestration.prompt}`,
           })
         if (policy.dndMinimalContext && ctx.skill?.list) {
-          const catalog = await ctx.skill.list()
-          const skills = Array.isArray(catalog) ? catalog : catalog?.data || []
-          for (const id of ["odm-dm-policy", "odm-narrator"]) {
-            const skill = skills.find(item => item.id === id)
-            if (skill?.content) event.system.push({ type: "text", text: `Required game skill already loaded: ${id}\n${skill.content}` })
-          }
+          for (const [id, content] of await requiredGameSkills())
+            event.system.push({ type: "text", text: `Required game skill already loaded: ${id}\n${content}` })
         }
       }),
     )
@@ -183,7 +231,9 @@ export default {
       ),
     )
 
-    return async () =>
-      Promise.allSettled(registrations.map((registration) => registration?.dispose?.()))
+    return async () => {
+      stopEvents()
+      return Promise.allSettled(registrations.map((registration) => registration?.dispose?.()))
+    }
   },
 }

@@ -42,6 +42,14 @@ TUI bundle восстанавливает отображение: если по�
 - systemd entrypoint не совпадает с актуальным server layer;
 - нарушена RAG/router invariant.
 
+## `WARNING: the OpenCode service was respawned without the current env`
+
+Во время install.sh был открыт TUI: он заново поднял остановленный сервис с env, который закэшировал при своём старте, поэтому новые значения из `.env` (перечислены в предупреждении) до сервиса не дошли. `config-manager.js` берёт `OPENCODE_DEFAULT_MODEL`/`OPENCODE_FREE_ONLY_PROVIDERS` из `~/.config/opencode/service.json` и без рестарта. Остальным переменным нужен рестарт: закройте открытые `custom-opencode`, затем:
+
+```bash
+opencode2 service stop && opencode2 service start
+```
+
 ## `web-service: FAIL`
 
 ```bash
@@ -152,6 +160,22 @@ OPENCODE_AUTH_REMEMBER_SECONDS=2592000
 - web password был изменён — старые подписанные sessions намеренно становятся недействительными.
 
 Для HTTPS за нормальным reverse proxy оставляйте `OPENCODE_AUTH_COOKIE_SECURE=auto`.
+
+## `403 Запрос с другого сайта отклонён`
+
+Сервер отклоняет browser-запросы к API с чужого origin (CSRF): `Sec-Fetch-Site` должен быть `same-origin`/`none`, а `Origin` — совпадать с `Host`.
+
+- За reverse proxy, который переписывает `Host` (nginx `proxy_pass` без `proxy_set_header Host $host`), передайте `X-Forwarded-Host` или перечислите публичный origin: `OPENCODE_WEB_ALLOWED_ORIGINS=https://phone.example.ts.net`.
+- Страница на другом localhost-порту или сайте не может вызывать API намеренно — это не ошибка.
+- `415 Ожидается Content-Type: application/json`: изменяющий запрос отправлен как форма или `text/plain`; web UI и скрипты должны слать JSON.
+
+## `401 Требуется вход по паролю` на localhost
+
+При `OPENCODE_WEB_ALLOW_LOCAL=1` passwordless bypass работает для просмотра и обычной работы, но не для ответов на permission-запросы, approvals, project settings/permission rules, git revert, provider/MCP/config и slash-command изменений. Войдите на странице `/login.html` (с «Запомнить вход» — 30 дней); login page намеренно не перенаправляет обратно, пока есть только bypass без cookie.
+
+## Web server не стартует: `OPENCODE_SERVER_PASSWORD`
+
+Сервер отказывается запускаться, если admin password пуст или равен `CHANGE_ME` (иначе вход был бы возможен с пустым паролем). Задайте настоящий пароль в `.env` и перезапустите web service.
 
 ## После повторного входа открылся не тот диалог
 
@@ -322,7 +346,7 @@ Catalog check не доказывает provider execution.
 - отсутствие automatic Ollama route;
 - upstream session/subagent API после OpenCode upgrade.
 
-В web режим всегда Build. Для tool-backed задачи plugin `visible-plan.js` должен добавить закреплённый `plan_update`; его вызов создаёт session-scoped native plan document и показывает его в обеих web-панелях. Если tool отсутствует, переустановите конфигурацию и проверьте список backend plugins. Agents `plan`/`plan-direct` в TUI/CLI остаются отдельным read-only режимом.
+Web отправляет сообщение под агентом самой сессии (обычно `build`; чат в Plan помечен чипом с кнопкой возврата в Build). Для tool-backed задачи plugin `visible-plan.js` должен добавить закреплённый `plan_update`; его вызов создаёт session-scoped native plan document и показывает его в обеих web-панелях. Если tool отсутствует, переустановите конфигурацию и проверьте список backend plugins. Agents `plan`/`plan-direct` в TUI/CLI остаются отдельным read-only режимом.
 
 ## На телефоне model picker открывает клавиатуру
 

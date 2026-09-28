@@ -21,15 +21,17 @@ self.addEventListener('fetch',(event)=>{
 
   // HTML is authentication-sensitive. Never serve a cached app shell after a
   // logout or expired session; only cache immutable-ish static assets.
+  // Network first with revalidation (ETag → 304 keeps it cheap). The offline
+  // copy is refreshed after responding, never before.
   if(STATIC_RE.test(url.pathname))event.respondWith((async()=>{
-    const cache=await caches.open(CACHE)
-    const cached=await cache.match(req)
+    const cached=caches.open(CACHE).then((cache)=>cache.match(req)).catch(()=>undefined)
     try{
       const network=await fetch(req,{cache:'no-cache'})
-      if(network.ok)await cache.put(req,network.clone())
+      if(network.ok){const copy=network.clone();event.waitUntil(caches.open(CACHE).then((cache)=>cache.put(req,copy)).catch(()=>{}))}
       return network
     }catch{
-      if(cached)return cached
+      const offline=await cached
+      if(offline)return offline
       throw new Error('offline and no cached asset')
     }
   })())
