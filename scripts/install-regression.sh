@@ -539,7 +539,8 @@ assert service["OPENCODE_WEB_PORT"] == "4098", "the local .env must win over set
 PY
 cmp -s "$USER_CONFIG_DIR/prompts/engineering.md" "$ENGINEERING_PROMPT" || { echo "private prompt did not replace the public one" >&2; exit 1; }
 [[ -f "$USER_PROMPT" && -f "$USER_PLUGIN" ]] || { echo "private prompt/plugin was not installed" >&2; exit 1; }
-cmp -s "$USER_CONFIG_DIR/tool-fabric/layers/private.json" "$(dirname "$FABRIC_CONFIG")/layers/private.json" || {
+FABRIC_LAYER="$(dirname "$FABRIC_CONFIG")/layers/private.json"
+cmp -s "$USER_CONFIG_DIR/tool-fabric/layers/private.json" "$FABRIC_LAYER" && [[ $(stat -c %a "$FABRIC_LAYER") == 600 ]] || {
   echo "private Tool Fabric policy was not deployed outside the checkout" >&2
   exit 1
 }

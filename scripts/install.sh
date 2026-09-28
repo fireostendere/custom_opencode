@@ -524,7 +524,9 @@ PY
         exit 1
       fi
       install -d -m 0700 "$FABRIC_DIR"
-      cp -R "$USER_CONFIG/tool-fabric/." "$FABRIC_DIR/"
+      while IFS= read -r -d '' rel; do
+        install -D -m 0600 "$USER_CONFIG/tool-fabric/$rel" "$FABRIC_DIR/$rel"
+      done < <(cd "$USER_CONFIG/tool-fabric" && find . -type f -print0)
     fi
   fi
 fi
