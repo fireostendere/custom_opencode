@@ -17,6 +17,7 @@ import argparse
 from contextlib import contextmanager
 from http.server import ThreadingHTTPServer
 import importlib.util
+import json
 import os
 from pathlib import Path
 import sys
@@ -28,6 +29,8 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
+# The fixture session is a D&D table: the browser smoke checks its status pill.
+DND_WATCH_SESSION = "ses_fixture"
 
 
 def load_module(name: str, path: Path) -> ModuleType:
@@ -107,6 +110,19 @@ def isolated_environment(root: Path):
         "# Other root plan\n\n- [ ] Other isolated step\n",
         encoding="utf-8",
     )
+    # A dnd-watch plugin status file (config/plugins/dnd-watch.js format).
+    watch_state = root / "state" / "dnd-watch"
+    watch_state.mkdir(parents=True)
+    now = int(time.time() * 1000)
+    (watch_state / "fixture.json").write_text(json.dumps({
+        "version": 1, "pid": 0, "directory": str(project), "updatedAt": now,
+        "sessions": {DND_WATCH_SESSION: {
+            "agent": "dnd-narrator", "campaignId": "343ed859-02a4-41f0-85cc-a1b228c503c4", "cursor": 2173, "autoWatch": True,
+            "watch": {"status": "waiting", "afterSeq": 2173, "auto": True, "errors": 0, "push": True},
+            "link": {"state": "live", "since": now}, "awake": True,
+            "log": [{"at": now, "text": "push-канал к ODM подключён"}],
+        }},
+    }), encoding="utf-8")
 
     values = {
         "FIXTURE_PROJECT": str(project),
@@ -120,6 +136,7 @@ def isolated_environment(root: Path):
         "OPENCODE_PROJECT_ROOTS": str(project),
         "CUSTOM_OPENCODE_FEATURE_STATE": str(root / "features.json"),
         "CUSTOM_OPENCODE_RUNTIME_DB": str(root / "runtime.sqlite3"),
+        "CUSTOM_OPENCODE_STATE_DIR": str(root / "state"),
         "MCP_RAG_ENABLED": "0",
         "OPENCODE_RESOURCE_SCHEDULER": "off",
     }
@@ -224,6 +241,7 @@ def run_browser_smoke(base_url: str) -> int:
     smoke.PASSWORD = "fixture-password"
     smoke.LAN_URL = base_url
     smoke.TS_URL = base_url
+    smoke.DND_WATCH_SESSION = DND_WATCH_SESSION
     smoke.RESULTS.clear()
     smoke.PROBLEMS.clear()
     return int(smoke.main())

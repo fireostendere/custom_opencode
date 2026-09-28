@@ -1,4 +1,5 @@
 import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'
+import { createDndWatchChip } from './dnd-watch-chip.js'
 
 const $ = (id) => document.getElementById(id)
 
@@ -151,6 +152,12 @@ function ensureSurfaces() {
     dialog.innerHTML = '<div class="modal workflow-modal"><div class="modal-head"><div><h3>Очередь</h3><div class="choice-meta">Хранится на сервере и продолжает работать после закрытия PWA</div></div><button class="icon" type="button" data-workflow-close="queueDialog">×</button></div><div id="queueDialogContent" class="queue-list"></div></div>'
     document.body.append(dialog)
   }
+  if (!$('dndWatchDialog')) {
+    const dialog = document.createElement('dialog')
+    dialog.id = 'dndWatchDialog'
+    dialog.innerHTML = '<div class="modal workflow-modal dnd-watch-modal"><div class="modal-head"><div><h3>🎲 Вотчер стола</h3><div class="choice-meta">Автоожидание игроков в кампании ODM</div></div><button class="icon" type="button" data-workflow-close="dndWatchDialog">×</button></div><div id="dndWatchDialogContent" class="dnd-watch-details"></div></div>'
+    document.body.append(dialog)
+  }
   if (!$('projectSettingsDialog')) {
     const dialog = document.createElement('dialog')
     dialog.id = 'projectSettingsDialog'
@@ -195,6 +202,8 @@ function selectSessionState(id) {
   if (id === state.sessionID) return
   state.sessionID = id
   $('projectSettingsDialog')?.close()
+  $('dndWatchDialog')?.close()
+  dndWatch.setSession(id)
   state.settingsTarget = null
   resetSubmitControls()
   state.orchestrationRevision += 1
@@ -1395,11 +1404,26 @@ function renderStatus() {
   const elapsed = running() ? state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : '' : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''
   const queue = Number(state.queue?.count || 0)
   const rag = state.children.some((child) => state.childDetails.get(child.id)?.rag) || state.settings?.rag === 'on'
-  const markup = `<span class="wf-pill strong">${escapeHtml(model)}</span>${context ? `<span class="wf-pill">${escapeHtml(context)}</span>` : ''}${cost ? `<span class="wf-pill">${escapeHtml(cost)}</span>` : ''}${elapsed ? `<span class="wf-pill"><span class="wf-dot ${running() ? 'busy' : ''}"></span>${escapeHtml(elapsed)}</span>` : ''}${rag ? '<span class="wf-pill">RAG ✓</span>' : ''}<button type="button" class="wf-pill clickable" id="queueStatusButton">Очередь ${queue}</button>`
+  const markup = `<span class="wf-pill strong">${escapeHtml(model)}</span>${context ? `<span class="wf-pill">${escapeHtml(context)}</span>` : ''}${cost ? `<span class="wf-pill">${escapeHtml(cost)}</span>` : ''}${elapsed ? `<span class="wf-pill"><span class="wf-dot ${running() ? 'busy' : ''}"></span>${escapeHtml(elapsed)}</span>` : ''}${rag ? '<span class="wf-pill">RAG ✓</span>' : ''}<button type="button" class="wf-pill clickable" id="queueStatusButton">Очередь ${queue}</button>${dndWatch.markup()}`
   if (host._lastMarkup === markup) return
   host._lastMarkup = markup
   host.innerHTML = markup
   $('queueStatusButton')?.addEventListener('click', openQueueDialog)
+  $('dndWatchButton')?.addEventListener('click', openDndWatchDialog)
+}
+function renderDndWatchDialog() {
+  const host = $('dndWatchDialogContent')
+  if (!host || !$('dndWatchDialog')?.open) return
+  const markup = dndWatch.detailsMarkup()
+  if (host._lastMarkup === markup) return
+  host._lastMarkup = markup
+  host.innerHTML = markup
+}
+function openDndWatchDialog() {
+  const dialog = $('dndWatchDialog')
+  if (!dialog) return
+  if (!dialog.open) dialog.showModal()
+  renderDndWatchDialog()
 }
 function renderAll() {
   if ($('projectSettingsButton')) $('projectSettingsButton').hidden = !state.sessionID || !state.directory || !state.settingsAvailable
@@ -1583,6 +1607,7 @@ function bindEvents() {
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
       refreshSelectedSession(true)
+      dndWatch.refresh()
       refreshQueue(undefined, true)
       refreshQuestions(true)
       refreshOrchestration(true)
@@ -1602,6 +1627,8 @@ async function tickMedium() {
 
 const fastPolling = createAdaptivePoller({ run:tickFast, isActive:running, activeDelay:5000, idleDelay:15000, isVisible:() => !document.hidden })
 const mediumPolling = createAdaptivePoller({ run:tickMedium, isActive:running, activeDelay:5000, idleDelay:30000, isVisible:() => !document.hidden })
+// D&D tables only: every 2 s while the status file lists this session, every 20 s otherwise.
+const dndWatch = createDndWatchChip({ request, onChange:() => { renderStatus(); renderDndWatchDialog() }, isVisible:() => !document.hidden })
 
 function init() {
   ensureSurfaces()

@@ -40,6 +40,9 @@ const TURN_MAX_ATTEMPTS = 6
 const AWAKE_IDLE_LIMIT_MS = 12 * 60 * 60_000
 const LOG_LIMIT = 8
 const STATE_HEARTBEAT_MS = 15_000
+// DM status reports ("Мастер думает…" for players; DND_WATCH_STATUS=0
+// disables) give up after this long instead of piling up behind a slow ODM.
+const STATUS_TIMEOUT_MS = 15_000
 const SESSION_CHANGED = "Watcher session changed"
 const REASONS = {
   ask: "Ask", whisper: "шёпот", player: "ход игрока", resync: "пересинхронизация",
@@ -477,6 +480,7 @@ export default {
     const registrations = []
     const push = enabled("DND_WATCH_PUSH")
     const keepAwake = enabled("DND_KEEP_AWAKE")
+    const reportStatus = enabled("DND_WATCH_STATUS")
     const directory = ctx.location?.directory ?? ""
     const stateFile = stateFileFor(directory)
     // The watcher is a game-only tool: hide its schema from every other lane.
@@ -655,6 +659,32 @@ export default {
       try { cursor = drainedCursor(decodeResult(result)) } catch { return }
       if (cursor !== undefined) entry.cursor = cursor
     }
+    // DM activity for the players' web UI: "thinking" when a table turn starts,
+    // "idle" when it ends. Fire-and-forget through the same native executor as
+    // the watcher's reads, so permissions still apply. Reports are chained per
+    // session (an idle never overtakes its thinking); a failed report leaves
+    // the table state unknown, so the next report for it goes out again.
+    function dmStatus(sessionID, state) {
+      const entry = tables.get(sessionID)
+      if (!reportStatus || !entry?.campaignId || !entry.context) return
+      if (entry.dmStatus === state || (state === "idle" && entry.dmStatus === undefined)) return
+      entry.dmStatus = state
+      // The idle goes to the campaign that was told "thinking", even if the turn switched campaigns.
+      if (state === "thinking" || !entry.dmStatusCampaign) entry.dmStatusCampaign = entry.campaignId
+      const campaignId = entry.dmStatusCampaign, context = entry.context
+      entry.dmStatusChain = (entry.dmStatusChain ?? Promise.resolve()).then(async () => {
+        if (entry.dmStatus !== state || disposed) return
+        try {
+          // Subagent sessions (dnd-reader, dnd-memory…) never speak for the DM.
+          entry.primary ??= !(await ctx.session.get({ sessionID })).parentID
+          if (!entry.primary) return
+          const narrator = await getNarrator()
+          await narrator.execute({ operation: "status", campaignId, state }, {
+            ...context, signal: AbortSignal.timeout(STATUS_TIMEOUT_MS), odmBackgroundRead: true, progress: async () => {},
+          })
+        } catch { if (entry.dmStatus === state) entry.dmStatus = "unknown" }
+      })
+    }
     async function arm(sessionID) {
       const entry = tables.get(sessionID)
       if (!sessionID || !entry?.auto || entry.turn?.state === "gave_up" || !entry.context || !entry.campaignId || !sequence(entry.cursor)) return false
@@ -783,6 +813,8 @@ export default {
       const entry = sessionID ? tables.get(sessionID) : undefined
       if (entry) {
         const woke = entry.woke
+        if (type === "session.execution.started") dmStatus(sessionID, "thinking")
+        else if (type === "session.idle" || ["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].includes(type)) dmStatus(sessionID, "idle")
         if (type === "session.execution.started") { entry.turn = { state: "running", startedAt: Date.now() }; entry.activeAt = Date.now(); publish() }
         else if (type === "session.execution.succeeded") {
           if (woke) note(sessionID, "ход разобран, жду дальше")

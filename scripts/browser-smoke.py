@@ -40,6 +40,8 @@ USERNAME = ENV.get("OPENCODE_SERVER_USERNAME", "")
 PASSWORD = ENV.get("OPENCODE_SERVER_PASSWORD", "")
 LAN_URL = os.environ.get("OPENCODE_LAN_URL", ENV.get("OPENCODE_LAN_URL", "http://127.0.0.1:4098"))
 TS_URL = os.environ.get("OPENCODE_TAILSCALE_URL", ENV.get("OPENCODE_TAILSCALE_URL", LAN_URL))
+# A D&D table session whose watcher pill must show (set by the local harness).
+DND_WATCH_SESSION = os.environ.get("OPENCODE_SMOKE_DND_SESSION", "")
 
 RESULTS: list[tuple[bool, str]] = []
 PROBLEMS: list[str] = []
@@ -311,7 +313,23 @@ def desktop_flow(context) -> bool:
     except Exception as exc:  # noqa: BLE001
         ok &= step(False, "desktop: composer", str(exc)[:150])
 
-    # 7. Logout.
+    # 7. D&D watcher pill in the status bar and its details dialog.
+    if DND_WATCH_SESSION:
+        try:
+            page.evaluate("id => { location.hash = '#/session/' + encodeURIComponent(id) }", DND_WATCH_SESSION)
+            pill = page.locator("#dndWatchButton")
+            pill.wait_for(state="visible", timeout=15000)
+            label = pill.inner_text().strip()
+            pill.click()
+            page.wait_for_selector("#dndWatchDialog[open]", timeout=5000)
+            details = page.locator("#dndWatchDialogContent").inner_text()
+            page.screenshot(path=str(SHOTS / "desktop-07-dnd-watch.png"))
+            ok &= step(label.startswith("🎲") and "Кампания" in details, f"desktop: D&D watcher pill «{label}» opens its details")
+            close_dialog(page, "dndWatchDialog")
+        except PWTimeout as exc:
+            ok &= step(False, "desktop: D&D watcher pill", str(exc)[:150])
+
+    # 8. Logout.
     try:
         page.click("#logoutButton")
         page.wait_for_selector("#loginForm", timeout=10000)

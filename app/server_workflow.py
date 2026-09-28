@@ -9,6 +9,7 @@ import threading
 import time
 from urllib.parse import quote, unquote, urlsplit
 
+import dnd_watch
 import github_workflow
 import integration_contract
 import runtime_completion
@@ -376,6 +377,8 @@ class Handler(rag.Handler, features.Handler):
         if runtime.handle_get(self, parsed, features):
             return
         if control.handle_get(self, parsed):
+            return
+        if dnd_watch.handle_get(self, parsed):
             return
         super().do_GET()
 
