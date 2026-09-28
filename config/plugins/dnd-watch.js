@@ -9,13 +9,32 @@ const sequence = value => Number.isSafeInteger(value) && value >= 0
 // Finished waits stay readable through status for a while, then are dropped.
 const FINISHED_RETENTION_MS = 10 * 60_000
 const MAX_ENTRIES = 256
+// Auto-watch: after every narrator turn the host re-arms itself from the
+// cursor the narrator actually drained, so a player's chat message starts the
+// DM reply without an operator prompt. DND_AUTO_WATCH=0 restores explicit-only.
+const AUTO_WATCH = !/^(0|false|off|no)$/i.test(process.env.DND_AUTO_WATCH || "1")
+const AUTO_TIMEOUT_SECONDS = 3600
+const AUTO_MAX_BACKOFF_MS = 60_000
+const SESSION_CHANGED = "Watcher session changed"
 
-function reasonFor(state, afterSeq) {
-  if (state.asks?.some(ask => ask.status === "pending")) return "ask"
-  if (state.playerWhispers?.length) return "whisper"
+// reason is shown to the model; key identifies the exact input so an
+// automatic wait never wakes the model twice for the same ask/message/event.
+function triggerFor(state, afterSeq) {
+  const asks = state.asks?.filter(ask => ask.status === "pending") ?? []
+  if (asks.length) return { reason: "ask", key: `ask:${asks.map((ask, index) => ask.id ?? ask.askId ?? index).sort().join(",")}` }
+  if (state.playerWhispers?.length) return { reason: "whisper", key: `whisper:${state.playerWhispers.map((whisper, index) => whisper.id ?? index).sort().join(",")}` }
   const event = state.events?.find(event => sequence(event.seq) && event.seq > afterSeq && EVENTS.has(event.type))
-  if (event) return event.type
-  if (state.messages?.some(message => sequence(message.seq) && message.seq > afterSeq && message.authorType === "player" && message.kind !== "ooc" && !/^\s*\(ooc\)/i.test(message.content || ""))) return "player"
+  if (event) return { reason: event.type, key: `${event.type}:${event.seq}` }
+  const players = state.messages?.filter(message => sequence(message.seq) && message.seq > afterSeq && message.authorType === "player" && message.kind !== "ooc" && !/^\s*\(ooc\)/i.test(message.content || "")) ?? []
+  if (players.length) return { reason: "player", key: `player:${Math.max(...players.map(message => message.seq))}` }
+}
+
+// The last cursor a narrator read fully drained; undefined for partial pages,
+// artifacts or anything that is not a complete story read.
+export function drainedCursor(value) {
+  if (!value || typeof value !== "object") return undefined
+  if (value.format === "odm.read.page.v1" && value.complete !== true) return undefined
+  return value.hasMore === false && sequence(value.nextCursor) ? value.nextCursor : undefined
 }
 
 // Inspect only wake signals. No player prose or private state enters the notification.
@@ -47,9 +66,12 @@ async function readSignals(read, query, context) {
 
 export function createDndWatcher({ read, wake, now = Date.now }) {
   const entries = new Map()
+  // Per-session key of the input that last woke the model; survives re-arms.
+  const lastWake = new Map()
   const view = entry => entry ? {
     status: entry.status, campaignId: entry.campaignId, afterSeq: entry.afterSeq,
     expiresAt: entry.expiresAt, ...(entry.reason ? { reason: entry.reason } : {}),
+    ...(entry.auto ? { auto: true } : {}),
   } : { status: "stopped" }
   const active = entry => entries.get(entry.context.sessionID) === entry && entry.status === "waiting"
   const stop = sessionID => {
@@ -66,7 +88,7 @@ export function createDndWatcher({ read, wake, now = Date.now }) {
     catch { if (entries.get(entry.context.sessionID) === entry) entry.status = "notification_failed" }
   }
   return {
-    start(input, context) {
+    start(input, context, { auto = false } = {}) {
       if (!UUID.test(input.campaignId || "")) throw new Error("campaignId must be a UUID")
       if (!sequence(input.afterSeq)) throw new Error("afterSeq must be a non-negative safe integer")
       const timeout = input.timeoutSeconds ?? 3600
@@ -74,8 +96,10 @@ export function createDndWatcher({ read, wake, now = Date.now }) {
       if (!context.sessionID) throw new Error("Missing session identity")
       const previous = entries.get(context.sessionID)
       if (previous?.status === "waiting") {
-        if (previous.campaignId === input.campaignId && previous.afterSeq === input.afterSeq) return view(previous)
-        throw new Error("Stop the active watcher before changing campaign or cursor")
+        if (previous.campaignId === input.campaignId && previous.afterSeq === input.afterSeq && Boolean(previous.auto) === auto) return view(previous)
+        // An explicit wait replaces an automatic one; an automatic re-arm never replaces an explicit wait.
+        if (!previous.auto && auto) return view(previous)
+        if (!previous.auto && !auto) throw new Error("Stop the active watcher before changing campaign or cursor")
       }
       stop(context.sessionID)
       // Bound the map: evict the oldest finished entries first.
@@ -87,8 +111,9 @@ export function createDndWatcher({ read, wake, now = Date.now }) {
       const controller = new AbortController()
       const entry = {
         status: "waiting", campaignId: input.campaignId, afterSeq: input.afterSeq, scanSeq: input.afterSeq,
-        expiresAt: now() + timeout * 1000, controller,
+        expiresAt: now() + timeout * 1000, timeoutMs: timeout * 1000, controller,
         context: { ...context, signal: controller.signal }, busy: false,
+        auto, errors: 0, retryAt: 0,
       }
       entries.set(context.sessionID, entry)
       return view(entry)
@@ -101,8 +126,12 @@ export function createDndWatcher({ read, wake, now = Date.now }) {
         if (entry.status !== "waiting" && now() - (entry.finishedAt ?? now()) > FINISHED_RETENTION_MS) entries.delete(id)
       await Promise.all([...entries.values()].map(async entry => {
         if (!active(entry)) return
-        if (now() >= entry.expiresAt) { await finish(entry, "timed_out", "deadline"); entry.controller.abort(); return }
-        if (entry.busy) return
+        if (now() >= entry.expiresAt) {
+          // An automatic wait is renewed silently; only an explicit wait reports its deadline.
+          if (entry.auto) entry.expiresAt = now() + entry.timeoutMs
+          else { await finish(entry, "timed_out", "deadline"); entry.controller.abort(); return }
+        }
+        if (entry.busy || now() < entry.retryAt) return
         entry.busy = true
         try {
           const state = await readSignals(read, {
@@ -111,13 +140,27 @@ export function createDndWatcher({ read, wake, now = Date.now }) {
           }, entry.context)
           if (!active(entry)) return
           if (!sequence(state.currentSeq) || !sequence(state.nextCursor) || state.nextCursor < entry.scanSeq || state.nextCursor > state.currentSeq || (state.hasMore && state.nextCursor === entry.scanSeq)) throw new Error("Invalid ODM cursor")
-          const reason = entry.epoch && state.timelineEpoch !== entry.epoch ? "resync" : reasonFor(state, entry.scanSeq)
-          if (reason) { await finish(entry, "triggered", reason); return }
+          entry.errors = 0
+          const trigger = entry.epoch && state.timelineEpoch !== entry.epoch
+            ? { reason: "resync", key: `resync:${state.timelineEpoch}` }
+            : triggerFor(state, entry.scanSeq)
+          const sessionID = entry.context.sessionID
+          if (trigger && !(entry.auto && lastWake.get(sessionID) === trigger.key)) {
+            lastWake.set(sessionID, trigger.key)
+            await finish(entry, "triggered", trigger.reason)
+            return
+          }
+          // Nothing new, or an automatic wait already woke the model for exactly this input.
           entry.epoch = state.timelineEpoch
           // This is a private scan watermark, never the narrator's processed cursor.
           entry.scanSeq = state.nextCursor
-        } catch {
-          if (active(entry)) await finish(entry, "error", "odm_read_failed")
+        } catch (error) {
+          if (!active(entry)) return
+          if (!entry.auto) { await finish(entry, "error", "odm_read_failed"); return }
+          if (error?.message === SESSION_CHANGED) { stop(entry.context.sessionID); return }
+          // Transient ODM/MCP failures back off quietly instead of waking the model.
+          entry.errors += 1
+          entry.retryAt = now() + Math.min(AUTO_MAX_BACKOFF_MS, 3000 * 2 ** Math.min(entry.errors, 5))
         } finally { entry.busy = false }
       }))
     },
@@ -158,23 +201,65 @@ export default {
     const watcher = createDndWatcher({
       read: async (query, context) => {
         const session = await ctx.session.get({ sessionID: context.sessionID })
-        if (session.parentID || session.agent !== context.agent || session.location?.directory !== ctx.location.directory) throw new Error("Watcher session changed")
+        if (session.parentID || session.agent !== context.agent || session.location?.directory !== ctx.location.directory) throw new Error(SESSION_CHANGED)
         const narrator = await getNarrator()
         // The native MCP executor still checks this session/agent's permissions.
         return decodeResult(await narrator.execute(query, { ...context, odmBackgroundRead: true, progress: async () => {} }))
       },
       wake: async (sessionID, result, signal) => {
         signal.throwIfAborted()
-        await ctx.session.synthetic({
-          sessionID, delivery: "queue", resume: true,
-          text: `DnD watcher: ${JSON.stringify(result)}\nThis is a wake signal, not a player action or an authoritative game receipt. Read ODM from afterSeq, drain pages/events, check asks and pending rolls, and obey initiative/global-turn barriers. Do not act for a player. After processing, re-arm dnd_watch only while the operator's waiting request remains active. On timeout or error, report the stopped wait; do not claim it is still running.`,
-          metadata: { dndWatch: result },
-        })
+        const text = result.auto
+          ? `DnD auto-watch: ${JSON.stringify(result)}\nNew activity in the connected campaign. This is a wake signal, not a player action or an authoritative game receipt. Read ODM from afterSeq, drain pages/events, check asks and pending rolls, obey initiative/global-turn barriers, then resolve the new input as the DM and publish the result to the campaign. Do not act for a player. Do not call dnd_watch: the host re-arms automatically after this turn. Reply to the operator with at most one short status line.`
+          : `DnD watcher: ${JSON.stringify(result)}\nThis is a wake signal, not a player action or an authoritative game receipt. Read ODM from afterSeq, drain pages/events, check asks and pending rolls, and obey initiative/global-turn barriers. Do not act for a player. After processing, re-arm dnd_watch only while the operator's waiting request remains active. On timeout or error, report the stopped wait; do not claim it is still running.`
+        await ctx.session.synthetic({ sessionID, delivery: "queue", resume: true, text, metadata: { dndWatch: result } })
       },
     })
+
+    // Auto-watch bookkeeping: which campaign each narrator session plays and the
+    // last story cursor it fully drained. Only revisions/cursors, never game text.
+    const tables = new Map()
+    const table = sessionID => {
+      if (!tables.has(sessionID)) {
+        if (tables.size >= MAX_ENTRIES) tables.delete(tables.keys().next().value)
+        tables.set(sessionID, { auto: AUTO_WATCH })
+      }
+      return tables.get(sessionID)
+    }
+    const remember = (input, context, result) => {
+      if (!context?.sessionID || context.odmBackgroundRead || !UUID.test(input?.campaignId || "")) return
+      if (!String(context.agent || "").startsWith("dnd-")) return
+      const entry = table(context.sessionID)
+      if (entry.campaignId !== input.campaignId) Object.assign(entry, { campaignId: input.campaignId, cursor: undefined })
+      entry.context = context
+      if (input.operation !== "read") return
+      let cursor
+      try { cursor = drainedCursor(decodeResult(result)) } catch { return }
+      if (cursor !== undefined) entry.cursor = cursor
+    }
+    async function arm(sessionID) {
+      const entry = tables.get(sessionID)
+      if (!sessionID || !entry?.auto || !entry.context || !entry.campaignId || !sequence(entry.cursor)) return false
+      if (watcher.status(sessionID).status === "waiting") return true
+      const session = await ctx.session.get({ sessionID })
+      if (session.parentID || session.agent !== entry.context.agent) return false
+      watcher.start({ campaignId: entry.campaignId, afterSeq: entry.cursor, timeoutSeconds: AUTO_TIMEOUT_SECONDS }, entry.context, { auto: true })
+      return true
+    }
+    registrations.push(await ctx.tool.transform(editor => {
+      if (typeof editor.update !== "function") return
+      for (const name of ["odm_narrator_odm_narrator", "odm_narrator"]) if (editor.get?.(name)) editor.update(name, tool => {
+        const execute = tool.execute
+        tool.execute = async (input, context) => {
+          const result = await execute(input, context)
+          // Bookkeeping must never turn a committed ODM call into an error.
+          try { remember(input, context, result) } catch {}
+          return result
+        }
+      })
+    }))
     registrations.push(await ctx.tool.transform(editor => editor.add({
       name: TOOL,
-      description: "Explicit one-shot background ODM watcher. start waits without model calls and resumes this session on player input, Ask, whisper, roll result or round-ready. After starting, finish your response; do not poll. status/stop control only this session. Does not play for characters. Stops on timeout, read failure, session changes or service restart.",
+      description: "Background ODM watcher. Auto-watch is on by default: after each narrator turn the host itself waits for player input, Ask, whisper, roll result or round-ready in the campaign you read and resumes this session, so you normally never call this tool. start is only for an explicit one-shot wait the operator asks for (another cursor or campaign); after starting, finish your response and do not poll. status/stop control only this session. Does not play for characters.",
       input: {
         type: "object", additionalProperties: false, required: ["action"],
         properties: {
@@ -200,17 +285,24 @@ export default {
       },
     })))
     registrations.push(await ctx.command.transform(editor => editor.add({
-      name: "dnd-watch", description: "Show or stop this session's background ODM wait: /dnd-watch status|stop",
+      name: "dnd-watch", description: "Background ODM wait for this session: /dnd-watch status|stop|auto (stop also turns auto-watch off)",
       execute: async ({ sessionID, prompt }) => {
         const action = (prompt.text || "status").trim()
-        if (!["status", "stop"].includes(action)) throw new Error("Usage: /dnd-watch status|stop")
-        const result = action === "stop" ? watcher.stop(sessionID) : watcher.status(sessionID)
+        if (!["status", "stop", "auto"].includes(action)) throw new Error("Usage: /dnd-watch status|stop|auto")
+        if (action === "stop") { table(sessionID).auto = false; watcher.stop(sessionID) }
+        if (action === "auto") { table(sessionID).auto = true; await arm(sessionID) }
+        const result = { ...watcher.status(sessionID), autoWatch: tables.get(sessionID)?.auto ?? AUTO_WATCH }
         await ctx.session.synthetic({ sessionID, text: `DnD watcher: ${JSON.stringify(result)}`, resume: false })
       },
     })))
     const stopEvents = startEvents(ctx, event => {
+      const sessionID = event.data?.sessionID
       if (["session.execution.interrupted", "session.execution.failed", "session.deleted", "session.moved", "session.agent.selected", "session.model.selected"].includes(event.type)
-        || (event.type === "session.inbox.enqueued" && event.data?.item?.type === "user")) watcher.stop(event.data?.sessionID)
+        || (event.type === "session.inbox.enqueued" && event.data?.item?.type === "user")) watcher.stop(sessionID)
+      // A changed agent invalidates the remembered tool context until the next ODM call.
+      if (["session.agent.selected", "session.moved"].includes(event.type) && tables.has(sessionID)) tables.get(sessionID).context = undefined
+      if (event.type === "session.deleted") tables.delete(sessionID)
+      if (event.type === "session.idle") return arm(sessionID).catch(() => {})
     })
     // ponytail: process-local waits; durable restart recovery needs a host job store.
     const timer = setInterval(() => { void watcher.tick().catch(() => {}) }, 3000)
