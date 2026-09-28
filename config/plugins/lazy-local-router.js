@@ -4,7 +4,7 @@ const LOCAL_PROVIDER = process.env.OPENCODE_LOCAL_PROVIDER || "ollama"
 const ROUTER_URL = process.env.OPENCODE_LOCAL_ROUTER_URL
 const START_SCRIPT = process.env.OPENCODE_LOCAL_ROUTER_START
 const LOG_PATH = process.env.OPENCODE_LOCAL_ROUTER_LOG
-const DND_MODE = String(process.env.DND_ORCHESTRATOR || "auto").toLowerCase()
+const DND_MODE = String(process.env.DND_ORCHESTRATOR || "off").toLowerCase()
 let currentStart = null
 
 async function healthy() {

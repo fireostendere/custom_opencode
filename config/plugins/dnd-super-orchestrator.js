@@ -2,7 +2,9 @@ import { appendFile } from "node:fs/promises"
 import { isDndEdition } from "./orchestrated-qwen.js"
 import { ensureRouter } from "./lazy-local-router.js"
 
-const MODE = String(process.env.DND_ORCHESTRATOR || "auto").toLowerCase()
+// Off by default: per-request rerouting overrode the pinned D&D effort and
+// service tier. Set DND_ORCHESTRATOR=auto to opt back in.
+const MODE = String(process.env.DND_ORCHESTRATOR || "off").toLowerCase()
 const RUNTIME_HOST = process.env.OPENCODE_RUNTIME_PLUGIN_HOST || "127.0.0.1"
 // The private Runtime V3 listener is separate from the web listener. Falling
 // back to OPENCODE_WEB_PORT sends the route request to the public web server,

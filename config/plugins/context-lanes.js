@@ -157,7 +157,7 @@ export default {
         if (policy.dndMinimalContext && ctx.skill?.list) {
           const catalog = await ctx.skill.list()
           const skills = Array.isArray(catalog) ? catalog : catalog?.data || []
-          for (const id of ["odm-dm-policy", "odm-narrator"]) {
+          for (const id of ["odm-dm-policy", "odm-narrator", "yolo-dm"]) {
             const skill = skills.find(item => item.id === id)
             if (skill?.content) event.system.push({ type: "text", text: `Required game skill already loaded: ${id}\n${skill.content}` })
           }
