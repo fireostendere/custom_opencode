@@ -8,6 +8,9 @@ let warned = false
 // The one shared keeper lives while ANY session is busy: parallel sessions and
 // subagents finish independently and one idle session must not release it.
 const busy = new Map()
+// Named holds from other plugins (the D&D watcher waiting for players) keep
+// the machine awake while no session is busy.
+const holds = new Set()
 
 function alive(process) {
   return !!process && process.exitCode === null && process.signalCode === null
@@ -58,12 +61,24 @@ function releaseKeeper() {
 
 export function observe(event, now = Date.now()) {
   const kind = classify(event?.type)
-  if (kind === "ignore") return busy.size > 0
+  if (kind === "ignore") return busy.size > 0 || holds.size > 0
   const id = String(event?.data?.sessionID || "")
   if (kind === "busy") busy.set(id, now)
   else busy.delete(id)
   for (const [session, since] of busy) if (now - since > STALE_BUSY_MS) busy.delete(session)
-  return busy.size > 0
+  return busy.size > 0 || holds.size > 0
+}
+
+// Idempotent; callers re-assert their hold periodically, which also respawns
+// the keeper after its GRACE_MIN script exits.
+export function holdAwake(key) {
+  holds.add(String(key))
+  ensureKeeper()
+}
+
+export function releaseAwake(key) {
+  holds.delete(String(key))
+  if (!busy.size && !holds.size) releaseKeeper()
 }
 
 // Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
