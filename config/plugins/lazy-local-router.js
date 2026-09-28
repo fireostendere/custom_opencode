@@ -4,8 +4,12 @@ const LOCAL_PROVIDER = process.env.OPENCODE_LOCAL_PROVIDER || "ollama"
 const ROUTER_URL = process.env.OPENCODE_LOCAL_ROUTER_URL
 const START_SCRIPT = process.env.OPENCODE_LOCAL_ROUTER_START
 const LOG_PATH = process.env.OPENCODE_LOCAL_ROUTER_LOG
-const DND_MODE = String(process.env.DND_ORCHESTRATOR || "auto").toLowerCase()
+const DND_MODE = String(process.env.DND_ORCHESTRATOR || "off").toLowerCase()
+// A failed start (script error, never healthy) is not retried for 5 minutes:
+// each attempt costs a spawned start script and up to 60 s of polling.
+const START_BACKOFF_MS = Number(process.env.OPENCODE_LOCAL_ROUTER_BACKOFF_MS || 5 * 60_000)
 let currentStart = null
+let retryAfter = 0
 
 async function healthy() {
   if (!ROUTER_URL) return false
@@ -25,23 +29,33 @@ export async function ensureRouter({ dnd = false } = {}) {
 
   currentStart = (async () => {
     if (!ROUTER_URL) throw new Error("OPENCODE_LOCAL_ROUTER_URL is not configured")
-    if (await healthy()) return
+    if (await healthy()) {
+      retryAfter = 0
+      return
+    }
+    if (Date.now() < retryAfter)
+      throw new Error(`Local model router failed to start recently; next start attempt in ${Math.ceil((retryAfter - Date.now()) / 1000)}s${LOG_PATH ? `. See ${LOG_PATH}` : ""}`)
 
     if (!START_SCRIPT) throw new Error("Local model router is offline and OPENCODE_LOCAL_ROUTER_START is not configured")
-    const child = Bun.spawn(["bash", START_SCRIPT], {
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    })
+    try {
+      const child = Bun.spawn(["bash", START_SCRIPT], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      })
 
-    for (let attempt = 0; attempt < 120; attempt++) {
-      if (await healthy()) return
-      if (child.exitCode !== null && child.exitCode !== 0) {
-        throw new Error(`Failed to start local model router${LOG_PATH ? `. See ${LOG_PATH}` : ""}`)
+      for (let attempt = 0; attempt < 120; attempt++) {
+        if (await healthy()) return
+        if (child.exitCode !== null && child.exitCode !== 0) {
+          throw new Error(`Failed to start local model router${LOG_PATH ? `. See ${LOG_PATH}` : ""}`)
+        }
+        await Bun.sleep(500)
       }
-      await Bun.sleep(500)
+      throw new Error(`Local model router did not become healthy${LOG_PATH ? `. See ${LOG_PATH}` : ""}`)
+    } catch (error) {
+      retryAfter = Date.now() + START_BACKOFF_MS
+      throw error
     }
-    throw new Error(`Local model router did not become healthy${LOG_PATH ? `. See ${LOG_PATH}` : ""}`)
   })()
 
   try {

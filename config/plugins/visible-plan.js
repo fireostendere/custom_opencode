@@ -132,7 +132,7 @@ export default {
         tools.add({
           name: TOOL,
           description:
-            "Publish or update the concise task plan shown in the web Plan card and workspace sidebar. This is a checklist, never chain-of-thought.",
+            "Publish or update the concise task plan shown in the web Plan card and workspace sidebar. This is a checklist, never chain-of-thought. Update only at milestones, in the same step as other tool calls.",
           input: inputSchema,
           options: { pinned: true, codemode: false },
           execute: async (input, context) => {
@@ -148,7 +148,16 @@ export default {
       ),
       ctx.session.hook("context", (event) => {
         const agent = String(event?.agent || "")
-        if (!PLAN_AGENTS.has(agent) || !Array.isArray(event.system)) return
+        // Only the primary Build/Plan agents own the session plan. Subagents
+        // (role-*, sol-role-*, readers, D&D workers) never see the tool.
+        if (!PLAN_AGENTS.has(agent)) {
+          if (event?.tools && typeof event.tools === "object" && Object.hasOwn(event.tools, TOOL)) {
+            const { [TOOL]: _hidden, ...tools } = event.tools
+            event.tools = tools
+          }
+          return
+        }
+        if (!Array.isArray(event.system)) return
         const sessionID = String(event.sessionID || "")
         const key = turnKey(event.messages)
         const previous = turns.get(sessionID)

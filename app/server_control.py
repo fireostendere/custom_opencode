@@ -16,6 +16,13 @@ DIRECTORY_CACHE_LOCK = threading.Lock()
 DIRECTORY_CACHE: list[str] = []
 DIRECTORY_CACHE_AT = 0.0
 DIRECTORY_CACHE_SECONDS = 10.0
+# The worker ticks every 1.5 s. While no session is busy, polling every known
+# workspace for pending permissions is wasted backend/9P work: fall back to
+# one full scan per IDLE_SCAN_SECONDS. Busy workspaces are scanned each tick,
+# and the web UI evaluates visible permission prompts immediately anyway.
+IDLE_SCAN_SECONDS = 12.0
+IDLE_SCAN_LOCK = threading.Lock()
+NEXT_IDLE_SCAN_AT = 0.0
 
 
 def _request_id(request: dict[str, Any]) -> str:
@@ -219,8 +226,16 @@ def _known_directories() -> list[str]:
 
 
 def _permission_directories() -> list[str]:
+    global NEXT_IDLE_SCAN_AT
     active = _active_directories()
-    return active if active else _known_directories()
+    if active:
+        return active
+    now = time.monotonic()
+    with IDLE_SCAN_LOCK:
+        if now < NEXT_IDLE_SCAN_AT:
+            return []
+        NEXT_IDLE_SCAN_AT = now + IDLE_SCAN_SECONDS
+    return _known_directories()
 
 
 def apply_permission_policies() -> None:
@@ -278,7 +293,7 @@ def snapshot() -> dict[str, Any]:
         "projectRules": True,
         "clientSuppliedActionData": False,
         "hardInteractiveBoundary": ["R3", "R4"],
-        "permissionScan": "active-workspaces-first with cached fallback",
+        "permissionScan": f"active-workspaces-first; idle full scan every {IDLE_SCAN_SECONDS:g}s",
     }
     return value
 

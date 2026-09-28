@@ -178,10 +178,21 @@ function ensureSurfaces() {
   })
 }
 
-function refreshSelectedSession(force = false) { return selectedSessionRefresh(() => refreshSelectedSessionNow(), force) }
-async function refreshSelectedSessionNow() {
-  const id = sessionFromHash()
-  if (id === state.sessionID && state.session) return
+// Session identity switches synchronously: a slow load of the previous chat
+// must never leave the composer bound to it (sends went to the wrong session).
+// Only the loading below is coalesced.
+// Subagent sessions of the open chat, for surfaces that must show their
+// pending permissions/questions in the parent (access-fix.js).
+globalThis.CustomOpenCodeSessionFamily = {
+  ids: () => (state.children || []).map((child) => child?.id).filter(Boolean),
+  label: (id) => { const child = (state.children || []).find((item) => item?.id === id); return child ? String(child.title || child.agent || 'субагент') : '' },
+}
+function refreshSelectedSession(force = false) {
+  selectSessionState(sessionFromHash())
+  return selectedSessionRefresh(() => refreshSelectedSessionNow(), force)
+}
+function selectSessionState(id) {
+  if (id === state.sessionID) return
   state.sessionID = id
   $('projectSettingsDialog')?.close()
   state.settingsTarget = null
@@ -221,7 +232,11 @@ async function refreshSelectedSessionNow() {
   state.lastDurationMs = 0
   state.observedRunning = running()
   renderAll()
-  if (!id) return
+}
+async function refreshSelectedSessionNow() {
+  const id = sessionFromHash()
+  selectSessionState(id)
+  if (!id || state.session?.id === id) return
   try {
     const session = dataOf(await request(`/api/session/${encodeURIComponent(id)}`))
     if (state.sessionID !== id) return
@@ -290,12 +305,14 @@ function syncProjectModelOptions() {
   const select = $('projectDefaultModel')
   if (!select) return
   const current = select.value
-  const options = new Map([
-    ['inherit', 'Оставить выбранную'],
-    ['orchestrated', 'Qwen 3.8 Max · Оркестрированная'],
-    ['sol-orchestrated', 'GPT-6 Sol · Оркестрированная'],
-  ])
-  for (const model of state.models || []) {
+  const models = state.models || []
+  // Offer an orchestration alias only while its model is in the catalog (an
+  // unpaid provider such as Alibaba is not rendered at all).
+  const available = (ref) => !models.length || models.some((model) => `${model?.providerID}/${model?.id}` === ref)
+  const options = new Map([['inherit', 'Оставить выбранную']])
+  if (available('bailian-cli/qwen3.8-orchestrated')) options.set('orchestrated', 'Qwen 3.8 Max · Оркестрированная')
+  if (available('openai/gpt-6-sol-orchestrated')) options.set('sol-orchestrated', 'GPT-6 Sol · Оркестрированная')
+  for (const model of models) {
     const provider = String(model?.providerID || '')
     const id = String(model?.id || '')
     if (!provider || !id || provider === 'ollama') continue
@@ -328,22 +345,30 @@ async function openProjectSettings() {
   $('projectSettingsDialog').showModal()
 }
 
+function sessionMark(key) { try { return sessionStorage.getItem(key) === '1' } catch { return false } }
+function setSessionMark(key) { try { sessionStorage.setItem(key, '1') } catch {} }
 async function applyProjectDefaultsOnce(sessionID = state.sessionID) {
   if (!sessionID || state.sessionID !== sessionID || !state.settings) return
   const key = `opencode:web:project-defaults:${sessionID}`
-  if (sessionStorage.getItem(key)) return
+  if (sessionMark(key)) return
+  // Defaults are for chats this tab just created; never rewrite the model of
+  // an existing chat opened from the TUI, another tab or after a reload.
+  if (!window.CustomOpenCodeControls?.wasCreatedHere?.(sessionID)) { setSessionMark(key); return }
+  const manuallySelected=()=>window.CustomOpenCodeControls?.wasModelManuallySelected?.(sessionID)===true
+  if(manuallySelected()){setSessionMark(key);return}
   try {
     const rows = dataOf(await request(`/api/session/${encodeURIComponent(sessionID)}/message?limit=1`))
     if (state.sessionID !== sessionID) return
     if (!Array.isArray(rows)) return
-    if (rows.length) { sessionStorage.setItem(key, '1'); return }
+    if (rows.length) { setSessionMark(key); return }
   } catch { return }
   if (state.sessionID !== sessionID) return
+  if(manuallySelected()){setSessionMark(key);return}
   const settings = state.settings
   const ref = ({ orchestrated:'bailian-cli/qwen3.8-orchestrated', 'sol-orchestrated':'openai/gpt-6-sol-orchestrated' })[settings.defaultModel] || settings.defaultModel
   if (typeof ref === 'string' && ref.includes('/') && !await chooseConcreteModel(ref)) return
   if (state.sessionID !== sessionID) return
-  sessionStorage.setItem(key, '1')
+  setSessionMark(key)
   if (settings.rag === 'on') {
     request('/client-rag-start.json', { method:'POST', body:JSON.stringify({ mode:'quick', sessionID }) }).catch(() => {})
   }
@@ -353,7 +378,7 @@ async function chooseConcreteModel(ref) {
   const [provider, ...rest] = ref.split('/')
   const model = rest.join('/')
   if (!provider || !model || provider === 'ollama') return false
-  return Boolean(await window.CustomOpenCodeControls?.changeModel?.({ providerID:provider, id:model }))
+  return Boolean(await window.CustomOpenCodeControls?.changeModel?.({ providerID:provider, id:model },{source:'project-default'}))
 }
 
 function readAttachment(file, slot, sessionID = state.sessionID, revision = state.orchestrationRevision, attachments = state.attachments) {
@@ -392,15 +417,29 @@ function clearComposer() {
     input.value = ''
     input.dispatchEvent(new Event('input', { bubbles:true }))
   }
-  const removes = [...document.querySelectorAll('[data-remove-attachment]')]
   state.attachments = []
   state.attachmentReads = []
-  for (const button of removes) button.click()
+  // Remove buttons carry indexes into app.js' list and are re-rendered after
+  // each click, so clicking a captured batch left chips (and empty sends) behind.
+  if (window.CustomOpenCodeControls?.clearAttachments) window.CustomOpenCodeControls.clearAttachments()
+  else for (let guard = 0; guard < 50; guard++) {
+    const button = document.querySelector('[data-remove-attachment]')
+    if (!button) break
+    button.click()
+  }
 }
 function resetSubmitControls() {
   state.submitPending = false
   const input = $('input'), action = $('composerAction'), attach = $('attachButton')
-  if (input) { input.disabled = false; input.dispatchEvent(new Event('input', { bubbles:true })) }
+  if (input) {
+    // readOnly (not disabled) during a send keeps focus in the composer, so
+    // text typed right after Enter is not lost.
+    const refocus = input.readOnly && document.activeElement === input
+    input.disabled = false
+    input.readOnly = false
+    input.dispatchEvent(new Event('input', { bubbles:true }))
+    if (refocus) input.focus({ preventScroll:true })
+  }
   if (action) action.disabled = false
   if (attach) attach.disabled = false
 }
@@ -408,6 +447,13 @@ function resetSubmitControls() {
 async function interceptSubmit(event) {
   if (!state.sessionID) return
   if (document.documentElement.dataset.modelTransition === '1') { event.preventDefault(); return }
+  if (sessionFromHash() !== state.sessionID) {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    refreshSelectedSession(true)
+    toast('Чат ещё открывается — отправьте ещё раз')
+    return
+  }
   const text = $('input')?.value.trim() || ''
   if (text.startsWith('/') && !text.startsWith('//')) return
   const hasAttachmentSurface = Boolean($('attachments') && !$('attachments').hidden && $('attachments').children.length)
@@ -418,7 +464,7 @@ async function interceptSubmit(event) {
   state.submitPending = true
   const sessionID = state.sessionID, revision = state.orchestrationRevision, attachments = state.attachments, reads = state.attachmentReads
   const input = $('input'),action = $('composerAction'),attach = $('attachButton')
-  if (input) { input.value = ''; input.disabled = true; input.dispatchEvent(new Event('input', { bubbles:true })) }
+  if (input) { input.value = ''; input.readOnly = true; input.dispatchEvent(new Event('input', { bubbles:true })) }
   if (action) action.disabled = true
   if (attach) attach.disabled = true
   try {
@@ -648,6 +694,7 @@ export function questionSelectionFor(request) {
     return { selected, custom }
   })
 }
+function inSessionFamily(id) { return Boolean(id) && (id === state.sessionID || (state.children || []).some((child) => child?.id === id)) }
 async function questionRequests() {
   if (!state.sessionID) return []
   const q = workspaceQuery()
@@ -655,7 +702,7 @@ async function questionRequests() {
     try {
       const value = dataOf(await request(`/api/form/request${q ? `?${q}` : ''}`))
       state.questionTransport = 'form'
-      return Array.isArray(value) ? value.map((item) => normalizeQuestionRequest(item)).filter((item) => item && item.sessionID === state.sessionID) : []
+      return Array.isArray(value) ? value.map((item) => normalizeQuestionRequest(item)).filter((item) => item && inSessionFamily(item.sessionID)) : []
     } catch (error) {
       if (![404,405].includes(error.status)) {
         console.debug('form endpoint', error)
@@ -668,7 +715,7 @@ async function questionRequests() {
     try {
       const value = dataOf(await request(`/api/question${q ? `?${q}` : ''}`))
       state.questionTransport = 'question'
-      return Array.isArray(value) ? value.map((item) => normalizeQuestionRequest(item)).filter((item) => item && item.sessionID === state.sessionID) : []
+      return Array.isArray(value) ? value.map((item) => normalizeQuestionRequest(item)).filter((item) => item && inSessionFamily(item.sessionID)) : []
     } catch (error) {
       if (![404,405].includes(error.status)) console.debug('question endpoint', error)
       else state.questionTransport = 'unsupported'
@@ -792,7 +839,7 @@ export function questionAnswersMissing(answers, request = state.question) {
   return answers.some((row) => !row.length)
 }
 async function submitQuestion() {
-  if (!state.question) return
+  if (!state.question || state.questionActionPending) return
   const requestRow = state.question
   const requestKey = state.questionKey
   const answers = questionAnswers(requestRow, state.questionSelection)
@@ -825,7 +872,7 @@ async function submitQuestion() {
   }
 }
 async function rejectQuestion() {
-  if (!state.question) return
+  if (!state.question || state.questionActionPending) return
   const requestRow = state.question
   const requestKey = state.questionKey
   const qid = requestRow.formID || requestRow.requestID || requestRow.id
@@ -863,7 +910,7 @@ function handleQuestionEvent(payload) {
   const data = payload.properties || payload.data || {}
   const candidate = data.form || data.request || data
   const sessionID = candidate.sessionID || data.sessionID
-  if (String(sessionID || '') !== String(state.sessionID || '')) return
+  if (!inSessionFamily(String(sessionID || ''))) return
   state.questionRevision += 1
   if (asked) {
     const requestRow = normalizeQuestionRequest(data, sessionID)
@@ -1013,7 +1060,10 @@ function updateActivityFromEvent(payload) {
   const outputValue = data.content !== undefined ? data.content : data.state?.content
   const errorValue = data.error !== undefined ? data.error : data.state?.error
   const deltaInput = toolEvent && data.delta !== undefined ? `${activityValue(existing?.input)}${activityValue(data.delta)}` : existing?.input
-  const deltaOutput = !toolEvent && data.delta !== undefined ? `${existing?.output || ''}${activityValue(data.delta)}` : existing?.output
+  const streamingDelta = !toolEvent && data.delta !== undefined
+  // The chat already shows the streamed answer; the activity panel keeps only a
+  // bounded tail so a long reply doesn't rebuild a huge <pre> per token.
+  const deltaOutput = streamingDelta ? `${existing?.output || ''}${activityValue(data.delta)}`.slice(-ACTIVITY_OUTPUT_TAIL) : existing?.output
   const next = {
     ...(existing || {}),
     ...descriptor,
@@ -1028,7 +1078,14 @@ function updateActivityFromEvent(payload) {
   else state.activityItems.push(next)
   state.activityItems = state.activityItems.slice(-32)
   state.currentActivityID = descriptor.id
-  scheduleOrchestrationRender()
+  if (streamingDelta) scheduleOrchestrationRenderThrottled()
+  else scheduleOrchestrationRender()
+}
+const ACTIVITY_OUTPUT_TAIL = 4000
+let orchestrationThrottleTimer = 0
+function scheduleOrchestrationRenderThrottled() {
+  if (orchestrationThrottleTimer) return
+  orchestrationThrottleTimer = setTimeout(() => { orchestrationThrottleTimer = 0; scheduleOrchestrationRender() }, 500)
 }
 function scheduleOrchestrationRender() {
   if (state.orchestrationRenderFrame !== null) return
@@ -1091,7 +1148,13 @@ async function refreshOrchestrationNow() {
       if (current() && [404,405].includes(error.status)) state.childrenTransport = 'unsupported'
     }
   }
-  if (!children.length) {
+  // The native V2 server has no /children route (404). app.js already keeps the
+  // full session list fresh (session.created/deleted events), so use it instead
+  // of scanning 200 sessions on every refresh (~12 requests/min while running).
+  const knownSessions = window.CustomOpenCodeControls?.sessions?.()
+  if (!children.length && Array.isArray(knownSessions) && knownSessions.length) {
+    children = knownSessions.filter((item) => item?.parentID === sessionID)
+  } else if (!children.length && state.childrenTransport !== 'supported') {
     try {
       const value = dataOf(await request('/api/session?limit=200&order=desc'))
       if (!current()) return
@@ -1262,9 +1325,14 @@ function renderOrchestration(statuses = state.orchestrationStatuses || {}) {
   restorePanelScroll(host.querySelector('.orchestration-nodes'), nodesScroll)
   const sessionID = state.sessionID
   const revision = state.orchestrationRevision
+  // One frame later only keep a conversation that was at the bottom stuck to
+  // it. Re-applying the captured scrollTop there fought the user's wheel and
+  // left auto-follow hundreds of pixels behind while an answer streamed.
+  if (!conversation?.atBottom || $('messages')?.dataset.followDetached === '1') return
   requestAnimationFrame(() => {
     if (state.sessionID !== sessionID || state.orchestrationRevision !== revision || state.orchestrationRenderRevision !== renderRevision || host.hidden) return
-    restoreScrollState($('messages'), conversation)
+    const messages = $('messages')
+    if (messages && messages.dataset.followDetached !== '1') messages.scrollTop = Math.max(0, messages.scrollHeight - messages.clientHeight)
   })
 }
 

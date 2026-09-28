@@ -30,6 +30,7 @@ function createFakeContext(initialState) {
     users: initialState?.users ?? [],
   }
   const calls = []
+  const inputs = []
   const toasts = []
   const alerts = []
   const prompts = []
@@ -45,9 +46,16 @@ function createFakeContext(initialState) {
 
   const context = {
     webserverControl: {
-      run(argumentsList) {
+      run(argumentsList, options) {
         calls.push(argumentsList)
+        inputs.push(options?.input)
         const cmd = argumentsList[0]
+        if (cmd === "status" && initialState?.hangStatus) {
+          return new Promise((resolve) => { context.releaseStatus = resolve })
+        }
+        if (argumentsList.includes("--password-stdin") && initialState?.legacyPasswordArgv) {
+          throw new Error("invalid arguments: usage: webserver-control.py [-h] {status,...}")
+        }
         if (cmd === "status") {
           return {
             ok: true,
@@ -117,9 +125,8 @@ function createFakeContext(initialState) {
         }
         if (cmd === "user-add") {
           const usernameIdx = argumentsList.indexOf("--username")
-          const passwordIdx = argumentsList.indexOf("--password")
           const username = argumentsList[usernameIdx + 1]
-          const hasPassword = passwordIdx >= 0
+          const hasPassword = argumentsList.includes("--password") || argumentsList.includes("--password-stdin")
           const user = { username, source: "store", created_at: "2026-01-01" }
           state.users.push(user)
           if (!hasPassword) {
@@ -183,6 +190,7 @@ function createFakeContext(initialState) {
     context, 
     state, 
     calls, 
+    inputs, 
     toasts, 
     alerts, 
     prompts, 
@@ -349,9 +357,49 @@ const wizardModule = await import(`${new URL("config/plugins/tui/server-wizard.j
   assert.ok(fake.alerts[1].message.includes("не короче 8"))
   assert.deepEqual(fake.calls, [
     ["status"],
-    ["user-add", "--username", "bob", "--password", "password123"],
+    ["user-add", "--username", "bob", "--password-stdin"],
     ["status"],
   ])
+  assert.equal(fake.inputs[1], "password123\n", "The password must travel through stdin")
+  assert.ok(!fake.calls.flat().includes("password123"), "The password must never appear in argv (/proc/*/cmdline)")
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  cleanup()
+}
+
+// --- Test add user against a control script without --password-stdin ---
+{
+  const fake = createFakeContext({ deployed: true, running: false, defaultEnabled: false, legacyPasswordArgv: true })
+  const cleanup = wizardModule.default.setup(fake.context)
+  fake.renderSlot()
+  const row = fake.layers[0].commands.find((item) => item.id === "custom.server-wizard.open")
+  fake.selectQueue.push("add-user", "manual")
+  fake.promptQueue.push("dave", "password456", "password456")
+  assert.equal(row.run(""), true)
+  await waitFor(() => fake.state.users.length === 1)
+  assert.deepEqual(fake.calls.slice(0, 3), [
+    ["status"],
+    ["user-add", "--username", "dave", "--password-stdin"],
+    ["user-add", "--username", "dave", "--password", "password456"],
+  ], "An older control script (unknown flag) falls back to the legacy argv form")
+  await waitFor(() => fake.toasts.at(-1)?.message.includes("dave"))
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  cleanup()
+}
+
+// --- Test a hanging control command: re-running /server explains why ---
+{
+  const fake = createFakeContext({ deployed: true, hangStatus: true })
+  const cleanup = wizardModule.default.setup(fake.context)
+  fake.renderSlot()
+  const row = fake.layers[0].commands.find((item) => item.id === "custom.server-wizard.open")
+  assert.equal(row.run(""), true)
+  await waitFor(() => fake.calls.length === 1)
+  assert.equal(row.run(""), true)
+  await waitFor(() => fake.toasts.length === 1)
+  assert.match(fake.toasts[0].message, /status.*ещё выполняется/, "A second /server must not return silently")
+  assert.equal(fake.calls.length, 1, "A busy wizard must not start another control command")
+  fake.context.releaseStatus({ ok: true, deployed: false })
+  await waitFor(() => fake.selects.length === 1)
   await new Promise((resolve) => setTimeout(resolve, 10))
   cleanup()
 }
@@ -482,6 +530,54 @@ const wizardModule = await import(`${new URL("config/plugins/tui/server-wizard.j
   await waitFor(() => fake.calls.length > 0)
   await new Promise((resolve) => setTimeout(resolve, 10))
   cleanup()
+}
+
+// --- Real control process: per-command timeouts, stdin secrets, group kill ---
+{
+  const { mkdtemp, writeFile, chmod, readFile, rm } = await import("node:fs/promises")
+  const { tmpdir } = await import("node:os")
+  const { join } = await import("node:path")
+  const temp = await mkdtemp(join(tmpdir(), "custom-opencode-server-wizard-"))
+  const record = join(temp, "record.json")
+  const grandchild = join(temp, "grandchild.pid")
+  const script = join(temp, "control")
+  await writeFile(script, `#!/usr/bin/env python3
+import json, subprocess, sys, time
+args = sys.argv[1:]
+if args[:1] == ["hang"]:
+    child = subprocess.Popen(["sleep", "30"])
+    open(${JSON.stringify(grandchild)}, "w").write(str(child.pid))
+    time.sleep(30)
+data = sys.stdin.read() if "--password-stdin" in args else None
+open(${JSON.stringify(record)}, "w").write(json.dumps({"args": args, "stdin": data}))
+print(json.dumps({"ok": True, "username": "erin"}))
+`, "utf8")
+  await chmod(script, 0o755)
+  process.env.CUSTOM_OPENCODE_WEBSERVER_COMMAND = script
+  const control = await import(`${new URL("config/plugins/tui/lib/webserver-control.js", root).href}?real=${Date.now()}`)
+  assert.ok(control.controlTimeout(["status"]) <= 30_000, "status must not wait 31 minutes")
+  assert.ok(control.controlTimeout(["user-list"]) <= 30_000)
+  assert.ok(control.controlTimeout(["apply", "--running", "on"]) <= 120_000)
+  assert.ok(control.controlTimeout(["deploy"]) >= 1_800_000, "deploy keeps its installer budget")
+  await control.runControl({}, ["user-add", "--username", "erin", "--password-stdin"], { input: "s3cret-pass\n" })
+  const recorded = JSON.parse(await readFile(record, "utf8"))
+  assert.deepEqual(recorded.args, ["user-add", "--username", "erin", "--password-stdin"])
+  assert.equal(recorded.stdin, "s3cret-pass\n")
+  const started = Date.now()
+  const pending = control.runControl({}, ["hang"], { timeoutMs: 400 })
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  assert.equal(control.activeControl(), "hang", "A running command must be visible to the wizards")
+  await assert.rejects(pending, /timed out after 1 s \(hang\)/)
+  assert.ok(Date.now() - started < 3000)
+  assert.equal(control.activeControl(), null)
+  const orphan = Number(await readFile(grandchild, "utf8"))
+  let alive = true
+  for (let attempt = 0; attempt < 40 && alive; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    try { process.kill(orphan, 0) } catch { alive = false }
+  }
+  assert.equal(alive, false, "A timed-out control command must be killed with its process group")
+  await rm(temp, { recursive: true, force: true })
 }
 
 clearTimeout(watchdog)

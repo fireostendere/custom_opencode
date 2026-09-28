@@ -393,6 +393,14 @@ text = text.replace("__CUSTOM_OPENCODE_ROOT__", json_string_value(root))
 text = text.replace("__RAG_DISABLED__", rag_disabled)
 text = text.replace("__PONYTAIL_PLUGIN_PATH__", json_string_value(ponytail_plugin))
 config = json.loads(text)
+if os.environ.get("OPENCODE_ALIBABA_ENABLED", "1").strip().lower() in {"0", "off", "false", "no"}:
+    # Unpaid Alibaba Token Plan: drop the cloud provider (Qwen/DeepSeek/GLM and
+    # the Qwen orchestration alias) and every agent routed to it, so nothing
+    # can pick or delegate to a model that cannot be called. Local Ollama stays.
+    (config.get("providers") or {}).pop("bailian-cli", None)
+    agents = config.get("agents") or {}
+    for agent_id in [key for key, value in agents.items() if str((value or {}).get("model") or "").startswith("bailian-cli/")]:
+        agents.pop(agent_id)
 # The discovered native ponytail-v2.js bridge uses the pinned upstream builder.
 # Do not register the upstream V1 callback API as a V2 manifest.
 config.pop("plugins", None)
@@ -608,6 +616,7 @@ SERVICE_ENV=(
   PONYTAIL_ENABLED PONYTAIL_CHECKOUT_DIR PONYTAIL_DEFAULT_MODE GEMINI_API_KEY GOOGLE_API_KEY OPENCODE_PLAN_DIRECTORY
   MCP_RAG_ROOT MCP_RAG_BIN
   OPENCODE_TOOL_FABRIC OPENCODE_FABRIC_PYTHON OPENCODE_FABRIC_LAUNCHER OPENCODE_FABRIC_CONFIG
+  OPENCODE_PROJECT_ROOTS OPENCODE_DEFAULT_MODEL OPENCODE_FREE_ONLY_PROVIDERS
 )
 install -d -m 0700 "$CONFIG_DIR"
 "$PYTHON3" - "$CONFIG_DIR/service.json" "$CONFIG_DIR" "${SERVICE_ENV[@]}" <<'PY'
@@ -644,6 +653,25 @@ os.replace(temporary, target)
 PY
 timeout 15s env -u OPENCODE_CONFIG_DIR opencode2 service stop >/dev/null 2>&1 || true
 timeout 45s env -u OPENCODE_CONFIG_DIR opencode2 service start >/dev/null
+# An already-running TUI may respawn the stopped service with the service env
+# it cached at its own start. Warn (names only, never values) when the live
+# service misses the env persisted above.
+"$PYTHON3" - "$CONFIG_DIR/service.json" "${XDG_STATE_HOME:-$HOME/.local/state}/opencode/service.json" <<'PY' || true
+import json, sys
+from pathlib import Path
+
+try:
+    wanted = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("env") or {}
+    pid = int(json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))["pid"])
+    raw = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    raise SystemExit(0)
+live = dict(item.decode(errors="replace").split("=", 1) for item in raw if b"=" in item)
+stale = sorted(name for name, value in wanted.items() if live.get(name) != value)
+if stale:
+    print(f"WARNING: the OpenCode service was respawned without the current env ({', '.join(stale)}); "
+          "close open custom-opencode TUIs, then run: opencode2 service stop && opencode2 service start", file=sys.stderr)
+PY
 cat >"$BIN_DIR/custom-opencode-serve" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail

@@ -20,8 +20,11 @@ export const DND_EDITION_MODEL = {
 }
 export const ORCHESTRATED_MODELS = [ORCHESTRATED_MODEL, SOL_ORCHESTRATED_MODEL, ASTRA_ORCHESTRATED_MODEL, DND_EDITION_MODEL]
 
-// The web surface exposes Build/Plan while keeping direct agent IDs internal.
-// Native clients can still use the same plan identifiers without translation.
+// Web and TUI share sessions, so both use the visible native agents. The TUI
+// ignores a session's model while its agent is hidden (legacy build-direct /
+// plan-direct) and falls back to the config default model.
+export const LEGACY_AGENT_ALIASES = { 'build-direct': 'build', 'plan-direct': 'plan' }
+
 export function modeFromAgent(agentID = '') {
   return String(agentID).startsWith('plan') ? 'plan' : 'build'
 }
@@ -33,8 +36,16 @@ export function profileFromAgent(agentID = '') {
 
 export function agentFor(mode = 'build', profile = 'direct') {
   if (profile === 'dnd-edition') return 'dnd-narrator'
-  if (profile === 'orchestrated') return mode === 'plan' ? 'plan' : 'build'
-  return mode === 'plan' ? 'plan-direct' : 'build-direct'
+  return mode === 'plan' ? 'plan' : 'build'
+}
+
+// Agent after the user explicitly picks a model; null keeps the current one.
+// Only the D&D narrator is tied to its model, and hidden legacy agents migrate
+// to visible ones (the TUI drops a session's model under a hidden agent).
+export function agentAfterModelPick(currentAgent = '', profile = 'direct') {
+  if (profile === 'dnd-edition') return currentAgent === 'dnd-narrator' ? null : 'dnd-narrator'
+  if (currentAgent === 'dnd-narrator') return 'build'
+  return LEGACY_AGENT_ALIASES[currentAgent] || null
 }
 
 export function composerActionState({ running = false, hasPayload = false } = {}) {

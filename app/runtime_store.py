@@ -33,6 +33,59 @@ TERMINAL_STATES = {"completed", "failed", "cancelled"}
 EXECUTION_STATES = frozenset(
     {"submitted", "running", "waiting_permission", "verifying", "recovering"}
 )
+# SQLite truncates the -wal file to this size whenever the log restarts after a
+# checkpoint. Without a limit one large transaction pins its high-water mark.
+JOURNAL_SIZE_LIMIT = 16 * 1024 * 1024
+# Scalar task columns: cheap to read, no JSON decoding, never the attachments.
+TASK_LIGHT_COLUMNS = (
+    "id",
+    "session_id",
+    "project_dir",
+    "kind",
+    "profile",
+    "priority",
+    "state",
+    "created_at",
+    "updated_at",
+    "started_at",
+    "finished_at",
+    "last_progress_at",
+    "dispatch_attempts",
+    "last_error",
+)
+# full: every column decoded (dispatch/retry need the attachments).
+# summary: everything except the attachment payload (file names only).
+# public: what list endpoints render; metadata reduced to PUBLIC_METADATA_KEYS.
+# light: scalar columns only.
+TASK_PROJECTIONS = frozenset({"full", "summary", "public", "light"})
+PUBLIC_METADATA_KEYS = ("sandbox", "worktree")
+# Recorded run replays and large tool outputs can be regenerated from the
+# native session/tools; they get a short retention. Nothing else does.
+REGENERABLE_ARTIFACT_KINDS = ("run-replay", "tool-output")
+PROGRESS_CHECKPOINTS_PER_TASK = 20
+_TASK_ORDER = (
+    "ORDER BY CASE WHEN state IN ('running','submitted','verifying','waiting_permission') "
+    "THEN 0 ELSE 1 END,priority DESC,created_at ASC"
+)
+# JSON1 projections. Booleans and nested values are re-wrapped so the decoded
+# result is exactly what json.loads of the full column would have produced.
+_SQL_FILE_NAMES = (
+    "CASE WHEN json_valid(files_json) AND json_type(files_json)='array' THEN "
+    "(SELECT json_group_array(CASE json_type(item.value,'$.name') "
+    "WHEN 'true' THEN json('true') WHEN 'false' THEN json('false') "
+    "ELSE json_extract(item.value,'$.name') END) "
+    "FROM json_each(tasks.files_json) AS item WHERE item.type='object') "
+    "ELSE '[]' END"
+)
+_SQL_PUBLIC_METADATA = (
+    "CASE WHEN json_valid(metadata_json) AND json_type(metadata_json)='object' THEN "
+    "(SELECT json_group_object(item.key, CASE item.type "
+    "WHEN 'true' THEN json('true') WHEN 'false' THEN json('false') "
+    "WHEN 'object' THEN json(item.value) WHEN 'array' THEN json(item.value) "
+    "ELSE item.value END) "
+    "FROM json_each(tasks.metadata_json) AS item WHERE item.key IN (%s)) "
+    "ELSE '{}' END"
+) % ",".join(f"'{key}'" for key in PUBLIC_METADATA_KEYS)
 
 
 def now_ms() -> int:
@@ -50,6 +103,13 @@ def _loads(value: str | None, fallback: Any) -> Any:
         return json.loads(value)
     except (TypeError, json.JSONDecodeError):
         return fallback
+
+
+def file_names(files: Any) -> list[str]:
+    """Public attachment names; never the (possibly multi-MB) payload."""
+    if not isinstance(files, list):
+        return []
+    return [str((item or {}).get("name") or "file") for item in files if isinstance(item, dict)]
 
 
 @dataclass(frozen=True)
@@ -90,6 +150,7 @@ class RuntimeStore:
             pool_size = 8
         self._pool: queue.LifoQueue[sqlite3.Connection] = queue.LifoQueue(maxsize=pool_size)
         self._initialized = False
+        self._json_sql: bool | None = None
 
     def initialize(self) -> None:
         if self._initialized:
@@ -165,8 +226,21 @@ class RuntimeStore:
                         project_dir TEXT NOT NULL,path TEXT NOT NULL,task_id TEXT NOT NULL,symbol TEXT NOT NULL DEFAULT '',
                         updated_at INTEGER NOT NULL,PRIMARY KEY(project_dir,path,task_id,symbol)
                     );
+                    CREATE INDEX IF NOT EXISTS idx_tasks_state_priority ON tasks(state,priority DESC,created_at ASC);
+                    CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated_at);
+                    CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id,id);
+                    CREATE TABLE IF NOT EXISTS task_notifications (
+                        task_id TEXT PRIMARY KEY,state TEXT NOT NULL,notified_at INTEGER NOT NULL
+                    );
                     """
                 )
+                columns = {row[1] for row in db.execute("PRAGMA table_info(tasks)")}
+                if "file_names_json" not in columns:
+                    try:
+                        db.execute("ALTER TABLE tasks ADD COLUMN file_names_json TEXT")
+                    except sqlite3.OperationalError as exc:
+                        if "duplicate column" not in str(exc).lower():  # concurrent process
+                            raise
                 db.execute(
                     "INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)",
                     (str(SCHEMA_VERSION),),
@@ -202,6 +276,11 @@ class RuntimeStore:
         try:
             db.execute("PRAGMA synchronous=NORMAL")
         except sqlite3.OperationalError:
+            pass
+        try:
+            limit = int(os.environ.get("OPENCODE_SQLITE_JOURNAL_LIMIT_BYTES") or JOURNAL_SIZE_LIMIT)
+            db.execute(f"PRAGMA journal_size_limit={max(0, limit)}")
+        except (ValueError, sqlite3.OperationalError):
             pass
         db.execute("PRAGMA foreign_keys=OFF")
         return db
@@ -245,11 +324,12 @@ class RuntimeStore:
                 raise
 
     def _row_task(
-        self, row: sqlite3.Row | None, dependencies: list[str] | None = None
+        self, row: sqlite3.Row | dict[str, Any] | None, dependencies: list[str] | None = None
     ) -> dict[str, Any] | None:
         if row is None:
             return None
         value = dict(row)
+        value.pop("file_names_json", None)  # derived column; full rows carry "files"
         value["files"] = _loads(value.pop("files_json", None), [])
         value["metadata"] = _loads(value.pop("metadata_json", None), {})
         value["baseline"] = _loads(value.pop("baseline_json", None), {})
@@ -259,6 +339,105 @@ class RuntimeStore:
             self.dependencies(value["id"]) if dependencies is None else dependencies
         )
         return value
+
+    def json_sql_available(self) -> bool:
+        """True when this SQLite's JSON1 reproduces json.loads exactly (probed once)."""
+        if self._json_sql is None:
+            probe = (
+                "SELECT (SELECT %s FROM (SELECT ? AS files_json) AS tasks),"
+                "(SELECT %s FROM (SELECT ? AS metadata_json) AS tasks)"
+            ) % (
+                _SQL_FILE_NAMES,
+                _SQL_PUBLIC_METADATA,
+            )
+            files = '[{"name":"a"},{"name":true},{"name":{"x":[1]}},{"x":1},5,{}]'
+            metadata = '{"sandbox":"s","worktree":{"a":[1,false]},"other":1}'
+            try:
+                with self.connect() as db:
+                    names, subset = db.execute(probe, (files, metadata)).fetchone()
+                self._json_sql = json.loads(names) == ["a", True, {"x": [1]}, None, None] and (
+                    json.loads(subset) == {"sandbox": "s", "worktree": {"a": [1, False]}}
+                )
+            except (sqlite3.Error, TypeError, ValueError):
+                self._json_sql = False
+        return bool(self._json_sql)
+
+    def _projection_columns(self, projection: str) -> str:
+        if projection not in TASK_PROJECTIONS:
+            raise ValueError(f"unknown task projection: {projection}")
+        if projection == "full":
+            return "*"
+        columns = list(TASK_LIGHT_COLUMNS)
+        if projection == "light":
+            return ",".join(columns)
+        json_sql = self.json_sql_available()
+        columns += ["text", "route_json", "verification_json"]
+        # Names are denormalized at creation (attachments are immutable); rows
+        # written by an older runtime are derived on the fly until backfilled.
+        if json_sql:
+            columns.append(f"COALESCE(file_names_json,{_SQL_FILE_NAMES}) AS file_names_json")
+        else:
+            columns += [
+                "file_names_json",
+                "CASE WHEN file_names_json IS NULL THEN files_json END AS files_json",
+            ]
+        if projection == "summary":
+            columns += ["metadata_json", "baseline_json"]
+        else:
+            columns.append(
+                f"{_SQL_PUBLIC_METADATA} AS metadata_subset_json" if json_sql else "metadata_json"
+            )
+        return ",".join(columns)
+
+    def _project_row(
+        self, row: sqlite3.Row, projection: str, dependencies: list[str] | None = None
+    ) -> dict[str, Any]:
+        if projection == "full":
+            return self._row_task(row, dependencies) or {}
+        value = dict(row)
+        stored = value.pop("file_names_json", None)
+        payload = value.pop("files_json", None)
+        if stored is not None:
+            names = _loads(stored, [])
+            value["file_names"] = (
+                [str(name or "file") for name in names] if isinstance(names, list) else []
+            )
+        elif payload is not None:
+            value["file_names"] = file_names(_loads(payload, []))
+        elif projection != "light":
+            value["file_names"] = []
+        if "metadata_subset_json" in value:
+            subset = _loads(value.pop("metadata_subset_json"), {})
+            value["metadata"] = subset if isinstance(subset, dict) else {}
+        elif "metadata_json" in value:
+            metadata = _loads(value.pop("metadata_json"), {})
+            if projection == "public":
+                metadata = (
+                    {key: metadata[key] for key in PUBLIC_METADATA_KEYS if key in metadata}
+                    if isinstance(metadata, dict)
+                    else {}
+                )
+            value["metadata"] = metadata
+        for key in ("baseline", "route", "verification"):
+            if f"{key}_json" in value:
+                value[key] = _loads(value.pop(f"{key}_json"), {})
+        value["dependencies"] = (
+            self.dependencies(value["id"]) if dependencies is None else dependencies
+        )
+        return value
+
+    @staticmethod
+    def _dependency_map(db: sqlite3.Connection, ids: list[str]) -> dict[str, list[str]]:
+        dependencies: dict[str, list[str]] = {task_id: [] for task_id in ids}
+        for start in range(0, len(ids), 500):
+            chunk = ids[start : start + 500]
+            for row in db.execute(
+                "SELECT task_id,depends_on FROM task_dependencies WHERE task_id IN (%s) ORDER BY depends_on"
+                % ",".join("?" for _ in chunk),
+                chunk,
+            ).fetchall():
+                dependencies[str(row["task_id"])].append(str(row["depends_on"]))
+        return dependencies
 
     def create_task(
         self,
@@ -281,10 +460,14 @@ class RuntimeStore:
         priority = max(-100, min(100, int(priority)))
         timestamp = now_ms()
         deps = [str(item) for item in dependencies if item and str(item) != task_id]
+        encoded_files = _json(files or [])
+        # Names come from the stored JSON, exactly what a full read decodes.
+        encoded_names = _json(file_names(_loads(encoded_files, [])))
         with self.transaction() as db:
             db.execute(
                 """INSERT INTO tasks(id,session_id,project_dir,kind,profile,priority,state,text,files_json,metadata_json,
-                   created_at,updated_at,last_progress_at,baseline_json,route_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   created_at,updated_at,last_progress_at,baseline_json,route_json,file_names_json)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     task_id,
                     session_id,
@@ -294,13 +477,14 @@ class RuntimeStore:
                     priority,
                     "blocked" if deps else "queued",
                     text,
-                    _json(files or []),
+                    encoded_files,
                     _json(metadata or {}),
                     timestamp,
                     timestamp,
                     timestamp,
                     _json(baseline or {}),
                     _json(route or {}),
+                    encoded_names,
                 ),
             )
             for dependency in dict.fromkeys(deps):
@@ -319,11 +503,14 @@ class RuntimeStore:
             )
         return self.get_task(task_id) or {}
 
-    def get_task(self, task_id: str) -> dict[str, Any] | None:
+    def get_task(self, task_id: str, *, projection: str = "full") -> dict[str, Any] | None:
         self.initialize()
+        columns = self._projection_columns(projection)
         with self.connect() as db:
-            row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
-        return self._row_task(row)
+            row = db.execute(f"SELECT {columns} FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        return self._project_row(row, projection)
 
     def list_tasks(
         self,
@@ -332,8 +519,15 @@ class RuntimeStore:
         project_dir: str | None = None,
         states: Iterable[str] | None = None,
         limit: int = 200,
+        projection: str = "full",
     ) -> list[dict[str, Any]]:
+        """List tasks in dispatch order.
+
+        Pollers and list endpoints must pass a projection: the default "full"
+        decodes attachments (base64 data URIs) and every JSON column.
+        """
         self.initialize()
+        columns = self._projection_columns(projection)
         clauses: list[str] = []
         args: list[Any] = []
         if session_id:
@@ -350,19 +544,148 @@ class RuntimeStore:
         args.append(max(1, min(1000, int(limit))))
         with self.connect() as db:
             rows = db.execute(
-                f"SELECT * FROM tasks{where} ORDER BY CASE WHEN state IN ('running','submitted','verifying','waiting_permission') THEN 0 ELSE 1 END,priority DESC,created_at ASC LIMIT ?",
+                f"SELECT {columns} FROM tasks{where} {_TASK_ORDER} LIMIT ?",
                 args,
             ).fetchall()
-            ids = [str(row["id"]) for row in rows]
-            dependencies: dict[str, list[str]] = {task_id: [] for task_id in ids}
-            if ids:
-                for dependency in db.execute(
-                    "SELECT task_id,depends_on FROM task_dependencies WHERE task_id IN (%s) ORDER BY depends_on"
-                    % ",".join("?" for _ in ids),
-                    ids,
+            dependencies = self._dependency_map(db, [str(row["id"]) for row in rows])
+        return [self._project_row(row, projection, dependencies[str(row["id"])]) for row in rows]
+
+    def has_tasks(
+        self, *, states: Iterable[str], session_id: str | None = None
+    ) -> bool:
+        """Cheap existence probe for the worker loop (no row decoding)."""
+        self.initialize()
+        state_list = sorted(s for s in states if s in TASK_STATES)
+        if not state_list:
+            return False
+        clauses = ["state IN (%s)" % ",".join("?" for _ in state_list)]
+        args: list[Any] = list(state_list)
+        if session_id:
+            clauses.append("session_id=?")
+            args.append(session_id)
+        with self.connect() as db:
+            row = db.execute(
+                f"SELECT 1 FROM tasks WHERE {' AND '.join(clauses)} LIMIT 1", args
+            ).fetchone()
+        return row is not None
+
+    def task_state(self, task_id: str) -> str | None:
+        self.initialize()
+        with self.connect() as db:
+            row = db.execute("SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()
+        return str(row["state"]) if row else None
+
+    def task_states(self, task_ids: Iterable[str]) -> dict[str, str]:
+        ids = list(dict.fromkeys(str(item) for item in task_ids if item))
+        if not ids:
+            return {}
+        self.initialize()
+        states: dict[str, str] = {}
+        with self.connect() as db:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                for row in db.execute(
+                    "SELECT id,state FROM tasks WHERE id IN (%s)" % ",".join("?" for _ in chunk),
+                    chunk,
                 ).fetchall():
-                    dependencies[str(dependency["task_id"])].append(str(dependency["depends_on"]))
-        return [self._row_task(row, dependencies[str(row["id"])]) or {} for row in rows]
+                    states[str(row["id"])] = str(row["state"])
+        return states
+
+    def project_dirs(self, states: Iterable[str]) -> list[str]:
+        self.initialize()
+        state_list = sorted(s for s in states if s in TASK_STATES)
+        if not state_list:
+            return []
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT DISTINCT project_dir FROM tasks WHERE state IN (%s) AND project_dir<>'' ORDER BY project_dir"
+                % ",".join("?" for _ in state_list),
+                state_list,
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def tasks_updated_since(self, since_ms: int, *, limit: int = 1000) -> list[dict[str, Any]]:
+        """Light rows changed after a watermark (uses idx_tasks_updated)."""
+        self.initialize()
+        with self.connect() as db:
+            rows = db.execute(
+                f"SELECT {','.join(TASK_LIGHT_COLUMNS)} FROM tasks WHERE updated_at>? "
+                "ORDER BY updated_at ASC,id ASC LIMIT ?",
+                (int(since_ms), max(1, min(5000, int(limit)))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def tasks_missing_artifact(
+        self,
+        kind: str,
+        *,
+        states: Iterable[str],
+        since_ms: int,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Recently finished tasks that still lack an artifact of ``kind``."""
+        self.initialize()
+        state_list = sorted(s for s in states if s in TASK_STATES)
+        if not state_list:
+            return []
+        columns = ",".join(f"task.{name}" for name in TASK_LIGHT_COLUMNS)
+        with self.connect() as db:
+            rows = db.execute(
+                f"""SELECT {columns} FROM tasks task
+                    WHERE task.state IN ({','.join('?' for _ in state_list)}) AND task.updated_at>?
+                      AND NOT EXISTS (SELECT 1 FROM artifacts artifact
+                                      WHERE artifact.task_id=task.id AND artifact.kind=?)
+                    ORDER BY task.updated_at ASC LIMIT ?""",
+                (*state_list, int(since_ms), kind, max(1, min(500, int(limit)))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def claim_notifications(self, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Durably record (task, state) notifications; return only new ones."""
+        self.initialize()
+        claimed: list[dict[str, Any]] = []
+        items = [row for row in rows if row.get("id") and row.get("state")]
+        if not items:
+            return claimed
+        timestamp = now_ms()
+        with self.transaction() as db:
+            for row in items:
+                previous = db.execute(
+                    "SELECT state FROM task_notifications WHERE task_id=?", (str(row["id"]),)
+                ).fetchone()
+                if previous is not None and str(previous["state"]) == str(row["state"]):
+                    continue
+                db.execute(
+                    "INSERT INTO task_notifications(task_id,state,notified_at) VALUES(?,?,?) "
+                    "ON CONFLICT(task_id) DO UPDATE SET state=excluded.state,notified_at=excluded.notified_at",
+                    (str(row["id"]), str(row["state"]), timestamp),
+                )
+                claimed.append(row)
+        return claimed
+
+    def seed_notifications(self, states: Iterable[str]) -> int:
+        """Mark current tasks as already notified (first run of the durable notifier)."""
+        self.initialize()
+        state_list = sorted(s for s in states if s in TASK_STATES)
+        if not state_list:
+            return 0
+        with self.transaction() as db:
+            return db.execute(
+                "INSERT OR IGNORE INTO task_notifications(task_id,state,notified_at) "
+                "SELECT id,state,? FROM tasks WHERE state IN (%s)" % ",".join("?" for _ in state_list),
+                (now_ms(), *state_list),
+            ).rowcount
+
+    def meta_get(self, key: str) -> str | None:
+        self.initialize()
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return str(row["value"]) if row else None
+
+    def meta_set(self, key: str, value: str) -> None:
+        self.initialize()
+        with self.transaction() as db:
+            db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (key, str(value)))
 
     def dependencies(self, task_id: str) -> list[str]:
         self.initialize()
@@ -386,14 +709,15 @@ class RuntimeStore:
         return not waiting, waiting
 
     def next_ready(self, *, session_id: str | None = None) -> dict[str, Any] | None:
-        candidates = self.list_tasks(session_id=session_id, states=["queued", "blocked"], limit=500)
+        candidates = self.list_tasks(
+            session_id=session_id, states=["queued", "blocked"], limit=500, projection="light"
+        )
         for task in candidates:
             ready, waiting = self.dependency_state(task["id"])
             if ready:
                 if task["state"] == "blocked":
-                    self.transition(task["id"], "queued", event="task.unblocked", data={})
-                    task = self.get_task(task["id"]) or task
-                return task
+                    return self.transition(task["id"], "queued", event="task.unblocked", data={})
+                return self.get_task(task["id"]) or task
             if task["state"] != "blocked":
                 self.transition(
                     task["id"], "blocked", event="task.blocked", data={"waitingFor": waiting}
@@ -479,19 +803,21 @@ class RuntimeStore:
             current = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
             if current is None:
                 raise KeyError(task_id)
-            updates = ["state=?", "updated_at=?", "last_progress_at=?"]
-            args: list[Any] = [state, timestamp, timestamp]
+            changes: dict[str, Any] = {
+                "state": state,
+                "updated_at": timestamp,
+                "last_progress_at": timestamp,
+            }
             if state in {"submitted", "running"} and current["started_at"] is None:
-                updates.append("started_at=?")
-                args.append(timestamp)
+                changes["started_at"] = timestamp
             if state in TERMINAL_STATES or state == "needs_attention":
-                updates.append("finished_at=?")
-                args.append(timestamp)
+                changes["finished_at"] = timestamp
             if error is not None:
-                updates.append("last_error=?")
-                args.append(str(error)[:4000])
-            args.append(task_id)
-            db.execute(f"UPDATE tasks SET {','.join(updates)} WHERE id=?", args)
+                changes["last_error"] = str(error)[:4000]
+            db.execute(
+                f"UPDATE tasks SET {','.join(f'{column}=?' for column in changes)} WHERE id=?",
+                [*changes.values(), task_id],
+            )
             if state in TERMINAL_STATES:
                 db.execute("DELETE FROM patch_ownership WHERE task_id=?", (task_id,))
             self._event_db(
@@ -503,7 +829,11 @@ class RuntimeStore:
                 data or {},
                 timestamp,
             )
-        return self.get_task(task_id) or {}
+            # Return the committed row from this transaction's own read; a second
+            # SELECT would copy and decode the attachment payload again.
+            merged = {**dict(current), **changes}
+            dependencies = self._dependency_map(db, [task_id])[task_id]
+        return self._row_task(merged, dependencies) or {}
 
     def update_task(
         self,
@@ -520,33 +850,36 @@ class RuntimeStore:
             row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
             if row is None:
                 raise KeyError(task_id)
-            updates = ["updated_at=?"]
-            args: list[Any] = [timestamp]
+            merged = dict(row)
+            # Only columns whose stored value changes are written. An unchanged
+            # heartbeat/observation must not rewrite the row (with its inline
+            # attachments) into the WAL or bump updated_at.
+            columns: dict[str, Any] = {}
             changes: dict[str, Any] = {}
             if priority is not None:
                 value = max(-100, min(100, int(priority)))
-                updates.append("priority=?")
-                args.append(value)
                 if value != row["priority"]:
+                    columns["priority"] = value
                     changes["priority"] = value
             if metadata_patch is not None:
                 current = _loads(row["metadata_json"], {})
                 current = current if isinstance(current, dict) else {}
                 current.update(metadata_patch)
-                updates.append("metadata_json=?")
-                args.append(_json(current))
+                encoded = _json(current)
+                if encoded != row["metadata_json"]:
+                    columns["metadata_json"] = encoded
             if route is not None:
-                updates.append("route_json=?")
-                args.append(_json(route))
+                encoded = _json(route)
+                if encoded != row["route_json"]:
+                    columns["route_json"] = encoded
                 if route != _loads(row["route_json"], {}):
                     changes["route"] = route
             if verification is not None:
-                updates.append("verification_json=?")
-                args.append(_json(verification))
+                encoded = _json(verification)
+                if encoded != row["verification_json"]:
+                    columns["verification_json"] = encoded
                 if verification != _loads(row["verification_json"], {}):
                     changes["verification"] = verification
-            args.append(task_id)
-            db.execute(f"UPDATE tasks SET {','.join(updates)} WHERE id=?", args)
             if dependencies is not None:
                 deps = list(
                     dict.fromkeys(
@@ -561,17 +894,24 @@ class RuntimeStore:
                 }
                 if set(deps) != before:
                     changes["dependencies"] = deps
-                db.execute("DELETE FROM task_dependencies WHERE task_id=?", (task_id,))
-                for dep in dict.fromkeys(deps):
-                    db.execute(
-                        "INSERT OR IGNORE INTO task_dependencies(task_id,depends_on) VALUES(?,?)",
-                        (task_id, dep),
-                    )
+                    db.execute("DELETE FROM task_dependencies WHERE task_id=?", (task_id,))
+                    for dep in deps:
+                        db.execute(
+                            "INSERT OR IGNORE INTO task_dependencies(task_id,depends_on) VALUES(?,?)",
+                            (task_id, dep),
+                        )
                 if str(row["state"]) in {"queued", "blocked", "paused"}:
                     state = "queued" if not deps else "blocked"
-                    db.execute("UPDATE tasks SET state=? WHERE id=?", (state, task_id))
                     if state != row["state"]:
+                        columns["state"] = state
                         changes["state"] = state
+            if columns or changes:
+                columns["updated_at"] = timestamp
+                db.execute(
+                    f"UPDATE tasks SET {','.join(f'{column}=?' for column in columns)} WHERE id=?",
+                    [*columns.values(), task_id],
+                )
+                merged.update(columns)
             # Progress/heartbeat metadata is persisted, not a user-facing edit.
             if changes:
                 self._event_db(
@@ -583,7 +923,8 @@ class RuntimeStore:
                     changes,
                     timestamp,
                 )
-        return self.get_task(task_id) or {}
+            dependency_rows = self._dependency_map(db, [task_id])[task_id]
+        return self._row_task(merged, dependency_rows) or {}
 
     def reorder(self, session_id: str, ids: list[str]) -> None:
         for index, task_id in enumerate(ids[:200]):
@@ -633,6 +974,7 @@ class RuntimeStore:
         project_dir: str | None = None,
         after: int = 0,
         limit: int = 500,
+        kind_contains: str | None = None,
     ) -> list[dict[str, Any]]:
         self.initialize()
         clauses = ["id>?"]
@@ -646,6 +988,10 @@ class RuntimeStore:
         if project_dir:
             clauses.append("project_dir=?")
             args.append(project_dir)
+        if kind_contains:
+            # Case-sensitive substring, identical to `needle in kind`.
+            clauses.append("instr(kind,?)>0")
+            args.append(kind_contains)
         args.append(max(1, min(2000, int(limit))))
         with self.connect() as db:
             rows = db.execute(
@@ -654,18 +1000,35 @@ class RuntimeStore:
         return [{**dict(row), "data": _loads(row["data_json"], {})} for row in rows]
 
     def checkpoint(
-        self, task_id: str, stage: str, *, summary: str = "", data: dict[str, Any] | None = None
+        self,
+        task_id: str,
+        stage: str,
+        *,
+        summary: str = "",
+        data: dict[str, Any] | None = None,
+        keep: int | None = None,
     ) -> dict[str, Any]:
-        task = self.get_task(task_id)
-        if not task:
-            raise KeyError(task_id)
+        """Persist a checkpoint; ``keep`` retains only the newest N of this stage."""
+        self.initialize()
         cid = f"cp_{uuid4().hex}"
         timestamp = now_ms()
         with self.transaction() as db:
+            task = db.execute(
+                "SELECT session_id,project_dir FROM tasks WHERE id=?", (task_id,)
+            ).fetchone()
+            if task is None:
+                raise KeyError(task_id)
             db.execute(
                 "INSERT INTO checkpoints(id,task_id,stage,summary,data_json,created_at) VALUES(?,?,?,?,?,?)",
                 (cid, task_id, stage, str(summary)[:4000], _json(data or {}), timestamp),
             )
+            if keep is not None:
+                db.execute(
+                    """DELETE FROM checkpoints WHERE task_id=? AND stage=? AND rowid NOT IN (
+                           SELECT rowid FROM checkpoints WHERE task_id=? AND stage=?
+                           ORDER BY created_at DESC,rowid DESC LIMIT ?)""",
+                    (task_id, stage, task_id, stage, max(1, int(keep))),
+                )
             self._event_db(
                 db,
                 task_id,
@@ -688,7 +1051,7 @@ class RuntimeStore:
         self.initialize()
         with self.connect() as db:
             rows = db.execute(
-                "SELECT * FROM checkpoints WHERE task_id=? ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM checkpoints WHERE task_id=? ORDER BY created_at DESC,rowid DESC LIMIT ?",
                 (task_id, max(1, min(500, int(limit)))),
             ).fetchall()
         return [
@@ -734,8 +1097,14 @@ class RuntimeStore:
             return None
         return _loads(row["value_json"], None)
 
-    def prune(self, retention_days: int | None = None) -> dict[str, int]:
-        """Drop expired cache entries and old terminal task data."""
+    def prune(
+        self, retention_days: int | None = None, *, regenerable_days: int | None = None
+    ) -> dict[str, int]:
+        """Drop expired cache entries, old terminal task data and stale ledgers.
+
+        Regenerable artifacts (run replays, large tool outputs) use the shorter
+        ``regenerable_days`` retention; everything else keeps ``retention_days``.
+        """
         self.initialize()
         timestamp = now_ms()
         days = max(
@@ -747,7 +1116,22 @@ class RuntimeStore:
             ),
         )
         cutoff = timestamp - days * 86_400_000
+        regen_days = max(
+            1,
+            int(
+                regenerable_days
+                if regenerable_days is not None
+                else os.environ.get("OPENCODE_REGENERABLE_ARTIFACT_DAYS", "7")
+            ),
+        )
+        regen_cutoff = timestamp - min(regen_days, days) * 86_400_000
+        regen_kinds = ",".join(f"'{kind}'" for kind in REGENERABLE_ARTIFACT_KINDS)
+        stats: dict[str, int] = {}
         with self.transaction() as db:
+            tables = {
+                str(row[0])
+                for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
             # TEMP tables are connection-local and pooled connections survive
             # across prune() calls. Always reset the scratch table so pooling
             # cannot turn a second maintenance pass into an OperationalError.
@@ -760,8 +1144,10 @@ class RuntimeStore:
             files = [
                 str(row[0])
                 for row in db.execute(
-                    f"SELECT file_path FROM artifacts WHERE file_path IS NOT NULL AND (task_id IN ({old_tasks}) OR (task_id IS NULL AND created_at<?))",
-                    (cutoff,),
+                    f"""SELECT file_path FROM artifacts WHERE file_path IS NOT NULL AND (
+                           task_id IN ({old_tasks}) OR (task_id IS NULL AND created_at<?)
+                           OR (kind IN ({regen_kinds}) AND created_at<?))""",
+                    (cutoff, regen_cutoff),
                 ).fetchall()
             ]
             expired = db.execute(
@@ -770,6 +1156,10 @@ class RuntimeStore:
             artifacts = db.execute(
                 f"DELETE FROM artifacts WHERE task_id IN ({old_tasks}) OR (task_id IS NULL AND created_at<?)",
                 (cutoff,),
+            ).rowcount
+            stats["regenerableArtifacts"] = db.execute(
+                f"DELETE FROM artifacts WHERE kind IN ({regen_kinds}) AND created_at<?",
+                (regen_cutoff,),
             ).rowcount
             db.execute(f"DELETE FROM checkpoints WHERE task_id IN ({old_tasks})")
             db.execute(
@@ -788,8 +1178,51 @@ class RuntimeStore:
             db.execute(
                 f"DELETE FROM task_dependencies WHERE task_id IN ({old_tasks}) OR depends_on IN ({old_tasks})"
             )
+            db.execute(f"DELETE FROM task_notifications WHERE task_id IN ({old_tasks})")
+            if "execution_review_claims" in tables:
+                db.execute(
+                    f"DELETE FROM execution_review_claims WHERE root_id IN ({old_tasks}) OR task_id IN ({old_tasks})"
+                )
             tasks = db.execute(f"DELETE FROM tasks WHERE id IN ({old_tasks})").rowcount
             db.execute("DROP TABLE IF EXISTS prune_tasks")
+            # Progress checkpoints are written whenever the agent's signature
+            # changes; resume only needs the newest ones.
+            try:
+                stats["progressCheckpoints"] = db.execute(
+                    """DELETE FROM checkpoints WHERE rowid IN (
+                           SELECT rowid FROM (
+                               SELECT rowid,ROW_NUMBER() OVER (
+                                   PARTITION BY task_id ORDER BY created_at DESC,rowid DESC) AS position
+                               FROM checkpoints WHERE stage='progress')
+                           WHERE position>?)""",
+                    (PROGRESS_CHECKPOINTS_PER_TASK,),
+                ).rowcount
+            except sqlite3.OperationalError:
+                stats["progressCheckpoints"] = 0
+            db.execute("DELETE FROM usage_keys WHERE created_at<?", (cutoff,))
+            if {"execution_roots", "execution_bindings", "execution_requests"} <= tables:
+                # A root is stale once it started before the cutoff and has had
+                # no model request since; its bindings go with it and the next
+                # native turn binds a fresh root.
+                stale_roots = """SELECT id FROM execution_roots WHERE started_at<? AND NOT EXISTS (
+                                     SELECT 1 FROM execution_requests recent
+                                     WHERE recent.root_id=execution_roots.id AND recent.started_at>=?)"""
+                stats["executionBindings"] = db.execute(
+                    f"DELETE FROM execution_bindings WHERE root_id IN ({stale_roots})",
+                    (cutoff, cutoff),
+                ).rowcount
+                stats["executionRoots"] = db.execute(
+                    f"""DELETE FROM execution_roots WHERE id IN ({stale_roots})
+                        AND id NOT IN (SELECT root_id FROM execution_bindings)""",
+                    (cutoff, cutoff),
+                ).rowcount
+                stats["executionRequests"] = db.execute(
+                    "DELETE FROM execution_requests WHERE started_at<?", (cutoff,)
+                ).rowcount
+            if "budget_approval_requests" in tables:
+                db.execute("DELETE FROM budget_approval_requests WHERE created_at<?", (cutoff,))
+            if "budget_approvals" in tables:
+                db.execute("DELETE FROM budget_approvals WHERE updated_at<?", (cutoff,))
         artifact_root = self.paths.artifacts.resolve(strict=False)
         removed = 0
         for raw in files:
@@ -800,7 +1233,61 @@ class RuntimeStore:
                 removed += 1
             except (OSError, RuntimeError, ValueError):
                 pass
-        return {"expiredCache": expired, "tasks": tasks, "artifacts": artifacts, "files": removed}
+        stats["fileNamesBackfilled"] = self.backfill_file_names()
+        self.compact()
+        return {
+            "expiredCache": expired,
+            "tasks": tasks,
+            "artifacts": artifacts,
+            "files": removed,
+            **stats,
+        }
+
+    def backfill_file_names(self, limit: int = 200) -> int:
+        """Fill file_names_json for rows written by an older runtime (bounded)."""
+        self.initialize()
+        with self.transaction() as db:
+            rows = db.execute(
+                "SELECT id,files_json FROM tasks WHERE file_names_json IS NULL LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+            for row in rows:
+                db.execute(
+                    "UPDATE tasks SET file_names_json=? WHERE id=? AND file_names_json IS NULL",
+                    (_json(file_names(_loads(row["files_json"], []))), row["id"]),
+                )
+        return len(rows)
+
+    def compact(self) -> dict[str, Any]:
+        """Truncate the WAL and return free pages when auto_vacuum=INCREMENTAL.
+
+        Never runs VACUUM: converting a live database to incremental
+        auto-vacuum is an explicit offline operation
+        (scripts/runtime-db-maintenance.py).
+        """
+        self.initialize()
+        result: dict[str, Any] = {}
+        with self.connect() as db:
+            try:
+                # Do not stall request threads behind a long-lived reader.
+                db.execute("PRAGMA busy_timeout=2000")
+                # A read refreshes this pooled connection's view of the header
+                # (auto_vacuum may have been converted by the offline command).
+                db.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
+                if int(db.execute("PRAGMA auto_vacuum").fetchone()[0]) == 2:
+                    # Before the checkpoint: its page moves are written to the WAL.
+                    db.execute("PRAGMA incremental_vacuum").fetchall()
+                    result["incrementalVacuum"] = True
+                row = db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                result["walCheckpoint"] = list(row) if row is not None else None
+            except sqlite3.Error as exc:
+                result["error"] = f"{type(exc).__name__}: {exc}"[:300]
+            finally:
+                try:
+                    db.execute("PRAGMA busy_timeout=10000")
+                except sqlite3.Error:
+                    pass
+        return result
 
     def consume_rate(self, scope: str, limit: int, window_ms: int = 60000) -> None:
         self.initialize()
@@ -1092,9 +1579,11 @@ class RuntimeStore:
                 # Reject the whole acquisition. Inserting before checking left
                 # denied agents holding locks and deadlocked the rightful owner.
                 return [{"path": r["path"], "taskID": r["task_id"]} for r in rows]
+            # The monitor re-claims every owned path each progress poll; keep the
+            # first claim instead of deleting/re-inserting identical rows.
             for path in normalized:
                 db.execute(
-                    "INSERT OR REPLACE INTO patch_ownership(project_dir,path,task_id,symbol,updated_at) VALUES(?,?,?,?,?)",
+                    "INSERT OR IGNORE INTO patch_ownership(project_dir,path,task_id,symbol,updated_at) VALUES(?,?,?,?,?)",
                     (project, path, task_id, "", timestamp),
                 )
         return []

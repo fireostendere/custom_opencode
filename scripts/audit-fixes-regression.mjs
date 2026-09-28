@@ -132,13 +132,16 @@ try {
     const event = {
       sessionID: "s",
       system: [{ type: "text", text: "native policy" }],
-      messages: [{ role: "user", content: "XML <server>unchanged</server>" }],
+      messages: [{ id: "msg_1", role: "user", content: "XML <server>unchanged</server>" }],
     }
-    const user = JSON.stringify(event.messages)
+    const system = JSON.stringify(event.system)
     for (let n = 0; n < 50; n++) await gh.context(event)
-    assert.equal(event.system.length, 2)
-    assert.equal(JSON.stringify(event.messages), user)
-    assert.equal(JSON.stringify(event.system).split("POLICY_ONCE").length - 1, 1)
+    // The per-turn block rides on the current user message; the cached system
+    // prefix stays byte-identical and the user's own bytes are preserved.
+    assert.equal(JSON.stringify(event.system), system)
+    assert.equal(event.messages.length, 1)
+    assert.equal(JSON.stringify(event.messages).split("POLICY_ONCE").length - 1, 1)
+    assert.deepEqual(event.messages[0].content.at(-1), { type: "text", text: "XML <server>unchanged</server>" })
   })
   await check("artifact reader uses native session not supplied argument", async () => {
     let sent
@@ -234,3 +237,92 @@ for (const count of [100, 500]) {
 console.log(
   "PASS: bounded 100/500-tool discovery, session/profile isolation and reload invalidation",
 )
+
+// notify-win: model-controlled text never enters the PowerShell source, and
+// only a real permission prompt (effect "ask") spawns a toast.
+{
+  const { toastScript, psQuote, default: notify } = await import("../config/plugins/notify-win.js")
+  const hostile = "a’); Start-Process calc; (’' $(whoami) `n"
+  const script = toastScript(hostile, hostile.repeat(20))
+  for (const needle of ["Start-Process", "whoami", "’"]) assert.ok(!script.includes(needle), `script source leaked ${needle}`)
+  const encoded = [...script.matchAll(/FromBase64String\('([A-Za-z0-9+/=]*)'\)/g)].map((match) => Buffer.from(match[1], "base64").toString("utf8"))
+  assert.equal(encoded[0], hostile, "title round-trips through base64")
+  assert.equal([...encoded[1]].length, 200, "message is truncated before encoding")
+  assert.equal(psQuote("x‘y‛z'"), "x‘‘y‛‛z''")
+  const spawned = []
+  globalThis.Bun = { spawn: (argv) => { spawned.push(argv) } }
+  let evaluate
+  const dispose = await notify.setup({
+    permission: { hook: async (_name, fn) => { evaluate = fn; return { dispose: async () => {} } } },
+    event: { subscribe: () => new ReadableStream().values() },
+    session: { get: async () => ({ title: "" }) },
+  })
+  evaluate({ sessionID: "s", action: "read", resources: ["README.md"], effect: "allow" })
+  assert.equal(spawned.length, 0, "auto-allowed tool calls must not spawn powershell")
+  evaluate({ sessionID: "s", action: "shell", resources: [hostile], effect: "ask" })
+  assert.equal(spawned.length, 1)
+  assert.ok(!spawned[0].at(-1).includes("Start-Process"))
+  await dispose()
+  delete globalThis.Bun
+  console.log("PASS notify-win: base64 text transport, typographic quotes, ask-only toasts")
+}
+
+// keep-awake: one shared keeper stays alive while any session is busy.
+{
+  const spawned = []
+  const killed = []
+  globalThis.Bun = { spawn: () => { const child = { exitCode: null, signalCode: null, kill: () => { killed.push(child); child.exitCode = 0 } }; spawned.push(child); return child } }
+  const { default: keepAwake } = await import("../config/plugins/keep-awake.js")
+  let emit
+  const stream = new ReadableStream({ start(controller) { emit = (event) => controller.enqueue(event) } })
+  const stop = keepAwake.setup({ event: { subscribe: () => stream.values() } })
+  const send = async (type, sessionID) => { emit({ type, data: { sessionID } }); await new Promise((resolve) => setImmediate(resolve)) }
+  await send("session.execution.started", "a")
+  await send("session.execution.started", "b")
+  assert.equal(spawned.length, 1, "one shared keeper")
+  await send("session.idle", "a")
+  assert.equal(killed.length, 0, "another busy session keeps the machine awake")
+  await send("session.execution.succeeded", "b")
+  assert.equal(killed.length, 1, "released when the last busy session goes idle")
+  await send("session.execution.started", "c")
+  assert.equal(spawned.length, 2)
+  stop()
+  assert.equal(killed.length, 2, "dispose releases the keeper")
+  delete globalThis.Bun
+  console.log("PASS keep-awake: busy-session set")
+}
+
+// config-backup: own timestamped copies only, private modes, no duplicate writes.
+{
+  const { mkdirSync: mkdir, writeFileSync: write, readdirSync: list, statSync: stat, chmodSync: chmod, rmSync: remove } = await import("node:fs")
+  const base = await mkdtemp(join(tmpdir(), "config-backup-"))
+  const backups = join(base, "backups")
+  try {
+    mkdir(backups, { mode: 0o755 })
+    write(join(base, "opencode.json"), '{"a":1}', { mode: 0o600 })
+    write(join(backups, "opencode.json.manual-before-upgrade"), "manual")
+    write(join(backups, "opencode.json.2020-01-01-00-00-00"), '{"old":true}')
+    chmod(join(backups, "opencode.json.2020-01-01-00-00-00"), 0o644)
+    process.env.OPENCODE_CONFIG_DIR = base
+    process.env.OPENCODE_CONFIG_BACKUP_KEEP = "2"
+    const { backup } = await import(`../config/plugins/config-backup.js?t=${Date.now()}`)
+    backup()
+    backup()
+    backup()
+    const own = () => list(backups).filter((name) => /^opencode\.json\.\d{4}-/.test(name)).sort()
+    assert.equal(own().length, 2, "identical content is not copied again on every plugin load")
+    assert.ok(list(backups).includes("opencode.json.manual-before-upgrade"), "manual files are never pruned")
+    assert.equal(stat(backups).mode & 0o777, 0o700)
+    for (const name of own()) assert.equal(stat(join(backups, name)).mode & 0o777, 0o600, name)
+    write(join(base, "opencode.json"), '{"a":2}')
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    backup()
+    assert.equal(own().length, 2, "pruning keeps KEEP own copies")
+    assert.ok(!own().includes("opencode.json.2020-01-01-00-00-00"), "oldest own copy is pruned first")
+  } finally {
+    delete process.env.OPENCODE_CONFIG_DIR
+    delete process.env.OPENCODE_CONFIG_BACKUP_KEEP
+    remove(base, { recursive: true, force: true })
+  }
+  console.log("PASS config-backup: own pattern, private modes, dedupe, pruning")
+}

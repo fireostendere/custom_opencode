@@ -3,9 +3,12 @@
 from __future__ import annotations
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
+from unittest.mock import patch
 
 # Setup env BEFORE importing server modules
 ROOT = Path(__file__).resolve().parents[1]
@@ -288,6 +291,72 @@ try:
     assert status == 401, f"Expected throttled 401 with good credentials, got {status}"
     assert server_workflow._login_limited("proxy:198.51.100.99"), "identity should be throttled"
     print("  ✓ Basic-auth throttle works (8 failures → throttled denial)")
+
+    # Test 9: non-ASCII and empty passwords
+    print("\nTest 9: non-ASCII and empty passwords")
+    server_users.add_user("carol", "пароль-Кириллица-1")
+    assert server_users.authenticate("carol", "пароль-Кириллица-1"), "Cyrillic store password must log in"
+    assert not server_users.authenticate("carol", "пароль-неверный")
+    assert not server_users.authenticate("кэрол", "пароль-Кириллица-1"), "non-ASCII username must fail cleanly"
+    with patch.dict(os.environ, {"OPENCODE_SERVER_PASSWORD": "секрет-пароль-1"}):
+        assert server_users.authenticate("envuser", "секрет-пароль-1"), "Cyrillic env password must log in"
+        assert not server_users.authenticate("envuser", "секрет")
+    for empty in ("", "   "):
+        with patch.dict(os.environ, {"OPENCODE_SERVER_PASSWORD": empty}):
+            assert not server_users.authenticate("envuser", empty), "unset admin password must never log in"
+            assert not server_users.authenticate("envuser", "")
+    status, headers, _ = request(
+        "POST", "/auth/login",
+        body={"username": "carol", "password": "пароль-Кириллица-1"},
+        headers={"Host": "example.com", "X-Forwarded-Proto": "https", "X-Forwarded-For": "198.51.100.60"},
+    )
+    assert status == 204 and headers.get("Set-Cookie"), status
+    cyrillic_headers = {"Host": "example.com", "X-Forwarded-Proto": "https", "X-Forwarded-For": "198.51.100.61"}
+    for attempt in range(server_workflow._LOGIN_MAX_FAILURES):
+        status, _, _ = request("POST", "/auth/login", body={"username": "carol", "password": f"неверно-{attempt}"}, headers=dict(cyrillic_headers))
+        assert status == 401, (attempt, status)
+    status, _, _ = request("POST", "/auth/login", body={"username": "carol", "password": "пароль-Кириллица-1"}, headers=dict(cyrillic_headers))
+    assert status == 429, f"non-ASCII failures must be throttled, got {status}"
+    # Malformed Basic credentials are failed attempts too.
+    malformed = {"Host": "example.com", "X-Forwarded-Proto": "https", "X-Forwarded-For": "198.51.100.62", "Authorization": "Basic !!not-base64"}
+    for attempt in range(server_workflow._LOGIN_MAX_FAILURES):
+        status, _, _ = request("GET", "/auth/session", headers=dict(malformed))
+        assert status == 401, (attempt, status)
+    assert server_workflow._login_limited("proxy:198.51.100.62"), "malformed Basic attempts must be counted"
+    print("  ✓ Cyrillic passwords log in, failures are counted, empty admin password never authenticates")
+
+    # Test 10: admin password validation at startup (hermetic copy: the
+    # repository .env must not influence it)
+    print("\nTest 10: admin password validation at startup")
+    hermetic = temp_path / "hermetic"
+    (hermetic / "app").mkdir(parents=True)
+    for name in ("server.py", "server_users.py"):
+        shutil.copyfile(ROOT / "app" / name, hermetic / "app" / name)
+    legacy = temp_path / "legacy-auth.env"
+    startup_env = {key: value for key, value in os.environ.items() if not key.startswith("OPENCODE_SERVER_")}
+    startup_env["OPENCODE_LEGACY_AUTH_FILE"] = str(legacy)
+    probe = (
+        "import server, server_users\n"
+        "print(server_users.authenticate(server.CLIENT_USER, 'file-password-1'), server_users.authenticate(server.CLIENT_USER, ''))\n"
+    )
+
+    def start(extra: dict[str, str], legacy_text: str = "") -> subprocess.CompletedProcess[str]:
+        legacy.write_text(legacy_text, encoding="utf-8")
+        return subprocess.run(
+            [sys.executable, "-c", probe], cwd=hermetic / "app", env={**startup_env, **extra},
+            capture_output=True, text=True, timeout=120,
+        )
+
+    result = start({"OPENCODE_SERVER_PASSWORD": "CHANGE_ME"})
+    assert result.returncode != 0 and "CHANGE_ME" in result.stderr, result
+    result = start({"OPENCODE_SERVER_PASSWORD": "   "})
+    assert result.returncode != 0 and "OPENCODE_SERVER_PASSWORD" in result.stderr, result
+    result = start({})
+    assert result.returncode != 0 and "OPENCODE_SERVER_PASSWORD" in result.stderr, result
+    # A password configured only in an env file reaches server_users too.
+    result = start({}, "OPENCODE_SERVER_PASSWORD=file-password-1\n")
+    assert result.returncode == 0 and result.stdout.split() == ["True", "False"], result
+    print("  ✓ empty/CHANGE_ME admin password refuses to start; file-only password is consistent")
 
 finally:
     server.shutdown()

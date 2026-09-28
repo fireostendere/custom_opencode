@@ -24,7 +24,18 @@
  * with the selected model and its saved variant.
  */
 import { Plugin } from "@opencode-ai/plugin/tui"
+import { createEffect } from "solid-js"
 import { getNightPromoStatus, isNightDiscountModel } from "./lib/limits-helper.js"
+import {
+  DND_AGENT,
+  LEGACY_AGENT_ALIASES,
+  agentForModelChoice,
+  modelForAgentSwitch,
+  modelRef,
+  nextAgent,
+  primaryAgents,
+  visibleAgent,
+} from "./lib/agent-sync.js"
 
 const RECENT_LIMIT = 10
 const OPENAI_PROVIDERS = new Set(["openai", "chatgpt"])
@@ -71,12 +82,15 @@ async function loadPreferredVariants() {
 }
 
 function preferredVariant(model, preferences) {
+  const variants = modelVariants(model)
   const candidate =
     preferences[modelKey(model.providerID, model.id)] ??
     preferences[modelKey(model.providerID, model.modelID)]
-  return modelVariants(model).some((variant) => variant.id === candidate)
+  return variants.some((variant) => variant.id === candidate)
     ? candidate
-    : undefined
+    : variants.length === 1
+      ? variants[0].id
+      : undefined
 }
 
 // Role-routed orchestration stacks: provider-pinned worker models plus the
@@ -266,6 +280,141 @@ export default Plugin.define({
         },
       },
     )
+
+    // Model a session used before an agent that owns its own model (the D&D
+    // narrator) took over; restored when the user leaves that agent again.
+    const savedModels = new Map()
+    const agentModels = {
+      remember(sessionID, model) {
+        const ref = modelRef(model)
+        if (!sessionID || !ref) return
+        savedModels.delete(sessionID)
+        savedModels.set(sessionID, ref)
+        while (savedModels.size > 64) savedModels.delete(savedModels.keys().next().value)
+      },
+      peek: (sessionID) => savedModels.get(sessionID),
+      forget: (sessionID) => savedModels.delete(sessionID),
+    }
+    const migrated = new Set()
+    let agentSwitching = false
+
+    async function agentsFor(session) {
+      const location = session?.location?.directory ? session.location : context.data.location.default()
+      const cached = context.data.location.agent?.list?.(location)
+      if (Array.isArray(cached) && cached.length) return cached
+      try {
+        const response = await context.client.agent.list({ location })
+        return response?.data ?? []
+      } catch {
+        return []
+      }
+    }
+
+    async function withPreferredVariant(model, location) {
+      if (!model || model.variant) return model
+      try {
+        const [response, preferences] = await Promise.all([
+          context.client.model.list({ location }),
+          loadPreferredVariants(),
+        ])
+        const entry = (response?.data ?? []).find(
+          (item) => item.providerID === model.providerID && item.id === model.id,
+        )
+        const variant = entry && preferredVariant(entry, preferences)
+        return variant ? { ...model, variant } : model
+      } catch {
+        return model
+      }
+    }
+
+    // Persist agent switches immediately. The native switch is a TUI-local
+    // draft whose model falls back to the config default until the next
+    // submit commits it; a persisted agent keeps the session's model.
+    async function switchSessionAgent(sessionID, target, agents) {
+      const session = context.data.session.get(sessionID)
+      if (!session || !target || target.id === session.agent) return
+      const from = visibleAgent(agents, session.agent)
+      const remembered = agentModels.peek(sessionID)
+      let model = modelForAgentSwitch({
+        from,
+        to: target,
+        sessionModel: session.model,
+        remembered,
+        recent: recent.models,
+        agents,
+      })
+      if (model && target.model) agentModels.remember(sessionID, session.model)
+      model = await withPreferredVariant(model, session.location)
+      await context.client.session.switchAgent({ sessionID, agent: target.id })
+      if (model) {
+        await context.client.session.switchModel({ sessionID, model })
+        if (!target.model) agentModels.forget(sessionID)
+      }
+      context.ui.toast.show({
+        message: `Agent: ${target.name || target.id}`,
+        variant: "info",
+        duration: 1500,
+      })
+    }
+
+    function sessionAgentAction(pick) {
+      const route = context.ui.router.current()
+      // Home and busy sessions keep the native draft behaviour: the home
+      // prompt has no session to persist to and a running turn must not
+      // change agent mid-flight.
+      if (route?.type !== "session") return false
+      const sessionID = route.sessionID
+      const session = context.data.session.get(sessionID)
+      if (!session || context.data.session.status(sessionID) === "running") return false
+      if (agentSwitching) return
+      agentSwitching = true
+      void (async () => {
+        try {
+          const agents = await agentsFor(session)
+          const target = await pick(agents, session)
+          if (target) await switchSessionAgent(sessionID, target, agents)
+        } catch {
+          context.ui.toast.show({ message: "Failed to switch agent", variant: "error" })
+        } finally {
+          agentSwitching = false
+        }
+      })()
+    }
+
+    const cycleAgent = (direction) =>
+      sessionAgentAction((agents, session) => nextAgent(agents, session.agent, direction))
+
+    const chooseAgent = () =>
+      sessionAgentAction(async (agents, session) => {
+        const visible = primaryAgents(agents)
+        const selected = await context.ui.dialog.select({
+          title: "Select Agent",
+          placeholder: "Filter agents…",
+          options: visible.map((agent) => ({
+            title: agent.name || agent.id,
+            value: agent.id,
+            description: agent.description,
+          })),
+          current: visibleAgent(visible, session.agent)?.id,
+        })
+        return visible.find((agent) => agent.id === selected)
+      })
+
+    // Sessions saved under a hidden legacy agent render with the config
+    // default model in the native TUI. Migrate them once, preserving the model.
+    function migrateLegacyAgent() {
+      const route = context.ui.router.current()
+      if (route?.type !== "session") return
+      const sessionID = route.sessionID
+      const session = context.data.session.get(sessionID)
+      const target = LEGACY_AGENT_ALIASES[session?.agent]
+      if (!target || session.parentID || migrated.has(sessionID)) return
+      if (context.data.session.status(sessionID) !== "idle") return
+      migrated.add(sessionID)
+      Promise.resolve(context.client.session.switchAgent({ sessionID, agent: target })).catch(() => {
+        // Leave the session as is; choosing a model migrates it as well.
+      })
+    }
 
     // Shared state between openDialog() and the jump keymap layer.
     const jump = {
@@ -519,6 +668,12 @@ export default Plugin.define({
             providerID: result.providerID,
             ...(variant ? { variant } : {}),
           }
+          const session = sessionID ? context.data.session.get(sessionID) : null
+          // The TUI honours a session's model only under a visible agent that
+          // matches it: D&D needs the narrator, leaving D&D needs Build, and
+          // hidden legacy agents must migrate or the model silently resets.
+          const agent = agentForModelChoice(model, session?.agent)
+          let agentChanged = false
 
           try {
             if (!sessionID) {
@@ -526,6 +681,7 @@ export default Plugin.define({
               // session with the selected model so the next prompt uses it.
               const session = await context.client.session.create({
                 model,
+                ...(agent === DND_AGENT ? { agent } : {}),
                 location: { directory: location.directory },
               })
               if (!session?.id) throw new Error("Session was not created")
@@ -534,10 +690,15 @@ export default Plugin.define({
                 sessionID: session.id,
               })
             } else {
+              if (agent && agent !== session?.agent) {
+                await context.client.session.switchAgent({ sessionID, agent })
+                agentChanged = true
+              }
               await context.client.session.switchModel({
                 sessionID,
                 model,
               })
+              agentModels.forget(sessionID)
             }
             try {
               await updateRecent((draft) => {
@@ -554,6 +715,13 @@ export default Plugin.define({
               // Recent history is non-critical.
             }
           } catch {
+            if (agentChanged && session?.agent) {
+              try {
+                await context.client.session.switchAgent({ sessionID, agent: session.agent })
+              } catch {
+                // The original failure is reported below.
+              }
+            }
             context.ui.toast.show({
               message: sessionID
                 ? "Failed to switch model"
@@ -573,6 +741,7 @@ export default Plugin.define({
     const unslot = context.ui.slot({
       append: "app",
       render: () => {
+        createEffect(migrateLegacyAgent)
         context.keymap.layer(() => ({
           mode: "global",
           priority: 200,
@@ -589,6 +758,31 @@ export default Plugin.define({
               run: () => {
                 openDialog()
               },
+            },
+            // Same IDs as the native agent commands, so their configured
+            // bindings (shift+tab, <leader>a, /agents) reach these handlers.
+            {
+              id: "agent.cycle",
+              title: "Agent cycle",
+              description: "Next agent; keeps the session's model",
+              group: "Agent",
+              run: () => cycleAgent(1),
+            },
+            {
+              id: "agent.cycle.reverse",
+              title: "Agent cycle reverse",
+              description: "Previous agent; keeps the session's model",
+              group: "Agent",
+              run: () => cycleAgent(-1),
+            },
+            {
+              id: "agent.list",
+              title: "Switch agent",
+              description: "Choose an agent; keeps the session's model",
+              group: "Agent",
+              slash: { name: "agents" },
+              palette: true,
+              run: () => chooseAgent(),
             },
           ],
         }))

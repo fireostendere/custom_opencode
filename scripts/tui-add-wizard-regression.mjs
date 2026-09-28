@@ -407,7 +407,8 @@ assert.deepEqual(applied.models['acme-ui/alias-model'], {
 })
 assert.deepEqual(applied.models['acme-ui/coder-orchestrated'], {
   id: 'coder-orchestrated',
-  modelID: 'coder',
+  // The alias calls the base model's upstream ID, not its catalog alias.
+  modelID: 'qwen3-coder',
   name: 'Coder · Orchestrated',
   capabilities: { tools: true },
   limit: { context: 32768 },
@@ -471,6 +472,60 @@ configureDialog([], [null])
 rows.find((row) => row.id === 'custom.add-wizard.mcp-profile').run('')
 await new Promise((resolve) => setImmediate(resolve))
 assert.equal(await readFile(registryPath, 'utf8'), beforeProfileCancel, 'Cancel in profile selector leaves registry unchanged')
+
+// Receipt reader cost: bounded polling with backoff, the full session context
+// only on a sparse schedule, and immediate wake-up from inbox events.
+{
+  const { readConfigReceipt } = await import(new URL('config/plugins/tui/lib/config-receipt.js', root).href)
+  const marker = (id) => `custom.config.receipt:${id}\n`
+  function fakeClient(appearAfterMs, { admitted = false } = {}) {
+    const started = Date.now()
+    const calls = { list: 0, context: 0, cancel: [] }
+    const ready = () => Date.now() - started >= appearAfterMs
+    return {
+      calls,
+      session: {
+        inbox: {
+          list: async () => {
+            calls.list += 1
+            return !admitted && ready() ? [{ id: 'inb_1', type: 'synthetic', payload: { text: `${marker('slow')}{"ok":1}` } }] : []
+          },
+          cancel: async ({ inboxID }) => { calls.cancel.push(inboxID) },
+        },
+        context: async () => {
+          calls.context += 1
+          return admitted && ready() ? [{ text: `${marker('slow')}{"ok":2}` }] : []
+        },
+      },
+    }
+  }
+  const slow = fakeClient(700)
+  assert.deepEqual(await readConfigReceipt(slow, 'ses_r', 'slow'), { ok: 1 })
+  assert.ok(slow.calls.list <= 7, `inbox polls must back off (${slow.calls.list})`)
+  assert.ok(slow.calls.context <= 2, `full-context reads must stay sparse (${slow.calls.context})`)
+  assert.deepEqual(slow.calls.cancel, ['inb_1'])
+
+  const admittedClient = fakeClient(300, { admitted: true })
+  assert.deepEqual(await readConfigReceipt(admittedClient, 'ses_r', 'slow'), { ok: 2 }, 'An admitted receipt is still found')
+
+  const listeners = new Map()
+  const on = (type, handler) => { listeners.set(type, handler); return () => listeners.delete(type) }
+  const evented = fakeClient(60_000)
+  const started = Date.now()
+  const pending = readConfigReceipt(evented, 'ses_r', 'evt', { on })
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  listeners.get('session.inbox.enqueued')({ type: 'session.inbox.enqueued', data: { sessionID: 'ses_other', inboxID: 'x', item: { type: 'synthetic', payload: { text: `${marker('evt')}{}` } } } })
+  listeners.get('session.inbox.enqueued')({ type: 'session.inbox.enqueued', data: { sessionID: 'ses_r', inboxID: 'inb_evt', item: { type: 'synthetic', payload: { text: `${marker('evt')}{"ok":3}` } } } })
+  assert.deepEqual(await pending, { ok: 3 })
+  assert.ok(Date.now() - started < 200, 'An enqueued event must wake the reader at once')
+  assert.equal(evented.calls.context, 0, 'An evented receipt must not read the full context')
+  assert.deepEqual(evented.calls.cancel, ['inb_evt'])
+  assert.equal(listeners.size, 0, 'Event subscriptions must be released')
+
+  const missing = fakeClient(60_000)
+  await assert.rejects(readConfigReceipt(missing, 'ses_r', 'none', { timeoutMs: 400 }), /Configuration response missing/)
+  assert.ok(missing.calls.context <= 3, 'Even a missing receipt reads the full context only a few times')
+}
 
 const report = {
   schema: 1,

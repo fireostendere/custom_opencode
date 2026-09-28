@@ -55,7 +55,18 @@ function ensureUI(){
   if(refreshButton&&heading&&!heading.contains(refreshButton))heading.insertBefore(refreshButton,heading.lastElementChild)
   syncBadge()
 }
-function syncBadge(label=''){const badge=$('runtimeProfileBadge');if(!badge)return;const id=profile();badge.textContent=label||profileRow(id)?.label||(id==='direct'?'Direct':id);badge.dataset.profile=id;badge.title=id==='direct'?'Selected OpenCode model':'Server model profile'}
+function syncBadge(label=''){const badge=$('runtimeProfileBadge');if(badge){const id=profile();badge.textContent=label||profileRow(id)?.label||(id==='direct'?'Direct':id);badge.dataset.profile=id;badge.title=id==='direct'?'Selected OpenCode model':'Server model profile'}syncProfileChip()}
+// An explicit Task Center profile re-routes the session's model on every send
+// (server provider-pinned route). Keep that visible next to the model picker
+// with a one-click reset, instead of silently overriding the picked model.
+function syncProfileChip(){
+  const explicit=canonicalProfile(explicitProfile()),active=Boolean(sid())&&explicit!=='direct'
+  let chip=$('runtimeProfileChip')
+  if(!chip&&active){const anchor=$('variantSelect')?.closest('.control-select')||$('modelButton');if(!anchor)return;chip=document.createElement('button');chip.type='button';chip.id='runtimeProfileChip';chip.className='control plan-mode-chip runtime-profile-chip';chip.addEventListener('click',()=>{setProfile('direct');toast('Профиль сброшен: используется выбранная модель')});anchor.after(chip)}
+  if(!chip)return
+  chip.hidden=!active
+  if(active){chip.textContent=`Профиль: ${profileLabel(explicit)} — сбросить`;chip.title='Этот профиль Task Center при каждой отправке переключает модель чата на модель профиля. Нажмите, чтобы вернуться к выбранной модели.'}
+}
 
 async function capabilities(){const session=sid();if(!session)return;try{const value=await req(`/client-model-capabilities.json?sessionID=${encodeURIComponent(session)}`);if(sid()!==session)return;state.capabilities=value;syncBadge();renderProfiles()}catch(error){console.debug('runtime capabilities',error)}}
 function renderProfiles(){

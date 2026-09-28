@@ -87,6 +87,12 @@ export function isIsolatedNarratorRole(event) {
   return /^narrator-(referee|writer|ask|actor)$/.test(String(event?.agent || ""))
 }
 
+/** Read-only research agents (fast-reader, sol-fast-reader, ...) build nothing:
+ * the implementation-minimality policy is pure prompt overhead for them. */
+export function isReaderAgent(event) {
+  return /(?:^|-)reader$/.test(String(event?.agent || ""))
+}
+
 export function isDndLane(event) {
   const agent = String(event?.agent || "")
   const modelID = event?.model?.id || event?.model?.modelID
@@ -205,7 +211,7 @@ export function resolveContextPolicy(event) {
       contextClass,
       clearNative: false,
       engineering: "full",
-      ponytail: true,
+      ponytail: !isReaderAgent(event),
       planPrompt: true,
       runtime: true,
       runtimeBudgetChars: 24000,
@@ -216,7 +222,7 @@ export function resolveContextPolicy(event) {
     contextClass: "normal",
     clearNative: false,
     engineering: "full",
-    ponytail: true,
+    ponytail: !isReaderAgent(event),
     planPrompt: true,
     runtime: true,
     runtimeBudgetChars: 12000,

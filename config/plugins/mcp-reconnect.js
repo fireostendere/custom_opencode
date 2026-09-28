@@ -7,6 +7,10 @@ const TRANSIENT = /connection closed|request timed out|ECONNRESET|ECONNREFUSED|E
 
 export function createMcpRecovery({ list, connect, now = Date.now, report = () => {} }) {
   const retries = new Map()
+  // Only a server that has worked can recover from a transient drop. A server
+  // that never connected (doomed first start, wrong workspace) is not retried:
+  // each attempt re-injects its instructions into every session history.
+  const connectedOnce = new Set()
   let scanning = false
   let stopped = false
   return {
@@ -18,9 +22,11 @@ export function createMcpRecovery({ list, connect, now = Date.now, report = () =
         const rows = await list()
         if (stopped) return
         for (const name of retries.keys()) if (!rows.some(row => row.name === name)) retries.delete(name)
+        for (const name of connectedOnce) if (!rows.some(row => row.name === name)) connectedOnce.delete(name)
         await Promise.all(rows.map(async ({ name, status }) => {
           const previous = retries.get(name)
           if (status?.status === "connected") {
+            connectedOnce.add(name)
             // A flapping connection must not reset its retry budget on every handshake.
             if (previous) {
               previous.healthySince ??= now()
@@ -28,7 +34,7 @@ export function createMcpRecovery({ list, connect, now = Date.now, report = () =
             }
             return
           }
-          if (status?.status !== "failed" || !TRANSIENT.test(status.error || "")) {
+          if (status?.status !== "failed" || !TRANSIENT.test(status.error || "") || !connectedOnce.has(name)) {
             retries.delete(name)
             return
           }

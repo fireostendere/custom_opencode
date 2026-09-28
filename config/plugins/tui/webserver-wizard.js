@@ -3,6 +3,7 @@ import { installPanelSubmitRouter } from "./lib/panel-submit-router.js"
 import { WEB_SERVER_COMMAND, parseWebserverCommand } from "./lib/webserver-command.js"
 import {
   runControl,
+  activeControl,
   chooseState,
   statusText,
   isOpenCodePrompt,
@@ -22,7 +23,11 @@ async function showStatus(context) {
 
 let wizardOpen = false
 async function openWizard(context) {
-  if (wizardOpen) return
+  if (wizardOpen) {
+    const command = activeControl()
+    toast(context, command ? `Web server: команда «${command}» ещё выполняется, подождите…` : "Web server: мастер уже открыт", "info")
+    return
+  }
   wizardOpen = true
   try {
     const current = await runControl(context, ["status"])
@@ -49,6 +54,7 @@ async function openWizard(context) {
     if (running == null) return
     const defaultEnabled = await chooseState(context, "Состояние web server по умолчанию", current.defaultEnabled)
     if (defaultEnabled == null) return
+    toast(context, "Применяю состояние web server…", "info")
     const value = await runControl(context, ["apply", "--running", running ? "on" : "off", "--default", defaultEnabled ? "on" : "off"])
     toast(context, statusText(value), "success")
   } catch (error) {

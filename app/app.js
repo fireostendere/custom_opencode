@@ -13,8 +13,10 @@ const PROJECT_ORDER_KEY = 'opencode:web:project-order-v1'
 const SESSION_TREE_KEY = 'opencode:web:session-tree-v1'
 const NOTIFY_KEY = 'opencode:web:notifications'
 const LAST_MODEL_KEY = 'opencode:web:last-model-v1'
+const DRAFT_MODEL_EXPLICIT_KEY = 'opencode:web:draft-model-explicit-v1'
 const CUSTOM_MODELS_KEY = 'opencode:web:custom-models-v1'
 const HIDDEN_MODELS_KEY = 'opencode:web:hidden-models-v1'
+const MANUAL_MODEL_SELECTION_KEY = 'opencode:web:manual-model-selection:'
 const PERSONAL_PRO_LIMITS = { fiveHour: 12000, sevenDay: 40000 }
 const CONTEXT_PAGE_SIZE = 80
 const QWEN_SUFFIX_RE = /\s·\sQwen\s+(OK|exhausted→([^·]+))\s*$/
@@ -41,7 +43,7 @@ const state = {
   contextCache: new Map(),
   mirrorHistory: new Map(),
   agents: [], models: [], providers: [], defaultModel: null,
-  draftAgent: null, draftModel: null, attachments: [],
+  draftAgent: null, draftModel: null, draftModelExplicit: false, attachments: [],
   loading: false, running: new Map(), queues: new Map(), deliveryMode: 'steer',
   projectDialogMode: 'create', projectDialogPending: false, actionSession: null, pendingPermission: null,
   git: { vcs: null, files: [], diffs: [] }, notifyEnabled: localStorage.getItem(NOTIFY_KEY) === '1',
@@ -245,11 +247,8 @@ async function sessionWithControls(session){
 function primaryAgentFor(model, agent) {
   const id = String(agent || 'build')
   if (!['build', 'plan', 'build-direct', 'plan-direct'].includes(id)) return agent
-  const modelID = model?.id || model?.modelID
-  const providerID = model?.providerID || model?.provider
-  const mode = id.startsWith('plan') ? 'plan' : 'build'
-  const orchestrated = ORCHESTRATED_MODELS.some((model) => model.id.endsWith('-orchestrated') && model.providerID === providerID && model.id === modelID)
-  return orchestrated ? mode : `${mode}-direct`
+  // Visible native agents only: a hidden agent makes the TUI drop the model.
+  return id.startsWith('plan') ? 'plan' : 'build'
 }
 async function transferSessionToProject(session,project,{select=false,removeSource=false}={}) {
   if(state.selected?.id===session.id)saveDraftNow()
@@ -311,20 +310,52 @@ function modelRefChanged(a,b) { return a?.id!==b?.id || a?.providerID!==b?.provi
 function clearSessionModelState(id) { sessionModelVersions.delete(id);sessionModelOverrides.delete(id);sessionModelQueues.delete(id) }
 function hasSession(id) { return state.selected?.id===id||state.sessions.some((session)=>session.id===id) }
 function dispatchModelChanged(sessionID,model,previousModel,ok,error) { window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok,...(error?{error}:{})}})) }
+// Tab-scoped flags. Storage can be unavailable (privacy modes, blocked site
+// data); a failed write must never break a model switch.
+function sessionFlag(key) { try { return globalThis.sessionStorage?.getItem(key)==='1' } catch { return false } }
+function setSessionFlag(key,on) { try { if(on)globalThis.sessionStorage?.setItem(key,'1');else globalThis.sessionStorage?.removeItem(key) } catch {} }
+function markManualModelSelection(sessionID) { if(sessionID)setSessionFlag(MANUAL_MODEL_SELECTION_KEY+sessionID,true) }
+function wasModelManuallySelected(sessionID) { return Boolean(sessionID&&sessionFlag(MANUAL_MODEL_SELECTION_KEY+sessionID)) }
+function markDraftModelExplicit() { state.draftModelExplicit=true;setSessionFlag(DRAFT_MODEL_EXPLICIT_KEY,true) }
+function clearDraftModelExplicit() { state.draftModelExplicit=false;setSessionFlag(DRAFT_MODEL_EXPLICIT_KEY,false) }
 function setSessionModel(id,model) {
   const next={...model}
   if(state.selected?.id===id)state.selected.model=next
   const index=state.sessions.findIndex((session)=>session.id===id)
   if(index>=0)state.sessions[index]={...state.sessions[index],model:next}
 }
+// A web model switch masks slightly stale reads for a short grace period only.
+// After it (or once the server confirms id/provider; it may add a default
+// variant) the server is authoritative again, including changes from the TUI.
+const MODEL_OVERRIDE_GRACE_MS = 2000
+// Chats this tab created itself. Project default models apply only to them:
+// an empty chat created in the TUI or another tab already has a chosen model.
+const createdHere = new Map()
+function wasCreatedHere(id) { return Boolean(id)&&Date.now()-(createdHere.get(id)||0)<10*60_000 }
+function sameModelIdentity(a,b) { return a?.id===b?.id&&a?.providerID===b?.providerID }
 function sessionModelFromRead(id,model,versionAtStart,localModel) {
   const override=sessionModelOverrides.get(id)
   if(override){
-    if(!modelRefChanged(model,override.model))sessionModelOverrides.delete(id)
+    if(sameModelIdentity(model,override.model)||Date.now()-(override.at||0)>MODEL_OVERRIDE_GRACE_MS)sessionModelOverrides.delete(id)
     else return {...override.model}
   }
   if(sessionModelVersions.get(id)!==versionAtStart&&localModel)return {...localModel}
   return model
+}
+// Live model/agent changes from another client (TUI, second tab). A web switch
+// still in flight wins; its own result arrives through changeModel.
+function applyServerModel(id,model) {
+  if(!id||!model?.id||sessionModelQueues.has(id))return
+  sessionModelOverrides.delete(id)
+  sessionModelVersions.set(id,(sessionModelVersions.get(id)||0)+1)
+  setSessionModel(id,model)
+  if(state.selected?.id===id){renderControls();renderUsage()}
+}
+function applyServerAgent(id,agent) {
+  if(!id||!agent)return
+  const index=state.sessions.findIndex((session)=>session.id===id)
+  if(index>=0&&state.sessions[index].agent!==agent)state.sessions[index]={...state.sessions[index],agent}
+  if(state.selected?.id===id&&state.selected.agent!==agent){state.selected.agent=agent;renderControls()}
 }
 function queueSessionModelChange(id,change) {
   const previous=sessionModelQueues.get(id)||Promise.resolve()
@@ -504,7 +535,7 @@ function renderSessions() {
   document.querySelectorAll('[data-session-more]').forEach((button)=>button.addEventListener('click',(event)=>{event.stopPropagation();openSessionActions(button.dataset.sessionMore)}))
 }
 
-async function selectSession(id,{push=true,saveDraft=true,waitForDetails=true}={}) {
+async function selectSession(id,{push=true,saveDraft=true,waitForDetails=true}={}) {followDetachedFor=null;delete $('messages')?.dataset.followDetached;
   const session=state.sessions.find((s)=>s.id===id); if(!session)return
   if(saveDraft)saveDraftNow()
   const cachedContext=state.contextCache.get(id)
@@ -544,14 +575,22 @@ function messageKey(message) {
   const created=message?.time?.created||message?.createdAt||''
   return `anonymous:${role}:${created}:${messagePlainText(message)}`
 }
-function mergeContextMessages(current,incoming,older=false) {
+// A history page fetched before the latest stream deltas must not replace the
+// live message that already holds them (streamed words used to vanish).
+let lastStreamEventAt=0
+function mergeContextMessages(current,incoming,older=false,liveSince=0) {
   const rows=older?[...incoming,...current]:[...current,...incoming],merged=new Map()
-  rows.forEach((message)=>merged.set(messageKey(message),message))
+  const live=new Map(liveSince?current.filter((message)=>message?._liveAt>liveSince).map((message)=>[messageKey(message),message]):[])
+  rows.forEach((message)=>{const key=messageKey(message);merged.set(key,live.get(key)||message)})
   return [...merged.values()]
 }
+// Bounded LRU: long transcripts of every chat opened in a tab used to stay in memory.
+const CONTEXT_CACHE_LIMIT=12
 function contextCacheFor(id) {
   let value=state.contextCache.get(id)
-  if(!value){value={messages:[],loaded:false,loading:false,refreshQueued:false,nextCursor:null,hasMore:true,complete:false,seenCursors:new Set()};state.contextCache.set(id,value)}
+  if(value){state.contextCache.delete(id);state.contextCache.set(id,value);return value}
+  value={messages:[],loaded:false,loading:false,refreshQueued:false,nextCursor:null,hasMore:true,complete:false,seenCursors:new Set()};state.contextCache.set(id,value)
+  for(const [key,entry] of state.contextCache){if(state.contextCache.size<=CONTEXT_CACHE_LIMIT)break;if(key!==id&&key!==state.selected?.id&&!entry.loading)state.contextCache.delete(key)}
   return value
 }
 function setContextPageCursor(cache,cursor,nextCursor) {
@@ -566,10 +605,11 @@ async function loadContext({force=false,initial=false}={}) {
   cache.loading=true
   const wasLoaded=cache.loaded
   try {
+    const fetchStartedAt=Date.now()
     const page=await api.getContextPage(id,{limit:CONTEXT_PAGE_SIZE})
     const incoming=contextMessages(page.messages)
     const hadConversation=cache.messages.length>0
-    cache.messages=wasLoaded?mergeContextMessages(cache.messages,incoming):incoming
+    cache.messages=wasLoaded?mergeContextMessages(cache.messages,incoming,false,fetchStartedAt):incoming
     cache.loaded=true
     if(!wasLoaded){cache.complete=Boolean(page.complete);setContextPageCursor(cache,'',page.nextCursor)}
     else if(page.complete){cache.complete=true;cache.nextCursor=null;cache.hasMore=false}
@@ -621,8 +661,9 @@ async function loadControls() {
 }
 async function loadDraftControls() {
   if(state.selected||!state.clientConfig?.scratchDirectory)return
+  state.draftModelExplicit ||= sessionFlag(DRAFT_MODEL_EXPLICIT_KEY)
   state.draftModel ||= loadLastModel()
-  try { const catalog=await api.getControls(state.clientConfig.scratchDirectory); if(state.selected)return; const knownModels=mergeCustomModels(catalog.models); state.draftAgent ||= catalog.agents.find((a)=>a.id==='build-direct')?.id||catalog.agents.find((a)=>a.id==='build')?.id||catalog.agents[0]?.id; if(state.draftModel&&!knownModels.some((m)=>m.id===state.draftModel.id&&m.providerID===state.draftModel.providerID))state.draftModel=null; state.draftModel ||= catalog.fallback && {id:catalog.fallback.id,providerID:catalog.fallback.providerID}; applyControls({...catalog,models:knownModels}) }
+  try { const catalog=await api.getControls(state.clientConfig.scratchDirectory); if(state.selected)return; const knownModels=mergeCustomModels(catalog.models); state.draftAgent ||= catalog.agents.find((a)=>a.id==='build')?.id||catalog.agents[0]?.id; if(state.draftModel&&!knownModels.some((m)=>m.id===state.draftModel.id&&m.providerID===state.draftModel.providerID))state.draftModel=null; state.draftModel ||= catalog.fallback && {id:catalog.fallback.id,providerID:catalog.fallback.providerID}; applyControls({...catalog,models:knownModels}) }
   catch(error){toast(`Настройки: ${error.message}`)}
 }
 function applyControls(catalog){state.agents=catalog.agents;state.models=mergeCustomModels(catalog.models);state.providers=catalog.providers;state.defaultModel=catalog.fallback;renderControls();renderUsage()}
@@ -647,13 +688,33 @@ function renderControls(){
   $('variantSelect').value=selectedVariant; $('variantSelect').disabled=!variants.length
 }
 async function changeAgent(agent){const sessionID=state.selected?.id||null,previous=state.selected?.agent||state.draftAgent;if(!state.selected){state.draftAgent=agent;renderControls();window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:true}}));return true}state.selected.agent=agent;renderControls();try{await api.switchAgent(sessionID,agent);if(state.selected?.id!==sessionID){window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:false,error:'session changed'}}));return false}window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:true}}));return true}catch(e){if(state.selected?.id===sessionID&&state.selected.agent===agent){state.selected.agent=previous;renderControls()}toast(`Режим: ${e.message}`);window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:false,error:String(e?.message||e)}}));return false}}
-async function changeModel(model){const sessionID=state.selected?.id||null,previousModel=activeModelRef()?{...activeModelRef()}:null;if(!state.selected){state.draftModel={...model};saveLastModel(model);renderControls();dispatchModelChanged(sessionID,model,previousModel,true);return true}return queueSessionModelChange(sessionID,async()=>{if(!hasSession(sessionID)){dispatchModelChanged(sessionID,model,previousModel,false,'session removed');return false}try{await api.switchModel(sessionID,model);if(!hasSession(sessionID)){dispatchModelChanged(sessionID,model,previousModel,false,'session removed');return false}sessionModelVersions.set(sessionID,(sessionModelVersions.get(sessionID)||0)+1);sessionModelOverrides.set(sessionID,{model:{...model}});setSessionModel(sessionID,model);if(state.selected?.id===sessionID){saveLastModel(model);renderControls();renderUsage()}dispatchModelChanged(sessionID,model,previousModel,true);return true}catch(e){if(state.selected?.id===sessionID)toast(`Модель: ${e.message}`);dispatchModelChanged(sessionID,model,previousModel,false,String(e?.message||e));return false}})}
+async function changeModel(model,{source='manual'}={}) {
+  const sessionID=state.selected?.id||null,previousModel=activeModelRef()?{...activeModelRef()}:null
+  if(source!=='project-default'){if(sessionID)markManualModelSelection(sessionID);else markDraftModelExplicit()}
+  if(!state.selected){state.draftModel={...model};saveLastModel(model);renderControls();dispatchModelChanged(sessionID,model,previousModel,true);return true}
+  return queueSessionModelChange(sessionID,async()=>{
+    if(!hasSession(sessionID)){dispatchModelChanged(sessionID,model,previousModel,false,'session removed');return false}
+    try{
+      await api.switchModel(sessionID,model)
+      if(!hasSession(sessionID)){dispatchModelChanged(sessionID,model,previousModel,false,'session removed');return false}
+      sessionModelVersions.set(sessionID,(sessionModelVersions.get(sessionID)||0)+1)
+      sessionModelOverrides.set(sessionID,{model:{...model},at:Date.now()})
+      setSessionModel(sessionID,model)
+      if(state.selected?.id===sessionID){saveLastModel(model);renderControls();renderUsage()}
+      dispatchModelChanged(sessionID,model,previousModel,true);return true
+    }catch(e){
+      if(state.selected?.id===sessionID)toast(`Модель: ${e.message}`)
+      dispatchModelChanged(sessionID,model,previousModel,false,String(e?.message||e));return false
+    }
+  })
+}
+
 function directModelRef(){
   const current=activeModelRef()
   if(current&&!ORCHESTRATED_MODELS.some((model)=>model.id===current.id&&model.providerID===current.providerID))return {...current}
   return state.defaultModel?{...state.defaultModel}:null
 }
-window.CustomOpenCodeControls={changeModel,changeAgent,activeModel:activeModelRef,directModel:directModelRef,startRun:markStarted}
+window.CustomOpenCodeControls={changeModel,changeAgent,activeModel:activeModelRef,directModel:directModelRef,wasModelManuallySelected,wasCreatedHere,clearAttachments,ensureQuickSession,sessions:()=>state.sessions,startRun:markStarted}
 
 const NIGHT_DISCOUNT_MODELS = new Set([
   'qwen3.8-max',
@@ -742,6 +803,24 @@ function assistantBody(message){
   for(const part of parts){if(part.type==='text'&&part.text)texts.push(part.text);else{const img=imagePart(part);if(img)images.push(img)}}
   if(!texts.length&&message.text)texts.push(message.text)
   return `${texts.map((text)=>`<div class="markdown">${renderMarkdown(text)}</div>`).join('')}${images.map((src)=>`<img class="image-preview" src="${escapeHtml(src)}" alt="image">`).join('')}${message.error?`<div class="markdown">${renderMarkdown(`**Ошибка:** ${message.error.message||message.error}`)}</div>`:''}`
+}
+// Message bodies are pure functions of the message. While an answer streams
+// only the live message changes, so every other one reuses its rendered HTML
+// instead of re-running Markdown for the whole history on each frame.
+const bodyMemo=new WeakMap()
+function messageBody(message,type){
+  let key
+  if(type==='user')key=`u\u0001${message.text||''}\u0001${(message.files||[]).map((f)=>f.name||f.mime||'').join('\u0002')}`
+  else{
+    const parts=message.content||message.parts||[],texts=[],images=[]
+    for(const part of parts){if(part.type==='text'&&part.text)texts.push(part.text);else{const img=imagePart(part);if(img)images.push(`${img.length}:${img.slice(-48)}`)}}
+    key=`a\u0001${texts.join('\u0002')}\u0001${images.join('\u0002')}\u0001${message.text||''}\u0001${message.error?.message||message.error||''}`
+  }
+  const cached=bodyMemo.get(message)
+  if(cached&&cached.key===key)return cached.html
+  const html=type==='user'?userBody(message):assistantBody(message)
+  bodyMemo.set(message,{key,html})
+  return html
 }
 function userBody(message){const files=(message.files||[]).map((f)=>`<span class="file-chip">${escapeHtml(f.name||f.mime||'файл')}</span>`).join('');return `<div class="markdown">${renderMarkdown(message.text||'')}</div>${files?`<div>${files}</div>`:''}`}
 function messagePlainText(message){
@@ -848,8 +927,10 @@ function renderMessages({anchor=null,bottom=false}={}){
     if(inner._lastHtml!=='welcome2'){inner.innerHTML='<div class="welcome">Пока нет сообщений.</div>';inner._lastHtml='welcome2'}
     updateScrollToBottomButton();return
   }
-  const stick=view.scrollHeight-view.scrollTop-view.clientHeight<100; const prev=view.scrollTop
-  const rows=state.context.map((message,index)=>{const type=message.type||message.role;return{message,index,type,body:type==='user'?userBody(message):assistantBody(message)}}).filter(({type,body})=>type==='user'||body)
+  // Never auto-follow once the user scrolled up: a compositor wheel scroll may
+  // not be reflected in scrollTop yet, and snapping back cancelled it.
+  const stick=followDetachedFor!==state.selected.id&&view.scrollHeight-view.scrollTop-view.clientHeight<100; const prev=view.scrollTop
+  const rows=state.context.map((message,index)=>{const type=message.type||message.role;return{message,index,type,body:messageBody(message,type)}}).filter(({type,body})=>type==='user'||body)
   const articleHtmls=rows.map(({message,index,type,body})=>{const id=message.id||message.messageID||`idx-${index}`;const actor=messagePresentation(message,type),family=type==='user'?'user':'assistant';return `<article class="message ${family} ${actor.origin}" data-message-index="${index}" data-origin="${escapeHtml(actor.origin)}"><div class="avatar">${escapeHtml(actor.avatar)}</div><div class="message-body"><div class="message-head"><span class="message-role">${escapeHtml(actor.role)}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`})
   const fullHtml=articleHtmls.join('')
 
@@ -922,6 +1003,8 @@ function scheduleMessageRender(){
 }
 
 function messagesAtBottom(view=$('messages')){return !view||view.scrollHeight-view.clientHeight-view.scrollTop<=100}
+let followDetachedFor=null
+function setFollowDetached(on){followDetachedFor=on?state.selected?.id||null:null;const view=$('messages');if(view){if(followDetachedFor)view.dataset.followDetached='1';else delete view.dataset.followDetached}}
 function updateScrollToBottomButton(){const button=$('scrollToBottom'),view=$('messages');if(button)button.hidden=!state.selected||messagesAtBottom(view)}
 function scrollMessagesToBottom(){const view=$('messages');if(!view)return;view.scrollTo({top:view.scrollHeight,behavior:'instant'});updateScrollToBottomButton()}
 
@@ -963,6 +1046,7 @@ function renderGitDialog(){
 }
 async function openFileByIndex(index){const file=state.git.files[index];if(!file||!state.selected)return;const path=file.path||file.file||file.name;if(!path)return;try{const value=await api.getFileContent(directory(state.selected),path);$('fileTitle').textContent=path;$('fileContent').textContent=typeof value==='string'?value:value?.content||JSON.stringify(value,null,2);$('fileDialog').showModal()}catch(e){toast(`Файл: ${e.message}`)}}
 
+function clearAttachments(){state.attachments=[];renderAttachments()}
 function renderAttachments(){$('attachments').hidden=!state.attachments.length;$('attachments').innerHTML=state.attachments.map((f,i)=>`<span class="attachment"><span>${escapeHtml(f.name)}</span><button data-remove-attachment="${i}">×</button></span>`).join('');document.querySelectorAll('[data-remove-attachment]').forEach((b)=>b.addEventListener('click',()=>{state.attachments.splice(Number(b.dataset.removeAttachment),1);renderAttachments()}))}
 function readFile(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve({uri:r.result,name:file.name||`file-${Date.now()}`,mime:file.type});r.onerror=()=>reject(r.error);r.readAsDataURL(file)})}
 async function addFiles(files){try{state.attachments.push(...await Promise.all([...files].map(readFile)));renderAttachments()}catch(e){toast(`Файл: ${e.message}`)}}
@@ -971,8 +1055,10 @@ async function ensureQuickSession(){if(state.selected)return state.selected;cons
 async function createAt(dir,title){
   if(!dir)throw new Error('Не выбрана папка для новой сессии')
   const source=state.selected
-  const session=await api.createSession({directory:dir,title,agent:source?.agent||state.draftAgent,model:source?.model||state.draftModel})
+  const session=await api.createSession({directory:dir,title,agent:primaryAgentFor(null,source?.agent||state.draftAgent),model:source?.model||state.draftModel})
   if(!session?.id)throw new Error('OpenCode не вернул id новой сессии')
+  createdHere.set(session.id,Date.now())
+  if(!source&&state.draftModelExplicit){markManualModelSelection(session.id);clearDraftModelExplicit()}
   // A list request started before this POST must not erase the new session.
   sessionSyncGeneration += 1
   state.sessions=[session,...state.sessions.filter((s)=>s.id!==session.id)]
@@ -1084,7 +1170,7 @@ async function forkWithFallback(session,messageID){
   }
 }
 
-function openSessionActions(id=state.selected?.id){const session=state.sessions.find((s)=>s.id===id);if(!session)return;state.actionSession=session;const m=meta(session.id);$('sessionActionList').innerHTML=`<button class="action" data-action="rename">Переименовать</button><button class="action" data-action="pin">${m.pinned?'Открепить':'Закрепить'}</button><button class="action" data-action="duplicate">Дублировать (Fork)</button><button class="action" data-action="fork-last">Fork от последнего сообщения</button><button class="action" data-action="copy-context">Копировать с контекстом…</button><button class="action" data-action="move-project">Перенести через handoff…</button><button class="action" data-action="delete">Удалить</button>`;document.querySelectorAll('[data-action]').forEach((b)=>b.addEventListener('click',()=>runSessionAction(b.dataset.action)));$('sessionDialog').showModal()}
+function openSessionActions(id=state.selected?.id){const session=state.sessions.find((s)=>s.id===id);if(!session)return;state.actionSession=session;const m=meta(session.id);$('sessionActionList').innerHTML=`<button class="action" data-action="rename">Переименовать</button><button class="action" data-action="pin">${m.pinned?'Открепить':'Закрепить'}</button><button class="action" data-action="duplicate">Дублировать (Fork)</button><button class="action" data-action="fork-last">Fork от последнего сообщения</button><button class="action" data-action="copy-context">Копировать с контекстом…</button><button class="action" data-action="move-project">Перенести через handoff…</button><button class="action" data-action="delete">Удалить</button>`;$('sessionActionList').querySelectorAll('[data-action]').forEach((b)=>b.addEventListener('click',()=>runSessionAction(b.dataset.action)));$('sessionDialog').showModal()}
 async function runSessionAction(action){const session=state.actionSession;if(!session)return;$('sessionDialog').close();if(action==='rename'){state.actionSession=session;$('renameInput').value=sessionTitle(session);$('renameDialog').showModal();$('renameInput').focus();return}if(action==='pin'){meta(session.id).pinned=!meta(session.id).pinned;saveMeta();renderSessions();return}if(action==='copy-context'||action==='move-project'){if(state.selected?.id!==session.id)await selectSession(session.id);openProjectDialog(action==='move-project'?'move':'copy');return}if(action==='duplicate'||action==='fork-last'){try{if(state.selected?.id!==session.id)await selectSession(session.id);const mid=undefined;const fork=await forkWithFallback(session,mid);state.sessions=[fork,...state.sessions.filter((s)=>s.id!==fork.id)];await selectSession(fork.id);toast('Fork создан')}catch(e){toast(`Fork: ${e.message}`)}return}if(action==='delete'){if(await confirmAction('Удалить сессию?',`«${sessionTitle(session)}» будет удалена без возможности восстановления.`))await removeSession(session)}}
 async function removeSession(session){try{await api.deleteSession(session.id);state.sessions=state.sessions.filter((s)=>s.id!==session.id);delete sessionMeta[session.id];delete drafts[session.id];saveMeta();saveJson(DRAFT_KEY,drafts);state.running.delete(session.id);state.queues.delete(session.id);clearSessionModelState(session.id);if(state.selected?.id===session.id)clearSelection();else renderSessions();toast('Сессия удалена')}catch(e){toast(`Удаление: ${e.message}`)}}
 async function renameCurrent(){const session=state.actionSession||state.selected;if(!session)return;const title=$('renameInput').value.trim();if(!title)return;try{const updated=await api.renameSession(session.id,title);session.title=updated?.title||title;$('renameDialog').close();renderSessions();renderHeader()}catch(e){toast(`Rename: ${e.message}`)}}
@@ -1130,11 +1216,11 @@ async function toggleNotifications(){
 async function notifyUser(title,body,tag,sessionID){if(!state.notifyEnabled||!('Notification'in window)||Notification.permission!=='granted')return;const data=sessionID?{url:`/#/session/${encodeURIComponent(sessionID)}`}:{url:'/'};const options={body,tag,data};try{const registration=await serviceWorkerReady();if(registration?.showNotification){await registration.showNotification(title,options);return}}catch{}try{new Notification(title,options)}catch{}}
 function updateBadge(){const count=state.running.size;try{if(count)navigator.setAppBadge?.(count);else navigator.clearAppBadge?.()}catch{}}
 
-function ensureAssistant(id){let m=state.context.find((x)=>x.id===id);if(m)return m;m={id,type:'assistant',content:[],time:{created:Date.now()}};state.context.push(m);return m}
+function ensureAssistant(id){lastStreamEventAt=Date.now();let m=state.context.find((x)=>x.id===id);if(m){m._liveAt=lastStreamEventAt;return m}m={id,type:'assistant',content:[],time:{created:Date.now()},_liveAt:lastStreamEventAt};state.context.push(m);return m}
 function ensurePart(message,type,ordinal=0){let p=(message.content||[]).filter((x)=>x.type===type)[ordinal];if(p)return p;p={type,text:''};message.content||=[];message.content.push(p);return p}
 function ensureTool(message,data){let p=(message.content||[]).find((x)=>x.type==='tool'&&x.id===data.id);if(p)return p;p={type:'tool',id:data.id,name:data.name||'tool',state:{status:'streaming',input:''},time:{created:Date.now()}};message.content||=[];message.content.push(p);return p}
 function markStarted(sessionID,label='running'){if(!sessionID||(state.sessions.length&&!state.sessions.some((session)=>session.id===sessionID)))return;invalidateRunSync();state.running.set(sessionID,{status:label,since:Date.now(),optimistic:label==='managed-send'});statusPolling.wake();rateLimitPolling.wake();renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
-function markFinished(sessionID,kind='готово'){if(!sessionID)return;invalidateRunSync();const wasRunning=state.running.has(sessionID);state.running.delete(sessionID);renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();const session=state.sessions.find((s)=>s.id===sessionID);if(wasRunning&&(document.hidden||state.selected?.id!==sessionID))notifyUser(`OpenCode: ${kind}`,sessionTitle(session),`done-${sessionID}`,sessionID);if(wasRunning||queueFor(sessionID).length)void flushQueue(sessionID)}
+function markFinished(sessionID,kind='готово'){if(!sessionID)return;invalidateRunSync();const wasRunning=state.running.has(sessionID);state.running.delete(sessionID);renderSessions();if(state.selected?.id===sessionID){renderHeader();if(wasRunning)scheduleContextReload(150)}updateBadge();const session=state.sessions.find((s)=>s.id===sessionID);if(wasRunning&&(document.hidden||state.selected?.id!==sessionID))notifyUser(`OpenCode: ${kind}`,sessionTitle(session),`done-${sessionID}`,sessionID);if(wasRunning||queueFor(sessionID).length)void flushQueue(sessionID)}
 function handleEvent(payload){
   window.dispatchEvent(new CustomEvent('custom-opencode:event',{detail:payload}))
   if(['session.created','session.deleted'].includes(payload.type))sessionPolling.wake()
@@ -1145,6 +1231,8 @@ function handleEvent(payload){
   if(['message.part.delta','message.part.updated','message.updated'].includes(payload.type)&&sid===state.selected?.id)scheduleContextReload(140)
   if(payload.type==='session.execution.failed')markFinished(sid,'ошибка')
   if(payload.type==='session.execution.interrupted')markFinished(sid,'остановлено')
+  if(payload.type==='session.model.selected')applyServerModel(sid,data.model)
+  if(payload.type==='session.agent.selected')applyServerAgent(sid,data.agent)
   if(!state.selected||sid!==state.selected.id)return
   let message,part
   switch(payload.type){
@@ -1162,10 +1250,37 @@ function handleEvent(payload){
     case'session.tool.success':part=ensureTool(ensureAssistant(data.assistantMessageID),data);part.state={status:'completed',input:part.state.input||data.input||{},content:data.content||[],metadata:data.metadata||{}};scheduleMessageRender();break
     case'session.tool.failed':part=ensureTool(ensureAssistant(data.assistantMessageID),data);part.state={status:'error',input:part.state.input||{},error:data.error,content:data.content||[]};scheduleMessageRender();break
     case'session.inbox.delivered':case'session.execution.succeeded':case'session.execution.failed':case'session.execution.interrupted':scheduleContextReload(120);break
-    default: if(payload.type.startsWith('session.'))scheduleContextReload(450)
+    // Generic session events reload history, but not mid-stream: the deltas
+    // already carry the text and the terminal events reload anyway.
+    default: if(payload.type.startsWith('session.')&&Date.now()-lastStreamEventAt>2000)scheduleContextReload(450)
   }
 }
-function connectEventStream(){eventSource?.close();eventSource=api.connectEvents(handleEvent,()=>{if(state.running.size)toast('Переподключение к event stream…',1200)})}
+// EventSource retries by itself only while CONNECTING; a non-200 answer (502
+// while the backend restarts) closes it for good. Reconnect with backoff and
+// resync whatever happened during the gap (answers, statuses).
+let eventStreamRetry=0,eventStreamTimer=0,eventStreamGapAt=0
+function connectEventStream(){
+  clearTimeout(eventStreamTimer)
+  eventSource?.close()
+  eventSource=api.connectEvents(handleEvent,(source)=>{
+    eventStreamGapAt||=Date.now()
+    if(state.running.size)toast('Переподключение к event stream…',1200)
+    if(source===eventSource&&source.readyState===EventSource.CLOSED)scheduleEventStreamReconnect()
+  },(source)=>{
+    if(source!==eventSource)return
+    eventStreamRetry=0
+    // Brief proxy reconnects of an idle chat lose nothing worth a reload.
+    const gap=eventStreamGapAt?Date.now()-eventStreamGapAt:0
+    eventStreamGapAt=0
+    if(gap>10000)resyncAfterEventGap()
+    // A run may have finished during the gap; statuses decide (the finish
+    // guard needs ~5s since start), then markFinished reloads the answer once.
+    else if(gap&&state.running.size){pollStatuses(true);setTimeout(()=>{if(state.running.size)pollStatuses(true)},5200)}
+  })
+}
+function scheduleEventStreamReconnect(){clearTimeout(eventStreamTimer);const delay=Math.min(30000,1000*2**Math.min(eventStreamRetry++,5));eventStreamTimer=setTimeout(connectEventStream,delay)}
+function ensureEventStream(){if(!eventSource||eventSource.readyState===EventSource.CLOSED)connectEventStream()}
+function resyncAfterEventGap(){pollStatuses(true);sessionPolling.wake();if(state.selected)loadContext({force:true})}
 const pollStatusesCoalesced=createRefreshCoalescer()
 async function pollStatuses(force=false){if(force)statusSyncGeneration+=1;return pollStatusesCoalesced(async()=>{const statusGeneration=++statusSyncGeneration;const statuses=await api.sessionStatuses();if(statusGeneration!==statusSyncGeneration)return;if(syncRunStatuses(statuses)){renderSessions();renderHeader();updateBadge()}},force)}
 const statusPolling=createAdaptivePoller({run:pollStatuses,isActive:()=>state.running.size>0,activeDelay:15000,idleDelay:30000,isVisible:()=>!document.hidden})
@@ -1260,7 +1375,7 @@ function bindEvents(){
   $('chooseProject').addEventListener('click',()=>openProjectDialog('create'));$('refresh').addEventListener('click',()=>{loadSessions();if(state.selected)loadContext({force:true})});$('search').addEventListener('input',renderSessions)
   $('menu').addEventListener('click',()=> $('sidebar').classList.toggle('open'));$('sessionActions').addEventListener('click',()=>openSessionActions());$('modelButton').addEventListener('click',()=>{renderModelChoices();$('modelDialog').showModal();if(!window.matchMedia('(max-width: 760px)').matches)$('modelSearch').focus()});$('modelSearch').addEventListener('input',renderModelChoices);$('modelAddButton').addEventListener('click',()=>{$('modelAddForm').reset();$('modelAddDialog').showModal();$('modelAddProvider').focus()});$('modelHiddenButton').addEventListener('click',()=>{showHiddenModels=!showHiddenModels;renderModelChoices()});$('modelAddForm').addEventListener('submit',(event)=>{event.preventDefault();try{const model=addCustomModel($('modelAddProvider').value,$('modelAddID').value,$('modelAddName').value);$('modelAddDialog').close();showHiddenModels=false;renderModelChoices();toast(`Модель ${model.name||model.id} добавлена`)}catch(error){toast(error.message||String(error),4200)}});$('modelChoices').addEventListener('click',(event)=>{const fav=event.target.closest?.('[data-fav]');if(fav){event.preventDefault();event.stopPropagation();const key=fav.dataset.fav;favorites.has(key)?favorites.delete(key):favorites.add(key);saveJson(FAV_KEY,[...favorites]);renderModelChoices();return}const remove=event.target.closest?.('[data-model-remove]');if(remove){event.preventDefault();event.stopPropagation();const key=remove.dataset.modelRemove;if(modelKey(activeModelRef())===key){toast('Сначала выберите другую модель.');return}if(hiddenModelKeys().has(key))setModelHidden(key,false);else removeModelFromPicker(key);renderModelChoices();return}const button=event.target.closest?.('[data-model][data-provider]');if(!button)return;$('modelDialog').close();changeModel({id:button.dataset.model,providerID:button.dataset.provider})})
   $('variantSelect').addEventListener('change',(e)=>{const ref=activeModelRef();if(!ref)return;const model={id:ref.id,providerID:ref.providerID};if(e.target.value)model.variant=e.target.value;changeModel(model)})
-  $('form').addEventListener('submit',sendMessage);$('stop').addEventListener('click',stopSelected);$('input').addEventListener('input',()=>{notePromptInput();autosizeInput();scheduleDraftSave()});$('input').addEventListener('keydown',(e)=>{if(e.key==='ArrowUp'&&navigatePromptHistory(-1,e)){e.preventDefault();return}if(e.key==='ArrowDown'&&navigatePromptHistory(1,e)){e.preventDefault();return}if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!window.matchMedia('(max-width: 760px)').matches){e.preventDefault();$('form').requestSubmit()}})
+  $('form').addEventListener('submit',sendMessage);$('stop').addEventListener('click',stopSelected);$('input').addEventListener('input',()=>{notePromptInput();autosizeInput();scheduleDraftSave()});$('input').addEventListener('keydown',(e)=>{if(e.key==='ArrowUp'&&navigatePromptHistory(-1,e)){e.preventDefault();return}if(e.key==='ArrowDown'&&navigatePromptHistory(1,e)){e.preventDefault();return}if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&(e.ctrlKey||e.metaKey||!window.matchMedia('(max-width: 760px)').matches)){e.preventDefault();$('form').requestSubmit()}})
   $('attachButton').addEventListener('click',()=> $('fileInput').click());$('fileInput').addEventListener('change',(e)=>{addFiles(e.target.files);e.target.value=''});$('input').addEventListener('paste',(e)=>{const files=[...(e.clipboardData?.items||[])].filter((i)=>i.kind==='file').map((i)=>i.getAsFile()).filter(Boolean);if(files.length){e.preventDefault();addFiles(files)}})
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.addEventListener('click',()=>{state.deliveryMode=b.dataset.delivery;renderRunControls()}));$('gitButton').addEventListener('click',openGitDialog);$('usageButton').addEventListener('click',()=>{$('usageDialog').showModal()});$('notifyButton').addEventListener('click',toggleNotifications)
   $('renameForm').addEventListener('submit',(e)=>{e.preventDefault();renameCurrent()});document.querySelectorAll('[data-close]').forEach((b)=>b.addEventListener('click',()=>$(b.dataset.close).close()));document.querySelectorAll('dialog').forEach((d)=>d.addEventListener('click',(e)=>{if(e.target===d&&!(d.id==='projectDialog'&&state.projectDialogPending))d.close()}))
@@ -1285,14 +1400,14 @@ function bindEvents(){
     requestAnimationFrame(maybeLoadOlderFromUser)
   }
   messagesView.addEventListener('wheel',(event)=>{
-    if(event.deltaY<0)armHistoryPagination()
+    if(event.deltaY<0){armHistoryPagination();setFollowDetached(true)}
   },{passive:true})
   messagesView.addEventListener('pointerdown',(event)=>{
     const rect=messagesView.getBoundingClientRect()
     if(event.pointerType==='mouse'&&event.clientX>=rect.right-20)armHistoryPagination()
   },{passive:true})
   messagesView.addEventListener('keydown',(event)=>{
-    if(['ArrowUp','PageUp','Home'].includes(event.key))armHistoryPagination()
+    if(['ArrowUp','PageUp','Home'].includes(event.key)){armHistoryPagination();setFollowDetached(true)}
   })
   messagesView.addEventListener('touchstart',(event)=>{
     if(event.touches.length!==1){historyPaginationTouch=null;return}
@@ -1305,16 +1420,16 @@ function bindEvents(){
     const touch=Array.from(event.touches).find((item)=>item.identifier===gesture.identifier)
     if(!touch){historyPaginationTouch=null;return}
     const dx=touch.clientX-gesture.x,dy=touch.clientY-gesture.y
-    if(dy>=12&&Math.abs(dx)<=Math.abs(dy)){gesture.armed=true;armHistoryPagination()}
+    if(dy>=12&&Math.abs(dx)<=Math.abs(dy)){gesture.armed=true;armHistoryPagination();setFollowDetached(true)}
     else if(Math.abs(dx)>12){historyPaginationTouch=null}
   },{passive:true})
   messagesView.addEventListener('touchend',()=>{historyPaginationTouch=null},{passive:true})
   messagesView.addEventListener('touchcancel',()=>{historyPaginationTouch=null},{passive:true})
-  messagesView.addEventListener('scroll',()=>{maybeLoadOlderFromUser();updateScrollToBottomButton()},{passive:true})
-  $('scrollToBottom').addEventListener('click',scrollMessagesToBottom)
+  messagesView.addEventListener('scroll',()=>{if(followDetachedFor&&messagesView.scrollHeight-messagesView.scrollTop-messagesView.clientHeight<4)setFollowDetached(false);maybeLoadOlderFromUser();updateScrollToBottomButton()},{passive:true})
+  $('scrollToBottom').addEventListener('click',()=>{setFollowDetached(false);scrollMessagesToBottom()})
   $('messagesInner').addEventListener('click',(e)=>{const copyCode=e.target.closest('.copy-code');if(copyCode){navigator.clipboard.writeText(copyCode.closest('.code-block').querySelector('code')?.textContent||'');copyCode.textContent='Скопировано';setTimeout(()=>copyCode.textContent='Копировать',900);return}const copy=e.target.closest('[data-copy-message]');if(copy){navigator.clipboard.writeText(messagePlainText(state.context[Number(copy.dataset.copyMessage)])||'');toast('Сообщение скопировано');return}const fork=e.target.closest('[data-fork-message]');if(fork){forkAtMessage(fork.dataset.forkMessage)}})
   window.addEventListener('hashchange',()=>{const id=sessionIdFromHash();if(id&&state.selected?.id!==id)selectSession(id,{push:false});else if(!id&&state.selected)clearSelection()});window.addEventListener('beforeunload',saveDraftNow)
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden){pollStatuses(true);pollRateLimit(true);statusPolling.reschedule();rateLimitPolling.reschedule();sessionPolling.wake();if(state.selected&&!isRunning(state.selected.id)){loadContext({force:false})}}})
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){ensureEventStream();pollStatuses(true);pollRateLimit(true);statusPolling.reschedule();rateLimitPolling.reschedule();sessionPolling.wake();if(state.selected&&!isRunning(state.selected.id)){loadContext({force:true})}}})
 }
 
 async function initialize(){

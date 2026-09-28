@@ -107,4 +107,70 @@ assert barks.should_bark("ordinary_attack", "guard-2", 3, play_mode="YOLO")
 voice = VoiceResolver()
 assert voice.resolve("campaign", "npc_guard_1", "guard") == voice.resolve("campaign", "npc_guard_1", "different")
 assert flatten_narration({"segments": [{"type": "speech", "speakerId": "bartender", "text": "Enough.", "delivery": "angry"}]}) == "bartender: Enough."
+# Native plugin: only the OpenAI Edition alias is routed, isolated narrator
+# roles and every other provider/model stay untouched, and one routing
+# decision serves every tool-continuation step of a user turn.
+PLUGIN_CHECK = r"""
+import assert from "node:assert/strict"
+process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN = "fixture-not-real"
+process.env.DND_ORCHESTRATOR = "auto"
+process.env.DND_QWEN_AUTOSTART = "0"
+const routes = []
+globalThis.fetch = async (url, init) => {
+  assert.ok(String(url).endsWith("/internal/runtime/dnd/route"), String(url))
+  routes.push(JSON.parse(init.body))
+  return new Response(JSON.stringify({ decision: { route: "LUNA_XHIGH", confidence: 0.9 }, telemetry: {} }))
+}
+const { default: plugin } = await import("./config/plugins/dnd-super-orchestrator.js")
+let hook
+await plugin.setup({ session: { hook: async (name, fn) => { if (name === "http.request") hook = fn } } })
+const edition = { providerID: "openai", id: "gpt-6-dnd-edition" }
+const send = async (model, input, extra = {}) => {
+  const event = { sessionID: "ses_dnd", agent: "dnd-narrator", kind: "primary", model, ...extra,
+    request: new Request("https://chatgpt.com/backend-api/codex/responses", { method: "POST",
+      body: JSON.stringify({ model: model.id, input, reasoning: { effort: "low" } }) }) }
+  const original = event.request
+  await hook(event)
+  return { event, original, body: await event.request.clone().json() }
+}
+const first = [{ role: "user", content: "I attack the goblin" }]
+let result = await send(edition, first)
+assert.equal(result.body.model, "gpt-6-luna")
+assert.equal(result.body.reasoning.effort, "xhigh")
+assert.equal(routes.length, 1)
+result = await send(edition, [...first, { type: "function_call", name: "odm" }, { type: "function_call_output", output: "hit" }])
+assert.equal(routes.length, 1, "tool continuations reuse the turn's routing decision")
+assert.equal(result.body.reasoning.effort, "xhigh")
+await send(edition, [...first, { role: "assistant", content: "ok" }, { role: "user", content: "I search the room" }])
+assert.equal(routes.length, 2, "a new user turn is routed again")
+for (const model of [
+  { providerID: "bailian-cli", id: "qwen3.8-max" },
+  { providerID: "ollama", id: "qwen3.8:27b" },
+  { providerID: "google", id: "gemini-3.8-pro" },
+  { providerID: "openai", id: "gpt-6-sol-direct" },
+]) {
+  const { event, original } = await send(model, first)
+  assert.equal(event.request, original, `${model.providerID}/${model.id} must not be rewritten`)
+}
+for (const agent of ["narrator-referee", "narrator-writer", "narrator-ask", "narrator-actor"]) {
+  const { event, original } = await send(edition, first, { agent })
+  assert.equal(event.request, original, `${agent} keeps its pinned route`)
+}
+for (const kind of ["title", "compaction", "generate"]) {
+  const { event, original } = await send(edition, first, { kind })
+  assert.equal(event.request, original, `${kind} requests are not routed`)
+}
+assert.equal(routes.length, 2)
+console.log("dnd-super-orchestrator plugin check OK")
+"""
+import os
+import subprocess
+
+env = {**os.environ, "DND_SUPER_ORCHESTRATOR_SELF_CHECK": "1"}
+for script in ("await import('./config/plugins/dnd-super-orchestrator.js')", PLUGIN_CHECK):
+    completed = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=ROOT, env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 print("D&D Super Orchestrator regression passed")

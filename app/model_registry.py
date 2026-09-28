@@ -7,6 +7,14 @@ import os
 from typing import Any
 
 ALIBABA_PROVIDER = "bailian-cli"
+
+
+def alibaba_enabled() -> bool:
+    """OPENCODE_ALIBABA_ENABLED=0: the Alibaba Token Plan (cloud Qwen/DeepSeek/GLM) is not paid.
+
+    Local Ollama Qwen models are a different provider and stay available.
+    """
+    return os.environ.get("OPENCODE_ALIBABA_ENABLED", "1").strip().lower() not in {"0", "off", "false", "no"}
 CANONICAL_EFFORTS = ("auto", "minimal", "low", "medium", "high", "max")
 ROLE_DEFAULTS = {
     "planner": "bailian-cli/qwen3.8-max",
@@ -348,12 +356,15 @@ class CapabilityRegistry:
         if not ok:
             raise ValueError(f"OPENCODE_SOL_ORCHESTRATED_MODEL: {error}")
 
+        # Direct sessions use the visible native agents. The TUI ignores a
+        # session's model whenever its agent is hidden (build-direct/plan-direct)
+        # and falls back to the config default, so hidden aliases reset models.
         direct = {
             "id": "direct",
             "label": "Selected model",
             "route": "selected",
-            "agentBuild": "build-direct",
-            "agentPlan": "plan-direct",
+            "agentBuild": "build",
+            "agentPlan": "plan",
             "orchestrated": False,
             "contextPolicy": {"mode": "model-aware", "targetRatio": 0.72},
             "sandbox": "repo-write",
@@ -614,7 +625,7 @@ class CapabilityRegistry:
             "sandbox": "repo-write",
             "autoReview": "smart",
         }
-        return {
+        profiles = {
             "direct": direct,
             "sol-orchestrated": sol_profile,
             "sol-review": sol_review,
@@ -627,6 +638,17 @@ class CapabilityRegistry:
             "research": research,
             "long-horizon": long_horizon,
         }
+        if not alibaba_enabled():
+            # Without the Token Plan these routes would switch sessions to
+            # models that cannot be called; offer only the remaining ones.
+            prefix = f"{ALIBABA_PROVIDER}/"
+            fields = ("cloudModel", "plannerModel", "builderModel", "readerModel", "reviewerModel")
+            profiles = {
+                key: value
+                for key, value in profiles.items()
+                if not any(str(value.get(field) or "").startswith(prefix) for field in fields)
+            }
+        return profiles
 
     def snapshot(self, stats_getter=None) -> dict[str, Any]:
         rows = []

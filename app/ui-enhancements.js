@@ -50,16 +50,52 @@ function loadSet(key) {
   try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')) } catch { return new Set() }
 }
 
-async function selectedDirectory() {
+function currentSessionKey() {
   const match = /^#\/session\/([^/?]+)/.exec(location.hash)
-  if (match) {
-    try {
-      const session = dataOf(await request(`/api/session/${encodeURIComponent(decodeURIComponent(match[1]))}`))
-      if (session?.location?.directory) return session.location.directory
-    } catch {}
+  return match ? decodeURIComponent(match[1]) : ''
+}
+const directoryBySession = new Map()
+let scratchDirectory = null
+async function selectedDirectory() {
+  const id = currentSessionKey()
+  if (id) {
+    if (!directoryBySession.has(id)) {
+      if (directoryBySession.size > 200) directoryBySession.clear()
+      directoryBySession.set(id, request(`/api/session/${encodeURIComponent(id)}`)
+        .then((value) => dataOf(value)?.location?.directory || null)
+        .catch(() => null))
+    }
+    const directory = await directoryBySession.get(id)
+    if (directory) return directory
+    directoryBySession.delete(id)
   }
-  const config = await request('/client-config.json')
-  return config?.scratchDirectory || ''
+  scratchDirectory ??= request('/client-config.json').then((config) => config?.scratchDirectory || '').catch(() => { scratchDirectory = null; return '' })
+  return scratchDirectory
+}
+
+// Free-model keys for the open chat. The picker re-groups on every search
+// keystroke; it used to refetch the session and the whole model catalog each time.
+let freeKeysState = { session:null, at:0, keys:new Set(), pending:null }
+function refreshFreeKeys() {
+  const session = currentSessionKey()
+  if (freeKeysState.pending && freeKeysState.session === session) return freeKeysState.pending
+  const pending = (async () => {
+    const directory = await selectedDirectory()
+    const params = new URLSearchParams()
+    if (directory) params.set('location[directory]', directory)
+    const models = dataOf(await request(`/api/model${params.size ? `?${params}` : ''}`)) || []
+    const keys = new Set((Array.isArray(models) ? models : []).filter(isFreeModel).map((model) => `${model.providerID}/${model.id}`))
+    if (currentSessionKey() === session) freeKeysState = { session, at:Date.now(), keys, pending:null }
+    return keys
+  })().finally(() => { if (freeKeysState.pending === pending) freeKeysState.pending = null })
+  freeKeysState = { ...freeKeysState, session, pending }
+  return pending
+}
+async function freeModelKeys() {
+  const fresh = freeKeysState.session === currentSessionKey() && freeKeysState.at
+  if (fresh && Date.now() - freeKeysState.at < 60_000) return freeKeysState.keys
+  if (fresh) { void refreshFreeKeys().catch(() => {}); return freeKeysState.keys }
+  return refreshFreeKeys()
 }
 
 export function isFreeModel(model) {
@@ -229,13 +265,9 @@ async function decorateModelChoices() {
   modelObserver?.disconnect()
   try {
     const providerLabels = providerLabelsFromFlatList(root)
-    const directory = await selectedDirectory()
-    const params = new URLSearchParams()
-    if (directory) params.set('location[directory]', directory)
-    const models = dataOf(await request(`/api/model${params.size ? `?${params}` : ''}`)) || []
-    const free = new Set((Array.isArray(models) ? models : [])
-      .filter(isFreeModel)
-      .map((model) => `${model.providerID}/${model.id}`))
+    const cached = freeKeysState.session === currentSessionKey() && freeKeysState.at && Date.now() - freeKeysState.at < 60_000
+    const free = cached ? freeKeysState.keys : await freeModelKeys()
+    if (!root.isConnected || root.querySelector(':scope > .model-provider-section') || !root.querySelector('[data-model]')) return
     const favorites = loadSet(FAV_KEY)
     const collapsed = loadSet(COLLAPSE_KEY)
     const orchestrated = document.documentElement.dataset.modelProfile === 'orchestrated'

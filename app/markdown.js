@@ -56,7 +56,8 @@ function renderInline(text) {
   value = value.replace(/__([^_]+)__/g, '<strong>$1</strong>')
   value = value.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
   value = value.replace(/~~([^~]+)~~/g, '<del>$1</del>')
-  codes.forEach((html, index) => { value = value.replace(`\u0000CODE${index}\u0000`, html) })
+  // split/join, not replace(): code such as `$&` or `$$` must not be read as a replacement pattern.
+  codes.forEach((html, index) => { value = value.split(`\u0000CODE${index}\u0000`).join(html) })
   return value
 }
 

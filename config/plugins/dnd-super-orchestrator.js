@@ -1,8 +1,12 @@
+import { createHash } from "node:crypto"
 import { appendFile } from "node:fs/promises"
 import { isDndEdition } from "./orchestrated-qwen.js"
 import { ensureRouter } from "./lazy-local-router.js"
+import { isIsolatedNarratorRole } from "./tui/lib/context-policy.js"
 
-const MODE = String(process.env.DND_ORCHESTRATOR || "auto").toLowerCase()
+// Off by default: per-request rerouting overrode the pinned D&D effort and
+// service tier. Set DND_ORCHESTRATOR=auto to opt back in.
+const MODE = String(process.env.DND_ORCHESTRATOR || "off").toLowerCase()
 const RUNTIME_HOST = process.env.OPENCODE_RUNTIME_PLUGIN_HOST || "127.0.0.1"
 // The private Runtime V3 listener is separate from the web listener. Falling
 // back to OPENCODE_WEB_PORT sends the route request to the public web server,
@@ -33,6 +37,17 @@ function lastUser(body) {
     return body.input.findLast((item) => item?.role === "user")?.content || ""
   }
   return ""
+}
+
+function turnItems(body) {
+  return Array.isArray(body?.messages) ? body.messages : Array.isArray(body?.input) ? body.input : []
+}
+
+/** Identity of the user turn a request belongs to: tool-continuation steps share it. */
+export function turnKey(body) {
+  const users = turnItems(body).filter((item) => item?.role === "user")
+  const text = typeof body?.input === "string" ? body.input : textOf(users.at(-1)?.content)
+  return createHash("sha256").update(JSON.stringify([users.length, text])).digest("hex")
 }
 
 function contextOf(text) {
@@ -95,7 +110,10 @@ async function record(event, decision, telemetry, fallback) {
 }
 
 export function isDndOrchestratorRequest(event) {
-  return isDndEdition(event) || event?.agent === "dnd-narrator" || String(event?.agent || "").startsWith("narrator-")
+  // Only the OpenAI Edition alias is routed. Any other model a D&D agent runs
+  // on (Bailian, Ollama, Google, a pinned OpenAI worker) is authoritative, and
+  // isolated narrator roles keep their own pinned model and JSON contract.
+  return isDndEdition(event) && !isIsolatedNarratorRole(event)
 }
 
 export function routeBody(body, decision) {
@@ -106,8 +124,43 @@ export default {
   id: "dnd-super-orchestrator",
   async setup(ctx) {
     if (mode() === "off") return
+    // One routing decision per (session, user turn): tool-continuation steps
+    // reuse it instead of waiting on local classification again.
+    const decisions = new Map()
+    const decide = (event, body) => {
+      const key = turnKey(body)
+      const cached = decisions.get(event.sessionID)
+      if (cached?.key === key) return cached.plan
+      const plan = (async () => {
+        let result
+        try {
+          // Auto mode can narrate while the optional local model starts. Waiting
+          // for its cold start on every tool continuation stalls the whole game.
+          if (mode() === "on") await ensureRouter({ dnd: true })
+          else void ensureRouter({ dnd: true }).catch(() => {})
+          result = await route(event, body)
+        } catch (error) {
+          if (mode() === "on") throw error
+          result = {
+            decision: { route: "LUNA_LOW", confidence: 0, fallback: "router-offline" },
+            telemetry: { router_backend: "unavailable", router_mode: "safe-fallback" },
+          }
+        }
+        await record(event, result.decision, result.telemetry, result.decision?.fallback)
+        return result
+      })()
+      decisions.delete(event.sessionID)
+      decisions.set(event.sessionID, { key, plan })
+      if (decisions.size > 256) decisions.delete(decisions.keys().next().value)
+      // A strict-mode failure must not stick to the turn.
+      plan.catch(() => {
+        if (decisions.get(event.sessionID)?.plan === plan) decisions.delete(event.sessionID)
+      })
+      return plan
+    }
     await ctx.session.hook("http.request", async (event) => {
       if (!isDndOrchestratorRequest(event) || event.agent === "compaction") return
+      if (event.kind && event.kind !== "primary") return
       const original = event.request
       let body = {}
       try {
@@ -115,21 +168,7 @@ export default {
       } catch {
         return
       }
-      let plan
-      try {
-        // Auto mode can narrate while the optional local model starts. Waiting
-        // for its cold start on every tool continuation stalls the whole game.
-        if (mode() === "on") await ensureRouter({ dnd: true })
-        else void ensureRouter({ dnd: true }).catch(() => {})
-        plan = await route(event, body)
-      } catch (error) {
-        if (mode() === "on") throw error
-        plan = {
-          decision: { route: "LUNA_LOW", confidence: 0, fallback: "router-offline" },
-          telemetry: { router_backend: "unavailable", router_mode: "safe-fallback" },
-        }
-      }
-      await record(event, plan.decision, plan.telemetry, plan.decision?.fallback)
+      const plan = await decide(event, body)
       let routed
       try {
         routed = applyRoute(body, plan.decision)
@@ -154,6 +193,14 @@ if (process.env.DND_SUPER_ORCHESTRATOR_SELF_CHECK) {
   if (!isDndOrchestratorRequest(event)) throw new Error("D&D request selector failed")
   if (isDndOrchestratorRequest({ agent: "dnd-narrator-high", model: { providerID: "openai", id: "gpt-6-luna-direct" } })) throw new Error("pinned D&D worker must not be rerouted")
   if (isDndOrchestratorRequest({ agent: "dnd-narrator-max", model: { providerID: "openai", id: "gpt-6-sol-orchestrated" } })) throw new Error("pinned Sol worker must not be rerouted")
+  for (const providerID of ["bailian-cli", "ollama", "google"])
+    if (isDndOrchestratorRequest({ agent: "dnd-narrator", model: { providerID, id: "qwen3.8-max" } })) throw new Error(`${providerID} narrator must not be rewritten to an OpenAI model`)
+  if (isDndOrchestratorRequest({ agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-6-sol-direct" } })) throw new Error("an explicit OpenAI pick must not be downgraded")
+  if (isDndOrchestratorRequest({ agent: "narrator-referee", model: { providerID: "openai", id: "gpt-6-dnd-edition" } })) throw new Error("isolated narrator roles keep their pinned route")
+  if (!isDndOrchestratorRequest({ agent: "build", model: { providerID: "openai", id: "gpt-6-dnd-edition" } })) throw new Error("Edition model selector failed")
+  const continuation = { input: [{ role: "user", content: "attack" }, { type: "function_call", name: "odm" }, { type: "function_call_output", output: "hit" }] }
+  if (turnKey(continuation) !== turnKey({ input: [{ role: "user", content: "attack" }] })) throw new Error("tool continuation must keep its turn")
+  if (turnKey(continuation) === turnKey({ input: [...continuation.input, { role: "user", content: "attack" }] })) throw new Error("a new user turn must route again")
   if (routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_LOW" }).model !== "gpt-6-luna") throw new Error("Luna low route failed")
   const lunaLow = routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_LOW" })
   const lunaXhigh = routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_XHIGH" })

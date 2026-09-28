@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("OPENCODE_SERVER_PASSWORD", "test")
 os.environ.setdefault("OPENCODE_BACKEND_URL", "http://localhost:9")
 os.environ.setdefault("OPENCODE_BACKEND_PASSWORD", "test")
+# The fixture exercises the Qwen probe; a local .env may disable it.
+os.environ["OPENCODE_LIMITS_QWEN"] = "1"
 os.environ.setdefault("OPENCODE_SCRATCH_DIRECTORY", str(Path(tempfile.gettempdir()) / "custom-opencode-limits-smoke-scratch"))
 sys.path.insert(0, str(ROOT / "app"))
 py_compile.compile(str(ROOT / "scripts/rag-probe.py"), doraise=True)
@@ -109,6 +111,12 @@ with tempfile.TemporaryDirectory() as temp:
     assert qwen_expired["state"] == "expired"
     assert qwen_expired["reason"] == "session-expired"
     assert "bl auth login --console" in qwen_expired.get("hint", "")
+
+    # OPENCODE_LIMITS_QWEN=0 (no Token Plan subscription) never spawns `bl`.
+    os.environ["OPENCODE_LIMITS_QWEN"] = "0"
+    server_ext._bailian_cache.update(at=0.0, value=None)
+    assert server_ext.query_qwen_status() == {"available": False, "state": "disabled", "reason": "disabled"}
+    os.environ["OPENCODE_LIMITS_QWEN"] = "1"
 
     # This is a fixture test; a fresh install may have no Google account.
     with patch.dict(os.environ, {"GEMINI_API_KEY": "fixture-gemini-key", "GOOGLE_API_KEY": ""}):

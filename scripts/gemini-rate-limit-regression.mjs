@@ -88,9 +88,13 @@ try {
   )
   Date.now = realNow
 
+  const readState = () => JSON.parse(readFileSync(join(state, "rate-limit.json"), "utf8"))
+  const live = readState()
+  assert.ok(live.active && live.until > Date.now(), "fixture: a live countdown exists before plugin load")
   const original = globalThis.fetch
   const hooks = {}
   let disposed = 0
+  const noHooks = { session: { hook: async () => ({ dispose: () => {} }) } }
   const cleanup = await mod.default.setup({
     session: {
       hook: async (name, callback) => {
@@ -104,6 +108,8 @@ try {
     },
   })
   assert.deepEqual(Object.keys(hooks), ["retry"], "the native scheduler is the sole retry owner")
+  assert.equal(readState().active, true, "plugin load must not wipe a live 429 countdown")
+  assert.equal(readState().until, live.until)
   assert.equal(
     globalThis.fetch,
     original,
@@ -124,9 +130,20 @@ try {
   assert.equal(event.decision, undefined)
   await cleanup()
   assert.equal(disposed, 1)
+  assert.equal(readState().active, true, "unload must not wipe the host's scheduled retry countdown")
+  // A stale active flag (expired countdown) is cleared on the next load.
+  mod.writeRateLimitState({ active: true, seconds: 5, until: Date.now() - 1000 })
+  const staleCleanup = await mod.default.setup(noHooks)
+  assert.equal(readState().active, false, "an expired countdown is cleared")
+  await staleCleanup()
+  // An inactive state is left untouched by load/unload (no write per plugin load).
+  const before = statSync(join(state, "rate-limit.json")).mtimeMs
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  await (await mod.default.setup(noHooks))()
+  assert.equal(statSync(join(state, "rate-limit.json")).mtimeMs, before, "no state write for an idle load/unload")
   assert.equal(statSync(join(state, "rate-limit.json")).mode & 0o777, 0o600)
   console.log(
-    "Gemini rate-limit regression OK: single native retry owner, bounded retry, abort, cleanup, private atomic state",
+    "Gemini rate-limit regression OK: single native retry owner, bounded retry, abort, cleanup, private atomic state, live countdown preserved across reloads",
   )
 } finally {
   rmSync(state, { recursive: true, force: true })

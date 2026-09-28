@@ -260,7 +260,7 @@ class Fabric:
             self.lock_file.close()
             self.lock_file = None
             raise RuntimeError("a tool fabric already owns this workspace")
-        for job in self.store.list_tasks(states=["queued", "running"], limit=1000):
+        for job in self.store.list_tasks(states=["queued", "running"], limit=1000, projection="light"):
             self.store.transition(job["id"], "needs_attention", error="Facade interrupted; execution was not replayed. Inspect artifacts/device before retrying.")
 
     def _row(self, id_):

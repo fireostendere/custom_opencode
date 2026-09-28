@@ -3,14 +3,7 @@ import { createEffect, createSignal, For, Match, onCleanup, Show, Switch } from 
 import { readdir, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
-import {
-  getLimits,
-  getLimitsSync,
-  onLimitsChange,
-  startAutoRefresh,
-  stopAutoRefresh,
-  getNightPromoStatus,
-} from "./limits-helper.js"
+import { acquireLimits, getLimitsSync, getNightPromoStatus } from "./limits-helper.js"
 import { normalizeFamilyIDs, resolvePlanSources, resolveRootID, selectV2PlanCandidates, selectV2PlanEntries, syncFamilyMessages } from "./panel-data.js"
 
 export const PANEL_DEFS = [
@@ -44,9 +37,9 @@ function fmtWhen(ts) {
   if (d.getFullYear() === now.getFullYear()) return `${d.getDate()} ${MONTHS_RU[d.getMonth()]}`
   return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getFullYear()).slice(2)}`
 }
-function fmtReset(ts) {
+function fmtReset(ts, nowMs = Date.now()) {
   if (!ts) return ""
-  const diff = Number(ts) * 1000 - Date.now()
+  const diff = Number(ts) * 1000 - nowMs
   if (diff <= 0) return "сейчас"
   const mins = Math.floor(diff / 60000)
   if (mins < 60) return `${mins}м`
@@ -190,19 +183,11 @@ function activityRows(context, messages) {
 export function createPanelViews(context) {
   const theme = context.theme
 
-  startAutoRefresh()
+  // Panels are off by default: creating the views must not start timers,
+  // file reads or provider CLIs. LimitsView owns that machinery while mounted.
   const [limits, setLimits] = createSignal(getLimitsSync())
-  const unsubscribeLimits = onLimitsChange(() => setLimits(getLimitsSync()))
-  getLimits().then(setLimits).catch(() => {})
-  const [tick, setTick] = createSignal(0)
-  const ticker = setInterval(() => {
-    setTick((value) => value + 1)
-    const current = getLimitsSync()
-    if (current.gemini?.rateLimited || limits()?.gemini?.rateLimited) {
-      setLimits(current)
-    }
-  }, 1000)
-  ticker.unref?.()
+  const [now, setNow] = createSignal(Date.now())
+  const limitReleases = new Set()
 
   const [version, setVersion] = createSignal(0)
   const [sessionTreeVersion, setSessionTreeVersion] = createSignal(0)
@@ -250,23 +235,33 @@ export function createPanelViews(context) {
             <text fg={usageColor(win().usedPercent)}><span>{bar(win().usedPercent)}</span></text>
             <text fg={theme.text.default} flexShrink={0}><span>{Math.round(win().usedPercent)}%</span></text>
           </box>
-          <Show when={win().resetsAt}><text fg={theme.text.subdued} wrapMode="word"><span>сброс {fmtReset(win().resetsAt)}</span></text></Show>
+          <Show when={win().resetsAt}><text fg={theme.text.subdued} wrapMode="word"><span>сброс {fmtReset(win().resetsAt, now())}</span></text></Show>
           <Show when={win().limit != null && win().usedCredits != null}><text fg={theme.text.subdued} wrapMode="word"><span>{fmtK(win().usedCredits)} / {fmtK(win().limit)} исп.</span></text></Show>
         </box>
       </Show>
     )
   }
   function LimitsView() {
-    tick()
+    // Reference-counted: the 120 s provider refresh and the Gemini ticker run
+    // only while at least one Limits view is mounted (visible).
+    const release = acquireLimits({
+      onChange: () => setLimits(getLimitsSync()),
+      onTick: () => setNow(Date.now()),
+    })
+    limitReleases.add(release)
+    onCleanup(() => {
+      limitReleases.delete(release)
+      release()
+    })
+    setLimits(getLimitsSync())
     const data = () => limits() ?? {}
     const codex = () => data().codex ?? { available: false }
     const qwen = () => data().qwen ?? { available: false }
-    const gemini = () => {
-      const g = data().gemini
-      if (g?.rateLimited) {
-        return getLimitsSync().gemini ?? g
-      }
-      return g ?? { available: false }
+    const gemini = () => data().gemini ?? { available: false }
+    const geminiSeconds = () => {
+      const nowSeconds = Math.floor(now() / 1000)
+      const g = gemini()
+      return g.resetsAt ? Math.max(0, g.resetsAt - nowSeconds) : g.seconds
     }
     return (
       <box flexDirection="column" width="100%" minWidth={0} gap={1} flexShrink={0}>
@@ -277,7 +272,9 @@ export function createPanelViews(context) {
         <Show
           when={qwen().available && qwen().state === "ok"}
           fallback={
-            qwen().state === "expired" || qwen().reason === "session-expired" ? (
+            qwen().reason === "disabled" ? (
+              <text fg={theme.text.subdued}><span>Alibaba: не используется</span></text>
+            ) : qwen().state === "expired" || qwen().reason === "session-expired" ? (
               <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
                 <text fg={theme.text.feedback.warning.default} wrapMode="word"><span>Alibaba: сессия истекла</span></text>
                 <text fg={theme.text.subdued} wrapMode="word"><span>bl auth login --console</span></text>
@@ -292,14 +289,14 @@ export function createPanelViews(context) {
         </Show>
         <Show when={gemini().available} fallback={<text fg={theme.text.subdued}><span>Gemini: не настроен</span></text>}>
           <Show when={gemini().rateLimited}>
-            <text fg={theme.text.feedback.warning.default}><span>Лимит Gemini (429): повтор через {gemini().seconds}с…</span></text>
+            <text fg={theme.text.feedback.warning.default}><span>Лимит Gemini (429): повтор через {geminiSeconds()}с…</span></text>
           </Show>
           <WindowRows label="Gemini · 1м (TPM)" win={gemini().minuteTokens} />
           <WindowRows label="Gemini · 1м (RPM)" win={gemini().minuteRequests} />
           <WindowRows label="Gemini · сутки (RPD)" win={gemini().dailyRequests} />
         </Show>
         {(() => {
-          const promo = getNightPromoStatus()
+          const promo = getNightPromoStatus(now())
           return <text fg={promo.active ? theme.text.feedback.success.default : theme.text.feedback.warning.default}><span>{promo.active ? `🌙 −50% · ещё ${fmtDur(promo.minutesToToggle)}` : `☀ −50% · через ${fmtDur(promo.minutesToToggle)}`}</span></text>
         })()}
       </box>
@@ -549,10 +546,9 @@ export function createPanelViews(context) {
   return {
     PanelContent,
     dispose() {
-      unsubscribeLimits?.()
       for (const unsubscribe of subscriptions) unsubscribe()
-      clearInterval(ticker)
-      stopAutoRefresh()
+      for (const release of limitReleases) release()
+      limitReleases.clear()
     },
   }
 }

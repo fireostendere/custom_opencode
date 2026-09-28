@@ -71,7 +71,9 @@ await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64
 const app = globalThis.__smoke.exports
 assert.equal(app.primaryAgentFor({ id: 'gpt-6-astra-orchestrated', providerID: 'openai' }, 'build-direct'), 'build')
 assert.equal(app.primaryAgentFor({ id: 'gpt-6-sol-orchestrated', providerID: 'openai' }, 'plan-direct'), 'plan')
-assert.equal(app.primaryAgentFor({ id: 'gpt-6-dnd-edition', providerID: 'openai' }, 'build-direct'), 'build-direct')
+assert.equal(app.primaryAgentFor({ id: 'gpt-6-dnd-edition', providerID: 'openai' }, 'build-direct'), 'build')
+assert.equal(app.primaryAgentFor({ id: 'gpt-6-luna', providerID: 'openai' }, 'plan'), 'plan')
+assert.equal(app.primaryAgentFor({ id: 'gpt-6-luna', providerID: 'openai' }, 'dnd-narrator'), 'dnd-narrator')
 const state = app.state
 
 const calls = { createSession: [], sendPrompt: [], deleteSession: [], switchAgent: [], switchModel: [] }
@@ -128,7 +130,7 @@ let result = await app.transferSessionToProject(sourceSession, targetProject, { 
 assert.equal(result.sourceRemoved, true, 'source removal must succeed')
 assert.equal(result.created.id, 'ses_new')
 assert.equal(calls.createSession[0].directory, '/dst')
-assert.equal(calls.createSession[0].agent, 'build-direct', 'ordinary copied sessions must use the no-delegation agent')
+assert.equal(calls.createSession[0].agent, 'build', 'copied sessions must use a visible agent or the TUI drops their model')
 assert.deepEqual(calls.createSession[0].model, { providerID: 'bailian-cli', id: 'qwen-flash', variant: 'low' })
 const handoffSent = calls.sendPrompt[0].value.text
 assert.ok(handoffSent.includes('первый вопрос') && handoffSent.includes('ответ'), 'handoff must carry the source context')

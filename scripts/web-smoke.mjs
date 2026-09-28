@@ -257,16 +257,22 @@ if (
 )
   throw new Error("New session must not clear the current selection")
 if (
-  !appProjectSource.includes("source?.agent||state.draftAgent") ||
+  !appProjectSource.includes("primaryAgentFor(null,source?.agent||state.draftAgent)") ||
   !appProjectSource.includes("source?.model||state.draftModel")
 )
   throw new Error("New session must preserve active controls")
-if (!uxControlsSource.includes("function currentMode() {\n  return 'build'\n}"))
-  throw new Error("Web must always use Build mode")
+if (!uxControlsSource.includes("function currentMode() {\n  return modeFromAgent(rawActiveAgent())\n}"))
+  throw new Error("Web mode must reflect the chat's own agent (shared with the TUI)")
+{
+  const start = uxControlsSource.indexOf("function syncAgentSurface() {")
+  const body = uxControlsSource.slice(start, uxControlsSource.indexOf("\n}\n", start))
+  if (start < 0 || /clickNativeAgent|changeAgent/.test(body))
+    throw new Error("Rendering a chat must never switch its agent")
+}
+if (!uxControlsSource.includes("id = 'planModeChip'") && !uxControlsSource.includes("chip.id = 'planModeChip'"))
+  throw new Error("A Plan chat needs a visible way back to Build")
 if (!uxControlsSource.includes("function targetAgent(mode, profile)"))
   throw new Error("Build must fall back when compatibility agents are unavailable")
-if (uxControlsSource.includes("modeFromAgent"))
-  throw new Error("Web must not derive Plan mode from a session agent")
 if (
   !advancedFeaturesSource.includes(
     "if (!state.sessionID || !activityBelongsToSession(payload)) return",
@@ -320,11 +326,10 @@ if (ux.composerActionState({ running: true, hasPayload: true }).kind !== "queue"
   throw new Error("Running composer with text must auto-queue")
 if (ux.modeFromAgent("build-direct") !== "build" || ux.modeFromAgent("plan") !== "plan")
   throw new Error("Internal Build/Plan compatibility mapping regressed")
-if (
-  ux.agentFor("build", "direct") !== "build-direct" ||
-  ux.agentFor("plan", "direct") !== "plan-direct"
-)
-  throw new Error("Ordinary models must use isolated direct agents")
+if (ux.agentFor("build", "direct") !== "build" || ux.agentFor("plan", "direct") !== "plan")
+  throw new Error("Direct models must use the visible native agents shared with the TUI")
+if (ux.LEGACY_AGENT_ALIASES["build-direct"] !== "build" || ux.LEGACY_AGENT_ALIASES["plan-direct"] !== "plan")
+  throw new Error("Legacy hidden agents must map to their visible counterparts")
 if (
   ux.agentFor("build", "orchestrated") !== "build" ||
   ux.agentFor("plan", "orchestrated") !== "plan"
@@ -577,11 +582,14 @@ if (
 if (!appSource.includes("const initialAgent=session.agent"))
   throw new Error("Session loading must preserve a concurrent agent switch")
 if (
+  !appSource.includes("async function changeModel(model,{source='manual'}={}) {") ||
   !appSource.includes(
-    "async function changeModel(model){const sessionID=state.selected?.id||null,previousModel=activeModelRef()?{...activeModelRef()}:null;if(!state.selected){state.draftModel={...model};saveLastModel(model);renderControls();",
+    "if(!state.selected){state.draftModel={...model};saveLastModel(model);renderControls();dispatchModelChanged(sessionID,model,previousModel,true);return true}",
   )
 )
   throw new Error("changeModel must only write the draft when no session is selected")
+if (!appSource.includes("if(source!=='project-default'){if(sessionID)markManualModelSelection(sessionID);else markDraftModelExplicit()}"))
+  throw new Error("A manual model choice must stop project defaults from overriding it")
 for (const marker of [
   "/client-queue.json",
   "/client-send.json",

@@ -44,6 +44,7 @@ SUITES = [
     ("web-fixtures-browser", [sys.executable, "scripts/web-fixture-e2e.py"]),
     ("web-production-frontend", [sys.executable, "scripts/local-web-harness.py", "test"]),
     ("web-critical-controls", [sys.executable, "scripts/web-critical-controls-e2e.py"]),
+    ("web-ux-regression", [sys.executable, "scripts/web-ux-regression-e2e.py"]),
     ("packaged-tui-pty", ["bash", "scripts/tui-package-smoke.sh"]),
     ("integration-contract", [sys.executable, "scripts/integration-preflight.py"]),
     ("workflow-cli-consistency", [sys.executable, "scripts/workflow-cli-consistency.py"]),

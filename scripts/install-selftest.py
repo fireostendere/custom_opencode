@@ -147,7 +147,11 @@ def main(argv: list[str] | None = None) -> int:
         add("shared-service-env", False, "opencode2 not found")
 
     backend_models: set[str] = set()
-    required_models = {plus.MAX_MODEL, plus.FLASH_MODEL}
+    # An unpaid Alibaba Token Plan is not rendered at all; then the OpenAI
+    # default/title model is what every new session depends on.
+    alibaba = os.environ.get("OPENCODE_ALIBABA_ENABLED", "1").strip().lower() not in {"0", "off", "false", "no"}
+    required_models = {plus.MAX_MODEL, plus.FLASH_MODEL} if alibaba else {"openai/gpt-6-luna-direct"}
+    reader_agent = "fast-reader" if alibaba else "sol-fast-reader"
 
     def backend_check() -> tuple[bool, str]:
         target = server_rag._v2_workspace_target("/api/model", str(base.SCRATCH_ROOT))
@@ -164,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     add(
         "backend-model-catalog",
         not missing_models,
-        "Max + Flash available" if not missing_models else "Missing: " + ", ".join(missing_models),
+        ("Max + Flash available" if alibaba else "Luna available (Alibaba off)") if not missing_models else "Missing: " + ", ".join(missing_models),
     )
 
     def agent_check() -> tuple[bool, str]:
@@ -174,8 +178,8 @@ def main(argv: list[str] | None = None) -> int:
             item.get("id") for item in agents or []
             if isinstance(item, dict) and isinstance(item.get("id"), str)
         }
-        ready = "fast-reader" in agent_ids
-        return ready, "fast-reader registered" if ready else "fast-reader missing"
+        ready = reader_agent in agent_ids
+        return ready, f"{reader_agent} registered" if ready else f"{reader_agent} missing"
 
     ok, detail = retry(agent_check, timeout=20.0)
     add("backend-agent-catalog", ok, detail)

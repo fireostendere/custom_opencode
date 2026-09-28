@@ -526,6 +526,8 @@ def parser() -> argparse.ArgumentParser:
     user_add_parser = commands.add_parser("user-add")
     user_add_parser.add_argument("--username", required=True)
     user_add_parser.add_argument("--password", default=None)
+    # Preferred: a password on argv is visible to every local process via /proc.
+    user_add_parser.add_argument("--password-stdin", action="store_true")
 
     user_remove_parser = commands.add_parser("user-remove")
     user_remove_parser.add_argument("--username", required=True)
@@ -571,7 +573,14 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "user-list":
             result = user_list()
         elif args.command == "user-add":
-            result = user_add(args.username, args.password)
+            password = args.password
+            if args.password_stdin:
+                if password is not None:
+                    raise ControlError("use either --password or --password-stdin")
+                password = sys.stdin.readline().rstrip("\r\n")
+                if not password:
+                    raise ControlError("empty password on stdin")
+            result = user_add(args.username, password)
         elif args.command == "user-remove":
             result = user_remove(args.username)
         elif args.command == "port":

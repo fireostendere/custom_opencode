@@ -11,16 +11,23 @@ const PREFS_KEY = 'opencode:web:login-prefs-v2'
 const LEGACY_USER_KEY = 'opencode:web:last-login-user'
 const RESUME_KEY = 'opencode:web:auth-resume-v1'
 
-function validTarget(value) {
-  // Browsers normalize a leading "/\" into "//" (protocol-relative URL), so
-  // backslash-prefixed targets are rejected too (open redirect: /\evil.com).
-  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\') && !value.startsWith('/login')
+function sameOriginTarget(value) {
+  // Resolve exactly as the browser will navigate: the URL parser drops tabs
+  // and newlines and turns "\" into "/", so "/%09/evil.example" or "/\evil"
+  // would become a protocol-relative redirect. Returns a same-origin
+  // path+query+hash, or null.
+  if (typeof value !== 'string' || !value.startsWith('/')) return null
+  let url
+  try { url = new URL(value, location.origin) } catch { return null }
+  if (url.origin !== location.origin) return null
+  if (!url.pathname.startsWith('/') || url.pathname.startsWith('//') || url.pathname.startsWith('/login')) return null
+  return `${url.pathname}${url.search}${url.hash}`
 }
 
 function safeNext() {
   const params = new URLSearchParams(location.search)
   const explicit = params.get('next')
-  let value = validTarget(explicit) ? explicit : '/'
+  let value = sameOriginTarget(explicit) || '/'
 
   // A server redirect never receives the URL fragment. Browsers commonly carry
   // it over to /login.html, so fold it back into the post-login destination.
@@ -29,12 +36,12 @@ function safeNext() {
   // Client-side 401 handling records the full route as an additional fallback.
   if (!explicit && value === '/') {
     try {
-      const resume = sessionStorage.getItem(RESUME_KEY)
-      if (validTarget(resume)) value = resume
+      const resume = sameOriginTarget(sessionStorage.getItem(RESUME_KEY))
+      if (resume) value = resume
     } catch {}
   }
 
-  return validTarget(value) ? value : '/'
+  return sameOriginTarget(value) || '/'
 }
 
 function loadPrefs() {
@@ -85,8 +92,16 @@ remember.checked = prefs.remember
 remember.addEventListener('change', savePrefs)
 username.addEventListener('change', savePrefs)
 
-fetch('/auth/session', { credentials:'same-origin', cache:'no-store' }).then((response) => {
+fetch('/auth/session', { credentials:'same-origin', cache:'no-store' }).then(async (response) => {
   if (!response.ok) return
+  const session = await response.json().catch(() => ({}))
+  // Passwordless local access does not cover confirmations (permissions,
+  // approvals, project rules, provider keys): stay here so the user can sign in.
+  // Only an explicit human:false counts; older servers omit the field.
+  if (session?.localBypass === true && session?.human === false) {
+    showError('Локальный доступ без пароля не подтверждает действия. Войдите, чтобы продолжить.')
+    return
+  }
   const target = safeNext()
   clearResume()
   location.replace(target)

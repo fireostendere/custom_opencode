@@ -24,6 +24,8 @@ export default Plugin.define({
     let queue = Promise.resolve()
     let warned = false
     const cleanups = new Set()
+    // Test seam; production always reads through powershell.exe.
+    const readClipboard = context.wslClipboard?.read ?? readWindowsClipboard
 
     function valid(editor) {
       return !disposed && focusedPrompt(context) === editor && isOpenCodePrompt(editor)
@@ -42,7 +44,7 @@ export default Plugin.define({
     async function paste(editor, fallback) {
       let clipboard
       try {
-        clipboard = await readWindowsClipboard()
+        clipboard = await readClipboard()
       } catch {
         if (disposed) return
         if (fallback?.length && valid(editor)) {
@@ -92,15 +94,22 @@ export default Plugin.define({
     }
 
     // Some Windows terminals consume Ctrl+V themselves and send bracketed
-    // paste, so the keymap command below never sees the key event.
+    // paste, so the keymap command below never sees the key event. A text
+    // paste already carries the clipboard: let it through natively instead of
+    // re-reading it via powershell.exe -Sta (~0.5 s per paste). Only an empty
+    // paste (the terminal found no text, e.g. an image-only clipboard) needs
+    // the Windows clipboard reader. If a terminal sends no paste at all for an
+    // image, the Ctrl+V command below remains the image path.
     const keyInput = context.renderer?.keyInput
     const pasteListener = (event) => {
       if (injecting) return
       const editor = focusedPrompt(context)
       if (!isOpenCodePrompt(editor)) return
+      const bytes = Buffer.from(event.bytes ?? [])
+      if (bytes.length > 0) return
       event.preventDefault?.()
       event.stopPropagation?.()
-      enqueue(editor, Buffer.from(event.bytes ?? []))
+      enqueue(editor, bytes)
     }
     keyInput?.prependListener?.("paste", pasteListener)
 

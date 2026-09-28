@@ -5,13 +5,21 @@ const ASK_DEDUPE_MS = 10_000
 const FOCUS_APPS = (process.env.NOTIFY_WIN_FOCUS_APPS ?? "WindowsTerminal,OpenConsole,ConHost,Code")
   .split(",").map((value) => value.trim()).filter(Boolean)
 
+// PowerShell treats U+2018/2019/201A/201B like ' inside single-quoted strings.
 export function psQuote(value) {
-  return String(value ?? "").replace(/'/g, "''").slice(0, 200)
+  return String(value ?? "").slice(0, 200).replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")
 }
 
-function toast(title, message) {
-  const apps = FOCUS_APPS.map(psQuote).join(",")
-  const ps = `
+// Untrusted text never enters the script source: it is truncated, then passed
+// as base64 (alphabet [A-Za-z0-9+/=]) and decoded inside PowerShell.
+function psText(value, limit) {
+  const text = Array.from(String(value ?? "")).slice(0, limit).join("")
+  return `([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(text, "utf8").toString("base64")}')))`
+}
+
+export function toastScript(title, message) {
+  const apps = FOCUS_APPS.filter((name) => /^[A-Za-z0-9_.-]{1,64}$/.test(name)).map((name) => `'${psQuote(name)}'`).join(",")
+  return `
 Add-Type -Namespace F -Name W -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p); [DllImport("shell32.dll")] public static extern int SHQueryUserNotificationState(out int s);'
 $ns = [int]0
 [void][F.W]::SHQueryUserNotificationState([ref]$ns)
@@ -24,9 +32,13 @@ if (@(${apps}) -contains $fg) { exit }
 $m = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
 $xml = $m::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
 $t = $xml.GetElementsByTagName('text')
-[void]$t.Item(0).AppendChild($xml.CreateTextNode('${psQuote(title)}'))
-[void]$t.Item(1).AppendChild($xml.CreateTextNode('${psQuote(message)}'))
+[void]$t.Item(0).AppendChild($xml.CreateTextNode(${psText(title, 100)}))
+[void]$t.Item(1).AppendChild($xml.CreateTextNode(${psText(message, 200)}))
 $m::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show([Windows.UI.Notifications.ToastNotification]::new($xml))`
+}
+
+function toast(title, message) {
+  const ps = toastScript(title, message)
   try {
     Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps], {
       stdin: "ignore", stdout: "ignore", stderr: "ignore",
@@ -51,9 +63,11 @@ export default {
       }
     }
 
-    const permission = await ctx.permission.hook("evaluate", ({ sessionID, action, resources }) => {
+    const permission = await ctx.permission.hook("evaluate", ({ action, resources, effect }) => {
       const now = Date.now()
       busySince ||= now
+      // Evaluate runs for every tool call; only a real prompt to the user toasts.
+      if (effect !== "ask") return
       if (now - lastAskAt < ASK_DEDUPE_MS) return
       lastAskAt = now
       toast("opencode: ждёт разрешения", `${action}${resources[0] ? ` — ${resources[0]}` : ""}`)
@@ -86,7 +100,9 @@ export default {
 
 if (process.env.NOTIFY_WIN_SELF_CHECK) {
   if (psQuote("it's") !== "it''s") throw new Error("apostrophe not doubled")
+  if (psQuote("it\u2019s") !== "it\u2019\u2019s") throw new Error("typographic quote not doubled")
   if (psQuote("x".repeat(300)).length !== 200) throw new Error("length cap")
+  if (toastScript("t\u2019); calc; (\u2019", "m").includes("calc")) throw new Error("title leaked into script source")
   if (psQuote(undefined) !== "") throw new Error("undefined -> empty")
   console.log("notify-win self-check OK")
 }

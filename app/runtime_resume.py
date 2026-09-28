@@ -17,7 +17,10 @@ def continuation_payload(store: Any, session_id: str, text: str, files: list[Any
     continue in the existing OpenCode session from the last meaningful durable
     checkpoint instead.
     """
-    candidates = store.list_tasks(session_id=session_id, states=["submitted"], limit=20)
+    # Runs on every dispatch: id/text only, never the attachment payload.
+    candidates = store.list_tasks(
+        session_id=session_id, states=["submitted"], limit=20, projection="public"
+    )
     if not candidates:
         return text, files, None
     task = candidates[0]

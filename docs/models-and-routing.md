@@ -2,14 +2,22 @@
 
 ## Пользовательская модель выполнения
 
-Web UI всегда работает в `Build`. Модель или server profile выбирается в model picker; native `Plan` доступен в TUI/CLI.
+Модель чата хранится в самой сессии и одинакова в web и TUI. Режим (`build`/`plan`) — это агент сессии: его выбирают в TUI (shift+tab, `/agents`), а web показывает чат в Plan отдельным чипом «План · только чтение — вернуть Build». Просмотр чата в web никогда не меняет его агента или модель.
 
 Есть два принципиально разных пути:
 
 1. обычная конкретная модель — direct/manual selection;
 2. server profile Runtime V2/V3 — role-based orchestration policy.
 
-`plan`/`plan-direct` остаются native upstream agent IDs для TUI/CLI. В web обычная модель использует `build-direct`, если compatibility agent доступен, иначе native `build`; orchestration alias использует native `build`. Provider/model/variant сохраняются.
+Web, TUI и server runtime используют только видимые native агенты `build`/`plan` (плюс `dnd-narrator` для DnD Edition). Скрытые legacy ID `build-direct`/`plan-direct` больше не назначаются: при скрытом агенте native TUI игнорирует модель сессии, показывает config default и при отправке переключает сессию на неё. Старые сессии мигрируют сами — при открытии в TUI, при выборе модели и при следующей отправке через web. Provider/model/variant при этом сохраняются.
+
+### Почему модель больше не «сбрасывается» в TUI
+
+- Смена агента (shift+tab, `/agents`) сразу сохраняется в сессии, поэтому TUI продолжает показывать и использовать модель сессии. Агент со своей моделью (`dnd-narrator`) приносит её, а при выходе из него возвращается прежняя модель.
+- В `opencode.json` нет top-level `model`: иначе он перебивает историю моделей TUI. Новые сессии TUI стартуют с последней выбранной модели (`custom-opencode` засевает её перед запуском); server-side default задаёт `config-manager.js` через каталог (`OPENCODE_DEFAULT_MODEL`, по умолчанию `openai/gpt-6-luna-direct`).
+- `OPENCODE_FREE_ONLY_PROVIDERS=opencode,opencode-go` оставляет у этих провайдеров (OpenCode Zen/Go) только бесплатные модели: `config-manager.js` удаляет из каталога всё, у чего хоть один ценовой tier ненулевой (неизвестная цена считается платной). Настройки `OPENCODE_DEFAULT_MODEL`/`OPENCODE_FREE_ONLY_PROVIDERS` читаются из env сервиса, а если их там нет — из `~/.config/opencode/service.json`: уже запущенный TUI может перезапустить сервис со своим старым env (install.sh тогда печатает предупреждение со списком переменных).
+- Web отправляет только грубый профиль `direct`/`orchestrated`; сервер выводит настоящий профиль из модели сессии и никогда не подменяет выбранную модель (раньше Sol/Astra · Orchestrated могли уйти на Qwen) и её effort.
+- Смена модели в TUI сразу видна в web (событие `session.model.selected`).
 
 ## Direct/manual model
 
