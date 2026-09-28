@@ -2,6 +2,8 @@
 """Repository index, context cache, artifacts and verification helpers."""
 from __future__ import annotations
 import base64
+import ctypes
+import gzip
 
 import hashlib
 import json
@@ -14,6 +16,7 @@ import threading
 import time
 from typing import Any, Iterable
 from uuid import uuid4
+import zlib
 
 from runtime_store import RuntimeStore, now_ms
 
@@ -123,13 +126,57 @@ _GIT_SNAPSHOT_CACHE: dict[str, tuple[float, tuple[Any, ...], dict[str, Any]]] = 
 _GIT_REFRESHING: set[str] = set()
 _GIT_REFRESH_RETRY_AT: dict[str, float] = {}
 _GIT_GENERATION: dict[str, int] = {}
+# Roots whose snapshot was invalidated by a tool write: the last snapshot keeps
+# being served (stale) while a background refresh replaces it.
+_GIT_INVALIDATED: set[str] = set()
+# Roots where `git diff-files` cannot meet its validation budget (9P): a
+# fork+kill per cache hit validated nothing, so skip it for a while.
+_GIT_VALIDATOR_SLOW_UNTIL: dict[str, float] = {}
+_GIT_VALIDATOR_BACKOFF_SECONDS = 600.0
+_SLOW_FS: dict[str, bool] = {}
+_V9FS_MAGIC = 0x01021997  # WSL2 drvfs (/mnt/<drive>) is served over 9P
+_GIT_TOPLEVEL: dict[str, tuple[float, str | None]] = {}
+_GIT_VALIDATED_AT: dict[str, float] = {}
 
 
-def _git_snapshot_ttl() -> float:
+def _statfs_type(path: str) -> int | None:
+    if not sys.platform.startswith("linux"):
+        return None
     try:
-        return max(0.05, float(os.environ.get("OPENCODE_GIT_SNAPSHOT_TTL_SECONDS", "1.5")))
-    except ValueError:
-        return 1.5
+        libc = ctypes.CDLL(None, use_errno=True)
+        buffer = ctypes.create_string_buffer(512)  # struct statfs is < 128 bytes
+        if libc.statfs(os.fsencode(path), buffer) != 0:
+            return None
+        width = ctypes.sizeof(ctypes.c_long)  # f_type is the leading __fsword_t
+        return int.from_bytes(buffer.raw[:width], sys.byteorder, signed=False) & 0xFFFFFFFF
+    except (OSError, AttributeError, ValueError, TypeError):
+        return None
+
+
+def slow_filesystem(root: Path) -> bool:
+    """True for 9P/drvfs trees (WSL /mnt/<drive>), where every git call is slow."""
+    key = str(root)
+    cached = _SLOW_FS.get(key)
+    if cached is None:
+        cached = key == "/mnt" or key.startswith("/mnt/") or _statfs_type(key) == _V9FS_MAGIC
+        _SLOW_FS[key] = cached
+    return cached
+
+
+def _git_snapshot_ttl(root: Path | None = None) -> float:
+    configured = os.environ.get("OPENCODE_GIT_SNAPSHOT_TTL_SECONDS")
+    if configured:
+        try:
+            return max(0.05, float(configured))
+        except ValueError:
+            pass
+    if root is not None and slow_filesystem(root):
+        # `git status` alone costs ~0.65 s on /mnt/c: refresh far less often.
+        try:
+            return max(0.05, float(os.environ.get("OPENCODE_GIT_SNAPSHOT_SLOW_FS_TTL_SECONDS") or 20.0))
+        except ValueError:
+            return 20.0
+    return 1.5
 
 
 def _snapshot_copy(value: dict[str, Any], **extra: Any) -> dict[str, Any]:
@@ -150,6 +197,19 @@ def _repo_quick_stamp(root: Path) -> tuple[Any, ...]:
 
 def _stamp_digest(value: tuple[Any, ...]) -> str:
     return hashlib.sha256(repr(value).encode()).hexdigest()[:16]
+
+
+def _worktree_stamp(root: Path) -> str:
+    """Root directory + HEAD only. `git status` refreshes .git/index (and so
+    treeStamp) without any content change; this stamp ignores that."""
+    values: list[Any] = []
+    for path in (root, root / ".git" / "HEAD"):
+        try:
+            st = path.stat()
+            values.extend((st.st_mtime_ns, st.st_size))
+        except OSError:
+            values.extend((None, None))
+    return _stamp_digest(tuple(values))
 
 
 def _changed_stat_stamp(root: Path, changed: Iterable[str]) -> str:
@@ -177,6 +237,11 @@ def _cached_snapshot_valid(root: Path, snapshot: dict[str, Any]) -> bool:
         return False
     if not snapshot.get("git"):
         return True
+    key = str(root)
+    if time.monotonic() < _GIT_VALIDATOR_SLOW_UNTIL.get(key, 0.0):
+        # Known to exceed its budget here; rely on the TTL refresh and on tool
+        # writes invalidating the snapshot.
+        return True
     try:
         validate_ms = max(
             5.0,
@@ -194,12 +259,30 @@ def _cached_snapshot_valid(root: Path, snapshot: dict[str, Any]) -> bool:
         # On very large/slow filesystems the validator must never become the
         # new hot-path stall. Tool writes explicitly invalidate the cache and a
         # full refresh is already scheduled in the background.
+        _GIT_VALIDATOR_SLOW_UNTIL[key] = time.monotonic() + _GIT_VALIDATOR_BACKOFF_SECONDS
         return True
     if proc.returncode != 0:
         return True
     working_tree_dirty = {item for item in proc.stdout.split("\0") if item}
     known = set(snapshot.get("changed") or [])
     return working_tree_dirty.issubset(known)
+
+
+def _cached_snapshot_ok(root: Path, key: str, captured_at: float, snapshot: dict[str, Any]) -> bool:
+    """_cached_snapshot_valid, throttled on 9P where each dirty-file lstat costs
+    ~1 ms (110 dirty files = 110 ms per cache hit). A capture counts as a
+    validation; tool writes still invalidate immediately."""
+    if slow_filesystem(root):
+        try:
+            interval = float(os.environ.get("OPENCODE_GIT_SLOW_FS_VALIDATE_SECONDS") or 5.0)
+        except ValueError:
+            interval = 5.0
+        if time.monotonic() - max(captured_at, _GIT_VALIDATED_AT.get(key, 0.0)) < interval:
+            return True
+    valid = _cached_snapshot_valid(root, snapshot)
+    if valid:
+        _GIT_VALIDATED_AT[key] = time.monotonic()
+    return valid
 
 
 def _capture_git_snapshot(root: Path, *, include_untracked: bool, timeout: float) -> dict[str, Any]:
@@ -213,8 +296,11 @@ def _capture_git_snapshot(root: Path, *, include_untracked: bool, timeout: float
             "status": [],
             "changed": [],
             "statusHash": "timeout",
+            "trackedHash": None,
+            "untrackedHash": None,
             "changedStamp": _changed_stat_stamp(root, []),
             "treeStamp": _stamp_digest(_repo_quick_stamp(root)),
+            "worktreeStamp": _worktree_stamp(root),
             "partial": True,
             "includesUntracked": False,
             "capturedAt": now_ms(),
@@ -226,8 +312,11 @@ def _capture_git_snapshot(root: Path, *, include_untracked: bool, timeout: float
             "status": [],
             "changed": [],
             "statusHash": "nogit",
+            "trackedHash": "nogit",
+            "untrackedHash": None,
             "changedStamp": _changed_stat_stamp(root, []),
             "treeStamp": _stamp_digest(_repo_quick_stamp(root)),
+            "worktreeStamp": _worktree_stamp(root),
             "partial": False,
             "includesUntracked": False,
             "capturedAt": now_ms(),
@@ -254,8 +343,12 @@ def _capture_git_snapshot(root: Path, *, include_untracked: bool, timeout: float
 
     rows: list[str] = []
     changed: list[str] = []
-    status_text = status.stdout if status is not None and status.returncode == 0 else ""
-    if status is not None and status.returncode == 0:
+    tracked_rows: list[str] = []
+    tracked_paths: list[str] = []
+    untracked_paths: list[str] = []
+    status_ok = status is not None and status.returncode == 0
+    status_text = status.stdout if status_ok else ""
+    if status_ok:
         records = status.stdout.split("\0")
         index = 0
         while index < len(records) and len(rows) < 1000:
@@ -270,35 +363,61 @@ def _capture_git_snapshot(root: Path, *, include_untracked: bool, timeout: float
                 index += 1
                 rows.append(f"{code} {old} -> {path}")
                 changed.extend((old, path))
+                tracked_rows.append(rows[-1])
+                tracked_paths.extend((old, path))
             else:
                 rows.append(row)
                 changed.append(path)
+                if code == "??":
+                    untracked_paths.append(path)
+                else:
+                    tracked_rows.append(row)
+                    tracked_paths.append(path)
 
     changed = sorted(dict.fromkeys(path for path in changed if path))
-    digest = hashlib.sha256(status_text.encode())
     # Size/mtime/ctime are enough for an invalidation fingerprint and avoid
     # synchronously reading megabytes of changed files on WSL/NTFS.
+    stamps: dict[str, bytes] = {}
     for relative in changed:
-        digest.update(relative.encode("utf-8", errors="surrogateescape"))
         path = safe_repo_file(root, relative)
         if path is None:
-            digest.update(b"\0missing")
+            stamps[relative] = b"\0missing"
             continue
         try:
             details = path.stat()
-            digest.update(
+            stamps[relative] = (
                 f"\0{details.st_size}:{details.st_mtime_ns}:{details.st_ctime_ns}".encode()
             )
         except OSError:
-            digest.update(b"\0unreadable")
+            stamps[relative] = b"\0unreadable"
+
+    def stat_digest(prefix: str, paths: Iterable[str]) -> str:
+        digest = hashlib.sha256(prefix.encode("utf-8", errors="surrogateescape"))
+        for relative in sorted(dict.fromkeys(item for item in paths if item)):
+            digest.update(relative.encode("utf-8", errors="surrogateescape"))
+            digest.update(stamps.get(relative, b"\0missing"))
+        return digest.hexdigest()[:16]
+
+    digest = hashlib.sha256(status_text.encode())
+    for relative in changed:
+        digest.update(relative.encode("utf-8", errors="surrogateescape"))
+        digest.update(stamps[relative])
     return {
         "git": True,
         "head": head.stdout.strip() if head is not None and head.returncode == 0 else None,
         "status": rows,
         "changed": changed,
         "statusHash": digest.hexdigest()[:16],
+        # Identical for fast (tracked-only) and complete captures of the same
+        # tree, unlike statusHash; the untracked digest exists only when the
+        # capture actually enumerated untracked files.
+        "trackedHash": stat_digest("\n".join(tracked_rows), tracked_paths) if status_ok else None,
+        "untrackedHash": (
+            stat_digest("untracked", untracked_paths) if status_ok and include_untracked else None
+        ),
         "changedStamp": _changed_stat_stamp(root, changed),
         "treeStamp": _stamp_digest(_repo_quick_stamp(root)),
+        "worktreeStamp": _worktree_stamp(root),
         "partial": status is None or status.returncode != 0,
         "includesUntracked": bool(include_untracked and status is not None and status.returncode == 0),
         "capturedAt": now_ms(),
@@ -316,7 +435,10 @@ def _refresh_git_snapshot(key: str, root: Path, generation: int) -> None:
             delay_seconds = 0.75
         if delay_seconds:
             time.sleep(delay_seconds)
-        value = _capture_git_snapshot(root, include_untracked=True, timeout=12.0)
+        try:
+            value = _capture_git_snapshot(root, include_untracked=True, timeout=12.0)
+        except OSError:
+            return  # the directory vanished; the next read captures synchronously
         value["generation"] = generation
         now = time.monotonic()
         with _GIT_SNAPSHOT_LOCK:
@@ -326,7 +448,8 @@ def _refresh_git_snapshot(key: str, root: Path, generation: int) -> None:
             # Never replace a usable snapshot with a timed-out background probe.
             if not value.get("partial") or previous is None:
                 _GIT_SNAPSHOT_CACHE[key] = (now, _repo_quick_stamp(root), value)
-                _GIT_REFRESH_RETRY_AT[key] = now + _git_snapshot_ttl()
+                _GIT_REFRESH_RETRY_AT[key] = now + _git_snapshot_ttl(root)
+                _GIT_INVALIDATED.discard(key)
             else:
                 # Large WSL/NTFS trees can exceed even the background budget.
                 # Back off instead of continuously rescanning them on each turn.
@@ -352,16 +475,29 @@ def _schedule_git_refresh(key: str, root: Path) -> None:
 
 
 def invalidate_git_snapshot(project_dir: str | None = None) -> None:
+    """Forget cached repository state.
+
+    Without a directory everything is dropped (next read captures anew). For
+    one project -- a tool just wrote files -- the last snapshot is kept but
+    marked stale: readers get it immediately (``stale=True``) and the first
+    read schedules a background refresh, instead of paying a synchronous
+    `git status` (~0.65 s on 9P) on the interactive path. Callers that need
+    the current tree pass ``fresh=True``.
+    """
     with _GIT_SNAPSHOT_LOCK:
         if project_dir is None:
             keys = set(_GIT_SNAPSHOT_CACHE) | set(_GIT_REFRESHING) | set(_GIT_GENERATION)
             _GIT_SNAPSHOT_CACHE.clear()
             _GIT_REFRESH_RETRY_AT.clear()
+            _GIT_INVALIDATED.clear()
+            _GIT_VALIDATOR_SLOW_UNTIL.clear()
+            _GIT_VALIDATED_AT.clear()
             for key in keys:
                 _GIT_GENERATION[key] = _GIT_GENERATION.get(key, 0) + 1
             return
         key = str(Path(project_dir).resolve(strict=False))
-        _GIT_SNAPSHOT_CACHE.pop(key, None)
+        if key in _GIT_SNAPSHOT_CACHE:
+            _GIT_INVALIDATED.add(key)
         _GIT_REFRESH_RETRY_AT.pop(key, None)
         _GIT_GENERATION[key] = _GIT_GENERATION.get(key, 0) + 1
 
@@ -382,41 +518,112 @@ def git_snapshot(
     root = Path(project_dir).resolve(strict=False)
     key = str(root)
     now = time.monotonic()
-    stamp = _repo_quick_stamp(root)
     with _GIT_SNAPSHOT_LOCK:
         cached = _GIT_SNAPSHOT_CACHE.get(key)
+        invalidated = key in _GIT_INVALIDATED
+    if cached and not refresh and not fresh and invalidated:
+        _schedule_git_refresh(key, root)
+        return _snapshot_copy(
+            cached[2],
+            cacheHit=True,
+            stale=True,
+            invalidated=True,
+            ageMs=round((now - cached[0]) * 1000, 2),
+        )
+    stamp = _repo_quick_stamp(root)
     if (
         cached
         and not refresh
         and not fresh
         and cached[1] == stamp
-        and _cached_snapshot_valid(root, cached[2])
+        and _cached_snapshot_ok(root, key, cached[0], cached[2])
     ):
         age = now - cached[0]
-        if age >= _git_snapshot_ttl():
+        ttl = _git_snapshot_ttl(root)
+        if age >= ttl:
             _schedule_git_refresh(key, root)
         return _snapshot_copy(
             cached[2],
             cacheHit=True,
-            stale=age >= _git_snapshot_ttl(),
+            stale=age >= ttl,
             ageMs=round(age * 1000, 2),
         )
 
     # A full refresh is reserved for explicit/background work. A fresh fast
     # capture bypasses cache without enumerating untracked files; this keeps
     # explicit diff/verification reads correct after out-of-band file edits.
+    with _GIT_SNAPSHOT_LOCK:
+        generation = _GIT_GENERATION.get(key, 0)
     value = _capture_git_snapshot(
         root,
         include_untracked=refresh,
         timeout=12.0 if refresh else 1.25,
     )
     with _GIT_SNAPSHOT_LOCK:
-        generation = _GIT_GENERATION.get(key, 0)
         value["generation"] = generation
         _GIT_SNAPSHOT_CACHE[key] = (time.monotonic(), _repo_quick_stamp(root), value)
+        # A write that landed during the capture keeps the snapshot stale.
+        if _GIT_GENERATION.get(key, 0) == generation:
+            _GIT_INVALIDATED.discard(key)
+        else:
+            _GIT_INVALIDATED.add(key)
     if not refresh:
         _schedule_git_refresh(key, root)
     return _snapshot_copy(value, cacheHit=False, stale=False, ageMs=0.0)
+
+
+def _git_toplevel(root: Path) -> str | None:
+    """`git rev-parse --show-toplevel`, cached: a checkout does not move."""
+    key = str(root)
+    cached = _GIT_TOPLEVEL.get(key)
+    if cached is not None and time.monotonic() - cached[0] < 300.0:
+        return cached[1]
+    try:
+        proc = _run(root, ["git", "rev-parse", "--show-toplevel"], timeout=4.0)
+        top = proc.stdout.strip() if proc.returncode == 0 and proc.stdout.strip() else None
+    except (OSError, subprocess.SubprocessError):
+        top = None
+    _GIT_TOPLEVEL[key] = (time.monotonic(), top)
+    return top
+
+
+def _git_branch(top: Path) -> str:
+    """Current branch from HEAD without forking git (worktree .git files too)."""
+    try:
+        git_dir = top / ".git"
+        if git_dir.is_file():
+            pointer = git_dir.read_text(encoding="utf-8", errors="replace").strip()
+            if not pointer.startswith("gitdir:"):
+                raise ValueError("unrecognized .git file")
+            git_dir = Path(pointer[len("gitdir:") :].strip())
+            git_dir = git_dir if git_dir.is_absolute() else top / git_dir
+        head = (git_dir / "HEAD").read_text(encoding="utf-8", errors="replace").strip()
+        if head.startswith("ref: "):
+            ref = head[5:].strip()
+            return ref[len("refs/heads/") :] if ref.startswith("refs/heads/") else ""
+        return ""  # detached HEAD: `git branch --show-current` prints nothing
+    except (OSError, ValueError):
+        try:
+            proc = _run(top, ["git", "branch", "--show-current"], timeout=4.0)
+            return proc.stdout.strip() if proc.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+
+def git_repo_info(project_dir: str) -> dict[str, Any]:
+    """Top-level, branch and the cached snapshot (for status panels).
+
+    Replaces three uncached git processes per UI poll with the shared,
+    stale-while-revalidate snapshot.
+    """
+    root = Path(project_dir).resolve(strict=False)
+    snapshot = git_snapshot(str(root))
+    if not snapshot.get("git"):
+        return {"available": False, "snapshot": snapshot}
+    top = _git_toplevel(root)
+    if not top:
+        return {"available": False, "snapshot": snapshot}
+    return {"available": True, "root": top, "branch": _git_branch(Path(top)), "snapshot": snapshot}
 
 
 def semantic_diff(
@@ -434,7 +641,9 @@ def semantic_diff(
     if current.get("git") and base_head and current_head and base_head != current_head:
         try:
             proc = _run(
-                root, ["git", "diff", "--name-status", f"{base_head}..{current_head}"], timeout=8.0
+                root,
+                ["git", "diff", "--no-ext-diff", "--no-textconv", "--name-status", f"{base_head}..{current_head}"],
+                timeout=8.0,
             )
         except subprocess.TimeoutExpired:
             proc = None
@@ -446,7 +655,11 @@ def semantic_diff(
     stats = {"files": 0, "insertions": 0, "deletions": 0}
     if current.get("git"):
         try:
-            proc = _run(root, ["git", "diff", "--numstat", str(base_head or "HEAD"), "--"], timeout=8.0)
+            proc = _run(
+                root,
+                ["git", "diff", "--no-ext-diff", "--no-textconv", "--numstat", str(base_head or "HEAD"), "--"],
+                timeout=8.0,
+            )
         except subprocess.TimeoutExpired:
             proc = None
         if proc is not None and proc.returncode == 0:
@@ -657,7 +870,13 @@ class ArtifactStore:
         summary: str = "",
         mime: str = "text/plain",
         owner_session: str | None = None,
+        compress: bool = False,
     ) -> dict[str, Any]:
+        """Store content inline (small text) or as a file.
+
+        ``compress`` gzips the file (``<id>.gz``); size/sha256 always describe
+        the logical content and get() decompresses transparently.
+        """
         self.store.initialize()
         data = (
             content.encode("utf-8", errors="replace")
@@ -673,8 +892,8 @@ class ArtifactStore:
         else:
             directory = self.store.paths.artifacts / (task_id or "shared")
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            path = directory / artifact_id
-            path.write_bytes(data)
+            path = directory / (artifact_id + (".gz" if compress else ""))
+            path.write_bytes(gzip.compress(data, compresslevel=6) if compress else data)
             os.chmod(path, 0o600)
             file_path = str(path)
         with self.store.transaction() as db:
@@ -739,8 +958,8 @@ class ArtifactStore:
         }
         if not textual:
             try:
-                data = Path(str(row["file_path"])).read_bytes() if row["file_path"] else b""
-            except OSError:
+                data = self._read_file(str(row["file_path"])) if row["file_path"] else b""
+            except (OSError, EOFError, zlib.error):
                 data = b""
             return {
                 "id": row["id"],
@@ -757,6 +976,13 @@ class ArtifactStore:
             }
         if row["inline_text"] is not None:
             text = str(row["inline_text"])
+        elif row["file_path"] and str(row["file_path"]).endswith(".gz"):
+            try:
+                text = self._read_file(str(row["file_path"])).decode("utf-8", errors="replace")
+                # Same universal-newline view read_text() gives plain files.
+                text = text.replace("\r\n", "\n").replace("\r", "\n")
+            except (OSError, EOFError, zlib.error):
+                text = ""
         elif row["file_path"]:
             try:
                 text = Path(str(row["file_path"])).read_text(encoding="utf-8", errors="replace")
@@ -801,6 +1027,11 @@ class ArtifactStore:
             "nextOffset": min(len(text), offset + limit),
             "truncated": bool(query) or offset + limit < len(text),
         }
+
+    @staticmethod
+    def _read_file(path: str) -> bytes:
+        data = Path(path).read_bytes()
+        return gzip.decompress(data) if path.endswith(".gz") else data
 
     def list(self, task_id: str, limit: int = 100) -> list[dict[str, Any]]:
         self.store.initialize()

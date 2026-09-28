@@ -3,6 +3,7 @@ import { installPanelSubmitRouter } from "./lib/panel-submit-router.js"
 import { SERVER_COMMAND, parseServerCommand } from "./lib/server-command.js"
 import {
   runControl,
+  activeControl,
   chooseState,
   statusText,
   isOpenCodePrompt,
@@ -57,6 +58,7 @@ async function doStatus(context, value) {
 async function doToggle(context, current) {
   const state = await chooseState(context, "Состояние web server сейчас", current.running)
   if (state == null) return
+  toast(context, "Применяю состояние web server…", "info")
   const value = await runControl(context, ["apply", "--running", state ? "on" : "off", "--default", current.defaultEnabled ? "on" : "off"])
   toast(context, statusText(value), "success")
 }
@@ -95,8 +97,21 @@ async function doPort(context, current) {
     message: `http://${host}:${port} — сервис будет перезапущен, если запущен.`,
   })
   if (!ok) return
+  toast(context, "Применяю адрес web server…", "info")
   const value = await runControl(context, ["port", "--port", String(port), "--host", host])
   toast(context, `Адрес: ${buildAddress(value)}` + (value.restarted ? " · сервис перезапущен" : " · перезапуск при следующем старте"), "success")
+}
+
+// The password goes through stdin: argv is world-readable in /proc/*/cmdline.
+// A webserver-control.py without --password-stdin rejects the unknown flag
+// before doing anything; only then fall back to the legacy argv form.
+async function addUserWithPassword(context, username, password) {
+  try {
+    return await runControl(context, ["user-add", "--username", username, "--password-stdin"], { input: `${password}\n` })
+  } catch (error) {
+    if (!/^invalid arguments/i.test(String(error?.message ?? ""))) throw error
+    return runControl(context, ["user-add", "--username", username, "--password", password])
+  }
 }
 
 async function doAddUser(context) {
@@ -146,7 +161,7 @@ async function doAddUser(context) {
     password = String(first)
     break
   }
-  await runControl(context, ["user-add", "--username", username, "--password", password])
+  await addUserWithPassword(context, username, password)
   toast(context, `Пользователь ${username} добавлен`, "success")
 }
 
@@ -238,9 +253,19 @@ async function menuLoop(context, initial) {
   }
 }
 
+function busyMessage(prefix) {
+  const command = activeControl()
+  return command
+    ? `${prefix}: команда «${command}» ещё выполняется, подождите…`
+    : `${prefix}: мастер уже открыт`
+}
+
 let wizardOpen = false
 async function openWizard(context) {
-  if (wizardOpen) return
+  if (wizardOpen) {
+    toast(context, busyMessage("Server"), "info")
+    return
+  }
   wizardOpen = true
   try {
     const current = await runControl(context, ["status"])

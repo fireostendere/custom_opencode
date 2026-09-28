@@ -183,6 +183,30 @@ def _token_revoked(token: str) -> bool:
         return False
 
 
+_INTERNAL_FAILURE_LOCK = threading.Lock()
+_INTERNAL_FAILURE_DELAY_SECONDS = 0.25
+
+
+def internal_token_throttled(handler: object) -> bool:
+    """Bound X-OpenCode-Runtime guessing (the token defaults to the admin
+    password); answers 403 itself for a wrong token.
+
+    Every local client shares one loopback identity, so a lockout would let
+    any local process (including an agent shell) block the real plugin.
+    Wrong tokens are instead serialized behind a global delay: at most four
+    guesses per second in total, while correct tokens never wait.
+    """
+    if not handler.headers.get("X-OpenCode-Runtime"):
+        # No token: nothing guessed; the route handler answers 403 itself.
+        return False
+    if runtime_v3._internal_auth(handler):
+        return False
+    with _INTERNAL_FAILURE_LOCK:
+        time.sleep(_INTERNAL_FAILURE_DELAY_SECONDS)
+    handler.json_response({"ok": False, "error": "forbidden"}, status=403)
+    return True
+
+
 class Handler(rag.Handler, features.Handler):
     """V3/runtime/control routes first, then RAG/workflow/base proxy routes."""
 
@@ -202,30 +226,14 @@ class Handler(rag.Handler, features.Handler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
-    def local_bypass(self) -> bool:
-        """Allow passwordless loopback only for a direct localhost request.
-
-        A local reverse proxy also connects from 127.0.0.1, so trusting the TCP
-        peer alone turns every proxied LAN/Tailscale request into localhost.
-        Forwarding headers or a non-loopback Host therefore disable bypass.
-        """
-        base = rag.plus.ext.base
-        if not base.ALLOW_LOCAL or not base.is_loopback(self.client_address[0]):
-            return False
-        if any(
-            self.headers.get(name)
-            for name in ("Forwarded", "X-Forwarded-For", "X-Real-IP", "X-Forwarded-Proto")
-        ):
-            return False
-        host_header = str(self.headers.get("Host", "")).strip()
-        try:
-            host = urlsplit(f"//{host_header}").hostname or ""
-        except ValueError:
-            return False
-        return base.is_loopback(host)
+    # local_bypass(), the cross-origin/Transfer-Encoding/Content-Type request
+    # policy and the consent-route classification are inherited from
+    # server.Handler, so every production route shares one decision.
 
     def authenticated(self) -> bool:
         base = rag.plus.ext.base
+        if self.requires_human_session():
+            return self.authenticated_human()
         if self.local_bypass():
             return True
         token = self.cookie_token()
@@ -238,7 +246,8 @@ class Handler(rag.Handler, features.Handler):
             identity = _request_identity(self)
             if _login_limited(identity):
                 return False
-            # Parse Basic auth
+            # Parse Basic auth. Malformed credentials and verifier errors are
+            # failed attempts too, so they stay inside the throttle.
             try:
                 import base64
 
@@ -247,13 +256,14 @@ class Handler(rag.Handler, features.Handler):
                     return False
                 decoded = base64.b64decode(encoded).decode("utf-8")
                 username, _, password = decoded.partition(":")
-                if not base.server_users.authenticate(username, password):
-                    _record_login_failure(identity)
-                    return False
-                _clear_login_failures(identity)
-                return True
-            except (ValueError, UnicodeDecodeError):
+                accepted = base.server_users.authenticate(username, password)
+            except Exception:
+                accepted = False
+            if not accepted:
+                _record_login_failure(identity)
                 return False
+            _clear_login_failures(identity)
+            return True
         return False
 
     def authenticated_human(self) -> bool:
@@ -288,7 +298,11 @@ class Handler(rag.Handler, features.Handler):
         username = str(payload.get("username", ""))
         password = str(payload.get("password", ""))
         remember = bool(payload.get("remember", False))
-        if not base.server_users.authenticate(username, password):
+        try:
+            accepted = base.server_users.authenticate(username, password)
+        except Exception:
+            accepted = False
+        if not accepted:
             _record_login_failure(identity)
             time.sleep(0.35)
             self.json_response({"ok": False, "error": "Неверный логин или пароль"}, status=401)
@@ -309,8 +323,40 @@ class Handler(rag.Handler, features.Handler):
             _revoke_token(token)
         super().logout()
 
+    def internal_route_allowed(self) -> bool:
+        """/internal/runtime/* on the public listener: direct local plugins only.
+
+        The private loopback policy server owns these routes. Here they remain
+        for a local plugin configured with the web port: loopback peer and
+        Host, no proxy forwarding and no browser Origin/Sec-Fetch-Site. Any
+        other caller gets 404, so the runtime token (by default the admin
+        password) cannot be probed from the LAN or from a web page.
+        """
+        base = rag.plus.ext.base
+        if not base.is_loopback(self.client_address[0]):
+            return False
+        if any(self.headers.get(name) for name in base.FORWARDING_HEADER_NAMES):
+            return False
+        if self.headers.get("Origin") is not None or str(self.headers.get("Sec-Fetch-Site", "")).strip():
+            return False
+        try:
+            host = urlsplit(f"//{str(self.headers.get('Host', '')).strip()}").hostname or ""
+        except ValueError:
+            return False
+        return base.is_loopback(host)
+
+    def internal_route_denied(self, parsed: object) -> bool:
+        if not str(getattr(parsed, "path", "")).startswith("/internal/"):
+            return False
+        if not self.internal_route_allowed():
+            self.json_response({"ok": False, "error": "not found"}, status=404)
+            return True
+        return internal_token_throttled(self)
+
     def do_GET(self) -> None:
         parsed = urlsplit(self.path)
+        if self.internal_route_denied(parsed):
+            return
         if parsed.path == "/client-integration.json":
             if not self.authenticated():
                 self.unauthorized()
@@ -335,6 +381,8 @@ class Handler(rag.Handler, features.Handler):
 
     def do_POST(self) -> None:
         parsed = urlsplit(self.path)
+        if self.internal_route_denied(parsed):
+            return
         if github_workflow.handle_post(self, parsed, runtime, features):
             return
         if unified_control.handle_post(self, parsed, runtime, features):
@@ -376,10 +424,10 @@ class Handler(rag.Handler, features.Handler):
 
 def main() -> None:
     rag.plus.ext.base.SCRATCH_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
-    server = rag.plus.ext.base.ThreadingHTTPServer(
+    # Accept backlog 128 (socketserver defaults to 5) and daemon threads.
+    server = rag.plus.ext.base.ThreadingWebServer(
         (rag.plus.ext.base.WEB_HOST, rag.plus.ext.base.WEB_PORT), Handler
     )
-    server.daemon_threads = True
     features._ensure_worker()
     print(
         f"OpenCode web client started on configured port {rag.plus.ext.base.WEB_PORT}", flush=True

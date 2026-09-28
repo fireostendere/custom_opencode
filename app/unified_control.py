@@ -10,10 +10,11 @@ from __future__ import annotations
 from collections import Counter
 import hashlib
 import json
-from pathlib import Path
 import subprocess
 from typing import Any
 from urllib.parse import parse_qs
+
+from repo_services import git_repo_info
 
 
 RESOURCE_PROFILES: dict[str, dict[str, Any]] = {
@@ -103,51 +104,24 @@ def _set_resource_profile(runtime: Any, directory: str, profile_id: str) -> dict
 def _git_snapshot(directory: str | None) -> dict[str, Any]:
     if not directory:
         return {"available": False}
-    root = Path(directory)
     try:
-        top = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=4.0,
-            check=False,
-        )
-        if top.returncode != 0:
-            return {"available": False}
-        canonical = top.stdout.strip()
-        branch = subprocess.run(
-            ["git", "-C", canonical, "branch", "--show-current"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=4.0,
-            check=False,
-        )
-        status = subprocess.run(
-            ["git", "-C", canonical, "status", "--porcelain=v1", "--branch"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=5.0,
-            check=False,
-        )
-        lines = status.stdout.splitlines() if status.returncode == 0 else []
-        files = []
-        for line in lines:
-            if not line or line.startswith("## "):
-                continue
-            files.append({"status": line[:2], "path": line[3:]})
-        return {
-            "available": True,
-            "root": canonical,
-            "branch": branch.stdout.strip() if branch.returncode == 0 else "",
-            "dirty": bool(files),
-            "changed": len(files),
-            "files": files[:200],
-        }
-    except (OSError, subprocess.SubprocessError):
+        # Shared stale-while-revalidate snapshot: a /client-unified.json poll
+        # no longer forks three git processes (~0.65 s each on 9P).
+        info = git_repo_info(directory)
+    except (OSError, subprocess.SubprocessError, ValueError):
         return {"available": False}
+    if not info.get("available"):
+        return {"available": False}
+    rows = (info.get("snapshot") or {}).get("status") or []
+    files = [{"status": row[:2], "path": row[3:]} for row in rows if row]
+    return {
+        "available": True,
+        "root": info.get("root"),
+        "branch": info.get("branch") or "",
+        "dirty": bool(files),
+        "changed": len(files),
+        "files": files[:200],
+    }
 
 
 def _event_group(kind: str) -> str:
@@ -192,7 +166,9 @@ def _activity(runtime: Any, *, directory: str | None, session_id: str | None, af
 
 
 def _verification_summary(runtime: Any, *, directory: str | None, session_id: str | None) -> dict[str, Any]:
-    tasks = runtime.STORE.list_tasks(session_id=session_id, project_dir=directory, limit=150)
+    tasks = runtime.STORE.list_tasks(
+        session_id=session_id, project_dir=directory, limit=150, projection="public"
+    )
     with_verification = [task for task in tasks if isinstance(task.get("verification"), dict) and task.get("verification")]
     latest = max(with_verification, key=lambda item: int(item.get("updated_at") or 0), default=None)
     if not latest:
@@ -212,13 +188,16 @@ def _verification_summary(runtime: Any, *, directory: str | None, session_id: st
 
 def _recovery(runtime: Any, *, directory: str | None, session_id: str | None) -> dict[str, Any]:
     states = ["failed", "needs_attention", "paused", "recovering"]
-    tasks = runtime.STORE.list_tasks(session_id=session_id, project_dir=directory, states=states, limit=100)
+    tasks = runtime.STORE.list_tasks(
+        session_id=session_id, project_dir=directory, states=states, limit=100, projection="light"
+    )
     items = []
     for task in tasks:
         actions = ["task.retry"]
         if task.get("state") not in {"failed", "completed", "cancelled"}:
             actions.append("task.cancel")
-        checkpoints = runtime.STORE.checkpoints(str(task.get("id")))
+        # Only the newest checkpoint is rendered; do not decode up to 100.
+        checkpoints = runtime.STORE.checkpoints(str(task.get("id")), limit=1)
         if checkpoints:
             actions.append("time.fork")
         items.append({
@@ -235,7 +214,8 @@ def _recovery(runtime: Any, *, directory: str | None, session_id: str | None) ->
 def _permission_advice(runtime: Any, *, directory: str | None) -> dict[str, Any]:
     if not directory:
         return {"suggestions": []}
-    rows = runtime.STORE.events(project_dir=directory, limit=1000)
+    # Filter in SQL instead of decoding up to 1000 unrelated event payloads.
+    rows = runtime.STORE.events(project_dir=directory, limit=1000, kind_contains="permission")
     counts: Counter[tuple[str, str]] = Counter()
     examples: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
@@ -267,7 +247,9 @@ def _permission_advice(runtime: Any, *, directory: str | None) -> dict[str, Any]
 
 
 def _project_snapshot(features: Any, runtime: Any, directory: str | None, session_id: str | None) -> dict[str, Any]:
-    tasks = runtime.STORE.list_tasks(session_id=session_id, project_dir=directory, limit=300)
+    tasks = runtime.STORE.list_tasks(
+        session_id=session_id, project_dir=directory, limit=300, projection="public"
+    )
     counts = Counter(str(task.get("state") or "unknown") for task in tasks)
     active = [task for task in tasks if str(task.get("state")) in runtime.ACTIVE_STATES]
     queued = [task for task in tasks if str(task.get("state")) in runtime.QUEUE_STATES]
@@ -307,7 +289,7 @@ def _global_search(runtime: Any, *, directory: str, query: str, limit: int = 60)
     if not needle:
         return {"query": query, "results": []}
     results: list[dict[str, Any]] = []
-    for task in runtime.STORE.list_tasks(project_dir=directory, limit=500):
+    for task in runtime.STORE.list_tasks(project_dir=directory, limit=500, projection="public"):
         hay = " ".join([str(task.get("text") or ""), str(task.get("last_error") or ""), str(task.get("kind") or "")]).lower()
         if needle in hay:
             results.append({"type": "task", "id": task.get("id"), "title": str(task.get("text") or task.get("kind") or "Task")[:160], "state": task.get("state"), "updatedAt": task.get("updated_at")})

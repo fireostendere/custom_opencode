@@ -69,19 +69,33 @@ def same_model(value: object, model: dict[str, str]) -> bool:
     )
 
 
+DEFAULT_MODEL = "openai/gpt-6-luna-direct"
+
+
+def default_model() -> dict[str, str] | None:
+    """Seed for an empty history; the config file no longer names a model."""
+    ref = (os.environ.get("OPENCODE_DEFAULT_MODEL") or DEFAULT_MODEL).split("#", 1)[0]
+    provider, separator, model = ref.partition("/")
+    return {"providerID": provider, "modelID": model} if separator and provider and model else None
+
+
 def main() -> int:
     if not tui_launch(sys.argv[1:]):
         return 0
     root = state_home() / "opencode"
     custom = root / "beta/tui/plugin.custom.tui-bundle.model-selector.recent.json"
     native = root / "model.json"
+    selected = None
     try:
         saved = json.loads(custom.read_text(encoding="utf-8"))
         models = saved.get("models") if isinstance(saved, dict) else None
-        selected = models[0] if isinstance(models, list) and models else None
-        if not valid_model(selected):
-            return 0
-        selected = {"providerID": selected["providerID"], "modelID": selected["modelID"]}
+        if models:
+            candidate = models[0] if isinstance(models, list) else None
+            if not valid_model(candidate):
+                return 0
+            selected = {"providerID": candidate["providerID"], "modelID": candidate["modelID"]}
+    except FileNotFoundError:
+        pass
     except (OSError, UnicodeError, json.JSONDecodeError):
         return 0
 
@@ -99,6 +113,14 @@ def main() -> int:
     recent = data.get("recent")
     if not isinstance(recent, list):
         recent = []
+    if selected is None:
+        # Without a config-level model the TUI starts from recent[0]; an empty
+        # history would otherwise fall through to an arbitrary catalog model.
+        if any(valid_model(item) for item in recent):
+            return 0
+        selected = default_model()
+        if selected is None:
+            return 0
     updated = [selected, *(item for item in recent if not same_model(item, selected))][:10]
     if data.get("recent") == updated:
         return 0

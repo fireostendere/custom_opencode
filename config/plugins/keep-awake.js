@@ -1,8 +1,13 @@
 import { startEvents } from "../events.js"
 
 const GRACE_MIN = 30
+// A session that never reports idle (crash, lost event) cannot pin the machine awake forever.
+const STALE_BUSY_MS = 6 * 60 * 60_000
 let keeper = null
 let warned = false
+// The one shared keeper lives while ANY session is busy: parallel sessions and
+// subagents finish independently and one idle session must not release it.
+const busy = new Map()
 
 function alive(process) {
   return !!process && process.exitCode === null && process.signalCode === null
@@ -51,17 +56,31 @@ function releaseKeeper() {
   keeper = null
 }
 
+export function observe(event, now = Date.now()) {
+  const kind = classify(event?.type)
+  if (kind === "ignore") return busy.size > 0
+  const id = String(event?.data?.sessionID || "")
+  if (kind === "busy") busy.set(id, now)
+  else busy.delete(id)
+  for (const [session, since] of busy) if (now - since > STALE_BUSY_MS) busy.delete(session)
+  return busy.size > 0
+}
+
 // Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
 export default {
   id: "keep-awake",
   setup(ctx) {
+    const sync = (awake) => (awake ? ensureKeeper() : releaseKeeper())
     const stop = startEvents(ctx, (event) => {
-      const kind = classify(event.type)
-      if (kind === "busy") ensureKeeper()
-      else if (kind === "idle") releaseKeeper()
+      if (classify(event?.type) !== "ignore") sync(observe(event))
     })
+    // The keeper script exits after GRACE_MIN; renew it for long busy turns.
+    const renew = setInterval(() => sync(observe(null)), 5 * 60_000)
+    renew.unref?.()
     return () => {
       stop()
+      clearInterval(renew)
+      busy.clear()
       releaseKeeper()
     }
   },

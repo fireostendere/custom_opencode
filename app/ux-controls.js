@@ -1,8 +1,10 @@
 import {
   ORCHESTRATED_MODEL,
   ORCHESTRATED_MODELS,
+  agentAfterModelPick,
   agentFor,
   composerActionState,
+  modeFromAgent,
   permissionSummary,
   profileFromAgent,
 } from './ux-state.js'
@@ -44,7 +46,7 @@ function rawActiveAgent() {
   return active.find((button) => !['build', 'plan'].includes(button.dataset.agent))?.dataset.agent || active[0]?.dataset.agent || 'build'
 }
 function currentMode() {
-  return 'build'
+  return modeFromAgent(rawActiveAgent())
 }
 function currentProfile() {
   if (!modelTransition && window.CustomOpenCodeControls?.activeModel?.()) return profileForModel(selectedOrchestratedModel())
@@ -106,6 +108,10 @@ function clickNativeAgent(agentID, allowVirtual = false) {
   return true
 }
 
+// Read-only: opening or re-rendering a chat never changes its agent. Web and
+// TUI share sessions, so a silent switch here used to flip Plan chats to Build
+// and fight the TUI. Agents change only on an explicit model pick (D&D in/out,
+// legacy migration) or through the Plan chip.
 function syncAgentSurface() {
   const activeAgent = rawActiveAgent()
   if (pendingAgentTarget && activeAgent === pendingAgentTarget) {
@@ -113,16 +119,35 @@ function syncAgentSurface() {
     failedAgentTarget = ''
   }
   const mode = currentMode()
-  const profile = currentProfile()
-  const expectedAgent = targetAgent(mode, profile)
-  if (expectedAgent !== activeAgent && expectedAgent !== failedAgentTarget) clickNativeAgent(expectedAgent)
-  document.documentElement.dataset.modelProfile = profile
+  document.documentElement.dataset.modelProfile = currentProfile()
   document.documentElement.dataset.executionMode = mode
   for (const button of agentButtons()) {
-    const id = button.dataset.agent || ''
-    button.classList.toggle('ux-hidden-agent', !['build', 'plan'].includes(id))
-    button.classList.toggle('active', id === mode || id === activeAgent && ['build', 'plan'].includes(id))
+    button.classList.toggle('ux-hidden-agent', !['build', 'plan'].includes(button.dataset.agent || ''))
   }
+  syncPlanChip(mode)
+}
+
+function syncPlanChip(mode) {
+  let chip = $('planModeChip')
+  if (!chip) {
+    const anchor = $('variantSelect')?.closest('.control-select') || $('modelButton')
+    if (!anchor) return
+    chip = document.createElement('button')
+    chip.type = 'button'
+    chip.id = 'planModeChip'
+    chip.className = 'control plan-mode-chip'
+    chip.textContent = 'План · только чтение — вернуть Build'
+    chip.title = 'Этот чат в режиме Plan (переключён в TUI): агент не меняет файлы. Нажмите, чтобы вернуть Build.'
+    chip.addEventListener('click', async () => {
+      chip.disabled = true
+      try { await window.CustomOpenCodeControls?.changeAgent?.('build') } finally {
+        chip.disabled = false
+        syncAgentSurface()
+      }
+    })
+    anchor.after(chip)
+  }
+  chip.hidden = !(mode === 'plan' && profileSessionKey() !== '__new__')
 }
 
 function selectedOrchestratedModel() {
@@ -199,7 +224,7 @@ function syncPermission() {
   const raw = detail.textContent || ''
   const title = $('permissionTitle')?.textContent?.trim() || 'Разрешение'
   const compact = permissionSummary(title, raw)
-  if (summary.textContent !== compact) summary.textContent = compact
+  if (summary.dataset.serverPreview !== '1' && summary.textContent !== compact) summary.textContent = compact
   if (raw !== lastPermissionRaw) {
     lastPermissionRaw = raw
     if (details) details.open = false
@@ -254,8 +279,9 @@ async function chooseModel(profile, model) {
     const changed = await window.CustomOpenCodeControls.changeModel(model)
     if (!valid()) { cancelModelTransition(pending); return false }
     if (!changed) { endModelTransition(pending, pending.previousProfile); return false }
-    pending.agent = targetAgent(currentMode(), profile)
-    const agentChanged = await window.CustomOpenCodeControls.changeAgent(pending.agent)
+    const nextAgent = agentAfterModelPick(rawActiveAgent(), profile)
+    pending.agent = nextAgent && nativeAgentButton(nextAgent) ? nextAgent : rawActiveAgent()
+    const agentChanged = pending.agent === rawActiveAgent() || await window.CustomOpenCodeControls.changeAgent(pending.agent)
     if (!valid()) { cancelModelTransition(pending); return false }
     if (agentChanged) {
       if (profile !== 'direct') document.documentElement.dataset.orchestratedModel = model.id

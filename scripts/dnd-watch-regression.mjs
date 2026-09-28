@@ -107,10 +107,15 @@ reply = () => { throw new Error("private transport detail") }
 await watcher.tick()
 assert.equal(wakes.at(-1).result.status, "error", "failure is visible instead of endless silent waiting")
 assert.ok(!JSON.stringify(wakes).includes("private transport detail"))
+// Finished entries stay readable for a while, then are dropped (bounded map).
+assert.equal(watcher.status(context.sessionID).status, "error")
+now += 10 * 60_000 + 1
+await watcher.tick()
+assert.equal(watcher.status(context.sessionID).status, "stopped", "finished entries must not accumulate forever")
 watcher.close()
 
 // Native plugin lifecycle and zero-inference operator controls.
-let events, tool, command
+let events, tool, command, contextHook
 let child = false
 const notices = []
 const stream = new ReadableStream({ start(controller) { events = controller } })
@@ -124,6 +129,7 @@ const cleanup = await plugin.setup({
   } },
   command: { transform: async apply => { apply({ add: value => { command = value } }); return registration() } },
   session: {
+    hook: async (name, fn) => { if (name === "context") contextHook = fn; return registration() },
     get: async () => ({ agent: context.agent, parentID: child ? "ses_parent" : null, location: { directory: "/game" } }),
     synthetic: async value => notices.push(value),
   },
@@ -133,6 +139,15 @@ const cleanup = await plugin.setup({
   } },
 })
 try {
+  // dnd_watch exists only in the D&D lane; other lanes never pay for its schema.
+  const coding = { agent: "build", model: { providerID: "openai", id: "gpt-6-sol-direct" }, tools: { dnd_watch: {}, read: {} } }
+  await contextHook(coding)
+  assert.deepEqual(Object.keys(coding.tools), ["read"])
+  for (const lane of [{ agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-6-dnd-edition" } }, { agent: "build", model: { providerID: "openai", id: "gpt-6-dnd-edition" } }]) {
+    const dnd = { ...lane, tools: { dnd_watch: {}, odm_narrator: {} } }
+    await contextHook(dnd)
+    assert.ok("dnd_watch" in dnd.tools, `${lane.agent}/${lane.model.id} keeps dnd_watch`)
+  }
   const start = () => tool.execute({ action: "start", ...input }, context)
   const status = async () => JSON.parse((await tool.execute({ action: "status" }, context)).content).status
   for (const type of ["session.execution.interrupted", "session.execution.failed", "session.deleted", "session.moved", "session.agent.selected", "session.model.selected", "session.inbox.enqueued"]) {
@@ -153,4 +168,4 @@ try {
   child = true
   await assert.rejects(start, /primary session/)
 } finally { await cleanup() }
-console.log("DnD watcher: idle, one-shot wake, privacy, paging, stop races, session lifecycle, permissions surface, timeout and errors passed")
+console.log("DnD watcher: idle, one-shot wake, privacy, paging, stop races, session lifecycle, permissions surface, timeout and errors, D&D-only exposure, bounded entries passed")

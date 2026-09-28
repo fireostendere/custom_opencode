@@ -1,7 +1,10 @@
 // Protocol-aware output ceilings and streaming usage extraction. No credentials,
 // message contents or provider response text enter the usage ledger.
 export function capRequestBody(body, maximum, finishOnly = false, providerID = "", requestURL = "") {
-  const result = structuredClone(body)
+  // The parsed body is request-local: share untouched payloads (history, base64
+  // media) instead of deep-cloning them, and copy only the fields changed below.
+  // Unchanged top-level fields stay identical (===) so callers can skip a rebuild.
+  const result = { ...body }
   const cap = (old) => Math.max(1, Math.min(maximum, Number(old) > 0 ? Number(old) : maximum))
   if (Array.isArray(result.messages)) {
     const key =
@@ -19,7 +22,7 @@ export function capRequestBody(body, maximum, finishOnly = false, providerID = "
     ) {
       // The configured reasoning allocation cannot exceed the total generation
       // allowance. Report the effective cap in the ledger; never raise it.
-      result.thinking.budget_tokens = Math.max(1, result[key] - 1)
+      result.thinking = { ...result.thinking, budget_tokens: Math.max(1, result[key] - 1) }
     }
   } else if ("input" in result) {
     // ponytail: ChatGPT rejects wire caps; the ledger accounts actual output
@@ -28,8 +31,10 @@ export function capRequestBody(body, maximum, finishOnly = false, providerID = "
       delete result.max_output_tokens
     else result.max_output_tokens = cap(result.max_output_tokens)
   } else if (Array.isArray(result.contents)) {
-    result.generationConfig ||= {}
-    result.generationConfig.maxOutputTokens = cap(result.generationConfig.maxOutputTokens)
+    const config = result.generationConfig || {}
+    const limit = cap(config.maxOutputTokens)
+    if (!result.generationConfig || limit !== config.maxOutputTokens)
+      result.generationConfig = { ...config, maxOutputTokens: limit }
   } else
     throw new Error("Unsupported provider request schema: output reservation cannot be enforced")
   if (finishOnly) {
@@ -70,15 +75,26 @@ export function normalizeUsage(event, previous = {}) {
   return value
 }
 
+/** True when capRequestBody changed any top-level field of the request body. */
+export function bodyChanged(before, after) {
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)]))
+    if (before[key] !== after[key]) return true
+  return false
+}
+
 export function observeUsage(response, done) {
   let notified = false
-  const finish = async (usage, error = null) => {
+  // Accounting is fire-and-forget: provider bytes (including the final SSE
+  // chunk) and EOF are never held while the ledger write is in flight.
+  const finish = (usage, error = null) => {
     if (notified) return
     notified = true
-    await done(usage && Object.keys(usage).length ? usage : null, response.status, error)
+    Promise.resolve()
+      .then(() => done(usage && Object.keys(usage).length ? usage : null, response.status, error))
+      .catch(() => {})
   }
   if (!response.body) {
-    void finish(null, "empty provider response")
+    finish(null, "empty provider response")
     return response
   }
   const reader = response.body.getReader()
@@ -113,8 +129,8 @@ export function observeUsage(response, done) {
         if (ended) {
           buffer += decoder.decode()
           if (!oversized) parse(buffer)
-          await finish(usage)
           controller.close()
+          finish(usage)
           return
         }
         buffer += decoder.decode(value, { stream: true })
@@ -129,25 +145,20 @@ export function observeUsage(response, done) {
           buffer = ""
           oversized = true
         }
-        // SDKs commonly cancel immediately after [DONE]/message_stop. A flush
-        // callback is then never called. Persist usage before forwarding the
-        // terminal bytes, and also account for an early consumer cancellation.
-        if (terminal) await finish(usage)
+        // SDKs commonly cancel immediately after [DONE]/message_stop, so a flush
+        // callback is never called. Start the usage record as soon as the
+        // terminal event is seen, but forward the terminal bytes without waiting.
         controller.enqueue(value)
+        if (terminal) finish(usage)
       } catch (error) {
-        try {
-          await finish(usage, String(error?.message || error).slice(0, 300))
-        } finally {
-          controller.error(error)
-        }
+        finish(usage, String(error?.message || error).slice(0, 300))
+        controller.error(error)
       }
     },
     async cancel(reason) {
       // Close the provider immediately; accounting must not keep inference alive.
       const closed = reader.cancel(reason)
-      // The service owns this accounting write; the cancelled session needn't
-      // wait for the policy server to reply before returning control to the user.
-      void finish(usage, terminal ? null : "provider stream cancelled before terminal event").catch(() => {})
+      finish(usage, terminal ? null : "provider stream cancelled before terminal event")
       await closed
     },
   })

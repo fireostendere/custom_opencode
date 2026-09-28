@@ -1,5 +1,6 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { readFileSync } from "node:fs"
 import { appendFile } from "node:fs/promises"
 import {
   filterMcpTools,
@@ -11,9 +12,61 @@ import { McpDiscovery } from "./tui/lib/mcp-discovery.js"
 import { toolFabricConfig } from "./tui/lib/tool-fabric.js"
 import { syncManagedOrchestrations } from "./tui/lib/context-policy.js"
 import { filterDndTools, isDndContext } from "./orchestrated-qwen.js"
+import { startEvents } from "../events.js"
 
 const STORAGE_KEY = "registry-v2"
 const CONFIG_DIR = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", "opencode")
+// A client that was already running during install may respawn the service
+// with its cached (older) service env, so fall back to the persisted service
+// config that install.sh writes.
+export function serviceSetting(name, env = process.env, file = join(CONFIG_DIR, "service.json")) {
+  if (env[name] !== undefined) return env[name]
+  try {
+    const value = JSON.parse(readFileSync(file, "utf8"))?.env?.[name]
+    return typeof value === "string" ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+// Server-side default model. It deliberately lives in the catalog instead of
+// the config file: a config-level "model" outranks the TUI's recent models, so
+// every new TUI session and every Build/Plan fallback used to reset to it.
+const DEFAULT_MODEL = serviceSetting("OPENCODE_DEFAULT_MODEL") || "openai/gpt-6-luna-direct"
+// Providers whose paid models are not subscribed: only zero-cost models stay
+// in the catalog (e.g. OPENCODE_FREE_ONLY_PROVIDERS=opencode,opencode-go).
+const FREE_ONLY_PROVIDERS = new Set(
+  String(serviceSetting("OPENCODE_FREE_ONLY_PROVIDERS") || "").split(",").map((item) => item.trim()).filter(Boolean),
+)
+
+function catalogEntryModels(entry) {
+  const models = entry?.models
+  if (models instanceof Map) return [...models.values()]
+  if (Array.isArray(models)) return models
+  return models && typeof models === "object" ? Object.values(models) : []
+}
+
+// Free means every price tier is zero; an unknown price is not free.
+export function isFreeModel(model) {
+  const cost = model?.cost
+  const tiers = Array.isArray(cost) ? cost : cost && typeof cost === "object" ? [cost] : []
+  return tiers.length > 0 && tiers.every((tier) => Number(tier?.input || 0) === 0 && Number(tier?.output || 0) === 0)
+}
+
+export function removePaidModels(catalog, providers = FREE_ONLY_PROVIDERS) {
+  if (!providers.size || typeof catalog?.provider?.list !== "function") return []
+  const removed = []
+  for (const entry of catalog.provider.list() || []) {
+    const providerID = entry?.provider?.id ?? entry?.id
+    if (!providers.has(providerID)) continue
+    for (const model of catalogEntryModels(entry)) {
+      const id = model?.id
+      if (typeof id !== "string" || isFreeModel(model)) continue
+      catalog.model.remove(providerID, id)
+      removed.push(`${providerID}/${id}`)
+    }
+  }
+  return removed
+}
 const ID_RE = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/
 const ENV_REF_RE = /^\{env:[A-Z_][A-Z0-9_]*\}$/
 const SENSITIVE_NAME_RE =
@@ -294,6 +347,24 @@ function publicSummary(registry) {
   }
 }
 
+function isConfigReceipt(message) {
+  if (!message || message.role !== "user") return false
+  const content = message.content
+  const text = typeof content === "string"
+    ? content
+    : Array.isArray(content) ? content.map((part) => (typeof part?.text === "string" ? part.text : "")).join("") : ""
+  // Exact wire format only (`receipt:<uuid>\n<JSON>`): user text that merely
+  // starts with the prefix is conversation content and stays byte-identical.
+  const match = /^custom\.config\.receipt:[0-9a-f-]{36}\n([\s\S]*)$/i.exec(text)
+  if (!match) return false
+  try {
+    const data = JSON.parse(match[1])
+    return Boolean(data) && typeof data === "object"
+  } catch {
+    return false
+  }
+}
+
 async function synthetic(ctx, sessionID, text) {
   await ctx.session.synthetic({ sessionID, text, resume: false })
 }
@@ -315,6 +386,19 @@ export default {
     if (legacy !== undefined) await ctx.storage.set(STORAGE_KEY, registry)
     let installed = {}
     const exposure = new Map() // Observations only, per session; never used as activation state.
+    const bounded = (map, key, value) => {
+      map.delete(key)
+      map.set(key, value)
+      if (map.size > 1000) map.delete(map.keys().next().value)
+    }
+    // A session's parent never changes: walk the chain with session.get once.
+    const parents = new Map()
+    const parentOf = async (sessionID) => {
+      if (parents.has(sessionID)) return parents.get(sessionID)
+      const parentID = (await ctx.session.get?.({ sessionID }))?.parentID || null
+      bounded(parents, sessionID, parentID)
+      return parentID
+    }
     const modeFor = async (sessionID, agent) => {
       const settings = registry.mcpSettings
       let current = sessionID
@@ -324,10 +408,23 @@ export default {
         if (agent && settings.sessions[`${current}/${agent}`])
           return settings.sessions[`${current}/${agent}`]
         if (settings.sessions[current]) return settings.sessions[current]
-        current = (await ctx.session.get?.({ sessionID: current }))?.parentID
+        current = await parentOf(current)
       }
       return settings.mode
     }
+    // MCP status is observed once per session and again only after the native
+    // host reports an MCP status/tool change, not on every model step.
+    const mcpObserved = new Map()
+    const observeMcp = async (sessionID) => {
+      if (mcpObserved.has(sessionID)) return
+      await ctx.mcp.list?.()
+      bounded(mcpObserved, sessionID, true)
+    }
+    const stopEvents = ctx.event?.subscribe
+      ? startEvents(ctx, (event) => {
+          if (event?.type === "mcp.status.changed" || event?.type === "mcp.tools.changed") mcpObserved.clear()
+        })
+      : () => {}
     const receipt = async (sessionID, input, data) => {
       if (typeof input?.requestID === "string")
         await synthetic(
@@ -343,6 +440,7 @@ export default {
     }
     const reloadAll = async () => {
       discovery.clear()
+      mcpObserved.clear()
       const settled = await Promise.allSettled([
         ctx.catalog.reload(),
         ctx.mcp.reload(),
@@ -382,6 +480,11 @@ export default {
     }
 
     await ctx.catalog.transform((catalog) => {
+      const slash = DEFAULT_MODEL.indexOf("/")
+      // An explicit config "model" (set before this transform) still wins.
+      if (slash > 0 && !catalog.model.default?.get?.())
+        catalog.model.default?.set?.(DEFAULT_MODEL.slice(0, slash), DEFAULT_MODEL.slice(slash + 1).split("#")[0])
+      removePaidModels(catalog)
       for (const [providerID, definition] of Object.entries(registry.providers)) {
         catalog.provider.update(providerID, (draft) =>
           Object.assign(draft, structuredClone(definition)),
@@ -403,7 +506,8 @@ export default {
         catalog.model.update(item.providerID, item.id, (draft) => {
           if (base) Object.assign(draft, structuredClone(base))
           draft.id = item.id
-          draft.modelID = item.baseModelID
+          // baseModelID is a catalog ID; the wire needs the base's upstream model.
+          draft.modelID = base?.modelID ?? item.baseModelID
           draft.name = item.name || `${item.id} · Orchestrated`
         })
       }
@@ -456,12 +560,23 @@ export default {
         draft.add(structuredClone(definition))
     })
 
+    // mcp_discover only helps when this request deferred tool schemas; it is
+    // otherwise pure per-request prompt overhead.
+    const hideDiscovery = (tools) => {
+      if (tools && Object.hasOwn(tools, "mcp_discover")) delete tools.mcp_discover
+    }
     await ctx.session.hook("context", async (event) => {
+      // Config receipts are machine replies for the TUI wizard (full registry
+      // and MCP definitions); they must never reach the model.
+      if (Array.isArray(event.messages)) {
+        for (let index = event.messages.length - 1; index >= 0; index--)
+          if (isConfigReceipt(event.messages[index])) event.messages.splice(index, 1)
+      }
       if (event.tools) {
         if (isDndContext(event)) {
-          // Load MCP tools before keeping only the D&D allowlist. Without this
-          // the connected odm_narrator server is invisible to the model.
-          await ctx.mcp.list?.()
+          // Observe MCP status before keeping only the D&D allowlist. Without
+          // this the connected odm_narrator server was invisible to the model.
+          await observeMcp(event.sessionID)
           event.tools = filterDndTools(event.tools)
           const report = {
             id: "dnd-lazy",
@@ -475,10 +590,12 @@ export default {
           // D&D keeps its small allowlist eager, but discovery must still know
           // this session. Otherwise a missing MCP loops on "retry next step".
           if (hasDiscovery) discovery.update(event.sessionID, { ...event.tools }, report)
+          // The D&D allowlist is eager: nothing is ever deferred behind discovery.
+          hideDiscovery(event.tools)
           exposure.set(event.sessionID, report)
           return
         }
-        await ctx.mcp.list?.()
+        await observeMcp(event.sessionID)
         const text = (event.messages || []).filter((m) => m.role === "user").at(-1)?.content
         const selection = resolveMcpProfile(registry, {
           mode: await modeFor(event.sessionID, event.agent),
@@ -487,6 +604,7 @@ export default {
         })
         let report = filterMcpTools(event.tools, installed, registry.mcpProfiles, selection)
         if (hasDiscovery) report = discovery.update(event.sessionID, event.tools, report)
+        if (!report.deferred?.length) hideDiscovery(event.tools)
         exposure.set(event.sessionID, {
           ...report,
           agent: event.agent,
@@ -767,6 +885,7 @@ export default {
           }),
       })
     })
+    return () => stopEvents()
   },
 }
 

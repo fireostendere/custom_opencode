@@ -27,6 +27,19 @@ function permissionSessionID(request) {
   return String(request?.sessionID || request?.sessionId || request?.session?.id || '')
 }
 
+// The open chat plus its subagent sessions: a child waiting for approval used
+// to be invisible in the parent, so the run just looked hung.
+function inCurrentFamily(request) {
+  const sid = currentSessionID(), id = permissionSessionID(request)
+  if (!sid || !id) return false
+  return id === sid || (globalThis.CustomOpenCodeSessionFamily?.ids?.() || []).includes(id)
+}
+function familyLabel(request) {
+  const id = permissionSessionID(request)
+  if (!id || id === currentSessionID()) return ''
+  return globalThis.CustomOpenCodeSessionFamily?.label?.(id) || 'субагент'
+}
+
 function permissionKey(request) {
   const sid = permissionSessionID(request)
   const pid = permissionID(request)
@@ -192,6 +205,7 @@ function clearBanner() {
   if (!banner.hidden) banner.hidden = true
   delete banner.dataset.permissionSession
   delete banner.dataset.permissionId
+  delete $('permissionSummary')?.dataset.serverPreview
   if (key !== ':') {
     lastClearBannerAt = Date.now()
     lastClearBannerKey = key
@@ -201,22 +215,24 @@ function clearBanner() {
 function restorePermissionCopy() {
   if (!activePermission) return
   const sid = currentSessionID()
-  if (!sid || permissionSessionID(activePermission) !== sid) {
+  if (!sid || !inCurrentFamily(activePermission)) {
     clearBanner()
     return
   }
   const title = $('permissionTitle')
   const summary = $('permissionSummary')
   const detail = $('permissionDetail')
-  if (title) title.textContent = actionLabel(actionName(activePermission))
-  if (summary) summary.textContent = permissionSummaryForRequest(activePermission)
+  const child = familyLabel(activePermission)
+  if (title) title.textContent = `${child ? `Субагент «${child}» · ` : ''}${actionLabel(actionName(activePermission))}`
+  // control-plane.js owns the line once the server sent a preview for this request.
+  if (summary && summary.dataset.serverPreview !== '1') summary.textContent = permissionSummaryForRequest(activePermission)
   if (detail && detail.textContent !== expectedPermissionDetail) detail.textContent = expectedPermissionDetail
 }
 
 function showPermission(requestRow) {
   const sid = currentSessionID()
   const pid = permissionID(requestRow)
-  if (!sid || !pid || permissionSessionID(requestRow) !== sid || permissionSuppression.isResolved(permissionKey(requestRow))) {
+  if (!sid || !pid || !inCurrentFamily(requestRow) || permissionSuppression.isResolved(permissionKey(requestRow))) {
     clearBanner()
     return
   }
@@ -227,6 +243,7 @@ function showPermission(requestRow) {
   expectedPermissionDetail = permissionDetailText(requestRow)
   const banner = $('permissionBanner')
   if (!banner) return
+  if (banner.dataset.permissionId !== pid) delete $('permissionSummary')?.dataset.serverPreview
   banner.dataset.permissionSession = sid
   banner.dataset.permissionId = pid
   restorePermissionCopy()
@@ -250,7 +267,7 @@ async function refreshPermission() {
     }
     const directory = await sessionDirectory(sid)
     if (!directory || currentSessionID() !== sid) return
-    const rows = (await permissionRequests(directory)).filter((item) => permissionSessionID(item) === sid)
+    const rows = (await permissionRequests(directory)).filter((item) => inCurrentFamily(item))
     if (currentSessionID() !== sid) return
 
     permissionSuppression.prune()
@@ -297,7 +314,7 @@ async function sendPermissionReply(requestRow, reply) {
 async function handlePermissionAction(button, event) {
   const requestRow = activePermission
   const sid = currentSessionID()
-  if (!requestRow || permissionSessionID(requestRow) !== sid) {
+  if (!requestRow || !sid || !inCurrentFamily(requestRow)) {
     clearBanner()
     refreshPermission()
     return
@@ -330,7 +347,7 @@ function installPermissionScope() {
     const bannerPid = banner.dataset.permissionId || ''
     if (bannerSid && bannerPid && bannerSid === sid) return
     const pid = permissionID(activePermission)
-    if (!sid || !activePermission || permissionSessionID(activePermission) !== sid || banner.dataset.permissionSession !== sid || banner.dataset.permissionId !== pid) {
+    if (!sid || !activePermission || !inCurrentFamily(activePermission) || banner.dataset.permissionSession !== sid || banner.dataset.permissionId !== pid) {
       clearBanner()
       queueMicrotask(refreshPermission)
     }
@@ -350,7 +367,7 @@ function installPermissionScope() {
     const payload = event.detail
     if (payload?.type === 'permission.asked') {
       const requestRow = permissionFromEvent(payload)
-      if (requestRow && permissionSessionID(requestRow) === currentSessionID()) showPermission(requestRow)
+      if (requestRow && inCurrentFamily(requestRow)) showPermission(requestRow)
       return
     }
     if (['permission.replied', 'permission.rejected', 'permission.cancelled'].includes(payload?.type)) refreshPermission()

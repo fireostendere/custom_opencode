@@ -42,16 +42,27 @@ function sessionIdFromHash() {
   return match ? decodeURIComponent(match[1]) : null
 }
 
+// A session's directory never changes: resolve it once instead of one
+// GET /api/session/:id per slash-palette keystroke.
+const directoryBySession = new Map()
+let scratchDirectory = null
 async function selectedDirectory() {
   const id = sessionIdFromHash()
   if (id) {
-    try {
-      const session = dataOf(await request(`/api/session/${encodeURIComponent(id)}`))
-      if (session?.location?.directory) return session.location.directory
-    } catch {}
+    // Cache the in-flight lookup too: fast typing fires several keystrokes
+    // before the first answer arrives.
+    if (!directoryBySession.has(id)) {
+      if (directoryBySession.size > 200) directoryBySession.clear()
+      directoryBySession.set(id, request(`/api/session/${encodeURIComponent(id)}`)
+        .then((value) => dataOf(value)?.location?.directory || null)
+        .catch(() => null))
+    }
+    const directory = await directoryBySession.get(id)
+    if (directory) return directory
+    directoryBySession.delete(id)
   }
-  const config = await request('/client-config.json')
-  return config?.scratchDirectory || ''
+  scratchDirectory ??= request('/client-config.json').then((config) => config?.scratchDirectory || '').catch(() => { scratchDirectory = null; return '' })
+  return scratchDirectory
 }
 
 function escapeHtml(value) {
@@ -104,6 +115,13 @@ function stableOpenAILimits(value) {
   return cached ? { ...cached, liveReason:value?.reason || 'snapshot-unavailable' } : value
 }
 
+const PLAN_LABELS = { free:'Free', go:'Go', plus:'Plus', pro:'Pro', prolite:'Pro Lite', team:'Team', business:'Business', enterprise:'Enterprise', edu:'Edu', education:'Edu' }
+export function planLabel(plan) {
+  const id = String(plan || '').toLowerCase()
+  if (!id || id === 'unknown') return 'OK'
+  return PLAN_LABELS[id] || String(plan)
+}
+
 function renderOpenAIQuota(value) {
   if (!value?.available) {
     const reasons = {
@@ -115,12 +133,12 @@ function renderOpenAIQuota(value) {
     return `<section class="quota-provider"><div class="quota-provider-head"><strong>ChatGPT / OpenAI</strong><span class="quota-muted">недоступно</span></div><div class="quota-note">${escapeHtml(reasons[value?.reason] || 'Нет rate-limit snapshot')}</div></section>`
   }
   const windows = [value.primary, value.secondary].filter(Boolean).sort((a, b) => (a.windowDurationMins || 0) - (b.windowDurationMins || 0))
-  const state = value.stale ? 'последние данные' : (value.planType || 'OK')
+  const state = value.stale ? 'последние данные' : planLabel(value.planType)
   return `<section class="quota-provider">
     <div class="quota-provider-head"><strong>ChatGPT / OpenAI</strong><span class="${value.stale ? 'quota-muted' : 'quota-good'}">${escapeHtml(state)}</span></div>
     ${windows.map((window) => {
       const remaining = Number(window.remainingPercent)
-      return `<div class="quota-row"><div class="quota-label"><span>${escapeHtml(windowLabel(window.windowDurationMins))}</span><strong>${Number.isFinite(remaining) ? `${remaining}%` : '—'}</strong></div>${progress(remaining, quotaTone(remaining))}<div class="quota-reset">${escapeHtml(resetText(window.resetsAt))}</div></div>`
+      return `<div class="quota-row"><div class="quota-label"><span>${escapeHtml(windowLabel(window.windowDurationMins))}</span><strong>${Number.isFinite(remaining) ? `${remaining}%` : '—'}</strong></div>${progress(remaining, quotaTone(remaining))}<div class="quota-reset">${Number.isFinite(remaining) ? `${remaining}% осталось` : ''}${window.resetsAt ? ` · ${escapeHtml(resetText(window.resetsAt))}` : ''}</div></div>`
     }).join('') || '<div class="quota-note">Rate-limit окна не возвращены.</div>'}
     ${value.stale ? '<div class="quota-note">Live-опрос временно недоступен; показан последний успешный snapshot.</div>' : ''}
   </section>`
@@ -138,6 +156,7 @@ function renderQwenWindow(window, fallbackLimit, fallbackMinutes) {
 }
 
 function renderQwenQuota(value) {
+  if (value?.state === 'disabled') return '<section class="quota-provider"><div class="quota-provider-head"><strong>Qwen</strong><span class="quota-muted">не используется</span></div></section>'
   const isExpired = value?.state === 'expired' || value?.reason === 'session-expired'
   const state = value?.state === 'ok' ? 'OK' : value?.state === 'exhausted' ? 'исчерпан' : (isExpired ? 'сессия истекла' : 'нет probe')
   const stateClass = value?.state === 'exhausted' || isExpired ? 'quota-bad' : value?.state === 'ok' ? 'quota-good' : 'quota-muted'
@@ -218,14 +237,17 @@ function commandDescription(command) {
 async function loadCommands(force = false) {
   const directory = await selectedDirectory()
   const cached = commandCache.get(directory)
-  if (!force && cached && Date.now() - cached.at < COMMAND_CACHE_MS) return cached.items
+  if (!force && cached && (cached.pending || Date.now() - cached.at < COMMAND_CACHE_MS)) return cached.pending || cached.items
   const params = new URLSearchParams()
   if (directory) params.set('location[directory]', directory)
-  const raw = dataOf(await request(`/api/command${params.size ? `?${params}` : ''}`))
-  const remote = (Array.isArray(raw) ? raw : []).map((item) => typeof item === 'string' ? { name:item } : item).filter((item) => commandName(item) && !RETIRED_COMMANDS.has(commandName(item).toLowerCase()))
-  const items = remote
-  commandCache.set(directory, { at:Date.now(), items })
-  return items
+  const pending = request(`/api/command${params.size ? `?${params}` : ''}`).then((value) => {
+    const raw = dataOf(value)
+    const items = (Array.isArray(raw) ? raw : []).map((item) => typeof item === 'string' ? { name:item } : item).filter((item) => commandName(item) && !RETIRED_COMMANDS.has(commandName(item).toLowerCase()))
+    commandCache.set(directory, { at:Date.now(), items })
+    return items
+  }, (error) => { commandCache.delete(directory); throw error })
+  commandCache.set(directory, { at:0, items:[], pending })
+  return pending
 }
 
 function slashQuery() {
@@ -261,11 +283,15 @@ function renderPalette() {
   palette.querySelector('.slash-item.active')?.scrollIntoView({ block:'nearest' })
 }
 
+let paletteSeq = 0
 async function updatePalette() {
   const query = slashQuery()
+  const seq = ++paletteSeq
   if (query === null) { closePalette(); return }
   try {
     const commands = await loadCommands()
+    // Out-of-order answers must not overwrite the palette for newer input.
+    if (seq !== paletteSeq || slashQuery() !== query) return
     paletteItems = commands.filter((command) => commandName(command).toLowerCase().startsWith(query)).slice(0, 30)
     paletteIndex = Math.min(paletteIndex, Math.max(0, paletteItems.length - 1))
     renderPalette()
@@ -304,6 +330,10 @@ function waitForSessionID(timeout = 8000) {
 async function ensureSessionID() {
   const id = sessionIdFromHash()
   if (id) return id
+  // Commands without an open chat run in a quick scratch session; clicking
+  // "new session" only opened the project picker and timed out.
+  const quick = window.CustomOpenCodeControls?.ensureQuickSession
+  if (quick) { const session = await quick(); if (session?.id) return session.id }
   $('newSession')?.click()
   return waitForSessionID()
 }
@@ -324,15 +354,27 @@ async function executeSlash(value) {
     toast('Команда /doctor удалена', 4000)
     return
   }
-  const sessionID = await ensureSessionID()
-  const body = { command:parsed.command, text:parsed.arguments }
-  await request(`/api/session/${encodeURIComponent(sessionID)}/command`, { method:'POST', body:JSON.stringify(body) })
+  if (slashPending) return
+  slashPending = true
+  // Clear before the POST so a double Enter cannot run the command twice;
+  // restore the text if it fails.
   input.value = ''
   input.dispatchEvent(new Event('input', { bubbles:true }))
   closePalette()
-  toast(`/${parsed.command} выполнена`)
-  setTimeout(() => $('refresh')?.click(), 250)
+  try {
+    const sessionID = await ensureSessionID()
+    const body = { command:parsed.command, text:parsed.arguments }
+    await request(`/api/session/${encodeURIComponent(sessionID)}/command`, { method:'POST', body:JSON.stringify(body) })
+    toast(`/${parsed.command} выполнена`)
+    setTimeout(() => $('refresh')?.click(), 250)
+  } catch (error) {
+    if (!input.value) { input.value = value; input.dispatchEvent(new Event('input', { bubbles:true })) }
+    throw error
+  } finally {
+    slashPending = false
+  }
 }
+let slashPending = false
 
 function bindSlashCommands() {
   const input = $('input')

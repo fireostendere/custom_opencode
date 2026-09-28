@@ -130,3 +130,47 @@ await Promise.race([cancelling, new Promise((_, reject) => setTimeout(() => reje
 releaseLedger()
 await cancelling
 console.log("PASS: cancellation reaches provider while ledger is still pending")
+
+// The final SSE chunk and EOF reach the SDK while the ledger write is pending.
+{
+  let release
+  const pending = new Promise((resolve) => { release = resolve })
+  let recorded = null
+  const held = observeUsage(new Response(bytes), async (usage) => { await pending; recorded = usage })
+  const delivered = await Promise.race([
+    held.text(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("terminal chunk waited for the ledger")), 200)),
+  ])
+  assert.equal(delivered, bytes)
+  assert.equal(recorded, null, "the ledger write is still in flight")
+  release()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(recorded.output, 20)
+  // A rejecting ledger never surfaces into the provider stream.
+  const failing = observeUsage(new Response(bytes), async () => { throw new Error("ledger down") })
+  assert.equal(await failing.text(), bytes)
+  console.log("PASS: terminal bytes are forwarded without waiting for usage accounting")
+}
+
+// Copy-on-write capping: no deep clone of history/media, unchanged fields stay identical.
+{
+  const { bodyChanged } = await import("../config/plugins/tui/lib/request-budget.js")
+  const media = { type: "input_image", image_url: "data:image/png;base64," + "A".repeat(100000) }
+  const body = { input: [{ role: "user", content: [media] }], max_output_tokens: 512, reasoning: { effort: "high" } }
+  const capped = capRequestBody(body, 1024, false, "openai", "https://api.openai.com/v1/responses")
+  assert.equal(capped.input, body.input, "history/media must be shared, not cloned")
+  assert.equal(capped.reasoning, body.reasoning)
+  assert.equal(bodyChanged(body, capped), false, "a body inside the allocation is unchanged")
+  assert.equal(bodyChanged(body, capRequestBody(body, 256, false, "openai", "https://api.openai.com/v1/responses")), true)
+  assert.equal(bodyChanged(body, capRequestBody(body, 1024, true, "openai", "https://api.openai.com/v1/responses")), false, "no tools to strip")
+  const thinking = { messages: [], max_tokens: 4096, thinking: { type: "enabled", budget_tokens: 4000 } }
+  const thinkingCapped = capRequestBody(thinking, 1024)
+  assert.equal(thinkingCapped.thinking.budget_tokens, 1023)
+  assert.equal(thinking.thinking.budget_tokens, 4000, "nested fields are copied, never mutated")
+  const gemini = { contents: [], generationConfig: { maxOutputTokens: 512, temperature: 0 } }
+  assert.equal(capRequestBody(gemini, 1024).generationConfig, gemini.generationConfig)
+  const geminiCapped = capRequestBody(gemini, 100)
+  assert.deepEqual(geminiCapped.generationConfig, { maxOutputTokens: 100, temperature: 0 })
+  assert.equal(gemini.generationConfig.maxOutputTokens, 512)
+  console.log("PASS: copy-on-write capping shares payloads and reports unchanged bodies")
+}

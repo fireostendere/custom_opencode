@@ -48,9 +48,23 @@ def _unique_dependencies(values: Iterable[object] | None, task_id: str | None = 
 
 
 def _validate_existing(store: Any, dependencies: list[str]) -> None:
-    missing = [dependency for dependency in dependencies if store.get_task(dependency) is None]
+    # Existence only: never decode dependency rows (attachments included).
+    lookup = getattr(store, "task_states", None)
+    if callable(lookup):
+        known = lookup(dependencies)
+        missing = [dependency for dependency in dependencies if dependency not in known]
+    else:
+        missing = [dependency for dependency in dependencies if store.get_task(dependency) is None]
     if missing:
         raise ValueError("unknown task dependencies: " + ", ".join(missing[:20]))
+
+
+def _current_state(store: Any, task_id: str) -> str | None:
+    lookup = getattr(store, "task_state", None)
+    if callable(lookup):
+        return lookup(task_id)
+    task = store.get_task(task_id)
+    return None if task is None else str(task.get("state") or "")
 
 
 def _depends_on(store: Any, start: str, target: str, seen: set[str] | None = None) -> bool:
@@ -99,10 +113,9 @@ def install(store: Any) -> None:
 
     def transition(task_id: str, state: str, **kwargs):
         with invariant_lock:
-            task = store.get_task(task_id)
-            if task is None:
+            current = _current_state(store, task_id)
+            if current is None:
                 raise KeyError(task_id)
-            current = str(task.get("state") or "")
             target = str(state)
             if current != target and target not in ALLOWED_TRANSITIONS.get(current, set()):
                 raise ValueError(f"invalid task transition: {current} -> {target}")

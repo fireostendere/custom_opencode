@@ -1,6 +1,10 @@
 import { startEvents } from '../events.js'
 
 const TOOLS = new Set(['odm_narrator', 'odm_narrator_odm_narrator'])
+const RESET_EVENTS = new Set([
+  'session.deleted', 'session.moved', 'session.agent.selected', 'session.model.selected',
+  'session.compaction.started', 'session.compaction.ended', 'session.compacted',
+])
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 const sequence = value => Number.isSafeInteger(value) && value >= 0
 const keyOf = input => JSON.stringify([input.campaignId, input.projection ?? 'live'])
@@ -114,10 +118,11 @@ export default {
         tool.execute = cache.wrap(tool.execute)
       })
     })
-    const compaction = await ctx.session.hook('compaction', event => cache.reset(event.sessionID))
+    // The native host has no 'compaction' hook; compaction is observable only
+    // as session events. A compacted transcript no longer proves the baseline.
     const stop = startEvents(ctx, event => {
-      if (['session.deleted', 'session.moved', 'session.agent.selected', 'session.model.selected'].includes(event.type)) cache.reset(event.data?.sessionID)
+      if (RESET_EVENTS.has(event?.type)) cache.reset(event.data?.sessionID)
     })
-    return async () => { stop(); await registration.dispose(); await compaction.dispose() }
+    return async () => { stop(); await registration?.dispose?.() }
   },
 }

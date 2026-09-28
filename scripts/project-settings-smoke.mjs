@@ -8,7 +8,7 @@ const source = (await readFile(new URL('advanced-features.js', root), 'utf8'))
 const { state, applyProjectDefaultsOnce, saveProjectSettings } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
 const stored = new Map(), switched = [], requests = [], elements = new Map()
 globalThis.sessionStorage = { getItem:key=>stored.get(key), setItem:(key,value)=>stored.set(key,value) }
-globalThis.window = { CustomOpenCodeControls:{ changeModel:async model=>{ switched.push(model);return true } } }
+globalThis.window = { CustomOpenCodeControls:{ changeModel:async model=>{ switched.push(model);return true }, wasCreatedHere:id=>id!=='foreign' } }
 globalThis.document = { getElementById:id=>elements.get(id) }
 globalThis.fetch = async (path, options) => {
   requests.push({ path, options })
@@ -20,6 +20,9 @@ await applyProjectDefaultsOnce()
 assert.deepEqual(switched, [{providerID:'openai',id:'gpt-6-sol-orchestrated'}], 'Saved SOL alias must actually select SOL')
 await applyProjectDefaultsOnce()
 assert.equal(switched.length, 1, 'Do not reapply a default over a manual selection')
+state.sessionID = 'foreign'
+await applyProjectDefaultsOnce()
+assert.equal(switched.length, 1, 'An empty chat created in the TUI or another tab keeps its model')
 state.sessionID = 'history'
 globalThis.fetch = async () => Response.json({ data:[{id:'msg'}] })
 await applyProjectDefaultsOnce()

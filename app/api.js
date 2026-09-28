@@ -373,12 +373,13 @@ export async function getClientConfig() {
   return request('/client-config.json')
 }
 
-export function connectEvents(onEvent, onError) {
+export function connectEvents(onEvent, onError, onOpen) {
   const source = new EventSource('/api/event')
   source.onmessage = (event) => {
     try { onEvent(JSON.parse(event.data)) }
     catch (error) { console.warn('Invalid OpenCode event', error) }
   }
-  source.onerror = () => onError?.()
+  source.onerror = () => onError?.(source)
+  source.onopen = () => onOpen?.(source)
   return source
 }

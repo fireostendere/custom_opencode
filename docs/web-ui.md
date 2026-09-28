@@ -34,7 +34,39 @@ Default — `OPENCODE_WEB_ALLOW_LOCAL=0`: даже прямой loopback тре�
 
 Это принципиально важно для topology `телефон → Tailscale/Caddy/nginx → 127.0.0.1:4098`: локальный reverse proxy сам подключается с loopback, но его удалённый пользователь **не** получает localhost bypass и обязан пройти обычный login.
 
+Браузер тоже подключается к localhost, в том числе от имени чужих страниц. Поэтому bypass **не** действует для запросов, которые браузер помечает как пришедшие с другого сайта или другого localhost-порта (`Sec-Fetch-Site: cross-site`/`same-site`, либо `Origin`, не совпадающий с `Host`). Работают: локальные инструменты без browser-заголовков (curl, скрипты, TUI/plugins — Node `fetch` шлёт только `sec-fetch-mode`) и собственная same-origin страница web UI.
+
+Bypass никогда не подтверждает действия, которые меняют права агента, credentials или уничтожают работу — для них нужна настоящая login-сессия (cookie), даже на localhost:
+
+- ответы на permission-запросы (`/api/session/:id/permission/:id/reply`, legacy `/permissions/:id`, `/client-remote-action.json`) и budget-approval формы;
+- `/client-project-settings.json` (permission rules), `/client-git-revert.json`, `/client-task-sandbox.json`, `/client-worktree-merge.json`;
+- `/client-provider-config.json` и изменяющие запросы к `/api/config`, `/api/mcp`, `/api/provider`, `/api/auth`, `/api/session/:id/command`.
+
+Такие запросы по bypass получают `401` с пояснением; web UI открывает страницу входа (она не перенаправляет обратно, пока есть только bypass без cookie), после входа пользователь возвращается в тот же диалог. `/auth/session` возвращает `localBypass` и `human` (есть ли настоящая login-сессия).
+
 Для любого LAN/tailnet/reverse-proxy deployment оставляйте `OPENCODE_WEB_ALLOW_LOCAL=0`.
+
+## Защита от CSRF и чужих страниц
+
+Один общий фильтр проверяет каждый запрос до любых обработчиков:
+
+- запрос, который браузер пометил как пришедший с другого сайта/порта (`Sec-Fetch-Site` не `same-origin`/`none`, или `Origin` не совпадает с `Host`), получает `403`. Исключение — переход (`Sec-Fetch-Mode: navigate`, GET/HEAD) на страницу приложения: ссылка извне открывает login, но не достаёт до `/api/*`, `/client-*`, `/auth/*`, `/internal/*`;
+- тело изменяющего запроса должно быть `Content-Type: application/json`, иначе `415` (cross-site формы и `text/plain` не проходят);
+- `Transfer-Encoding` отклоняется (`400`), а соединение закрывается всякий раз, когда тело запроса не было прочитано полностью (защита от request smuggling за reverse proxy).
+
+За reverse proxy публичный `Origin` сверяется с `X-Forwarded-Host`/`Forwarded: host=` от proxy на том же хосте. Если proxy переписывает `Host` без этих заголовков (nginx по умолчанию), перечислите публичные origins в `OPENCODE_WEB_ALLOWED_ORIGINS`.
+
+`/internal/runtime/*` на публичном порту обслуживаются только прямым loopback-запросам без forwarding/browser-заголовков (владелец этих маршрутов — private policy listener на `127.0.0.1:4099`); остальным — `404`. Неверный `X-OpenCode-Runtime` на обоих портах отвечает `403` с глобальной задержкой (не более ~4 попыток в секунду), корректный token не ждёт.
+
+## Статика, кэш и заголовки
+
+Сервер отдаёт из `app/` только ассеты из allowlist (`.html .js .css .png .svg .ico .webmanifest`); dotfiles, `__pycache__`, `*.py`, `README.md` и любые другие типы — `404`. Файлы держатся в памяти и сверяются с диском (mtime/size) не чаще раза в 2 секунды; ответы несут strong `ETag` (`If-None-Match` → `304`), gzip для текстовых типов (`Content-Encoding: gzip`, `Vary: Accept-Encoding`) и по-прежнему `Cache-Control: no-cache`, поэтому обновления применяются сразу.
+
+Все статические ответы получают `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `X-Frame-Options: DENY`; HTML — `Content-Security-Policy` (`script-src 'self'` плюс sha256 inline-bootstrap страницы входа, без inline-обработчиков и `javascript:`). `'unsafe-eval'` оставлен только для browser-автоматизации e2e (Playwright `wait_for_function`); само приложение строки не исполняет.
+
+## Admin password
+
+Web server не стартует, если `OPENCODE_SERVER_PASSWORD` пуст или равен `CHANGE_ME`. Пустой пароль никогда не принимается при входе. Пароли в любой раскладке (в том числе кириллица) сравниваются как UTF-8 bytes, а каждая ошибка проверки учитывается login throttle.
 
 ## Настройки оформления
 
@@ -110,9 +142,9 @@ Mobile dialogs используют доступный `dvh` viewport вмест
 
 ## Execution mode
 
-Web UI всегда работает в `Build`: для обычной модели выбирается `build-direct`, если compatibility agent доступен, иначе native `build`; для оркестрированной модели сохраняется native `build`. Переключатель режима скрыт, provider/model/variant не меняются.
+Web UI и TUI работают с одними сессиями и одними видимыми агентами `build`/`plan` (`dnd-narrator` для DnD Edition). Переключателя режима в web нет, и web никогда не меняет агента или модель чата при просмотре: чат, переведённый в Plan из TUI, помечается чипом «План · только чтение — вернуть Build». Смена модели или агента в TUI сразу отображается в web. Legacy `build-direct`/`plan-direct` старых сессий мигрируют на `build`/`plan` с сохранением provider/model/variant.
 
-Native `plan`/`plan-direct` остаются доступны в TUI и CLI. Оркестрация по-прежнему выбирается моделью/profile в model picker.
+Оркестрация по-прежнему выбирается моделью/profile в model picker. Явный профиль Task Center (например «Разработка») при каждой отправке переключает модель чата на модель профиля; пока он активен, рядом с выбором модели виден чип «Профиль: … — сбросить».
 
 В поле текущего диалога `ArrowUp` и `ArrowDown` перебирают только пользовательские prompt’ы этой session. Текущий draft сохраняется и возвращается при переходе вниз; история других сессий и проектов не используется.
 

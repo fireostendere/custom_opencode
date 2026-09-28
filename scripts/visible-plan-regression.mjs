@@ -119,6 +119,16 @@ try {
     messageID: "msg_5",
     tool: "edit",
   })
+  // Subagents never maintain the session plan: the tool is not exposed to them.
+  for (const agent of ["role-builder", "sol-role-reviewer", "sol-fast-reader", "fast-reader", "dnd-narrator"]) {
+    const subagent = { sessionID: `ses_${agent}`, agent, system: [], messages: context.messages, tools: { plan_update: {}, read: {} } }
+    await contextHook(subagent)
+    assert.deepEqual(Object.keys(subagent.tools), ["read"], `${agent} must not see plan_update`)
+  }
+  const primaryTools = { ...context, system: [], tools: { plan_update: {}, read: {} } }
+  await contextHook(primaryTools)
+  assert.deepEqual(Object.keys(primaryTools.tools), ["plan_update", "read"], "Build keeps plan_update")
+  assert.match(planTool.description, /same step as other tool calls/)
   const policy = await import(pathToFileURL(resolve(root, "config/plugins/tui/lib/context-policy.js")).href)
   policy.setSessionContextClass("ses_bare_plan", "bare")
   const bareContext = {
@@ -137,7 +147,7 @@ try {
   )
   await cleanup()
   console.log(
-    "Visible plan regression OK: pinned tool, normal mutation gate, bare bypass, atomic session plan",
+    "Visible plan regression OK: pinned tool, normal mutation gate, bare bypass, atomic session plan, primary-only exposure",
   )
 } finally {
   rmSync(planDirectory, { recursive: true, force: true })

@@ -1,10 +1,14 @@
 import { startEvents } from "../events.js"
+import { isDndContext } from "./orchestrated-qwen.js"
 
 const TOOL = "dnd_watch"
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const EVENTS = new Set(["pending_roll", "roll_requested", "roll_result", "pending_roll_updated", "global_turn_ready", "global_turn_narrator_trigger", "lead_response_requested", "spotlight_ready"])
 const ARRAYS = new Set(["messages", "events", "asks", "playerWhispers"])
 const sequence = value => Number.isSafeInteger(value) && value >= 0
+// Finished waits stay readable through status for a while, then are dropped.
+const FINISHED_RETENTION_MS = 10 * 60_000
+const MAX_ENTRIES = 256
 
 function reasonFor(state, afterSeq) {
   if (state.asks?.some(ask => ask.status === "pending")) return "ask"
@@ -57,6 +61,7 @@ export function createDndWatcher({ read, wake, now = Date.now }) {
     if (!active(entry)) return
     entry.status = status
     entry.reason = reason
+    entry.finishedAt = now()
     try { await wake(entry.context.sessionID, view(entry), entry.controller.signal) }
     catch { if (entries.get(entry.context.sessionID) === entry) entry.status = "notification_failed" }
   }
@@ -73,6 +78,12 @@ export function createDndWatcher({ read, wake, now = Date.now }) {
         throw new Error("Stop the active watcher before changing campaign or cursor")
       }
       stop(context.sessionID)
+      // Bound the map: evict the oldest finished entries first.
+      for (const [id, old] of entries) {
+        if (entries.size < MAX_ENTRIES) break
+        if (old.status !== "waiting") entries.delete(id)
+      }
+      if (entries.size >= MAX_ENTRIES) throw new Error("Too many active DnD watchers")
       const controller = new AbortController()
       const entry = {
         status: "waiting", campaignId: input.campaignId, afterSeq: input.afterSeq, scanSeq: input.afterSeq,
@@ -86,6 +97,8 @@ export function createDndWatcher({ read, wake, now = Date.now }) {
     status: sessionID => view(entries.get(sessionID)),
     close: () => { for (const id of entries.keys()) stop(id) },
     async tick() {
+      for (const [id, entry] of entries)
+        if (entry.status !== "waiting" && now() - (entry.finishedAt ?? now()) > FINISHED_RETENTION_MS) entries.delete(id)
       await Promise.all([...entries.values()].map(async entry => {
         if (!active(entry)) return
         if (now() >= entry.expiresAt) { await finish(entry, "timed_out", "deadline"); entry.controller.abort(); return }
@@ -120,6 +133,13 @@ export default {
   id: "custom.dnd-watch",
   async setup(ctx) {
     const registrations = []
+    // The watcher is a game-only tool: hide its schema from every other lane.
+    if (ctx.session.hook)
+      registrations.push(await ctx.session.hook("context", event => {
+        if (!event?.tools || typeof event.tools !== "object" || isDndContext(event) || !Object.hasOwn(event.tools, TOOL)) return
+        const { [TOOL]: _hidden, ...tools } = event.tools
+        event.tools = tools
+      }))
     let narrator, readerRegistration
     async function getNarrator() {
       // Register the reader at first use, after native MCP discovery has settled.
@@ -198,7 +218,7 @@ export default {
     return async () => {
       clearInterval(timer); stopEvents(); watcher.close()
       if (readerRegistration) await (await readerRegistration).dispose()
-      await Promise.allSettled(registrations.map(registration => registration.dispose()))
+      await Promise.allSettled(registrations.map(registration => registration?.dispose?.()))
     }
   },
 }

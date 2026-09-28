@@ -79,7 +79,7 @@ def run() -> dict[str, Any]:
             "composerActionState",
             "action.kind === 'queue'",
             "action.kind === 'stop'",
-            "function currentMode() {\n  return 'build'",
+            "function currentMode() {\n  return modeFromAgent(rawActiveAgent())",
             "dataset.modelProfile",
         ),
         errors,

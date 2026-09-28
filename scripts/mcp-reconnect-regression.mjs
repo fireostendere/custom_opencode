@@ -8,8 +8,21 @@ assert.equal(typeof cleanup, 'function', 'Native plugin cleanup must be callable
 await cleanup()
 assert.equal(disposed, true)
 
+// A server that never connected (doomed first start) is never retried.
+{
+  let clock = 0
+  const attempts = []
+  const doomed = createMcpRecovery({
+    now: () => clock,
+    list: async () => [{ name:'fabric', status:{ status:'failed', error:'Connection closed' } }],
+    connect: async name => { attempts.push(name) },
+  })
+  for (const at of [0, 2000, 12000, 42000]) { clock = at; await doomed.tick() }
+  assert.equal(attempts.length, 0, 'a never-connected server must not be reconnected')
+}
+
 let clock = 0
-let rows = [{ name:'diptrace', status:{ status:'failed', error:'Connection closed' } }]
+let rows = [{ name:'diptrace', status:{ status:'connected' } }]
 const calls = []
 let finish
 const recovery = createMcpRecovery({
@@ -17,6 +30,8 @@ const recovery = createMcpRecovery({
   list: async () => structuredClone(rows),
   connect: async name => { calls.push(name); if (finish) await new Promise(resolve => { finish = resolve }) },
 })
+await recovery.tick()
+rows[0].status = { status:'failed', error:'Connection closed' }
 await recovery.tick()
 assert.equal(calls.length, 0)
 clock = 2000
@@ -46,7 +61,9 @@ assert.equal(calls.length, 4, 'Disabled/auth failures must not reconnect')
 rows[0].status = { status:'failed', error:'Connection closed' }; await recovery.tick()
 rows = []; clock += 2000; await recovery.tick()
 assert.equal(calls.length, 4, 'Removed server must remain removed')
-rows = [{ name:'diptrace', status:{ status:'failed', error:'Connection closed' } }]
+rows = [{ name:'diptrace', status:{ status:'connected' } }]
+await recovery.tick()
+rows[0].status = { status:'failed', error:'Connection closed' }
 await recovery.tick(); recovery.stop(); clock += 2000; await recovery.tick()
 assert.equal(calls.length, 4, 'Disposed plugin must stop retrying')
 let reads = 0
@@ -54,9 +71,9 @@ let unwanted = 0
 clock = 0
 const manualDisconnect = createMcpRecovery({
   now: () => clock,
-  list: async () => [{ name:'diptrace', status: ++reads < 3 ? { status:'failed', error:'Connection closed' } : { status:'disabled' } }],
+  list: async () => [{ name:'diptrace', status: ++reads === 1 ? { status:'connected' } : reads < 4 ? { status:'failed', error:'Connection closed' } : { status:'disabled' } }],
   connect: async () => { unwanted++ },
 })
-await manualDisconnect.tick(); clock = 2000; await manualDisconnect.tick()
+await manualDisconnect.tick(); await manualDisconnect.tick(); clock = 2000; await manualDisconnect.tick()
 assert.equal(unwanted, 0, 'Recheck a manual disconnect immediately before reconnect')
-console.log('MCP recovery regression passed: backoff, bounded retries, flapping, concurrency, disabled/auth/removal, cleanup')
+console.log('MCP recovery regression passed: never-connected skip, backoff, bounded retries, flapping, concurrency, disabled/auth/removal, cleanup')

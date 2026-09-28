@@ -42,4 +42,37 @@ assert.equal(spawned, 1)
 assert.equal(exitAwaited, false)
 assert.equal(fetches, 2)
 assert.deepEqual(fetchedURLs, ["http://router.test", "http://router.test"])
-console.log("Lazy local router startup regression passed")
+// A failed start backs off: no new start script (and no 60 s poll) per request.
+{
+  let spawns = 0
+  let healthy = false
+  globalThis.fetch = async () => ({ ok: healthy })
+  globalThis.Bun = {
+    spawn() {
+      spawns++
+      return { exitCode: 1 }
+    },
+    sleep: async () => {},
+  }
+  const { ensureRouter } = await import(`../config/plugins/lazy-local-router.js?backoff=${Date.now()}`)
+  await assert.rejects(ensureRouter(), /Failed to start local model router/)
+  assert.equal(spawns, 1)
+  await assert.rejects(ensureRouter(), /failed to start recently/)
+  await assert.rejects(ensureRouter({ dnd: true }), /failed to start recently/)
+  assert.equal(spawns, 1, "the back-off window must not spawn another start")
+  healthy = true
+  await ensureRouter()
+  assert.equal(spawns, 1, "a router started by other means is used at once")
+  healthy = false
+  await assert.rejects(ensureRouter(), /Failed to start local model router/)
+  assert.equal(spawns, 2, "a healthy observation clears the back-off")
+  const realNow = Date.now
+  Date.now = () => realNow() + 5 * 60_000 + 1
+  try {
+    await assert.rejects(ensureRouter(), /Failed to start local model router/)
+  } finally {
+    Date.now = realNow
+  }
+  assert.equal(spawns, 3, "the start is retried after the back-off")
+}
+console.log("Lazy local router startup regression passed (incl. 5-minute start back-off)")

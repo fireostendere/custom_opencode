@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import json
 import os
+# Registry/template contract of the whole product; install.sh runs this with
+# the local .env loaded, which may switch the Alibaba Token Plan off.
+os.environ["OPENCODE_ALIBABA_ENABLED"] = "1"
 from pathlib import Path
 import sys
 
@@ -95,10 +98,16 @@ assert effort_plan("openai/gpt-6-luna-direct", "max")["settings"] == {"reasoning
 
 registry = CapabilityRegistry([])
 profiles = registry.profiles()
+# Unpaid Alibaba Token Plan: only routes that never touch bailian-cli remain.
+os.environ["OPENCODE_ALIBABA_ENABLED"] = "0"
+try:
+    assert set(registry.profiles()) == {"direct", "sol-orchestrated", "sol-review", "dnd-edition"}, set(registry.profiles())
+finally:
+    os.environ["OPENCODE_ALIBABA_ENABLED"] = "1"
 assert set(profiles) == EXPECTED_PROFILES
 assert profiles["fast"]["builderModel"] == EXPECTED_ROLES["reader"]
-assert profiles["direct"]["agentBuild"] == "build-direct"
-assert profiles["direct"]["agentPlan"] == "plan-direct"
+assert profiles["direct"]["agentBuild"] == "build"
+assert profiles["direct"]["agentPlan"] == "plan"
 assert profiles["build"]["builderModel"] == EXPECTED_ROLES["builder"]
 assert profiles["build"]["readerModel"] == EXPECTED_ROLES["reader"]
 assert profiles["build"]["plannerModel"] == EXPECTED_ROLES["planner"]
@@ -199,7 +208,7 @@ assert deepseek["high"]["settings"]["effort"] == "high"
 assert deepseek["max"]["settings"]["effort"] == "max"
 assert glm["max"]["settings"]["effort"] == "max"
 
-assert agents["title"]["model"] == "bailian-cli/qwen3.8-flash#low"
+assert agents["title"]["model"] == "openai/gpt-6-luna-direct#none"
 assert agents["fast-reader"]["model"] == "bailian-cli/qwen3.8-flash#low"
 for direct_agent, denied_actions in {
     "build-direct": {

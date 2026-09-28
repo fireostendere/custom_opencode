@@ -20,10 +20,11 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTROL = ROOT / "scripts" / "webserver-control.py"
 
 
-def run_control(arguments: list[str], env: dict[str, str]) -> tuple[int, dict[str, object]]:
+def run_control(arguments: list[str], env: dict[str, str], stdin: str | None = None) -> tuple[int, dict[str, object]]:
     result = subprocess.run(
         [sys.executable, str(CONTROL), *arguments],
         env=env,
+        input=stdin,
         capture_output=True,
         text=True,
         check=False,
@@ -172,6 +173,16 @@ path.write_text(json.dumps(state))
 
         # Recreate unit for remaining tests
         unit.write_text("[Unit]\n", encoding="utf-8")
+
+        # The TUI wizard sends passwords on stdin so they never appear in argv.
+        code, value = run_control(["user-add", "--username", "carol", "--password-stdin"], env, stdin="carolpass123\n")
+        assert code == 0 and value["ok"] is True and value["username"] == "carol", value
+        code, value = run_control(["user-add", "--username", "dave", "--password-stdin"], env, stdin="\n")
+        assert code != 0, "an empty stdin password must be rejected"
+        code, value = run_control(["user-add", "--username", "dave", "--password", "x", "--password-stdin"], env, stdin="davepass123\n")
+        assert code != 0, "--password and --password-stdin are exclusive"
+        code, value = run_control(["user-remove", "--username", "carol"], env)
+        assert code == 0, value
 
         # Test user-add with explicit password
         code, value = run_control(["user-add", "--username", "alice", "--password", "alicepass123"], env)

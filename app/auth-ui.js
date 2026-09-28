@@ -48,10 +48,14 @@ async function refreshAuthState({ redirect = true } = {}) {
       return null
     }
     const data = await response.json()
-    if (accountUser) accountUser.textContent = data.localBypass ? `${data.user} · локально` : data.user
+    // A real login session may coexist with the local bypass; only that
+    // session can confirm permissions, approvals and project/provider changes.
+    // Older servers omit `human`; treat that as the previous bypass-only view.
+    const bypassOnly = !!data.localBypass && data.human !== true
+    if (accountUser) accountUser.textContent = bypassOnly ? `${data.user} · локально` : data.user
     if (logoutButton) {
-      logoutButton.hidden = !!data.localBypass
-      logoutButton.title = data.localBypass ? 'Локальный доступ разрешён без авторизации' : 'Выйти из OpenCode'
+      logoutButton.hidden = bypassOnly
+      logoutButton.title = bypassOnly ? 'Локальный доступ разрешён без авторизации' : 'Выйти из OpenCode'
     }
     return data
   } catch {

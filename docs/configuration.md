@@ -248,7 +248,7 @@ PONYTAIL_DEFAULT_MODE=full
 
 Для чисто разговорного одношагового ответа без инструментов формальный план не создаётся. Во всех остальных случаях модель может сначала изучить контекст read-only инструментами, затем обязана вызвать `plan_update` до первой изменяющей операции. Tool атомарно записывает 1-7 пунктов в `~/.opencode/plan/<sessionID>-plan.md`; повторные вызовы обновляют статусы. Harness отклоняет shell/edit/write/patch/subagent и неизвестные потенциально изменяющие tools, пока план текущего пользовательского хода не опубликован.
 
-Web UI всегда отправляет session через `build` или `build-direct`; `plan_update` сохраняет provider/model/variant и сразу публикует план в верхнюю плашку и боковую workspace-панель. Native `plan`/`plan-direct` в TUI/CLI публикуют итоговый чек-лист туда же перед ответом. При работе через custom Runtime V2/V3 дополнительно используются durable task queue, checkpoints и typed handoff.
+Web UI отправляет session под её собственным агентом (`build`, либо `plan`, если чат переведён в Plan из TUI); `plan_update` сохраняет provider/model/variant и сразу публикует план в верхнюю плашку и боковую workspace-панель. Native `plan` (и legacy `plan-direct` у старых сессий) в TUI/CLI публикуют итоговый чек-лист туда же перед ответом. При работе через custom Runtime V2/V3 дополнительно используются durable task queue, checkpoints и typed handoff.
 
 TUI-панель плана поддерживает native V2 Markdown-документы из `~/.opencode/plan` и сохраняет чтение legacy `todowrite` сообщений для старых сессий.
 

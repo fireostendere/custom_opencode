@@ -22,8 +22,11 @@ trap 'rm -rf "$WORKSPACE_TEST_ROOT"' EXIT
 # The verifier exercises fixtures, not the installer's private credentials or
 # existing user state. Never let a sourced .env change a zero-token test's inputs.
 for name in $(compgen -e); do
-  case "$name" in OPENCODE_*|CUSTOM_OPENCODE_*|TOKEN_PLAN_*|GEMINI_*|GOOGLE_*|MCP_RAG_*|DIPTRACE_MCP_*) unset "$name" ;; esac
+  case "$name" in OPENCODE_*|CUSTOM_OPENCODE_*|TOKEN_PLAN_*|GEMINI_*|GOOGLE_*|MCP_RAG_*|DIPTRACE_MCP_*|DND_*|HARDWARE_*) unset "$name" ;; esac
 done
+# server.setting() falls back to the .env file itself, which may switch paid
+# providers off; the contract fixtures describe the whole product.
+export OPENCODE_ALIBABA_ENABLED=1 OPENCODE_LIMITS_QWEN=1
 export HOME="$WORKSPACE_TEST_ROOT/home"
 export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
 mkdir -p "$HOME" "$WORKSPACE_TEST_ROOT/projects/alpha/sub" "$WORKSPACE_TEST_ROOT/outside"
@@ -89,6 +92,11 @@ done
 "$NODE" "$ROOT/scripts/lazy-local-router-regression.mjs"
 "$NODE" "$ROOT/scripts/refresh-coalescing-regression.mjs"
 "$NODE" "$ROOT/scripts/server-runtime-guard-regression.mjs"
+"$NODE" "$ROOT/scripts/audit-fixes-regression.mjs"
+"$NODE" "$ROOT/scripts/hardware-orchestrator-regression.mjs"
+"$NODE" "$ROOT/scripts/mcp-reconnect-regression.mjs"
+"$NODE" "$ROOT/scripts/tool-fabric-config-smoke.mjs"
+"$PYTHON3" "$ROOT/scripts/dnd-super-orchestrator-regression.py"
 "$NODE" "$ROOT/scripts/mcp-profiles-regression.mjs"
 "$NODE" "$ROOT/scripts/tui-add-wizard-regression.mjs"
 "$NODE" "$ROOT/scripts/tui-accounts-regression.mjs"
@@ -96,6 +104,10 @@ done
 "$NODE" "$ROOT/scripts/tui-server-wizard-regression.mjs"
 "$NODE" "$ROOT/scripts/model-selector-smoke.mjs"
 "$NODE" "$ROOT/scripts/tui-jsx-pragma-regression.mjs"
+"$NODE" "$ROOT/scripts/tui-regression.mjs"
+"$NODE" "$ROOT/scripts/tui-clipboard-regression.mjs"
+"$NODE" "$ROOT/scripts/panel-submit-regression.mjs"
+"$NODE" "$ROOT/scripts/location-recovery-regression.mjs"
 "$PYTHON3" "$ROOT/scripts/webserver-control-smoke.py"
 "$PYTHON3" "$ROOT/scripts/web-users-smoke.py"
 "$PYTHON3" "$ROOT/scripts/unified-workspace-regression.py"
@@ -394,8 +406,11 @@ for legacy in ("provider", "agent", "permission"):
     if legacy in config: bad.append(f"legacy V1 top-level field in OpenCode config: {legacy}")
 if "instructions" in config:
     bad.append("V2 instructions config must stay absent; model-aware engineering policy is injected by context-lanes")
-if config.get("model") != "bailian-cli/qwen3.8-max":
-    bad.append("primary default model must be bailian-cli/qwen3.8-max")
+if "model" in config:
+    bad.append("config-level model must stay absent: it outranks the TUI's recent models (default lives in config-manager's catalog)")
+manager_js = (root / "config/plugins/config-manager.js").read_text(encoding="utf-8")
+if 'serviceSetting("OPENCODE_DEFAULT_MODEL") || "openai/gpt-6-luna-direct"' not in manager_js or "catalog.model.default?.set?.(" not in manager_js:
+    bad.append("config-manager must provide the server-side default model through the catalog")
 
 mcp = config.get("mcp", {})
 kb = (mcp.get("servers") or {}).get("kb", {}) if isinstance(mcp, dict) else {}
@@ -475,9 +490,12 @@ for legacy_id in ("build-direct", "plan-direct"):
     legacy_agent = agents.get(legacy_id) or {}
     if legacy_agent.get("mode") != "primary" or legacy_agent.get("hidden") is not True:
         bad.append(f"legacy direct agent must remain hidden compatibility-only: {legacy_id}")
-for agent_id in ("fast-reader", "title"):
-    if (agents.get(agent_id) or {}).get("model") != "bailian-cli/qwen3.8-flash#low":
-        bad.append(f"{agent_id} must use cheap qwen3.8-flash#low")
+if (agents.get("fast-reader") or {}).get("model") != "bailian-cli/qwen3.8-flash#low":
+    bad.append("fast-reader must use cheap qwen3.8-flash#low")
+# Titles run for every new session, so they must not depend on an optional
+# provider subscription (Qwen/Token Plan may be unpaid): no-reasoning Luna.
+if (agents.get("title") or {}).get("model") != "openai/gpt-6-luna-direct#none":
+    bad.append("title must use no-reasoning openai/gpt-6-luna-direct#none")
 if "local-reader" in agents:
     bad.append("obsolete local-reader compatibility agent must stay removed")
 role_routes = {
