@@ -501,6 +501,7 @@ const appearance = readFileSync(resolve(root, "app/appearance.js"), "utf8")
 const appearanceBootstrap = readFileSync(resolve(root, "app/appearance-bootstrap.js"), "utf8")
 const appearanceCss = readFileSync(resolve(root, "app/appearance.css"), "utf8")
 const mobileUi = readFileSync(resolve(root, "app/mobile-ui.js"), "utf8")
+const modalUi = readFileSync(resolve(root, "app/modal-ui.js"), "utf8")
 const authUi = readFileSync(resolve(root, "app/auth-ui.js"), "utf8")
 const login = readFileSync(resolve(root, "app/login.html"), "utf8")
 const loginJs = readFileSync(resolve(root, "app/login.js"), "utf8")
@@ -726,6 +727,24 @@ for (const marker of [
 ]) {
   if (!designSystem.includes(marker))
     throw new Error(`Model dialog scroll contract missing: ${marker}`)
+}
+// Phone sheets close with a swipe down; the drag must yield to a scrolled list,
+// stay non-passive only on the dialog, and close through the shared
+// dialog.close() so the history entry is consumed like any other dismissal.
+for (const marker of [
+  "installSheetGesture",
+  "{ passive: false }",
+  "scrolledInside(",
+  "dismissSheet(",
+  "settleSheet(",
+  "closeDialog(dialog); resetSheet(dialog)",
+  "'translateY(100%)'",
+  "SHEET_QUERY = window.matchMedia('(max-width: 760px)')",
+]) {
+  if (!modalUi.includes(marker)) throw new Error(`Sheet swipe-to-dismiss marker missing: ${marker}`)
+}
+for (const marker of ["dialog.sheet-dragging{transition:none", "dialog.sheet-settling{transition:transform", "--sheet-drag"]) {
+  if (!designSystem.includes(marker)) throw new Error(`Sheet swipe styling missing: ${marker}`)
 }
 if (advanced.includes("/api/question/request"))
   throw new Error("Legacy question request endpoint must stay removed")

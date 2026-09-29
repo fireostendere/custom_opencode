@@ -160,6 +160,63 @@ def modal_dismissal_flow(page, tag: str, opener: str, dialog_id: str) -> bool:
     return ok
 
 
+def touch_drag(page, x: float, y0: float, dy: float, steps: int = 12, pause_ms: int = 16) -> None:
+    """A one-finger vertical drag through CDP: real touch events, unlike page.mouse."""
+    cdp = page.context.new_cdp_session(page)
+    try:
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y0}]})
+        for index in range(1, steps + 1):
+            cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": x, "y": y0 + dy * index / steps}]})
+            page.wait_for_timeout(pause_ms)
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    finally:
+        cdp.detach()
+
+
+def sheet_swipe_flow(page, tag: str, opener: str, dialog_id: str, scroller: str) -> bool:
+    """Phone sheets close with a swipe down; a scrolled list keeps scrolling."""
+    ok = True
+    base_url = page.url
+    is_open = f"document.getElementById('{dialog_id}')?.open === true"
+
+    def open_sheet() -> None:
+        page.click(opener)
+        page.wait_for_selector(f"#{dialog_id}[open]", timeout=5000)
+        page.wait_for_timeout(350)  # let the open animation finish
+
+    open_sheet()
+    box = page.locator(f"#{dialog_id}").bounding_box()
+    x = box["x"] + box["width"] / 2
+    # 1. A short drag from the handle settles back.
+    touch_drag(page, x, box["y"] + 14, 36)
+    page.wait_for_timeout(400)
+    ok &= step(page.evaluate(is_open) and not page.evaluate(f"document.getElementById('{dialog_id}').style.transform"),
+               f"{tag}: short swipe settles the sheet back")
+    # 2. A full drag from the handle closes and consumes the history entry.
+    touch_drag(page, x, box["y"] + 14, 320)
+    wait_dialog_closed(page, dialog_id)
+    wait_modal_history_cleared(page)
+    ok &= step(page.url == base_url, f"{tag}: swipe down closes the sheet and restores history")
+    # 3. A scrolled list scrolls back up instead of closing.
+    open_sheet()
+    page.wait_for_selector(f"{scroller} [data-model]", timeout=5000)
+    page.evaluate(f"document.querySelector('{scroller}').scrollTop = 240")
+    page.wait_for_timeout(100)
+    list_box = page.locator(scroller).bounding_box()
+    touch_drag(page, x, list_box["y"] + 40, 160)
+    page.wait_for_timeout(400)
+    scrolled = page.evaluate(f"document.querySelector('{scroller}').scrollTop")
+    ok &= step(page.evaluate(is_open) and scrolled < 240, f"{tag}: swipe inside a scrolled list scrolls it (scrollTop {scrolled:.0f})")
+    # 4. From the top of the list the same swipe closes the sheet.
+    page.evaluate(f"document.querySelector('{scroller}').scrollTop = 0")
+    page.wait_for_timeout(100)
+    touch_drag(page, x, list_box["y"] + 40, 320)
+    wait_dialog_closed(page, dialog_id)
+    wait_modal_history_cleared(page)
+    ok &= step(page.url == base_url, f"{tag}: swipe from the top of the list closes the sheet")
+    return ok
+
+
 def modal_replacement_flow(page) -> bool:
     base_url = page.url
     page.click("#sessionActions")
@@ -379,6 +436,12 @@ def mobile_flow(context) -> bool:
         ok &= modal_dismissal_flow(page, "mobile", "#modelButton", "modelDialog")
     except PWTimeout as exc:
         ok &= step(False, "mobile: modal dismissal/history", str(exc)[:150])
+
+    try:
+        ok &= sheet_swipe_flow(page, "mobile", "#modelButton", "modelDialog", "#modelChoices")
+    except PWTimeout as exc:
+        ok &= step(False, "mobile: sheet swipe", str(exc)[:150])
+        close_dialog(page, "modelDialog")
 
     # Composer on the phone layout.
     try:
