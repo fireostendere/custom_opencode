@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import plugin, { createDndWatcher, createPushLinks, isDoorbell, narratorEndpoint, parseSse, stateFileFor } from "../config/plugins/dnd-watch.js"
+import plugin, { bootId, createDndWatcher, createPushLinks, failedTurn, isDoorbell, narratorEndpoint, parseSse, stateFileFor } from "../config/plugins/dnd-watch.js"
 import { filterDndTools } from "../config/plugins/orchestrated-qwen.js"
 import { describeWatch, isTableSession, readWatchStates } from "../config/plugins/tui/lib/dnd-watch-view.js"
 import * as sharedView from "../config/plugins/tui/lib/dnd-watch-describe.js"
@@ -292,6 +292,15 @@ try {
     assert.equal(current.autoWatch, false)
     await command.execute({ sessionID: narrator.sessionID, prompt: { text: "auto" } })
     assert.equal((await status(narrator.sessionID)).status, "waiting", "operator auto turns it back on")
+    events.enqueue({ type: "session.model.selected", data: { sessionID: narrator.sessionID } })
+    await settle()
+    assert.equal((await status(narrator.sessionID)).status, "waiting", "a model switch between turns keeps the table watched")
+    events.enqueue({ type: "session.execution.started", data: { sessionID: narrator.sessionID } })
+    events.enqueue({ type: "session.model.selected", data: { sessionID: narrator.sessionID } })
+    await settle()
+    assert.equal((await status(narrator.sessionID)).status, "stopped", "a model switch mid-turn re-arms only after the turn")
+    await idle(narrator.sessionID)
+    assert.equal((await status(narrator.sessionID)).status, "waiting")
     const coder = { sessionID: "ses_code", agent: "build" }
     await narratorTool.execute({ operation: "read", campaignId, afterSeq: 0 }, coder)
     await idle(coder.sessionID)
@@ -587,6 +596,43 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
   retry.close()
 }
 
+// Failed woken turns back off; the last failure drops that input, never the table.
+{
+  assert.deepEqual(failedTurn(1, 0).turn, { state: "retry", retryAt: 30_000, failures: 1 })
+  assert.equal(failedTurn(5, 0).turn.retryAt, 8 * 60_000)
+  const last = failedTurn(6, 0)
+  assert.equal(last.turn, undefined, "after the last attempt the table keeps waiting for new input")
+  assert.match(last.note, /жду новый ввод/)
+}
+
+// An automatic wake that never reached the session is delivered again later.
+{
+  let clock = 0
+  let fail = true
+  const woke = []
+  const lost = createDndWatcher({
+    now: () => clock,
+    read: async () => state({ currentSeq: 11, nextCursor: 11, messages: [{ seq: 11, authorType: "player", kind: "do" }] }),
+    wake: async (_sessionID, result) => { if (fail) throw new Error("host busy"); woke.push(result) },
+  })
+  const lostContext = { sessionID: "ses_lost", agent: "dnd-narrator" }
+  lost.start(input, lostContext, { auto: true })
+  await lost.tick()
+  assert.equal(lost.status(lostContext.sessionID).status, "waiting", "a lost automatic wake keeps the table waiting")
+  fail = false
+  await lost.tick()
+  assert.equal(woke.length, 0, "redelivery backs off")
+  clock = 6000
+  await lost.tick()
+  assert.equal(woke.length, 1, "the same input is delivered once the session accepts it")
+  lost.stop(lostContext.sessionID)
+  fail = true
+  lost.start(input, lostContext)
+  await lost.tick()
+  assert.equal(lost.status(lostContext.sessionID).status, "notification_failed", "an explicit wait still reports a lost wake")
+  lost.close()
+}
+
 // Keep-awake: a watcher hold keeps the PC awake without any busy session.
 {
   const { holdAwake, releaseAwake, observe } = await import("../config/plugins/keep-awake.js")
@@ -722,6 +768,19 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
     globalThis.fetch = realFetch
     process.env.DND_WATCH_PUSH = "0"
   }
+  // Reboot: a table saved in an earlier boot stays off until the narrator's next turn.
+  const previous = JSON.parse(readFileSync(stateFileFor(location), "utf8"))
+  assert.equal(previous.bootId, bootId(), "the status file records the boot it was written in")
+  writeFileSync(stateFileFor(location), JSON.stringify({ ...previous, bootId: "previous-boot" }))
+  const rebooted = await start()
+  try {
+    await wait(1300)
+    assert.equal((await rebooted.status(narrator.sessionID)).status, "stopped", "a reboot does not re-arm the table on its own")
+    assert.deepEqual(JSON.parse(readFileSync(stateFileFor(location), "utf8")).sessions, {}, "the panel drops the previous boot's table")
+    await narratorTool.execute({ operation: "read", campaignId, afterSeq: 0 }, narrator)
+    await rebooted.emit("session.idle", { sessionID: narrator.sessionID })
+    assert.equal((await rebooted.status(narrator.sessionID)).status, "waiting", "the narrator's first turn after a reboot turns the table on again")
+  } finally { await rebooted.cleanup() }
 }
 
 // Sidebar panel view model.
@@ -792,7 +851,6 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
     waiting,
     { ...waiting, turn: { state: "running", startedAt: serverAt - 42_000 } },
     { ...waiting, turn: { state: "retry", retryAt: serverAt + 30_000 } },
-    { ...waiting, turn: { state: "gave_up", failures: 6 } },
     { ...waiting, watch: { status: "waiting", errors: 2, retryAt: serverAt + 12_000 } },
     { ...waiting, watch: { status: "triggered", reason: "player" } },
     { ...waiting, autoWatch: false, watch: { status: "stopped" }, link: { state: "off" } },
@@ -829,7 +887,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
     for (const field of ["tone", "headline", "label", "rows", "log", "hint", "ticking"]) assert.deepEqual(web[field], tui[field], `${tui.headline}: ${field}`)
   }
   const labels = fixtures.map(snapshot => describeWatch(snapshot, serverAt).label)
-  assert.deepEqual(labels, ["Ждёт игроков", "Мастер думает 0:42", "Повтор через 30с", "Нужен оператор", "ODM недоступен", "Будит мастера", "Выключен", "ODM недоступен", "opencode остановлен", "opencode не отвечает"])
+  assert.deepEqual(labels, ["Ждёт игроков", "Мастер думает 0:42", "Повтор через 30с", "ODM недоступен", "Будит мастера", "Выключен", "ODM недоступен", "opencode остановлен", "opencode не отвечает"])
 
   // A running turn ticks once per second, on the server's clock, only while shown.
   snapshots.set("ses_table", fixtures[1])
@@ -845,7 +903,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
   assert.match(details, /<dt>Сон ПК<\/dt><dd>не даёт уснуть<\/dd>/)
   assert.equal((details.match(/<li>/g) || []).length, 4, "the last four log lines")
   assert.ok(details.includes("шаг &lt;5&gt;") && !details.includes("<5>"), "log text is escaped")
-  snapshots.set("ses_table", fixtures[6])
+  snapshots.set("ses_table", fixtures[5])
   await runTimeout()
   assert.equal(pending(true).length, 0, "the clock stops with the countdown")
   assert.match(chip.detailsMarkup(), /\/dnd-watch auto — включить/)
@@ -874,4 +932,4 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
   assert.equal(degraded.markup(), "")
 }
 assert.ok(existsSync(join(stateRoot, "dnd-watch")))
-console.log("DnD watcher: idle, one-shot wake, privacy, paging, stop races, session lifecycle, permissions surface, timeout and errors, D&D-only exposure, bounded entries, auto-watch renewal/backoff/dedupe/priority/arming/operator control, push doorbell/reconnect/fallback, failed-turn retry, keep-awake hold, status file, restart recovery, DM status reports, sidebar view and web pill parity passed")
+console.log("DnD watcher: idle, one-shot wake, privacy, paging, stop races, session lifecycle, permissions surface, timeout and errors, D&D-only exposure, bounded entries, auto-watch renewal/backoff/dedupe/priority/arming/operator control, push doorbell/reconnect/fallback, failed-turn retry and give-up, lost-wake redelivery, keep-awake hold, status file, restart recovery, reboot scoping, DM status reports, sidebar view and web pill parity passed")
