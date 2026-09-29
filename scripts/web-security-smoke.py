@@ -35,6 +35,45 @@ with tempfile.TemporaryDirectory() as temp:
     sys.path.insert(0, str(ROOT / "app"))
     import server_workflow
 
+    # Exact native sessions may live outside OPENCODE_PROJECT_ROOTS (for
+    # example managed /tmp worktrees). Direct filesystem access stays
+    # root-bounded until the authenticated backend proves that path belongs to
+    # a real session; afterwards session-scoped managed send/settings must work.
+    external_session = root / "external-session"
+    external_session.mkdir()
+    server_workflow.features._forget_session_directory()
+    try:
+        server_workflow.features._canonical_directory(str(external_session))
+    except ValueError as exc:
+        assert str(exc) == "directory outside allowed project roots", exc
+    else:
+        raise AssertionError("untrusted external directory bypassed project roots")
+
+    fake_session = {
+        "id": "ses_external",
+        "location": {"directory": str(external_session)},
+    }
+
+    def external_session_backend(method, target, body=None, timeout=0):
+        if method == "GET" and target == "/api/session/ses_external":
+            return {"data": fake_session}
+        if method == "POST" and target == "/api/session/ses_external/prompt_async":
+            return {"ok": True, "accepted": True}
+        raise AssertionError((method, target, body, timeout))
+
+    with patch.object(
+        server_workflow.features,
+        "_backend_request_json",
+        side_effect=external_session_backend,
+    ):
+        resolved = server_workflow.features._session_directory("ses_external")
+        assert resolved == str(external_session.resolve()), resolved
+        settings = server_workflow.features.project_settings(resolved)
+        assert settings["defaultMode"] == "inherit", settings
+        sent = server_workflow._send_with_project_context("ses_external", "ping", [])
+        assert sent == {"ok": True, "accepted": True}, sent
+    server_workflow.features._forget_session_directory()
+
     base = server_workflow.rag.plus.ext.base
     with patch.object(base.time, "time", return_value=2_000_000_000):
         assert base.issue_session_token(300) != base.issue_session_token(300)
