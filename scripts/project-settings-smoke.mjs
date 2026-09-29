@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 
 const root = new URL('../app/', import.meta.url)
 const source = (await readFile(new URL('advanced-features.js', root), 'utf8'))
-  .replace("from './refresh-coalescer.js'", `from '${new URL('refresh-coalescer.js', root).href}'`)
+  .replace(/from '\.\/([\w.-]+\.js)'/g, (_, file) => `from '${new URL(file, root).href}'`)
   .replace("if (typeof document !== 'undefined') init()", 'export { state, applyProjectDefaultsOnce, saveProjectSettings }')
 const { state, applyProjectDefaultsOnce, saveProjectSettings } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
 const stored = new Map(), switched = [], requests = [], elements = new Map()

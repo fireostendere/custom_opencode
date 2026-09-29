@@ -5,6 +5,11 @@ const RESET_EVENTS = new Set([
   'session.deleted', 'session.moved', 'session.agent.selected', 'session.model.selected',
   'session.compaction.started', 'session.compaction.ended', 'session.compacted',
 ])
+// The installer caps native tool output at 48 000 bytes (tool_output.max_bytes);
+// a bigger ODM page is clipped by the host, the model sees a broken JSON page and
+// this cache has to drop its baseline. Ask for pages that always fit.
+const PAGE_BYTES = 45056
+const WRITES = new Set(['invoke', 'narrate', 'release_floor', 'delete_message', 'edit_message', 'autopilot_action', 'finish_global_round'])
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 const sequence = value => Number.isSafeInteger(value) && value >= 0
 const keyOf = input => JSON.stringify([input.campaignId, input.projection ?? 'live'])
@@ -38,7 +43,8 @@ export function createDndStateCache() {
   const reset = id => sessions.delete(id)
   function readParams(id, input) {
     if (input.pageCursor) return input // Frozen pages require the original query exactly.
-    const result = { projection: 'live', delta: true, paged: true, maxBytes: 131072, ...input }
+    const requested = Number(input.maxBytes)
+    const result = { projection: 'live', delta: true, paged: true, ...input, maxBytes: Number.isSafeInteger(requested) ? Math.min(requested, PAGE_BYTES) : PAGE_BYTES }
     if (result.stateDelta === false || Object.keys(result.knownSections ?? {}).length) return result
     result.stateDelta = true
     const known = sessions.get(id)?.get(keyOf(result))
@@ -52,6 +58,12 @@ export function createDndStateCache() {
     if (input.operation === 'catalog' && !input.action) return { summaryOnly: true, ...input }
     if (input.readAfter && typeof input.readAfter === 'object') {
       const { campaignId: _campaign, ...readAfter } = readParams(id, { campaignId: input.campaignId, ...input.readAfter })
+      return { ...input, readAfter }
+    }
+    // Without readAfter the sidecar attaches a full live state to every write.
+    // Ask for the bounded delta against the acknowledged baseline instead.
+    if (input.readAfter === undefined && WRITES.has(input.operation)) {
+      const { campaignId: _campaign, ...readAfter } = readParams(id, { campaignId: input.campaignId })
       return { ...input, readAfter }
     }
     return input

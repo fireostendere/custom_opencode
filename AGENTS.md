@@ -19,6 +19,6 @@
 
 ## D&D-линия
 - Промпт стола: `config/prompts/dnd-edition.md` (стиль YOLO 21+, темп, автоожидание).
-- Автоожидание: `config/plugins/dnd-watch.js` (`/dnd-watch status|stop|auto`, `DND_AUTO_WATCH=0` выключает). Push-сигналы ODM через `…/mcp/events` (`DND_WATCH_PUSH=0` — опрос), повтор упавшего хода, запрет сна (`DND_KEEP_AWAKE=0`), восстановление после перезапуска; статус — блок в боковой панели TUI (`config/plugins/tui/dnd-watch-panel.jsx`). Подробно: `docs/configuration.md`.
+- Автоожидание: `config/plugins/dnd-watch.js` (`/dnd-watch status|stop|auto`, `DND_AUTO_WATCH=0` выключает). Push-сигналы ODM через `…/mcp/events` (`DND_WATCH_PUSH=0` — опрос), повтор упавшего хода, запрет сна (`DND_KEEP_AWAKE=0`), восстановление после перезапуска, статус мастера «думает/idle» в ODM (`DND_WATCH_STATUS=0` выключает). Статус вотчера — блок в боковой панели TUI (`config/plugins/tui/dnd-watch-panel.jsx`) и плашка в строке статуса веба (`app/dnd-watch-chip.js`, `app/dnd_watch.py`); тексты общие — `config/plugins/tui/lib/dnd-watch-describe.js` (без импортов: веб грузит его как есть). Подробно: `docs/configuration.md`.
 - Luna Fast: `config/plugins/dnd-fast-tier.js`; роутер `dnd-super-orchestrator.js` выключен по умолчанию.
 - Типизированный вывод ролей ODM (`narrator-ask|actor|referee`): `config/plugins/typed-output.js` + реестр `config/prompts/typed-output.json`; writer и `narrate.content` — проза.

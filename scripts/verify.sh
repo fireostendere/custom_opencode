@@ -11,7 +11,7 @@ if [[ -z "$NODE" ]]; then echo "node is required" >&2; exit 1; fi
   "$ROOT/app/server.py" "$ROOT/app/server_ext.py" "$ROOT/app/server_plus.py" \
   "$ROOT/app/server_rag.py" "$ROOT/app/server_features.py" "$ROOT/app/server_control.py" \
   "$ROOT/app/server_workflow.py" "$ROOT/app/server_runtime.py" "$ROOT/app/runtime_store.py" \
-  "$ROOT/app/model_registry.py" "$ROOT/app/repo_services.py" "$ROOT/app/runtime_resume.py" \
+  "$ROOT/app/model_registry.py" "$ROOT/app/repo_services.py" "$ROOT/app/runtime_resume.py" "$ROOT/app/dnd_watch.py" \
   "$ROOT/scripts/rag-probe.py" "$ROOT/scripts/rag-probe-contract-regression.py" "$ROOT/scripts/rag-start-smoke.py" "$ROOT/scripts/runtime-smoke.py" \
   "$ROOT/scripts/runtime-resume-smoke.py" "$ROOT/scripts/webserver-control.py"
 
@@ -84,6 +84,7 @@ done
 "$NODE" "$ROOT/scripts/config-manager-regression.mjs"
 "$NODE" "$ROOT/scripts/context-lanes-regression.mjs"
 "$NODE" "$ROOT/scripts/dnd-watch-regression.mjs"
+"$PYTHON3" "$ROOT/scripts/dnd-watch-web-regression.py"
 "$NODE" "$ROOT/scripts/dnd-state-cache-regression.mjs"
 "$NODE" "$ROOT/scripts/typed-output-regression.mjs"
 DND_FAST_TIER_SELF_CHECK=1 "$NODE" "$ROOT/config/plugins/dnd-fast-tier.js"

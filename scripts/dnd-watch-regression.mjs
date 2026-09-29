@@ -2,9 +2,11 @@ import assert from "node:assert/strict"
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import plugin, { createDndWatcher, createPushLinks, isDoorbell, narratorEndpoint, parseSse, stateFileFor } from "../config/plugins/dnd-watch.js"
+import plugin, { bootId, createDndWatcher, createPushLinks, failedTurn, isDoorbell, narratorEndpoint, parseSse, stateFileFor } from "../config/plugins/dnd-watch.js"
 import { filterDndTools } from "../config/plugins/orchestrated-qwen.js"
 import { describeWatch, isTableSession, readWatchStates } from "../config/plugins/tui/lib/dnd-watch-view.js"
+import * as sharedView from "../config/plugins/tui/lib/dnd-watch-describe.js"
+import { createDndWatchChip } from "../app/dnd-watch-chip.js"
 
 // Flags are read at plugin setup: keep tests off the real PC power state,
 // the real ODM server and the real status directory.
@@ -290,6 +292,15 @@ try {
     assert.equal(current.autoWatch, false)
     await command.execute({ sessionID: narrator.sessionID, prompt: { text: "auto" } })
     assert.equal((await status(narrator.sessionID)).status, "waiting", "operator auto turns it back on")
+    events.enqueue({ type: "session.model.selected", data: { sessionID: narrator.sessionID } })
+    await settle()
+    assert.equal((await status(narrator.sessionID)).status, "waiting", "a model switch between turns keeps the table watched")
+    events.enqueue({ type: "session.execution.started", data: { sessionID: narrator.sessionID } })
+    events.enqueue({ type: "session.model.selected", data: { sessionID: narrator.sessionID } })
+    await settle()
+    assert.equal((await status(narrator.sessionID)).status, "stopped", "a model switch mid-turn re-arms only after the turn")
+    await idle(narrator.sessionID)
+    assert.equal((await status(narrator.sessionID)).status, "waiting")
     const coder = { sessionID: "ses_code", agent: "build" }
     await narratorTool.execute({ operation: "read", campaignId, afterSeq: 0 }, coder)
     await idle(coder.sessionID)
@@ -297,6 +308,150 @@ try {
   } finally { await cleanup() }
 }
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+// DM activity for the players' web UI: thinking when a table turn starts, idle when it ends.
+{
+  const setup = async ({ env = {}, parent = false } = {}) => {
+    const saved = Object.fromEntries(Object.keys(env).map(name => [name, process.env[name]]))
+    Object.assign(process.env, env)
+    let events, command
+    const notices = [], calls = []
+    const feed = new ReadableStream({ start(controller) { events = controller } })
+    const registration = () => ({ dispose: async () => {} })
+    const harness = { available: true, status: async () => ({ output: JSON.stringify({ ok: true }) }) }
+    const page = state({ currentSeq: 20, nextCursor: 20 })
+    const narratorTool = {
+      execute: async (input, ctx) => {
+        if (input.operation !== "status") return { output: JSON.stringify(page) }
+        calls.push({ input, ctx })
+        return harness.status(input, ctx)
+      },
+    }
+    let cleanup
+    try {
+      cleanup = await plugin.setup({
+        location: { directory: "/game" },
+        mcp: { list: async () => ({ data: [{ name: "odm_narrator", status: { status: "connected" } }] }) },
+        tool: { transform: async apply => {
+          apply({ add: () => {}, get: name => harness.available && name === "odm_narrator_odm_narrator" ? narratorTool : undefined, update: (_name, fn) => fn(narratorTool) })
+          return registration()
+        } },
+        command: { transform: async apply => { apply({ add: value => { command = value } }); return registration() } },
+        session: {
+          hook: async () => registration(),
+          get: async () => ({ agent: "dnd-narrator", parentID: parent ? "ses_parent" : null, location: { directory: "/game" } }),
+          synthetic: async value => notices.push(value),
+        },
+        event: { subscribe: ({ signal }) => {
+          signal.addEventListener("abort", () => events.close(), { once: true })
+          return feed.values()
+        } },
+      })
+    } finally {
+      for (const [name, value] of Object.entries(saved)) value === undefined ? delete process.env[name] : process.env[name] = value
+    }
+    const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(setImmediate) }
+    const emit = async (type, sessionID = "ses_dm") => { events.enqueue({ type, data: { sessionID } }); await settle() }
+    const status = async sessionID => {
+      await command.execute({ sessionID, prompt: { text: "status" } })
+      return JSON.parse(notices.at(-1).text.replace(/^DnD watcher: /, ""))
+    }
+    return { harness, calls, narratorTool, emit, settle, status, cleanup }
+  }
+  const dm = { sessionID: "ses_dm", agent: "dnd-narrator", messageID: "msg_dm", id: "call_dm" }
+  const states = calls => calls.map(call => call.input.state)
+
+  const table = await setup()
+  try {
+    await table.emit("session.execution.started")
+    assert.equal(table.calls.length, 0, "no status before the narrator has read a campaign")
+    await table.emit("session.idle")
+    await table.narratorTool.execute({ operation: "read", campaignId, afterSeq: 0 }, dm)
+    await table.emit("session.execution.started")
+    assert.deepEqual(states(table.calls), ["thinking"], "a table turn shows the DM as thinking")
+    const [thinking] = table.calls
+    assert.deepEqual(thinking.input, { operation: "status", campaignId, state: "thinking" })
+    assert.equal(thinking.ctx.odmBackgroundRead, true, "status calls bypass the narrator bookkeeping")
+    assert.equal(thinking.ctx.sessionID, dm.sessionID, "status runs under the narrator's own tool context")
+    assert.equal(thinking.ctx.agent, dm.agent)
+    assert.equal(typeof thinking.ctx.progress, "function")
+    assert.ok(thinking.ctx.signal instanceof AbortSignal && !thinking.ctx.signal.aborted, "an old turn's abort never cancels a status call")
+    await table.emit("session.execution.started")
+    assert.equal(table.calls.length, 1, "a repeated start sends no duplicate")
+    await table.emit("session.execution.succeeded")
+    await table.emit("session.idle")
+    assert.deepEqual(states(table.calls), ["thinking", "idle"], "the end of the turn sends idle once")
+    await table.emit("session.idle")
+    await table.emit("session.execution.started", "ses_other")
+    assert.equal(table.calls.length, 2, "an idle table and other sessions send nothing")
+    for (const end of ["session.execution.failed", "session.execution.interrupted"]) {
+      await table.emit("session.execution.started")
+      await table.emit(end)
+      assert.deepEqual(states(table.calls).slice(-2), ["thinking", "idle"], `${end} ends the turn`)
+    }
+    // A turn that switches campaigns still clears "thinking" where it was shown.
+    const next = "00000000-0000-4000-8000-000000000001"
+    await table.emit("session.execution.started")
+    await table.narratorTool.execute({ operation: "read", campaignId: next, afterSeq: 0 }, dm)
+    await table.emit("session.execution.succeeded")
+    assert.deepEqual(table.calls.slice(-2).map(call => [call.input.state, call.input.campaignId]), [["thinking", campaignId], ["idle", campaignId]])
+    await table.emit("session.execution.started")
+    assert.equal(table.calls.at(-1).input.campaignId, next, "the next turn reports for the new campaign")
+    await table.emit("session.execution.succeeded")
+    await table.narratorTool.execute({ operation: "read", campaignId, afterSeq: 0 }, dm)
+
+    // The event path never waits for ODM, and an idle never overtakes its thinking.
+    let release
+    table.harness.status = () => new Promise(resolve => { release = () => resolve({ output: "{}" }) })
+    const before = table.calls.length
+    await table.emit("session.execution.started")
+    await table.emit("session.execution.succeeded")
+    await table.emit("session.idle")
+    assert.equal((await table.status(dm.sessionID)).status, "waiting", "turn bookkeeping and re-arm ran while ODM was slow")
+    assert.deepEqual(states(table.calls.slice(before)), ["thinking"], "idle waits for the pending thinking")
+    table.harness.status = async () => ({ output: "{}" })
+    release()
+    await table.settle()
+    assert.deepEqual(states(table.calls.slice(before)), ["thinking", "idle"])
+
+    // Failures are swallowed; the next report for the same state is not treated as a duplicate.
+    let unhandled = 0
+    const onUnhandled = () => { unhandled++ }
+    process.on("unhandledRejection", onUnhandled)
+    try {
+      table.harness.status = async () => { throw new Error("ODM down") }
+      await table.emit("session.execution.started")
+      await table.emit("session.execution.succeeded")
+      table.harness.status = async () => ({ output: "{}" })
+      await table.emit("session.idle")
+      assert.deepEqual(states(table.calls).slice(-3), ["thinking", "idle", "idle"], "a failed idle is sent again on the next turn-end signal")
+      await table.emit("session.idle")
+      assert.deepEqual(states(table.calls).slice(-3), ["thinking", "idle", "idle"])
+      // Without the narrator tool the report is skipped quietly.
+      const missing = await setup()
+      try {
+        missing.harness.available = false
+        await missing.narratorTool.execute({ operation: "read", campaignId, afterSeq: 0 }, dm)
+        await missing.emit("session.execution.started")
+        await missing.emit("session.execution.succeeded")
+        assert.equal(missing.calls.length, 0, "no narrator tool, no status call")
+      } finally { await missing.cleanup() }
+      await new Promise(resolve => setTimeout(resolve, 20))
+      assert.equal(unhandled, 0, "status failures never escape")
+    } finally { process.off("unhandledRejection", onUnhandled) }
+  } finally { await table.cleanup() }
+
+  // DND_WATCH_STATUS=0 turns reporting off; subagent sessions never speak for the DM.
+  for (const [options, reason] of [[{ env: { DND_WATCH_STATUS: "0" } }, "DND_WATCH_STATUS=0 disables status reports"], [{ parent: true }, "a subagent session never reports DM status"]]) {
+    const other = await setup(options)
+    try {
+      await other.narratorTool.execute({ operation: "read", campaignId, afterSeq: 0 }, dm)
+      await other.emit("session.execution.started")
+      await other.emit("session.execution.succeeded")
+      assert.equal(other.calls.length, 0, reason)
+    } finally { await other.cleanup() }
+  }
+}
 
 // Push doorbell wire format: signals only, partial frames wait for more bytes.
 {
@@ -441,6 +596,43 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
   retry.close()
 }
 
+// Failed woken turns back off; the last failure drops that input, never the table.
+{
+  assert.deepEqual(failedTurn(1, 0).turn, { state: "retry", retryAt: 30_000, failures: 1 })
+  assert.equal(failedTurn(5, 0).turn.retryAt, 8 * 60_000)
+  const last = failedTurn(6, 0)
+  assert.equal(last.turn, undefined, "after the last attempt the table keeps waiting for new input")
+  assert.match(last.note, /жду новый ввод/)
+}
+
+// An automatic wake that never reached the session is delivered again later.
+{
+  let clock = 0
+  let fail = true
+  const woke = []
+  const lost = createDndWatcher({
+    now: () => clock,
+    read: async () => state({ currentSeq: 11, nextCursor: 11, messages: [{ seq: 11, authorType: "player", kind: "do" }] }),
+    wake: async (_sessionID, result) => { if (fail) throw new Error("host busy"); woke.push(result) },
+  })
+  const lostContext = { sessionID: "ses_lost", agent: "dnd-narrator" }
+  lost.start(input, lostContext, { auto: true })
+  await lost.tick()
+  assert.equal(lost.status(lostContext.sessionID).status, "waiting", "a lost automatic wake keeps the table waiting")
+  fail = false
+  await lost.tick()
+  assert.equal(woke.length, 0, "redelivery backs off")
+  clock = 6000
+  await lost.tick()
+  assert.equal(woke.length, 1, "the same input is delivered once the session accepts it")
+  lost.stop(lostContext.sessionID)
+  fail = true
+  lost.start(input, lostContext)
+  await lost.tick()
+  assert.equal(lost.status(lostContext.sessionID).status, "notification_failed", "an explicit wait still reports a lost wake")
+  lost.close()
+}
+
 // Keep-awake: a watcher hold keeps the PC awake without any busy session.
 {
   const { holdAwake, releaseAwake, observe } = await import("../config/plugins/keep-awake.js")
@@ -576,6 +768,19 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
     globalThis.fetch = realFetch
     process.env.DND_WATCH_PUSH = "0"
   }
+  // Reboot: a table saved in an earlier boot stays off until the narrator's next turn.
+  const previous = JSON.parse(readFileSync(stateFileFor(location), "utf8"))
+  assert.equal(previous.bootId, bootId(), "the status file records the boot it was written in")
+  writeFileSync(stateFileFor(location), JSON.stringify({ ...previous, bootId: "previous-boot" }))
+  const rebooted = await start()
+  try {
+    await wait(1300)
+    assert.equal((await rebooted.status(narrator.sessionID)).status, "stopped", "a reboot does not re-arm the table on its own")
+    assert.deepEqual(JSON.parse(readFileSync(stateFileFor(location), "utf8")).sessions, {}, "the panel drops the previous boot's table")
+    await narratorTool.execute({ operation: "read", campaignId, afterSeq: 0 }, narrator)
+    await rebooted.emit("session.idle", { sessionID: narrator.sessionID })
+    assert.equal((await rebooted.status(narrator.sessionID)).status, "waiting", "the narrator's first turn after a reboot turns the table on again")
+  } finally { await rebooted.cleanup() }
 }
 
 // Sidebar panel view model.
@@ -601,5 +806,130 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
   assert.ok(isTableSession({ agent: "build", location: { directory: "/srv/tables/dungeon_master" } }))
   assert.ok(!isTableSession({ agent: "build", location: { directory: "/srv/code/custom_opencode" } }), "the panel stays out of other projects")
 }
+
+// Web status bar pill: the same view model as the sidebar, polled with the server's clock.
+{
+  assert.equal(describeWatch, sharedView.describeWatch, "the TUI re-exports the shared view model unchanged")
+  const serverAt = Date.UTC(2026, 8, 29, 12, 0, 0)
+  const skew = -3_600_000 // the browser clock is an hour behind the server
+  let browserNow = serverAt + skew
+  const timers = new Map()
+  let nextTimer = 0
+  const fake = {
+    setTimeoutFn: (fn, delay) => { timers.set(++nextTimer, { fn, delay, interval: false }); return nextTimer },
+    clearTimeoutFn: id => { timers.delete(id) },
+    setIntervalFn: (fn, delay) => { timers.set(++nextTimer, { fn, delay, interval: true }); return nextTimer },
+    clearIntervalFn: id => { timers.delete(id) },
+  }
+  const pending = interval => [...timers.values()].filter(timer => timer.interval === interval)
+  const runTimeout = async () => {
+    const [id, timer] = [...timers.entries()].find(([, value]) => !value.interval)
+    timers.delete(id)
+    await timer.fn()
+    for (let i = 0; i < 5; i++) await new Promise(setImmediate)
+    return timer.delay
+  }
+  const snapshots = new Map()
+  const requests = []
+  let changes = 0, gate
+  const chip = createDndWatchChip({
+    ...fake,
+    clock: () => browserNow,
+    loadView: async () => sharedView,
+    onChange: () => { changes++ },
+    request: async path => {
+      requests.push(path)
+      await gate
+      const sessionID = new URLSearchParams(path.split("?")[1]).get("sessionID")
+      const snapshot = snapshots.get(sessionID)
+      return snapshot ? { present: true, serverNow: serverAt, snapshot } : { present: false, serverNow: serverAt }
+    },
+  })
+  const log = Array.from({ length: 6 }, (_, index) => ({ at: serverAt - (6 - index) * 60_000, text: `шаг <${index}>` }))
+  const waiting = { campaignId, cursor: 2173, autoWatch: true, updatedAt: serverAt - 1000, awake: true, watch: { status: "waiting", auto: true, errors: 0 }, link: { state: "live" }, log }
+  const fixtures = [
+    waiting,
+    { ...waiting, turn: { state: "running", startedAt: serverAt - 42_000 } },
+    { ...waiting, turn: { state: "retry", retryAt: serverAt + 30_000 } },
+    { ...waiting, watch: { status: "waiting", errors: 2, retryAt: serverAt + 12_000 } },
+    { ...waiting, watch: { status: "triggered", reason: "player" } },
+    { ...waiting, autoWatch: false, watch: { status: "stopped" }, link: { state: "off" } },
+    { ...waiting, watch: { status: "error" }, link: { state: "reconnecting", retryAt: serverAt + 8000 } },
+    { ...waiting, stoppedAt: serverAt - 500 },
+    { ...waiting, updatedAt: serverAt - 60_000 },
+  ]
+
+  assert.equal(chip.markup(), "", "no session, no pill")
+  chip.setSession("ses_plain")
+  assert.equal(await runTimeout(), 0, "a newly opened session is polled right away")
+  assert.equal(requests.at(-1), "/client-dnd-watch.json?sessionID=ses_plain")
+  assert.equal(chip.markup(), "", "sessions that are not D&D tables show no pill")
+  assert.equal(pending(false)[0].delay, 20_000, "an absent status is polled every 20 s")
+
+  snapshots.set("ses_table", fixtures[0])
+  chip.setSession("ses_table")
+  await runTimeout()
+  assert.equal(pending(false)[0].delay, 2000, "a table is polled every 2 s")
+  assert.ok(changes > 0)
+  const pill = chip.markup()
+  assert.match(pill, /id="dndWatchButton"/)
+  assert.match(pill, /<span class="wf-dot ok"><\/span><span class="dnd-watch-label">🎲 Ждёт игроков<\/span>/)
+  const before = changes
+  await runTimeout()
+  assert.equal(changes, before, "an unchanged status does not re-render")
+  assert.equal(pending(true).length, 0, "an idle wait needs no clock")
+
+  // Parity: every fixture renders exactly what the sidebar computes for the same server time.
+  for (const snapshot of fixtures) {
+    snapshots.set("ses_table", snapshot)
+    await runTimeout()
+    const web = chip.view(), tui = describeWatch(snapshot, serverAt)
+    for (const field of ["tone", "headline", "label", "rows", "log", "hint", "ticking"]) assert.deepEqual(web[field], tui[field], `${tui.headline}: ${field}`)
+  }
+  const labels = fixtures.map(snapshot => describeWatch(snapshot, serverAt).label)
+  assert.deepEqual(labels, ["Ждёт игроков", "Мастер думает 0:42", "Повтор через 30с", "ODM недоступен", "Будит мастера", "Выключен", "ODM недоступен", "opencode остановлен", "opencode не отвечает"])
+
+  // A running turn ticks once per second, on the server's clock, only while shown.
+  snapshots.set("ses_table", fixtures[1])
+  await runTimeout()
+  assert.match(chip.markup(), /wf-dot busy pulse.*Мастер думает 0:42/, "countdowns use the server clock, not the browser's")
+  assert.equal(pending(true).length, 1)
+  assert.equal(pending(true)[0].delay, 1000)
+  browserNow += 3000
+  assert.match(chip.markup(), /Мастер думает 0:45/)
+  const details = chip.detailsMarkup()
+  assert.match(details, /dnd-watch-headline tone-busy">◐ мастер разбирает ход · 0:45/)
+  assert.match(details, /<dt>Кампания<\/dt><dd>343ed859…<\/dd>/)
+  assert.match(details, /<dt>Сон ПК<\/dt><dd>не даёт уснуть<\/dd>/)
+  assert.equal((details.match(/<li>/g) || []).length, 4, "the last four log lines")
+  assert.ok(details.includes("шаг &lt;5&gt;") && !details.includes("<5>"), "log text is escaped")
+  snapshots.set("ses_table", fixtures[5])
+  await runTimeout()
+  assert.equal(pending(true).length, 0, "the clock stops with the countdown")
+  assert.match(chip.detailsMarkup(), /\/dnd-watch auto — включить/)
+
+  // A late reply for the previous session is dropped; closing the session stops polling.
+  let release
+  gate = new Promise(resolve => { release = resolve })
+  snapshots.set("ses_slow", fixtures[0])
+  chip.setSession("ses_slow")
+  const flight = runTimeout()
+  await new Promise(setImmediate)
+  assert.equal(requests.at(-1), "/client-dnd-watch.json?sessionID=ses_slow")
+  chip.setSession(null)
+  release()
+  gate = undefined
+  await flight
+  assert.equal(chip.markup(), "", "a reply for a closed session never shows")
+  assert.equal(timers.size, 0, "no session, no timers")
+
+  // Without the shared module (old server) the pill still shows, with a neutral label.
+  const degraded = createDndWatchChip({ ...fake, clock: () => browserNow, loadView: async () => { throw new Error("404") }, request: async () => ({ present: true, serverNow: serverAt, snapshot: waiting }) })
+  degraded.setSession("ses_table")
+  await runTimeout()
+  assert.match(degraded.markup(), /🎲 Вотчер стола/)
+  degraded.stop()
+  assert.equal(degraded.markup(), "")
+}
 assert.ok(existsSync(join(stateRoot, "dnd-watch")))
-console.log("DnD watcher: idle, one-shot wake, privacy, paging, stop races, session lifecycle, permissions surface, timeout and errors, D&D-only exposure, bounded entries, auto-watch renewal/backoff/dedupe/priority/arming/operator control, push doorbell/reconnect/fallback, failed-turn retry, keep-awake hold, status file, restart recovery and sidebar view passed")
+console.log("DnD watcher: idle, one-shot wake, privacy, paging, stop races, session lifecycle, permissions surface, timeout and errors, D&D-only exposure, bounded entries, auto-watch renewal/backoff/dedupe/priority/arming/operator control, push doorbell/reconnect/fallback, failed-turn retry and give-up, lost-wake redelivery, keep-awake hold, status file, restart recovery, reboot scoping, DM status reports, sidebar view and web pill parity passed")

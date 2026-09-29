@@ -389,6 +389,15 @@ with tempfile.TemporaryDirectory() as temp:
         original_canonical = features._canonical_directory
         features._canonical_directory = lambda raw, **kwargs: canonicalized.append(raw) or original_canonical(raw, **kwargs)
         try:
+            # Direct filesystem operations remain root-bounded.
+            try:
+                features._canonical_directory(str(outside))
+            except ValueError as exc:
+                assert "outside allowed project roots" in str(exc), exc
+            else:
+                raise AssertionError("untrusted external directory bypassed project roots")
+            canonicalized.clear()
+
             hits_before = backend_hits.get("/api/session/ses_web_plan", 0)
             expected_directory = str(project.resolve())
             assert features._session_directory("ses_web_plan") == expected_directory
@@ -397,16 +406,17 @@ with tempfile.TemporaryDirectory() as temp:
             # 9P canonicalization of an unchanged location string is cached.
             assert backend_hits.get("/api/session/ses_web_plan", 0) == hits_before + 2
             assert canonicalized == [str(project)], canonicalized
+
+            # An authenticated native session may move to an exact path outside
+            # OPENCODE_PROJECT_ROOTS (for example a managed /tmp worktree).
+            # The new location is canonicalized once, cached, and becomes
+            # available to session-scoped custom features.
             original_info = features._session_info
             features._session_info = lambda session_id: {"location": {"directory": str(outside)}}
             try:
-                for _ in range(2):
-                    try:
-                        features._session_directory("ses_web_plan")
-                    except ValueError as exc:
-                        assert "outside allowed project roots" in str(exc), exc
-                    else:
-                        raise AssertionError("moved-out session served from cache")
+                assert features._session_directory("ses_web_plan") == str(outside.resolve())
+                assert features._session_directory("ses_web_plan") == str(outside.resolve())
+                assert features._canonical_directory(str(outside)) == str(outside.resolve())
             finally:
                 features._session_info = original_info
             assert canonicalized == [str(project), str(outside), str(outside)], canonicalized

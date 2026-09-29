@@ -178,6 +178,7 @@ dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
 
 @media(prefers-reduced-motion:reduce){
   dialog[open]{animation:none}
+  dialog.sheet-settling,dialog.sheet-settling::backdrop{transition:none}
   #modelButton::after,.limits-summary::after,.model-provider-chevron,.permission-details>summary::after,.tool>summary::after,.trace>summary::after,.review-file>summary::after,.runtime-v3-panel>summary::after,.orchestration-trace details>summary::after,.pull-refresh,.pull-refresh-progress,.pull-refresh-arrow{transition:none}
   .pull-refresh[data-state="pulling"] .pull-refresh-icon,.pull-refresh[data-state="refreshing"] .pull-refresh-icon{animation:none}
 }
@@ -273,6 +274,12 @@ dialog>.modal{
   }
   dialog>.modal .modal-head{padding-top:4px}
   .modal-actions button{min-height:42px}
+  /* Swipe-down dismissal (modal-ui.js): the sheet follows the finger, then
+     settles back or slides out; the backdrop thins with the drag. */
+  dialog.sheet-dragging{transition:none;will-change:transform}
+  dialog.sheet-settling{transition:transform .2s cubic-bezier(.2,.8,.2,1)}
+  dialog.sheet-dragging::backdrop,dialog.sheet-settling::backdrop{opacity:calc(1 - var(--sheet-drag,0)*.75)}
+  dialog.sheet-settling::backdrop{transition:opacity .2s ease}
 }
 
 .check{display:inline-flex;align-items:center;gap:8px;line-height:1}

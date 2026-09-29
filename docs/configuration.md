@@ -91,12 +91,13 @@ Live routes are discrete: `NO_LLM`/authoritative tool dispatch,
 `LUNA_LOW`/`LUNA_XHIGH`/`LUNA_MAX`, or rare `SOL_XHIGH` for exceptionally complex scenes. Runtime V3 keeps state and RAG branches independent; ODM remains
 responsible for mechanics, mutations, identity and privacy.
 
-The D&D orchestrator uses the provider's default service tier. The current
-OpenCode OAuth path accepts GPT-6 Luna but rejects both explicit `service_tier=fast`
-and `priority` with HTTP 400. Its native `gpt-6-luna-fast` alias retries at the
-default tier after that refusal, so selecting it does not establish Fast mode.
-Use an API-key provider path that returns an actual Fast-tier receipt before
-claiming Luna Fast; the DnD Edition catalog alias maps to Luna so the un-routed profile
+`config/plugins/dnd-fast-tier.js` puts `service_tier=priority` (Luna "Fast") on
+every D&D Edition request, because the bundled AI SDK drops the variant setting
+for `gpt-6-*` model IDs. If the provider answers HTTP 400 naming the tier, the
+plugin resends the same request without it and keeps that model on the default
+tier for an hour. `DND_FAST_TIER=default` disables the plugin. The response
+still reports `serviceTier: default`; measure latency rather than trusting the
+receipt. The DnD Edition catalog alias maps to Luna, so the un-routed profile
 also selects the narrator model.
 
 The player-facing prompt lives in `config/prompts/dnd-edition.md`. It gives the
@@ -112,7 +113,9 @@ cannot use. The DnD corpus must be connected in the game project for lookup.
 плагин сам ждёт новых входов в кампании, которую ведущий дочитал, начиная с
 дочитанного курсора. Ход игрока (не OOC), pending Ask, whisper, событие броска
 или готовности раунда один раз возобновляют сессию синтетическим сообщением без
-текста игроков. Один и тот же вход дважды модель не будит.
+текста игроков. Один и тот же вход дважды модель не будит. Стол живёт до
+перезагрузки машины: сам он не выключается ни по времени, ни после упавших
+ходов, ни после смены модели в сессии.
 
 - **Push вместо опроса** (`DND_WATCH_PUSH=0` выключает). Плагин держит одно SSE-
   соединение `…/mcp/events` рядом с URL сервера `odm_narrator` из
@@ -122,18 +125,40 @@ cannot use. The DnD corpus must be connected in the game project for lookup.
   (старый сервер, обрыв) — прежний опрос раз в 3 секунды. Обрыв (ночной бэкап,
   деплой, сеть) переподключается сам с `Last-Event-ID`, модель не будится.
 - **Упавший ход** (ошибка провайдера, 429), начатый вотчером, повторяется через
-  30 с, 1, 2, 4, 8 мин; после 6 неудач вотчер ждёт оператора.
+  30 с, 1, 2, 4, 8 мин; после 6 неудач этот вход бросается, а вотчер ждёт
+  следующего. Будильник, который не дошёл до сессии, доставляется повторно.
 - **Сон ПК**: пока вотчер ждёт или ход идёт, `keep-awake` не даёт Windows
-  уснуть (экран гаснет как обычно); `DND_KEEP_AWAKE=0` выключает, после 12 ч без
-  активности стола удержание снимается.
+  уснуть (экран гаснет как обычно) — до перезагрузки; `DND_KEEP_AWAKE=0`
+  выключает.
 - **Перезапуск сервиса**: состояние стола пишется в
   `~/.local/state/custom-opencode/dnd-watch/<hash>.json` (статусы, курсоры,
   идентификаторы последнего ODM-вызова, журнал — без игрового текста); новый
   процесс восстанавливает ожидание, когда локация стола снова открыта.
+- **Перезагрузка**: файл помнит `boot_id` загрузки (в WSL он меняется при
+  перезагрузке Windows и `wsl --shutdown`). Столы прошлой загрузки не
+  восстанавливаются и лампа в ODM гаснет; первый ход ведущего (например, «ход» в
+  сессии нарратора) снова включает стол до следующей перезагрузки.
 - **Панель**: TUI показывает блок «🎲 Вотчер стола» в боковой панели сессии
   (рядом с контекстом и MCP) только для `dnd-*`-сессий или проекта
   `dungeon_master`: что вотчер делает сейчас, связь с ODM, курсор и последние
   действия.
+- **Веб**: в строке статуса сессии после «Очередь N» — плашка «🎲 Ждёт игроков»,
+  «🎲 Мастер думает 0:42», «🎲 ODM недоступен» и т.п. с цветной точкой, только
+  для сессий, которые ведут стол; по клику — подробности (кампания, курсор и
+  режим, связь, запрет сна, последние 4 записи журнала, подсказка). Данные —
+  `GET /client-dnd-watch.json?sessionID=…` (та же авторизация, что у остальных
+  `/client-*`; только эта сессия, без контекста ODM-вызова), опрос раз в 2 с для
+  стола и раз в 20 с для остальных сессий. Тексты и цвета берутся из того же
+  модуля, что у TUI (`config/plugins/tui/lib/dnd-watch-describe.js`; веб-сервер
+  отдаёт его как `/client-dnd-watch-describe.js` без сборки), поэтому веб и
+  панель не расходятся.
+- **Статус мастера для игроков** (`DND_WATCH_STATUS=0` выключает): когда в
+  сессии стола начинается ход, плагин в фоне вызывает `odm_narrator`
+  `{operation:"status", state:"thinking"}` — у игроков в ODM «Мастер думает…»;
+  по завершении хода (успех, ошибка, прерывание, `session.idle`) — `idle`.
+  Вызов идёт через тот же нативный исполнитель, что и чтения вотчера (права
+  сессии действуют), не задерживает события, не повторяет уже отправленное
+  состояние, ошибки глотает; субагентские сессии статус не шлют.
 
 Явный `dnd_watch start` (`campaignId`, `afterSeq` последнего обработанного хода,
 `timeoutSeconds` до суток) нужен только для ожидания по запросу оператора с
@@ -142,7 +167,9 @@ cannot use. The DnD corpus must be connected in the game project for lookup.
 чтения сразу (ошибки хоста непрозрачны: отказ прав и сбой сети выглядят
 одинаково). `/dnd-watch status|stop|auto` работают без inference; `stop`
 выключает и автоожидание. Проверка на настоящем движке с локальными
-MCP/model fixtures: `python3 scripts/dnd-watch-live.py`.
+MCP/model fixtures: `python3 scripts/dnd-watch-live.py`; без движка —
+`node scripts/dnd-watch-regression.mjs` (плагин, статус мастера, панель и
+веб-плашка) и `python3 scripts/dnd-watch-web-regression.py` (веб-эндпоинты).
 
 Клиентский `dnd-state-cache` передаёт `knownStateRevision` автоматически после
 полностью полученного `read`/`readAfter`. Кеш изолирован по сессии, кампании и

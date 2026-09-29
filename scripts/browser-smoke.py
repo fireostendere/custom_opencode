@@ -40,6 +40,8 @@ USERNAME = ENV.get("OPENCODE_SERVER_USERNAME", "")
 PASSWORD = ENV.get("OPENCODE_SERVER_PASSWORD", "")
 LAN_URL = os.environ.get("OPENCODE_LAN_URL", ENV.get("OPENCODE_LAN_URL", "http://127.0.0.1:4098"))
 TS_URL = os.environ.get("OPENCODE_TAILSCALE_URL", ENV.get("OPENCODE_TAILSCALE_URL", LAN_URL))
+# A D&D table session whose watcher pill must show (set by the local harness).
+DND_WATCH_SESSION = os.environ.get("OPENCODE_SMOKE_DND_SESSION", "")
 
 RESULTS: list[tuple[bool, str]] = []
 PROBLEMS: list[str] = []
@@ -155,6 +157,63 @@ def modal_dismissal_flow(page, tag: str, opener: str, dialog_id: str) -> bool:
     wait_modal_history_cleared(page)
     back_restored = page.url == base_url
     ok &= step(back_restored, f"{tag}: browser Back closes modal without route change")
+    return ok
+
+
+def touch_drag(page, x: float, y0: float, dy: float, steps: int = 12, pause_ms: int = 16) -> None:
+    """A one-finger vertical drag through CDP: real touch events, unlike page.mouse."""
+    cdp = page.context.new_cdp_session(page)
+    try:
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y0}]})
+        for index in range(1, steps + 1):
+            cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": x, "y": y0 + dy * index / steps}]})
+            page.wait_for_timeout(pause_ms)
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    finally:
+        cdp.detach()
+
+
+def sheet_swipe_flow(page, tag: str, opener: str, dialog_id: str, scroller: str) -> bool:
+    """Phone sheets close with a swipe down; a scrolled list keeps scrolling."""
+    ok = True
+    base_url = page.url
+    is_open = f"document.getElementById('{dialog_id}')?.open === true"
+
+    def open_sheet() -> None:
+        page.click(opener)
+        page.wait_for_selector(f"#{dialog_id}[open]", timeout=5000)
+        page.wait_for_timeout(350)  # let the open animation finish
+
+    open_sheet()
+    box = page.locator(f"#{dialog_id}").bounding_box()
+    x = box["x"] + box["width"] / 2
+    # 1. A short drag from the handle settles back.
+    touch_drag(page, x, box["y"] + 14, 36)
+    page.wait_for_timeout(400)
+    ok &= step(page.evaluate(is_open) and not page.evaluate(f"document.getElementById('{dialog_id}').style.transform"),
+               f"{tag}: short swipe settles the sheet back")
+    # 2. A full drag from the handle closes and consumes the history entry.
+    touch_drag(page, x, box["y"] + 14, 320)
+    wait_dialog_closed(page, dialog_id)
+    wait_modal_history_cleared(page)
+    ok &= step(page.url == base_url, f"{tag}: swipe down closes the sheet and restores history")
+    # 3. A scrolled list scrolls back up instead of closing.
+    open_sheet()
+    page.wait_for_selector(f"{scroller} [data-model]", timeout=5000)
+    page.evaluate(f"document.querySelector('{scroller}').scrollTop = 240")
+    page.wait_for_timeout(100)
+    list_box = page.locator(scroller).bounding_box()
+    touch_drag(page, x, list_box["y"] + 40, 160)
+    page.wait_for_timeout(400)
+    scrolled = page.evaluate(f"document.querySelector('{scroller}').scrollTop")
+    ok &= step(page.evaluate(is_open) and scrolled < 240, f"{tag}: swipe inside a scrolled list scrolls it (scrollTop {scrolled:.0f})")
+    # 4. From the top of the list the same swipe closes the sheet.
+    page.evaluate(f"document.querySelector('{scroller}').scrollTop = 0")
+    page.wait_for_timeout(100)
+    touch_drag(page, x, list_box["y"] + 40, 320)
+    wait_dialog_closed(page, dialog_id)
+    wait_modal_history_cleared(page)
+    ok &= step(page.url == base_url, f"{tag}: swipe from the top of the list closes the sheet")
     return ok
 
 
@@ -311,7 +370,23 @@ def desktop_flow(context) -> bool:
     except Exception as exc:  # noqa: BLE001
         ok &= step(False, "desktop: composer", str(exc)[:150])
 
-    # 7. Logout.
+    # 7. D&D watcher pill in the status bar and its details dialog.
+    if DND_WATCH_SESSION:
+        try:
+            page.evaluate("id => { location.hash = '#/session/' + encodeURIComponent(id) }", DND_WATCH_SESSION)
+            pill = page.locator("#dndWatchButton")
+            pill.wait_for(state="visible", timeout=15000)
+            label = pill.inner_text().strip()
+            pill.click()
+            page.wait_for_selector("#dndWatchDialog[open]", timeout=5000)
+            details = page.locator("#dndWatchDialogContent").inner_text()
+            page.screenshot(path=str(SHOTS / "desktop-07-dnd-watch.png"))
+            ok &= step(label.startswith("🎲") and "Кампания" in details, f"desktop: D&D watcher pill «{label}» opens its details")
+            close_dialog(page, "dndWatchDialog")
+        except PWTimeout as exc:
+            ok &= step(False, "desktop: D&D watcher pill", str(exc)[:150])
+
+    # 8. Logout.
     try:
         page.click("#logoutButton")
         page.wait_for_selector("#loginForm", timeout=10000)
@@ -361,6 +436,12 @@ def mobile_flow(context) -> bool:
         ok &= modal_dismissal_flow(page, "mobile", "#modelButton", "modelDialog")
     except PWTimeout as exc:
         ok &= step(False, "mobile: modal dismissal/history", str(exc)[:150])
+
+    try:
+        ok &= sheet_swipe_flow(page, "mobile", "#modelButton", "modelDialog", "#modelChoices")
+    except PWTimeout as exc:
+        ok &= step(False, "mobile: sheet swipe", str(exc)[:150])
+        close_dialog(page, "modelDialog")
 
     # Composer on the phone layout.
     try:

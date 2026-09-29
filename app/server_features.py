@@ -56,6 +56,13 @@ CANONICAL_DIRECTORY_TTL_SECONDS = 10.0
 CANONICAL_DIRECTORY_CACHE_LIMIT = 512
 _CANONICAL_DIRECTORY_LOCK = threading.Lock()
 _CANONICAL_DIRECTORY_CACHE: dict[str, tuple[float, str]] = {}
+# OPENCODE_PROJECT_ROOTS limits browsing/direct directory operations, but the
+# native backend can persist sessions at an explicitly chosen path outside
+# those roots (including managed /tmp worktrees). Once a directory is returned
+# by the authenticated backend as a session location, remember that canonical
+# path so session-scoped custom features can operate there without widening
+# filesystem enumeration.
+_TRUSTED_SESSION_DIRECTORIES: dict[str, float] = {}
 
 
 def _state_path() -> Path:
@@ -110,7 +117,12 @@ def _with_state_read() -> dict[str, Any]:
         return _load_state_unlocked()
 
 
-def _canonical_directory(raw: str | None, *, allow_scratch: bool = True) -> str:
+def _canonical_directory(
+    raw: str | None,
+    *,
+    allow_scratch: bool = True,
+    allow_session_location: bool = False,
+) -> str:
     if not raw:
         raise ValueError("directory is required")
     try:
@@ -119,6 +131,7 @@ def _canonical_directory(raw: str | None, *, allow_scratch: bool = True) -> str:
         raise ValueError("directory not found") from exc
     if not path.is_dir():
         raise ValueError("directory is not a directory")
+    canonical = str(path)
     roots = baseplus._project_roots()
     allowed = baseplus._allowed(path, roots)
     if allow_scratch:
@@ -127,9 +140,12 @@ def _canonical_directory(raw: str | None, *, allow_scratch: bool = True) -> str:
             allowed = allowed or baseplus._inside(path, scratch)
         except Exception:
             pass
-    if not allowed:
+    if not allowed and not allow_session_location:
+        with _CANONICAL_DIRECTORY_LOCK:
+            allowed = canonical in _TRUSTED_SESSION_DIRECTORIES
+    if not allowed and not allow_session_location:
         raise ValueError("directory outside allowed project roots")
-    return str(path)
+    return canonical
 
 
 def _session_info(session_id: str) -> dict[str, Any]:
@@ -147,20 +163,30 @@ def _session_directory(session_id: str) -> str:
     now = time.monotonic()
     with _CANONICAL_DIRECTORY_LOCK:
         cached = _CANONICAL_DIRECTORY_CACHE.get(directory)
-    if cached is not None and 0 <= now - cached[0] < CANONICAL_DIRECTORY_TTL_SECONDS:
-        return cached[1]
-    # Raises for missing or out-of-root directories: never cached.
-    canonical = _canonical_directory(directory)
+        if cached is not None and 0 <= now - cached[0] < CANONICAL_DIRECTORY_TTL_SECONDS:
+            _TRUSTED_SESSION_DIRECTORIES[cached[1]] = now
+            return cached[1]
+
+    # The native backend is the authority for a session's explicit workspace.
+    # Resolve it strictly, but do not re-apply OPENCODE_PROJECT_ROOTS here:
+    # exact external paths are already a supported native session capability.
+    canonical = _canonical_directory(directory, allow_session_location=True)
+
     with _CANONICAL_DIRECTORY_LOCK:
         if directory not in _CANONICAL_DIRECTORY_CACHE and len(_CANONICAL_DIRECTORY_CACHE) >= CANONICAL_DIRECTORY_CACHE_LIMIT:
-            _CANONICAL_DIRECTORY_CACHE.pop(min(_CANONICAL_DIRECTORY_CACHE, key=lambda key: _CANONICAL_DIRECTORY_CACHE[key][0]), None)
+            oldest = min(_CANONICAL_DIRECTORY_CACHE, key=lambda key: _CANONICAL_DIRECTORY_CACHE[key][0])
+            evicted = _CANONICAL_DIRECTORY_CACHE.pop(oldest, None)
+            if evicted is not None:
+                _TRUSTED_SESSION_DIRECTORIES.pop(evicted[1], None)
         _CANONICAL_DIRECTORY_CACHE[directory] = (now, canonical)
+        _TRUSTED_SESSION_DIRECTORIES[canonical] = now
     return canonical
 
 
 def _forget_session_directory() -> None:
     with _CANONICAL_DIRECTORY_LOCK:
         _CANONICAL_DIRECTORY_CACHE.clear()
+        _TRUSTED_SESSION_DIRECTORIES.clear()
 
 
 def _resolve_directory(payload: dict[str, Any] | None = None, params: dict[str, list[str]] | None = None) -> str:

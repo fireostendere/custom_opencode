@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { createHash } from "node:crypto"
-import { homedir } from "node:os"
+import { homedir, uptime } from "node:os"
 import { dirname, join } from "node:path"
 import { startEvents } from "../events.js"
 import { isDndContext } from "./orchestrated-qwen.js"
@@ -36,10 +36,11 @@ const ENDPOINT_CACHE_MS = 60_000
 const TURN_RETRY_MS = 30_000
 const TURN_RETRY_MAX_MS = 10 * 60_000
 const TURN_MAX_ATTEMPTS = 6
-// DND_KEEP_AWAKE=0 disables; a forgotten table stops pinning the PC after this.
-const AWAKE_IDLE_LIMIT_MS = 12 * 60 * 60_000
 const LOG_LIMIT = 8
 const STATE_HEARTBEAT_MS = 15_000
+// DM status reports ("Мастер думает…" for players; DND_WATCH_STATUS=0
+// disables) give up after this long instead of piling up behind a slow ODM.
+const STATUS_TIMEOUT_MS = 15_000
 const SESSION_CHANGED = "Watcher session changed"
 const REASONS = {
   ask: "Ask", whisper: "шёпот", player: "ход игрока", resync: "пересинхронизация",
@@ -130,7 +131,17 @@ export function createDndWatcher({ read, wake, now = Date.now, onChange = () => 
     entry.finishedAt = now()
     changed(entry.context.sessionID)
     try { await wake(entry.context.sessionID, view(entry), entry.controller.signal) }
-    catch { if (entries.get(entry.context.sessionID) === entry) { entry.status = "notification_failed"; changed(entry.context.sessionID) } }
+    catch {
+      if (entries.get(entry.context.sessionID) !== entry) return
+      if (entry.auto && status === "triggered") {
+        // An automatic wake that never reached the session keeps waiting and
+        // delivers the same input again after a backoff.
+        lastWake.delete(entry.context.sessionID)
+        entry.wakeFailures = (entry.wakeFailures ?? 0) + 1
+        Object.assign(entry, { status: "waiting", reason: undefined, finishedAt: undefined, retryAt: now() + Math.min(READ_MAX_BACKOFF_MS, 3000 * 2 ** Math.min(entry.wakeFailures, 5)) })
+      } else entry.status = "notification_failed"
+      changed(entry.context.sessionID)
+    }
   }
   return {
     start(input, context, { auto = false, delayMs = 0 } = {}) {
@@ -441,6 +452,22 @@ export function createPushLinks({ endpoint, onSignal, onState, fetch: request = 
   }
 }
 
+// A table lives until the machine reboots (in WSL: Windows reboot or
+// `wsl --shutdown`). Tables saved in an earlier boot are not restored: the
+// narrator's next turn arms them again.
+export function bootId() {
+  try { return readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() } catch {}
+  return `boot-${Math.round((Date.now() - uptime() * 1000) / 60_000)}`
+}
+
+// A woken turn failed: retry the same input with backoff; after the last
+// attempt drop that input but keep waiting for new ones.
+export function failedTurn(failures, at = Date.now()) {
+  if (failures >= TURN_MAX_ATTEMPTS) return { note: `ход не разобран после ${failures} попыток — жду новый ввод` }
+  const delay = Math.min(TURN_RETRY_MAX_MS, TURN_RETRY_MS * 2 ** (failures - 1))
+  return { turn: { state: "retry", retryAt: at + delay, failures }, note: `ход упал, повтор через ${Math.round(delay / 1000)}с` }
+}
+
 export function stateDirectory(env = process.env) {
   return join(env.CUSTOM_OPENCODE_STATE_DIR || join(homedir(), ".local", "state", "custom-opencode"), "dnd-watch")
 }
@@ -477,8 +504,10 @@ export default {
     const registrations = []
     const push = enabled("DND_WATCH_PUSH")
     const keepAwake = enabled("DND_KEEP_AWAKE")
+    const reportStatus = enabled("DND_WATCH_STATUS")
     const directory = ctx.location?.directory ?? ""
     const stateFile = stateFileFor(directory)
+    const boot = bootId()
     // The watcher is a game-only tool: hide its schema from every other lane.
     if (ctx.session.hook)
       registrations.push(await ctx.session.hook("context", event => {
@@ -509,7 +538,7 @@ export default {
     const table = sessionID => {
       if (!tables.has(sessionID)) {
         if (tables.size >= MAX_ENTRIES) tables.delete(tables.keys().next().value)
-        tables.set(sessionID, { auto: AUTO_WATCH, log: [], activeAt: Date.now() })
+        tables.set(sessionID, { auto: AUTO_WATCH, log: [] })
       }
       return tables.get(sessionID)
     }
@@ -542,12 +571,11 @@ export default {
       wake: async (sessionID, result, signal) => {
         signal.throwIfAborted()
         const text = result.auto
-          ? `DnD auto-watch: ${JSON.stringify(result)}\nNew activity in the connected campaign. This is a wake signal, not a player action or an authoritative game receipt. Read ODM from afterSeq, drain pages/events, check asks and pending rolls, obey initiative/global-turn barriers, then resolve the new input as the DM and publish the result to the campaign. Do not act for a player. Do not call dnd_watch: the host re-arms automatically after this turn. Reply to the operator with at most one short status line.`
+          ? `DnD auto-watch: ${JSON.stringify(result)}\nNew activity in the connected campaign. This is a wake signal, not a player action or an authoritative game receipt. Read ODM from afterSeq, drain pages/events, check asks and pending rolls, obey initiative/global-turn barriers, then resolve the new input as the DM and publish the result to the campaign. In combat, send the last narration about a resolved turn with passTurn:true; until then the table stays locked. This message and its fields are host bookkeeping: never quote them, their numbers or any operator wording into the campaign. Do not act for a player. Do not call dnd_watch: the host re-arms automatically after this turn. Reply to the operator with at most one short status line.`
           : `DnD watcher: ${JSON.stringify(result)}\nThis is a wake signal, not a player action or an authoritative game receipt. Read ODM from afterSeq, drain pages/events, check asks and pending rolls, and obey initiative/global-turn barriers. Do not act for a player. After processing, re-arm dnd_watch only while the operator's waiting request remains active. On timeout or error, report the stopped wait; do not claim it is still running.`
         await ctx.session.synthetic({ sessionID, delivery: "queue", resume: true, text, metadata: { dndWatch: result } })
         const entry = tables.get(sessionID)
         if (!entry) return
-        entry.activeAt = Date.now()
         if (result.status === "triggered") {
           entry.woke = true
           if (entry.turn?.state === "retry") entry.turn = undefined
@@ -596,11 +624,16 @@ export default {
     function reconcileLinks() {
       if (!push) return
       const wanted = watcher.campaigns()
+      // A connected narrator session keeps its doorbell even between waits, until
+      // reboot: the players' header lamp means "the DM host is online".
+      for (const entry of tables.values())
+        if (entry.campaignId && entry.context) wanted.add(entry.campaignId)
       for (const campaignId of wanted) {
         lingering.delete(campaignId)
         // Start at the waits' own cursor: the replay then covers only what they have not seen.
         const cursors = [...tables.keys()].map(sessionID => watcher.detail(sessionID))
           .filter(detail => detail?.status === "waiting" && detail.campaignId === campaignId).map(detail => detail.afterSeq)
+        if (!cursors.length) for (const entry of tables.values()) if (entry.campaignId === campaignId && sequence(entry.cursor)) cursors.push(entry.cursor)
         links.ensure(campaignId, cursors.length ? Math.min(...cursors) : 0)
       }
       for (const campaignId of links.campaigns()) {
@@ -611,12 +644,12 @@ export default {
       }
     }
     // keep-awake is optional: without it the watcher still works, the PC may just sleep.
+    // An armed table holds it until reboot; DND_KEEP_AWAKE=0 lets the PC sleep.
     let awakeHooks
     if (keepAwake) import("./keep-awake.js").then(hooks => { if (typeof hooks.holdAwake === "function") awakeHooks = hooks }).catch(() => {})
     function syncAwake() {
       const want = Boolean(awakeHooks) && [...tables.entries()].some(([sessionID, entry]) =>
-        Date.now() - entry.activeAt < AWAKE_IDLE_LIMIT_MS
-        && (watcher.status(sessionID).status === "waiting" || entry.turn?.state === "running" || entry.turn?.state === "retry"))
+        watcher.status(sessionID).status === "waiting" || entry.turn?.state === "running" || entry.turn?.state === "retry")
       if (want) awakeHooks.holdAwake(TOOL)
       else if (awake) awakeHooks?.releaseAwake(TOOL)
       if (want !== awake) { awake = want; publish() }
@@ -639,7 +672,7 @@ export default {
       }
       if (!Object.keys(sessions).length && !writeState.wrote) return
       writeState.wrote = true
-      try { writeJsonAtomic(stateFile, { version: 1, pid: process.pid, directory, updatedAt: Date.now(), sessions, ...extra }) } catch {}
+      try { writeJsonAtomic(stateFile, { version: 1, pid: process.pid, bootId: boot, directory, updatedAt: Date.now(), sessions, ...extra }) } catch {}
     }
 
     const remember = (input, context, result) => {
@@ -648,19 +681,47 @@ export default {
       const entry = table(context.sessionID)
       if (entry.campaignId !== input.campaignId) Object.assign(entry, { campaignId: input.campaignId, cursor: undefined })
       entry.context = context
-      entry.activeAt = Date.now()
       publish()
       if (input.operation !== "read") return
       let cursor
       try { cursor = drainedCursor(decodeResult(result)) } catch { return }
       if (cursor !== undefined) entry.cursor = cursor
     }
+    // DM activity for the players' web UI: "thinking" when a table turn starts,
+    // "idle" when it ends. Fire-and-forget through the same native executor as
+    // the watcher's reads, so permissions still apply. Reports are chained per
+    // session (an idle never overtakes its thinking); a failed report leaves
+    // the table state unknown, so the next report for it goes out again.
+    function dmStatus(sessionID, state) {
+      const entry = tables.get(sessionID)
+      if (!reportStatus || !entry?.campaignId || !entry.context) return
+      if (entry.dmStatus === state || (state === "idle" && entry.dmStatus === undefined)) return
+      entry.dmStatus = state
+      // The idle goes to the campaign that was told "thinking", even if the turn switched campaigns.
+      if (state === "thinking" || !entry.dmStatusCampaign) entry.dmStatusCampaign = entry.campaignId
+      const campaignId = entry.dmStatusCampaign, context = entry.context
+      entry.dmStatusChain = (entry.dmStatusChain ?? Promise.resolve()).then(async () => {
+        if (entry.dmStatus !== state || disposed) return
+        try {
+          // Subagent sessions (dnd-reader, dnd-memory…) never speak for the DM.
+          entry.primary ??= !(await ctx.session.get({ sessionID })).parentID
+          if (!entry.primary) return
+          const narrator = await getNarrator()
+          await narrator.execute({ operation: "status", campaignId, state }, {
+            ...context, signal: AbortSignal.timeout(STATUS_TIMEOUT_MS), odmBackgroundRead: true, progress: async () => {},
+          })
+        } catch { if (entry.dmStatus === state) entry.dmStatus = "unknown" }
+      })
+    }
     async function arm(sessionID) {
       const entry = tables.get(sessionID)
-      if (!sessionID || !entry?.auto || entry.turn?.state === "gave_up" || !entry.context || !entry.campaignId || !sequence(entry.cursor)) return false
+      if (!sessionID || !entry?.auto || !entry.context || !entry.campaignId || !sequence(entry.cursor)) return false
       if (watcher.status(sessionID).status === "waiting") return true
       const session = await ctx.session.get({ sessionID })
-      if (session.parentID || session.agent !== entry.context.agent) return false
+      if (session.parentID || session.agent !== entry.context.agent) {
+        note(sessionID, session.parentID ? "автоожидание не взведено: дочерняя сессия" : `автоожидание не взведено: агент сессии ${session.agent ?? "?"}`)
+        return false
+      }
       const delayMs = entry.turn?.state === "retry" ? Math.max(0, entry.turn.retryAt - Date.now()) : 0
       watcher.start({ campaignId: entry.campaignId, afterSeq: entry.cursor, timeoutSeconds: AUTO_TIMEOUT_SECONDS }, entry.context, { auto: true, delayMs })
       reconcileLinks()
@@ -668,12 +729,16 @@ export default {
       return true
     }
 
-    // Restart recovery: re-arm narrator tables saved by a previous process.
+    // Restart recovery: re-arm narrator tables saved by a previous process of
+    // this boot. After a reboot the panel is cleared and the tables stay off
+    // until the narrator's next turn.
     const restored = []
     try {
       const saved = JSON.parse(readFileSync(stateFile, "utf8"))
       const owned = saved?.pid && saved.pid !== process.pid && alive(saved.pid) && Date.now() - saved.updatedAt < 3 * STATE_HEARTBEAT_MS
-      for (const [sessionID, value] of owned ? [] : Object.entries(saved?.sessions ?? {})) {
+      const rebooted = Boolean(saved?.bootId) && saved.bootId !== boot
+      if (rebooted) { writeState.wrote = true; publish() }
+      for (const [sessionID, value] of owned || rebooted ? [] : Object.entries(saved?.sessions ?? {})) {
         const context = pickContext(value?.context)
         if (!UUID.test(value?.campaignId || "") || !sequence(value?.cursor) || context.sessionID !== sessionID || !String(context.agent || "").startsWith("dnd-")) continue
         Object.assign(table(sessionID), {
@@ -737,7 +802,7 @@ export default {
           const entry = tables.get(context.sessionID)
           // The model sometimes "arms" a wait itself, often mid-turn: never let
           // that replace the resilient automatic wait on the same campaign.
-          if (entry?.auto && entry.campaignId === input.campaignId && sequence(entry.cursor) && entry.context && entry.turn?.state !== "gave_up")
+          if (entry?.auto && entry.campaignId === input.campaignId && sequence(entry.cursor) && entry.context)
             result = { status: "auto", campaignId: input.campaignId, note: "auto-watch is on for this campaign: the host waits for players after this turn; nothing to start" }
           else {
             result = watcher.start(input, context)
@@ -759,7 +824,7 @@ export default {
         if (action === "stop") { table(sessionID).auto = false; watcher.stop(sessionID); note(sessionID, "выключен оператором") }
         if (action === "auto") {
           const entry = table(sessionID)
-          Object.assign(entry, { auto: true, failures: 0, turn: undefined, activeAt: Date.now() })
+          Object.assign(entry, { auto: true, failures: 0, turn: undefined })
           note(sessionID, "включён оператором")
           await arm(sessionID)
         }
@@ -783,7 +848,9 @@ export default {
       const entry = sessionID ? tables.get(sessionID) : undefined
       if (entry) {
         const woke = entry.woke
-        if (type === "session.execution.started") { entry.turn = { state: "running", startedAt: Date.now() }; entry.activeAt = Date.now(); publish() }
+        if (type === "session.execution.started") dmStatus(sessionID, "thinking")
+        else if (type === "session.idle" || ["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].includes(type)) dmStatus(sessionID, "idle")
+        if (type === "session.execution.started") { entry.turn = { state: "running", startedAt: Date.now() }; publish() }
         else if (type === "session.execution.succeeded") {
           if (woke) note(sessionID, "ход разобран, жду дальше")
           Object.assign(entry, { woke: false, failures: 0, turn: undefined })
@@ -796,26 +863,17 @@ export default {
           entry.woke = false
           if (!woke) entry.turn = undefined
           else {
+            const next = failedTurn((entry.failures ?? 0) + 1)
             // The failed turn never handled the input: let the same input wake again, later.
-            watcher.forget(sessionID)
-            entry.failures = (entry.failures ?? 0) + 1
-            if (entry.failures >= TURN_MAX_ATTEMPTS) {
-              entry.turn = { state: "gave_up", failures: entry.failures }
-              note(sessionID, `ход не разобран после ${entry.failures} попыток — нужен оператор`)
-            } else {
-              const delay = Math.min(TURN_RETRY_MAX_MS, TURN_RETRY_MS * 2 ** (entry.failures - 1))
-              entry.turn = { state: "retry", retryAt: Date.now() + delay, failures: entry.failures }
-              note(sessionID, `ход упал, повтор через ${Math.round(delay / 1000)}с`)
-            }
+            if (next.turn) watcher.forget(sessionID)
+            Object.assign(entry, { failures: next.turn ? next.turn.failures : 0, turn: next.turn })
+            note(sessionID, next.note)
           }
-          publish()
-        } else if (type === "session.inbox.enqueued" && event.data?.item?.type === "user" && entry.turn?.state === "gave_up") {
-          // The operator took the table over; auto-watch resumes after that turn.
-          Object.assign(entry, { failures: 0, turn: undefined })
           publish()
         } else if (type === "session.idle" && entry.turn?.state === "running") { entry.turn = undefined; publish() }
       }
-      if (type === "session.idle" || (type === "session.execution.failed" && entry?.turn?.state === "retry")) return arm(sessionID).catch(() => {})
+      // A model switch between turns stops the wait above; the table stays watched with the new model.
+      if (type === "session.idle" || type === "session.execution.failed" || (type === "session.model.selected" && entry?.turn?.state !== "running")) return arm(sessionID).catch(() => {})
     })
     // ponytail: waits are process-local; the status file lets a restarted
     // process re-arm them, but a host job store would make that durable.

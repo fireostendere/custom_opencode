@@ -18,7 +18,8 @@ const ENGINEERING = readFileSync(join(CONFIG_DIR, "prompts", "engineering.md"), 
 const ENGINEERING_LITE = readFileSync(join(CONFIG_DIR, "prompts", "engineering-lite.md"), "utf8").trim()
 const PLAN_POLICY =
   "Use plan_update only for complex or risky multi-step work. Keep 1-7 outcome-oriented items, update only at meaningful milestones in the same step as other tool calls (never a plan-only step), and never expose private reasoning."
-const GAME_SKILLS = ["odm-dm-policy", "odm-narrator", "yolo-dm"]
+// dnd-edition.md owns the table style; yolo-dm stays a discoverable skill.
+const GAME_SKILLS = ["odm-dm-policy", "odm-narrator"]
 const GAME_SKILL_TTL_MS = 5 * 60_000
 const GAME_SKILL_RETRY_MS = 30_000
 const PLAN_AGENTS = new Set(["build", "build-direct", "plan", "plan-direct"])
@@ -146,11 +147,43 @@ function removeOwned(parts) {
   })
 }
 
+// D&D lane: the operator and the game share one chat. The dnd-watch host
+// announces its wake signals by prefix; anything else the operator typed is
+// labeled out-of-game for this request only (history is never rewritten), so
+// a debug question gets an answer here instead of becoming a scene at the
+// table.
+export const OPERATOR_MARKER =
+  "[Оператор, вне игры. Команду вести игру выполни инструментами, в кампанию — только мир. Вопрос, отладку или жалобу обсуди только здесь: в кампанию ничего не пиши и не цитируй.]"
+const HOST_SIGNALS = ["DnD auto-watch:", "DnD watcher:", "Context class:"]
+
+export function labelOperatorTurn(messages) {
+  let index = -1
+  for (let i = messages.length - 1; i >= 0; i -= 1)
+    if (messages[i]?.role === "user") {
+      index = i
+      break
+    }
+  const turn = index >= 0 ? messages[index] : undefined
+  // Compaction and session.generate prompts carry no id: not the operator.
+  if (!turn?.id) return messages
+  const content = Array.isArray(turn.content)
+    ? turn.content
+    : typeof turn.content === "string"
+      ? [{ type: "text", text: turn.content }]
+      : []
+  const first = String(content.find((part) => part?.type === "text")?.text ?? "").trimStart()
+  if (!first || first.startsWith(OPERATOR_MARKER) || HOST_SIGNALS.some((signal) => first.startsWith(signal)))
+    return messages
+  const next = messages.slice()
+  next[index] = { ...turn, content: [{ type: "text", text: OPERATOR_MARKER }, ...content] }
+  return next
+}
+
 export default {
   id: "custom.context-lanes",
   async setup(ctx) {
     const registrations = []
-    // The skill catalog is 0.5-0.8 MB: fetch the two game skills once and
+    // The skill catalog is 0.5-0.8 MB: fetch the game skills once and
     // refresh them only on skill reload (or a bounded TTL as a safety net).
     let gameSkills = null
     const requiredGameSkills = async () => {
@@ -210,6 +243,7 @@ export default {
           for (const [id, content] of await requiredGameSkills())
             event.system.push({ type: "text", text: `Required game skill already loaded: ${id}\n${content}` })
         }
+        if (policy.dndMinimalContext && Array.isArray(event.messages)) event.messages = labelOperatorTurn(event.messages)
       }),
     )
 

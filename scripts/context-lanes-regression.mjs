@@ -137,11 +137,34 @@ try {
   await hooks.context(dnd)
   for (let step = 0; step < 5; step++) await hooks.context({ ...dnd, system: [] })
   assert.equal(skillLists, listsBeforeSteps + 1, 'D&D steps must reuse the cached game skills')
-  assert.deepEqual(dnd.system.slice(-3).map(item => item.text), ['Required game skill already loaded: odm-dm-policy\nPOLICY', 'Required game skill already loaded: odm-narrator\nNARRATOR', 'Required game skill already loaded: yolo-dm\nYOLO'])
+  assert.deepEqual(dnd.system.slice(-2).map(item => item.text), ['Required game skill already loaded: odm-dm-policy\nPOLICY', 'Required game skill already loaded: odm-narrator\nNARRATOR'])
+  assert.ok(!dnd.system.some(item => item.text.includes('YOLO')), 'dnd-edition.md owns the style; yolo-dm is not preloaded')
   assert.ok(!dnd.system.some(item => item.text.includes('CODING')), 'preloading must stay game-only')
   gameSkills.length = 0
   emit({ type: 'skill.updated', data: {} })
   await new Promise((resolve) => setImmediate(resolve))
+
+  // The operator's own message is labeled out-of-game for the request only;
+  // host wake signals and other lanes are left alone.
+  const { OPERATOR_MARKER } = await import(
+    pathToFileURL(new URL("../config/plugins/context-lanes.js", import.meta.url).pathname).href
+  )
+  const history = [{ role: "user", id: "u0", content: [{ type: "text", text: "ход" }] }, { role: "assistant", id: "a0", content: [] }]
+  const operatorTurn = { ...dnd, system: [], messages: [...history, { role: "user", id: "u1", content: [{ type: "text", text: "почему анимации не видно?" }] }] }
+  await hooks.context(operatorTurn)
+  assert.deepEqual(operatorTurn.messages.at(-1).content.map((part) => part.text), [OPERATOR_MARKER, "почему анимации не видно?"])
+  assert.deepEqual(operatorTurn.messages.slice(0, 2), history, "earlier history stays byte-identical")
+  await hooks.context(operatorTurn)
+  assert.equal(operatorTurn.messages.at(-1).content.filter((part) => part.text === OPERATOR_MARKER).length, 1, "labeling is idempotent")
+  const wakeTurn = { ...dnd, system: [], messages: [{ role: "user", id: "u2", content: [{ type: "text", text: "DnD auto-watch: {\"afterSeq\":1}" }] }] }
+  await hooks.context(wakeTurn)
+  assert.equal(wakeTurn.messages[0].content.length, 1, "host wake signals are not the operator")
+  const compaction = { ...dnd, system: [], messages: [{ role: "user", content: "summarize" }] }
+  await hooks.context(compaction)
+  assert.equal(compaction.messages[0].content, "summarize", "id-less compaction prompts are untouched")
+  const codingTurn = { sessionID: "coding", agent: "build", model: { providerID: "openai", id: "gpt-6-sol" }, system: [], messages: [{ role: "user", id: "u3", content: [{ type: "text", text: "почему?" }] }] }
+  await hooks.context(codingTurn)
+  assert.equal(codingTurn.messages[0].content.length, 1, "only the D&D lane labels operator turns")
 
   const dndPinnedModel = {
     sessionID: "dnd-pinned",
