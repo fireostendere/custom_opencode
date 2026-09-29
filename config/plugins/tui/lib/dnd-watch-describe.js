@@ -71,11 +71,6 @@ export function describeWatch(snapshot, now = Date.now()) {
     headline = `⚠ ход упал, повтор через ${secondsLeft(turn.retryAt, now)}с`
     label = `Повтор через ${secondsLeft(turn.retryAt, now)}с`
     ticking = true
-  } else if (turn?.state === "gave_up") {
-    tone = "warn"
-    headline = "⚠ ход не разобран — нужен оператор"
-    label = "Нужен оператор"
-    hint = "Напиши в сессию или /dnd-watch auto"
   } else if (watch.status === "waiting" && watch.errors > 0) {
     tone = "warn"
     headline = watch.retryAt ? `⚠ ODM недоступен, повтор ${secondsLeft(watch.retryAt, now)}с` : "⚠ ODM недоступен"
