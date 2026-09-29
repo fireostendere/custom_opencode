@@ -18,7 +18,8 @@ const ENGINEERING = readFileSync(join(CONFIG_DIR, "prompts", "engineering.md"), 
 const ENGINEERING_LITE = readFileSync(join(CONFIG_DIR, "prompts", "engineering-lite.md"), "utf8").trim()
 const PLAN_POLICY =
   "Use plan_update only for complex or risky multi-step work. Keep 1-7 outcome-oriented items, update only at meaningful milestones in the same step as other tool calls (never a plan-only step), and never expose private reasoning."
-const GAME_SKILLS = ["odm-dm-policy", "odm-narrator", "yolo-dm"]
+// dnd-edition.md owns the table style; yolo-dm stays a discoverable skill.
+const GAME_SKILLS = ["odm-dm-policy", "odm-narrator"]
 const GAME_SKILL_TTL_MS = 5 * 60_000
 const GAME_SKILL_RETRY_MS = 30_000
 const PLAN_AGENTS = new Set(["build", "build-direct", "plan", "plan-direct"])
@@ -150,7 +151,7 @@ export default {
   id: "custom.context-lanes",
   async setup(ctx) {
     const registrations = []
-    // The skill catalog is 0.5-0.8 MB: fetch the two game skills once and
+    // The skill catalog is 0.5-0.8 MB: fetch the game skills once and
     // refresh them only on skill reload (or a bounded TTL as a safety net).
     let gameSkills = null
     const requiredGameSkills = async () => {
