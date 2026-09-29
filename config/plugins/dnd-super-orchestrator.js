@@ -83,7 +83,7 @@ function applyRoute(body, decision) {
     // narrator call that pretends to be NO_LLM.
     throw new Error(`D&D ${selected || "unknown"} route requires managed ODM tool dispatch`)
   }
-  const target = selected === "SOL_XHIGH" ? "gpt-6-sol" : "gpt-6-luna"
+  const target = selected === "SOL_XHIGH" ? "gpt-6.1-sol" : "gpt-6-luna"
   const effort = selected === "LUNA_LOW" ? "low" : selected === "LUNA_MAX" ? "max" : "xhigh"
   const result = { ...body }
   result.model = target
@@ -207,7 +207,9 @@ if (process.env.DND_SUPER_ORCHESTRATOR_SELF_CHECK) {
   const lunaMax = routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_MAX" })
   if ("service_tier" in lunaLow || "service_tier" in lunaXhigh || "service_tier" in lunaMax) throw new Error("Luna OAuth tier contract failed")
   if (lunaLow.reasoning?.effort !== "low" || lunaXhigh.reasoning?.effort !== "xhigh" || lunaMax.reasoning?.effort !== "max" || "reasoning_effort" in lunaLow) throw new Error("Luna reasoning contract failed")
-  if ("service_tier" in routeBody({ model: "gpt-6-sol", messages: [] }, { route: "SOL_XHIGH" })) throw new Error("Sol default tier failed")
+  const solXhigh = routeBody({ model: "gpt-6-luna", messages: [] }, { route: "SOL_XHIGH" })
+  if ("service_tier" in solXhigh) throw new Error("Sol default tier failed")
+  if (solXhigh.model !== "gpt-6.1-sol" || solXhigh.reasoning?.effort !== "xhigh") throw new Error("Sol route must target GPT-6.1 Sol at xhigh")
   let refused = false
   const original = { messages: [{ role: "user", content: "attack" }], reasoning: { summary: "auto" }, reasoning_effort: "high", service_tier: "priority" }
   const routed = routeBody(original, { route: "LUNA_LOW" })
