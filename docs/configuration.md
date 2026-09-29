@@ -161,6 +161,33 @@ Alibaba-роли provider-locked на Alibaba Cloud/Bailian, а SOL и DnD-ро�
 
 Host load, GPU state, запущенные игры и доступность другого inference endpoint не участвуют в выборе model route.
 
+## Типизированный вывод (JEV-style)
+
+Плагин `config/plugins/typed-output.js` делает машинный трафик между агентами строгим JSON,
+как локальный классификатор JEV в hardware-линии. Проза остаётся только там, где её читает человек.
+
+Реестр — `config/prompts/typed-output.json` (плюс необязательные `prompts/typed-output.*.json`,
+например из приватного user config; поздний файл побеждает для агента):
+
+| Поле | Смысл |
+|---|---|
+| `kinds` | Виды запросов для формата; по умолчанию `primary` и `generate`, никогда `title`/`compaction` |
+| `format` | `{"type":"json_schema","name","schema"}` (strict) или `{"type":"json_object"}` |
+| `task` | JSON Schema, которой обязан соответствовать prompt нативного `subagent` к этому агенту |
+
+OpenCode V2 шлёт Responses-инструменты с `strict:false`, а `text` — только с `verbosity`, поэтому формат
+ставится на исходящее тело (`text.format` для Responses, `response_format` для Chat Completions).
+Если провайдер отвечает `400` с упоминанием формата, запрос один раз повторяется ровно в исходном виде,
+а модель на сутки помечается в `~/.local/state/custom-opencode/typed-output.json`. `TYPED_OUTPUT=off`
+выключает плагин.
+
+D&D: изолированные роли ODM `narrator-ask` (`odm_ask_answer_v1`) и `narrator-actor` (`odm_actor_turn_v1`)
+получают strict-схему, `narrator-referee` — JSON mode (`invoke.args` — открытый объект, strict его не выражает;
+форму по-прежнему проверяет `validateDecision` в ODM). `narrator-writer` и `narrate.content` — проза для игроков.
+Принимает ли ChatGPT-OAuth путь `text.format`, подтверждается первым живым запросом; при отказе работает откат.
+
+Проверка: `node scripts/typed-output-regression.mjs` (без токенов).
+
 ## Reasoning effort
 
 Canonical levels:
