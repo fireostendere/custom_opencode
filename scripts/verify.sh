@@ -86,6 +86,7 @@ done
 "$NODE" "$ROOT/scripts/dnd-watch-regression.mjs"
 "$PYTHON3" "$ROOT/scripts/dnd-watch-web-regression.py"
 "$NODE" "$ROOT/scripts/dnd-state-cache-regression.mjs"
+"$NODE" "$ROOT/scripts/typed-output-regression.mjs"
 DND_FAST_TIER_SELF_CHECK=1 "$NODE" "$ROOT/config/plugins/dnd-fast-tier.js"
 "$NODE" "$ROOT/scripts/visible-plan-regression.mjs"
 "$NODE" "$ROOT/scripts/ponytail-v2-regression.mjs"

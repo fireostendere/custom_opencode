@@ -1,0 +1,38 @@
+{
+  "comment": "Typed agent output (plugins/typed-output.js). ODM isolated narrator roles exchange JSON with the ODM host; the writer role and player-facing text stay prose. Referee uses JSON mode because invoke.args is an open object that strict mode cannot express; ODM validateDecision still checks its shape.",
+  "agents": {
+    "narrator-ask": {
+      "kinds": ["generate", "primary"],
+      "format": {
+        "type": "json_schema",
+        "name": "odm_ask_answer_v1",
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["answer"],
+          "properties": { "answer": { "type": "string" } }
+        }
+      }
+    },
+    "narrator-actor": {
+      "kinds": ["generate", "primary"],
+      "format": {
+        "type": "json_schema",
+        "name": "odm_actor_turn_v1",
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "content"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["do"] },
+            "content": { "type": "string" }
+          }
+        }
+      }
+    },
+    "narrator-referee": {
+      "kinds": ["generate", "primary"],
+      "format": { "type": "json_object" }
+    }
+  }
+}
