@@ -91,12 +91,13 @@ Live routes are discrete: `NO_LLM`/authoritative tool dispatch,
 `LUNA_LOW`/`LUNA_XHIGH`/`LUNA_MAX`, or rare `SOL_XHIGH` for exceptionally complex scenes. Runtime V3 keeps state and RAG branches independent; ODM remains
 responsible for mechanics, mutations, identity and privacy.
 
-The D&D orchestrator uses the provider's default service tier. The current
-OpenCode OAuth path accepts GPT-6 Luna but rejects both explicit `service_tier=fast`
-and `priority` with HTTP 400. Its native `gpt-6-luna-fast` alias retries at the
-default tier after that refusal, so selecting it does not establish Fast mode.
-Use an API-key provider path that returns an actual Fast-tier receipt before
-claiming Luna Fast; the DnD Edition catalog alias maps to Luna so the un-routed profile
+`config/plugins/dnd-fast-tier.js` puts `service_tier=priority` (Luna "Fast") on
+every D&D Edition request, because the bundled AI SDK drops the variant setting
+for `gpt-6-*` model IDs. If the provider answers HTTP 400 naming the tier, the
+plugin resends the same request without it and keeps that model on the default
+tier for an hour. `DND_FAST_TIER=default` disables the plugin. The response
+still reports `serviceTier: default`; measure latency rather than trusting the
+receipt. The DnD Edition catalog alias maps to Luna, so the un-routed profile
 also selects the narrator model.
 
 The player-facing prompt lives in `config/prompts/dnd-edition.md`. It gives the

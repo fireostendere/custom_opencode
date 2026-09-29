@@ -31,7 +31,7 @@ The dedicated D&D profile is also OpenAI-only:
 
 | Role | Model | Default effort |
 | --- | --- | --- |
-| narrator | `gpt-6-luna` | low |
+| narrator | `gpt-6-luna` | medium |
 | complex/private narrator | `gpt-6-luna` | xhigh |
 | exceptional gated narrator | `gpt-6-sol` | xhigh |
 | boundary planner | `gpt-6-luna` | xhigh |

@@ -25,6 +25,9 @@ assert.equal(cache.prepare('two', query).knownStateRevision, undefined, 'session
 assert.equal(cache.prepare('one', { ...query, campaignId: 'other' }).knownStateRevision, undefined)
 assert.equal(cache.prepare('one', { ...query, projection: 'full' }).knownStateRevision, undefined)
 assert.equal(cache.prepare('one', { ...query, stateDelta: false }).knownStateRevision, undefined)
+assert.equal(cache.prepare('one', query).maxBytes, 45056, 'pages fit the host tool_output cap')
+assert.equal(cache.prepare('one', { ...query, maxBytes: 131072 }).maxBytes, 45056, 'an oversized model request is clamped')
+assert.equal(cache.prepare('one', { ...query, maxBytes: 8192 }).maxBytes, 8192, 'a smaller model request is kept')
 assert.deepEqual(cache.prepare('one', { ...query, pageCursor: 'frozen', maxBytes: 4096 }), { ...query, pageCursor: 'frozen', maxBytes: 4096 })
 assert.equal(cache.prepare('one', { operation: 'catalog', campaignId, category: 'combat' }).summaryOnly, true)
 assert.equal(cache.prepare('one', { operation: 'catalog', campaignId, action: 'cast_buff' }).summaryOnly, undefined)
@@ -36,6 +39,15 @@ const prepared = cache.prepare('one', write)
 assert.equal(prepared.readAfter.knownStateRevision, nextRevision)
 assert.deepEqual({ ...prepared, readAfter: write.readAfter }, write, 'never change command identity, CAS or engine arguments')
 assert.equal(cache.prepare('one', { ...write, readAfter: false }).readAfter, false)
+{
+  const { readAfter: _omitted, ...bare } = write
+  const injected = cache.prepare('one', bare)
+  assert.deepEqual({ ...injected, readAfter: undefined }, { ...bare, readAfter: undefined }, 'injecting readAfter never touches the command')
+  assert.equal(injected.readAfter.stateDelta, true)
+  assert.equal(injected.readAfter.knownStateRevision, nextRevision, 'a write without readAfter still gets the bounded delta')
+  assert.equal(injected.readAfter.maxBytes, 45056)
+  assert.equal(cache.prepare('one', { operation: 'answer_ask', campaignId, askId: 'x' }).readAfter, undefined, 'non-story writes are untouched')
+}
 
 cache.reset('one')
 assert.equal(cache.prepare('one', query).knownStateRevision, undefined, 'compaction/reconnect discards the baseline')

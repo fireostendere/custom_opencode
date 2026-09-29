@@ -600,11 +600,16 @@ export default {
     function reconcileLinks() {
       if (!push) return
       const wanted = watcher.campaigns()
+      // A connected narrator session keeps its doorbell even between waits: the
+      // players' header lamp means "the DM host is online", not "a wait is armed".
+      for (const entry of tables.values())
+        if (entry.campaignId && entry.context && Date.now() - entry.activeAt < AWAKE_IDLE_LIMIT_MS) wanted.add(entry.campaignId)
       for (const campaignId of wanted) {
         lingering.delete(campaignId)
         // Start at the waits' own cursor: the replay then covers only what they have not seen.
         const cursors = [...tables.keys()].map(sessionID => watcher.detail(sessionID))
           .filter(detail => detail?.status === "waiting" && detail.campaignId === campaignId).map(detail => detail.afterSeq)
+        if (!cursors.length) for (const entry of tables.values()) if (entry.campaignId === campaignId && sequence(entry.cursor)) cursors.push(entry.cursor)
         links.ensure(campaignId, cursors.length ? Math.min(...cursors) : 0)
       }
       for (const campaignId of links.campaigns()) {
@@ -690,7 +695,10 @@ export default {
       if (!sessionID || !entry?.auto || entry.turn?.state === "gave_up" || !entry.context || !entry.campaignId || !sequence(entry.cursor)) return false
       if (watcher.status(sessionID).status === "waiting") return true
       const session = await ctx.session.get({ sessionID })
-      if (session.parentID || session.agent !== entry.context.agent) return false
+      if (session.parentID || session.agent !== entry.context.agent) {
+        note(sessionID, session.parentID ? "автоожидание не взведено: дочерняя сессия" : `автоожидание не взведено: агент сессии ${session.agent ?? "?"}`)
+        return false
+      }
       const delayMs = entry.turn?.state === "retry" ? Math.max(0, entry.turn.retryAt - Date.now()) : 0
       watcher.start({ campaignId: entry.campaignId, afterSeq: entry.cursor, timeoutSeconds: AUTO_TIMEOUT_SECONDS }, entry.context, { auto: true, delayMs })
       reconcileLinks()
