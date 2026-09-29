@@ -147,6 +147,38 @@ function removeOwned(parts) {
   })
 }
 
+// D&D lane: the operator and the game share one chat. The dnd-watch host
+// announces its wake signals by prefix; anything else the operator typed is
+// labeled out-of-game for this request only (history is never rewritten), so
+// a debug question gets an answer here instead of becoming a scene at the
+// table.
+export const OPERATOR_MARKER =
+  "[Оператор, вне игры. Команду вести игру выполни инструментами, в кампанию — только мир. Вопрос, отладку или жалобу обсуди только здесь: в кампанию ничего не пиши и не цитируй.]"
+const HOST_SIGNALS = ["DnD auto-watch:", "DnD watcher:", "Context class:"]
+
+export function labelOperatorTurn(messages) {
+  let index = -1
+  for (let i = messages.length - 1; i >= 0; i -= 1)
+    if (messages[i]?.role === "user") {
+      index = i
+      break
+    }
+  const turn = index >= 0 ? messages[index] : undefined
+  // Compaction and session.generate prompts carry no id: not the operator.
+  if (!turn?.id) return messages
+  const content = Array.isArray(turn.content)
+    ? turn.content
+    : typeof turn.content === "string"
+      ? [{ type: "text", text: turn.content }]
+      : []
+  const first = String(content.find((part) => part?.type === "text")?.text ?? "").trimStart()
+  if (!first || first.startsWith(OPERATOR_MARKER) || HOST_SIGNALS.some((signal) => first.startsWith(signal)))
+    return messages
+  const next = messages.slice()
+  next[index] = { ...turn, content: [{ type: "text", text: OPERATOR_MARKER }, ...content] }
+  return next
+}
+
 export default {
   id: "custom.context-lanes",
   async setup(ctx) {
@@ -211,6 +243,7 @@ export default {
           for (const [id, content] of await requiredGameSkills())
             event.system.push({ type: "text", text: `Required game skill already loaded: ${id}\n${content}` })
         }
+        if (policy.dndMinimalContext && Array.isArray(event.messages)) event.messages = labelOperatorTurn(event.messages)
       }),
     )
 
