@@ -22,6 +22,8 @@ const PLAN_POLICY =
 const GAME_SKILLS = ["odm-dm-policy", "odm-narrator"]
 const GAME_SKILL_TTL_MS = 5 * 60_000
 const GAME_SKILL_RETRY_MS = 30_000
+const GAME_SKILL_COLD_RETRIES = 6
+const GAME_SKILL_COLD_DELAY_MS = 500
 const PLAN_AGENTS = new Set(["build", "build-direct", "plan", "plan-direct"])
 const OWN_MARKERS = [
   "Custom engineering policy",
@@ -188,15 +190,28 @@ export default {
     let gameSkills = null
     const requiredGameSkills = async () => {
       if (gameSkills && Date.now() < gameSkills.until) return gameSkills.items
-      const catalog = await ctx.skill.list()
-      const skills = Array.isArray(catalog) ? catalog : catalog?.data || []
-      const items = GAME_SKILLS.flatMap((id) => {
-        const content = skills.find((item) => item.id === id)?.content
-        return content ? [[id, content]] : []
-      })
-      const complete = items.length === GAME_SKILLS.length
-      gameSkills = { items, until: Date.now() + (complete ? GAME_SKILL_TTL_MS : GAME_SKILL_RETRY_MS) }
-      return items
+      // A fresh project instance lists skills before its configured skill paths are
+      // scanned. Without a short retry the first turn goes out without the policy and the
+      // model loads ~14 KB of skills into its history; a partial list never replaces a
+      // complete one (that would also change the cached system prompt mid-session).
+      for (let attempt = 0; ; attempt++) {
+        const catalog = await ctx.skill.list()
+        const skills = Array.isArray(catalog) ? catalog : catalog?.data || []
+        const items = GAME_SKILLS.flatMap((id) => {
+          const content = skills.find((item) => item.id === id)?.content
+          return content ? [[id, content]] : []
+        })
+        if (items.length === GAME_SKILLS.length) {
+          gameSkills = { items, complete: true, until: Date.now() + GAME_SKILL_TTL_MS }
+          return items
+        }
+        if (gameSkills?.complete) return gameSkills.items
+        if (attempt >= GAME_SKILL_COLD_RETRIES) {
+          gameSkills = { items, until: Date.now() + GAME_SKILL_RETRY_MS }
+          return items
+        }
+        await new Promise((resolve) => setTimeout(resolve, GAME_SKILL_COLD_DELAY_MS))
+      }
     }
     const stopEvents = ctx.event?.subscribe
       ? startEvents(ctx, (event) => {

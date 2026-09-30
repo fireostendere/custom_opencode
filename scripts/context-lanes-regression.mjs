@@ -143,6 +143,17 @@ try {
   gameSkills.length = 0
   emit({ type: 'skill.updated', data: {} })
   await new Promise((resolve) => setImmediate(resolve))
+  {
+    // A fresh project instance lists skills before its skill paths are scanned; a short
+    // retry must fill the first turn instead of sending it without the policy.
+    setTimeout(() => gameSkills.push({ id: 'odm-narrator', content: 'NARRATOR' }, { id: 'odm-dm-policy', content: 'POLICY' }), 300)
+    const cold = { ...dnd, system: [] }
+    await hooks.context(cold)
+    assert.ok(cold.system.some(item => item.text.includes('NARRATOR')), 'cold start retries the skill listing')
+    gameSkills.length = 0
+    emit({ type: 'skill.updated', data: {} })
+    await new Promise((resolve) => setImmediate(resolve))
+  }
 
   // The operator's own message is labeled out-of-game for the request only;
   // host wake signals and other lanes are left alone.

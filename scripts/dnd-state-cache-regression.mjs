@@ -47,6 +47,8 @@ assert.equal(cache.prepare('one', { ...write, readAfter: false }).readAfter, fal
   assert.equal(injected.readAfter.knownStateRevision, nextRevision, 'a write without readAfter still gets the bounded delta')
   assert.equal(injected.readAfter.maxBytes, 45056)
   assert.equal(cache.prepare('one', { operation: 'answer_ask', campaignId, askId: 'x' }).readAfter, undefined, 'non-story writes are untouched')
+  assert.equal(cache.prepare('one', { ...bare, readAfter: true }).readAfter.knownStateRevision, nextRevision, 'readAfter:true means the default bounded delta, not a full state')
+  assert.deepEqual(cache.prepare('one', { operation: 'snapshot', campaignId, sections: ['party'], projection: 'live', stateDelta: true }), { operation: 'snapshot', campaignId, sections: ['party'] })
 }
 
 cache.reset('one')
@@ -96,6 +98,43 @@ const pending = inFlight(query, context)
 cache.reset('one')
 finish(result(baseline)); await pending
 assert.equal(cache.prepare('one', query).knownStateRevision, undefined)
+{
+  // A refused call keeps the acknowledged baseline; a repeated identical catalog is not resent.
+  const errors = createDndStateCache()
+  let fail = false
+  const call = errors.wrap(async input => {
+    if (fail) throw new Error('engine refused')
+    return result(input.operation === 'catalog' ? { groups: [{ name: 'pc_attack' }] } : baseline)
+  })
+  const ctx = { sessionID: 'err' }
+  await call(query, ctx)
+  fail = true
+  await assert.rejects(call({ operation: 'invoke', campaignId, name: 'pc_attack', expectedSeq: 10 }, ctx), /engine refused/)
+  assert.equal(errors.prepare('err', query).knownStateRevision, revision, 'an engine refusal must not force a full resync')
+  fail = false
+  const catalog = { operation: 'catalog', campaignId, action: 'pc_attack' }
+  assert.match((await call(catalog, ctx)).content, /pc_attack/)
+  assert.match((await call(catalog, ctx)).content, /unchanged/, 'the second identical lookup is a stub')
+  assert.match((await call({ ...catalog, action: 'heal' }, ctx)).content, /pc_attack/, 'other arguments are answered in full')
+  errors.reset('err')
+  assert.match((await call(catalog, ctx)).content, /pc_attack/, 'after a reset the schema is sent again')
+}
+{
+  // A complete single page reaches the model as a plain object; a partial page stays a page.
+  const plain = createDndStateCache()
+  const single = { format: 'odm.read.page.v1', hash: 'h', shape: { currentSeq: 'value', events: 'array', stateDelta: 'value' }, offset: 0,
+    entries: [{ key: 'currentSeq', value: 10 }, { key: 'events', index: 0, value: { seq: 10 } }, { key: 'timelineEpoch', value: epoch },
+      { key: 'stateDelta', value: baseline.stateDelta }], nextPage: null, complete: true, currentSeq: 10, nextCursor: 10, hasMore: false }
+  let reply = single
+  const read = plain.wrap(async () => result(reply))
+  assert.deepEqual(JSON.parse((await read(query, { sessionID: 'p' })).content),
+    { currentSeq: 10, events: [{ seq: 10 }], timelineEpoch: epoch, stateDelta: baseline.stateDelta })
+  assert.equal(plain.prepare('p', query).knownStateRevision, revision, 'the unwrapped page still acknowledges its baseline')
+  reply = { ...single, complete: false, nextPage: 'p2' }
+  assert.equal(JSON.parse((await read(query, { sessionID: 'p' })).content).format, 'odm.read.page.v1')
+  reply = { committedSeq: 11, readRequired: false, readAfter: { afterSeq: 10 }, state: single }
+  assert.equal(JSON.parse((await read({ operation: 'narrate', campaignId, expectedSeq: 10 }, { sessionID: 'p' })).content).state.currentSeq, 10)
+}
 console.log('D&D state cache regression passed: isolation, paging, readAfter, clipping and command identity')
 
 // Plugin wiring: compaction is observed through native session events.

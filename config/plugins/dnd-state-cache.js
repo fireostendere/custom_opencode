@@ -61,13 +61,18 @@ export function createDndStateCache() {
     if (input.operation === 'read') return readParams(id, input)
     if (input.operation === 'connect') return { projection: 'live', stateDelta: true, ...input }
     if (input.operation === 'catalog' && !input.action) return { summaryOnly: true, ...input }
+    if (input.operation === 'snapshot') {
+      // The model copies read options here; ODM rejects them and the step is wasted.
+      const { projection: _p, stateDelta: _s, knownStateRevision: _k, delta: _d, paged: _g, maxBytes: _m, ...snapshot } = input
+      return snapshot
+    }
     if (input.readAfter && typeof input.readAfter === 'object') {
       const { campaignId: _campaign, ...readAfter } = readParams(id, { campaignId: input.campaignId, ...input.readAfter })
       return { ...input, readAfter }
     }
     // Without readAfter the sidecar attaches a full live state to every write.
     // Ask for the bounded delta against the acknowledged baseline instead.
-    if (input.readAfter === undefined && WRITES.has(input.operation)) {
+    if ((input.readAfter === undefined || input.readAfter === true) && WRITES.has(input.operation)) {
       const { campaignId: _campaign, ...readAfter } = readParams(id, { campaignId: input.campaignId })
       return { ...input, readAfter }
     }
@@ -99,15 +104,43 @@ export function createDndStateCache() {
     if (states.size >= 16 && !states.has(key)) states.delete(states.keys().next().value)
     states.set(key, { revision: delta.revision, epoch: state.timelineEpoch, seq: state.currentSeq })
   }
+  // A complete single page carries paging scaffolding (shape, hash, a key/index wrapper
+  // per item) the model never needs: hand it the plain object, empty arrays left out as
+  // the page left them out. Multi-page reads stay pages; their cursors matter.
+  function plainPage(value) {
+    if (value?.format !== 'odm.read.page.v1' || !value.complete || value.offset !== 0 || !value.shape) return value
+    const state = {}
+    for (const entry of value.entries) {
+      if (value.shape[entry.key] === 'array') (state[entry.key] ??= []).push(entry.value)
+      else state[entry.key] = entry.value
+    }
+    return state
+  }
+  function withText(result, before, after) {
+    if (after === before) return result
+    const text = JSON.stringify(after)
+    return { ...result, content: typeof result.content === 'string' ? text : [{ type: 'text', text }] }
+  }
+  // The same schema lookup again in one session is already in the model's context
+  // (a compaction or reconnect resets the session). Say so instead of resending it.
+  function repeatCatalog(states, query, result) {
+    const text = typeof result?.content === 'string' ? result.content
+      : Array.isArray(result?.content) && result.content.length === 1 && result.content[0].type === 'text' ? result.content[0].text : null
+    if (!text || result.isError) return result
+    const seen = states.catalogs ??= new Map(), key = JSON.stringify({ ...query, campaignId: undefined })
+    if (seen.get(key) !== text) { seen.set(key, text); return result }
+    return withText(result, null, { unchanged: true, note: 'Same catalog answer as your earlier call with these arguments in this session.' })
+  }
   function wrap(execute) {
     return async (input, context) => {
       const id = context.sessionID
       if (!id || !input?.campaignId || context.odmBackgroundRead) return execute(input, context)
       if (input.operation === 'connect') reset(id)
       const states = session(id), prepared = prepare(id, input)
-      let result
-      try { result = await execute(prepared, context) }
-      catch (error) { reset(id); throw error } // Never replay a write.
+      // Never replay a write. A refused or lost call leaves the acknowledged baseline
+      // valid (the server diffs from it or answers with a full resync), so errors pass
+      // through without a reset; dropping it made every engine refusal resend ~11 KB of sheets.
+      const result = await execute(prepared, context)
       if (sessions.get(id) !== states || context.signal?.aborted) return result
       try {
         // A preview/artifact is not an acknowledged baseline. The runtime's default
@@ -116,10 +149,17 @@ export function createDndStateCache() {
         if (result?.metadata?.truncated || result?.metadata?.artifactID || Buffer.byteLength(JSON.stringify(result)) > limit) {
           reset(id); return result
         }
+        if (prepared.operation === 'catalog') return repeatCatalog(states, prepared, result)
         const value = decode(result)
         if (value?.readRequired) { reset(id); return result }
-        if (prepared.operation === 'read') observe(states, prepared, value)
-        else if (value?.state && value.readAfter) observe(states, { ...value.readAfter, campaignId: input.campaignId }, value.state)
+        if (prepared.operation === 'read') {
+          observe(states, prepared, value)
+          return withText(result, value, plainPage(value))
+        }
+        if (value?.state && value.readAfter) {
+          observe(states, { ...value.readAfter, campaignId: input.campaignId }, value.state)
+          return withText(result, value, { ...value, state: plainPage(value.state) })
+        }
       } catch { reset(id) } // A cache failure must not turn a committed action into an error.
       return result
     }
