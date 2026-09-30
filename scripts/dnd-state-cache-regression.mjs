@@ -28,7 +28,7 @@ assert.equal(cache.prepare('one', { ...query, stateDelta: false }).knownStateRev
 assert.equal(cache.prepare('one', query).maxBytes, 45056, 'pages fit the host tool_output cap')
 assert.equal(cache.prepare('one', { ...query, maxBytes: 131072 }).maxBytes, 45056, 'an oversized model request is clamped')
 assert.equal(cache.prepare('one', { ...query, maxBytes: 8192 }).maxBytes, 8192, 'a smaller model request is kept')
-assert.deepEqual(cache.prepare('one', { ...query, pageCursor: 'frozen', maxBytes: 4096 }), { ...query, pageCursor: 'frozen', maxBytes: 4096 })
+assert.deepEqual(cache.prepare('one', { ...query, pageCursor: 'frozen', maxBytes: 4096 }), { ...query, pageCursor: 'frozen', maxBytes: 4096 }, 'an unknown cursor passes through')
 assert.equal(cache.prepare('one', { operation: 'catalog', campaignId, category: 'combat' }).summaryOnly, true)
 assert.equal(cache.prepare('one', { operation: 'catalog', campaignId, action: 'cast_buff' }).summaryOnly, undefined)
 assert.equal(cache.prepare('one', { operation: 'catalog', campaignId, summaryOnly: false }).summaryOnly, false)
@@ -59,12 +59,13 @@ const page1 = { format: 'odm.read.page.v1', hash: 'h', offset: 0, complete: fals
   entries: [{ key: 'timelineEpoch', value: epoch }], currentSeq: 10, nextCursor: 10, hasMore: false }
 const page2 = { ...page1, offset: 1, complete: true, nextPage: null,
   entries: [{ key: 'stateDelta', value: baseline.stateDelta }] }
-let page = page1
-const paged = cache.wrap(async () => result(page))
+let page = page1, sent = []
+const paged = cache.wrap(async input => { sent.push(input); return result(page) })
 await paged(query, context)
 assert.equal(cache.prepare('one', query).knownStateRevision, undefined)
 page = page2
 await paged({ ...query, pageCursor: 'p2' }, context)
+assert.deepEqual(sent[1], { ...sent[0], pageCursor: 'p2' }, 'a continuation replays the exact first-page query the server froze')
 assert.equal(cache.prepare('one', query).knownStateRevision, revision)
 
 cache.reset('one')

@@ -42,7 +42,12 @@ export function createDndStateCache() {
   }
   const reset = id => sessions.delete(id)
   function readParams(id, input) {
-    if (input.pageCursor) return input // Frozen pages require the original query exactly.
+    if (input.pageCursor) {
+      // Frozen pages require the first page's exact query. The model echoes only its own
+      // arguments, so replay the prepared one or every continuation is a 409.
+      const page = sessions.get(id)?.get(keyOf(input))?.page
+      return page?.nextPage === input.pageCursor ? { ...page.query, pageCursor: input.pageCursor } : input
+    }
     const requested = Number(input.maxBytes)
     const result = { projection: 'live', delta: true, paged: true, ...input, maxBytes: Number.isSafeInteger(requested) ? Math.min(requested, PAGE_BYTES) : PAGE_BYTES }
     if (result.stateDelta === false || Object.keys(result.knownSections ?? {}).length) return result
@@ -81,7 +86,8 @@ export function createDndStateCache() {
         if (['timelineEpoch', 'stateDelta'].includes(entry.key)) fields[entry.key] = entry.value
       }
       if (!value.complete) {
-        states.set(key, { ...previous, page: { fields, hash: value.hash, nextPage: value.nextPage, offset: value.offset + value.entries.length } })
+        const query0 = query.pageCursor ? prior.query : query
+        states.set(key, { ...previous, page: { fields, hash: value.hash, nextPage: value.nextPage, offset: value.offset + value.entries.length, query: query0 } })
         return
       }
       state = { ...fields, currentSeq: value.currentSeq }
