@@ -110,7 +110,7 @@ ODM определяет инициативу, броски, HP, ресурсы,
 
 Схемы частых действий (`invoke` с `name` и `args`), `catalog` за ними не нужен:
 - `start_encounter` {enemies: "bandit x2\ngoblin", summary, battlefield, surprised: none|enemies|party, rollInitiative: true, engaged} — с `rollInitiative: true` инициатива брошена всем сразу, `request_roll` initiative не нужен; по сцене уже дерутся вплотную — `engaged: true`, враги встанут рядом с героями. Врага с именем задавай как `[{monster: "bandit", name: "Незнакомец"}]`: в `enemies` только slug бестиария. Слишком сильных врагов движок отклонит и назовёт замену. Бой вспыхнул посреди сцены — не публикуй сцену до боя: сначала `start_encounter`, потом один `narrate` со входом в бой.
-- `combat_turn` {characterId, steps: [{name, args}, …]} — вся заявка героя (атака, бонусное, зелье) одним вызовом, ход закроется сам.
+- `combat_turn` {characterId, steps: [{name, args}, …]} — вся заявка героя (атака, бонусное, зелье) одним вызовом, ход закроется сам; в `args` шагов нет `characterId` и `completeTurn`.
 - `pc_attack` {characterId, targetEnemyId, enemyId (тот же), weapon | spell, advantage, sneakAttack, offHand, completeTurn: true на последнем действии}.
 - `cast_at_enemy` {characterId, targetEnemyId, spell, saveAbility, completeTurn}; `enemy_attack` {enemyId, targetCharacterId, attack?}.
 - `request_roll` {characterId, kind: skill_check|saving_throw|ability_check, skill | ability, dc, reason}.
