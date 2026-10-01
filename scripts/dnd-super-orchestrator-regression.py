@@ -56,7 +56,7 @@ assert complex_plan["decision"]["route"] == "LUNA_MAX"
 assert DndOrchestrator(router=FakeRouter("D")).plan("I turn the captain against the advisor using what each knows about last week's events.")["decision"]["route"] == "LUNA_MAX"
 assert complex_plan["telemetry"]["requested_service_tier"] == "default"
 assert route_model("LUNA_MAX") == {"model": "gpt-6-luna", "effort": "max", "serviceTier": "default"}
-assert route_model("SOL_XHIGH")["serviceTier"] == "default"
+assert route_model("SOL_XHIGH") == {"model": "gpt-6.1-sol", "effort": "xhigh", "serviceTier": "default"}
 assert DndOrchestrator(router=FakeRouter("E")).plan("I ask the bartender about the road.")["decision"]["route"] == "LUNA_LOW"
 assert DndOrchestrator(router=FakeRouter("E")).plan("What did I hide last week?")["decision"]["route"] == "LUNA_LOW"
 assert DndOrchestrator(router=OllamaRouter("E")).plan("Настрою капитана против советника, используя тайну каждого и противоречивые свидетельства.")["decision"]["route"] == "LUNA_MAX"
