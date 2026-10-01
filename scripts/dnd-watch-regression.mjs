@@ -781,6 +781,27 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
     await rebooted.emit("session.idle", { sessionID: narrator.sessionID })
     assert.equal((await rebooted.status(narrator.sessionID)).status, "waiting", "the narrator's first turn after a reboot turns the table on again")
   } finally { await rebooted.cleanup() }
+  // One narrator per table: a new session that connects stops the old one for good.
+  const shared = await start()
+  try {
+    const old = { sessionID: "ses_old", agent: "dnd-narrator", messageID: "msg_o", id: "call_o" }
+    const young = { sessionID: "ses_young", agent: "dnd-narrator", messageID: "msg_y", id: "call_y" }
+    await narratorTool.execute({ operation: "read", campaignId, afterSeq: 0 }, old)
+    await shared.emit("session.idle", { sessionID: old.sessionID })
+    assert.equal((await shared.status(old.sessionID)).status, "waiting")
+    await narratorTool.execute({ operation: "read", campaignId, afterSeq: 0 }, young)
+    await shared.emit("session.idle", { sessionID: young.sessionID })
+    assert.equal((await shared.status(old.sessionID)).status, "waiting", "reading alone does not take the table")
+    await narratorTool.execute({ operation: "connect", campaignId }, young)
+    await wait(50)
+    assert.equal((await shared.status(young.sessionID)).status, "waiting")
+    assert.equal((await shared.status(old.sessionID)).status, "stopped", "a new connection stops the old narrator")
+    await shared.emit("session.idle", { sessionID: old.sessionID })
+    assert.equal((await shared.status(old.sessionID)).status, "stopped", "the old narrator does not re-arm itself")
+    await wait(300)
+    const sessions = Object.keys(JSON.parse(readFileSync(stateFileFor(location), "utf8")).sessions)
+    assert.ok(sessions.includes(young.sessionID) && !sessions.includes(old.sessionID), "the panel shows one narrator for the table")
+  } finally { await shared.cleanup() }
 }
 
 // Sidebar panel view model.

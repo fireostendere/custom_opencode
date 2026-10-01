@@ -676,12 +676,34 @@ export default {
       try { writeJsonAtomic(stateFile, { version: 1, pid: process.pid, bootId: boot, directory, updatedAt: Date.now(), sessions, ...extra }) } catch {}
     }
 
+    // One narrator per table: every other session watching this campaign stops and
+    // forgets it, so two DMs never resolve the same round. Returns how many were dropped.
+    const evict = (sessionID, campaignId) => {
+      let dropped = 0
+      for (const [other, entry] of tables) if (other !== sessionID && entry.campaignId === campaignId) {
+        watcher.stop(other)
+        tables.delete(other)
+        dropped++
+      }
+      return dropped
+    }
+    // A primary session that connects to a campaign takes the table over.
+    async function takeOver(sessionID, campaignId) {
+      if (disposed || (await ctx.session.get({ sessionID })).parentID || tables.get(sessionID)?.campaignId !== campaignId) return
+      const dropped = evict(sessionID, campaignId)
+      if (!dropped) return
+      note(sessionID, `стол забран у прошлых сессий нарратора (${dropped})`)
+      reconcileLinks()
+      syncAwake()
+    }
+
     const remember = (input, context, result) => {
       if (!context?.sessionID || context.odmBackgroundRead || !UUID.test(input?.campaignId || "")) return
       if (!String(context.agent || "").startsWith("dnd-")) return
       const entry = table(context.sessionID)
       if (entry.campaignId !== input.campaignId) Object.assign(entry, { campaignId: input.campaignId, cursor: undefined })
       entry.context = context
+      if (input.operation === "connect") takeOver(context.sessionID, input.campaignId).catch(() => {})
       publish()
       if (input.operation !== "read") return
       let cursor
@@ -746,6 +768,8 @@ export default {
           campaignId: value.campaignId, cursor: value.cursor, auto: AUTO_WATCH && value.autoWatch !== false, context,
           log: Array.isArray(value.log) ? value.log.filter(item => typeof item?.text === "string").slice(-LOG_LIMIT) : [],
         })
+        // Older files may hold several sessions on one campaign: the last one saved keeps it.
+        evict(sessionID, value.campaignId)
         restored.push(sessionID)
         note(sessionID, "восстановлен после перезапуска opencode")
       }
