@@ -10,6 +10,10 @@ const TIER = String(process.env.DND_FAST_TIER || "priority").toLowerCase()
 const REJECTED_MS = 60 * 60_000
 const TIER_ERROR = /service[_ ]?tier|priority/i
 
+function isPrimaryEditionRequest(event) {
+  return isDndEdition(event) && event.agent !== "compaction" && (!event.kind || event.kind === "primary")
+}
+
 export function withServiceTier(body, tier = TIER) {
   if (!body || typeof body !== "object" || tier === "off" || tier === "default") return body
   if (body.service_tier) return body
@@ -23,7 +27,7 @@ export default {
     const rejected = new Map() // model -> until
     const sent = new Map() // sessionID -> { model, body }
     await ctx.session.hook("http.request", async (event) => {
-      if (!isDndEdition(event) || event.agent === "compaction") return
+      if (!isPrimaryEditionRequest(event)) return
       const original = event.request
       let body
       try {
@@ -45,6 +49,10 @@ export default {
     })
     if (!ctx.session.hook) return
     await ctx.session.hook("http.response", async (event) => {
+      // Title/compaction requests can share a session with a live narrator
+      // request. They must neither consume its retry state nor replay its body.
+      if ((event.kind && event.kind !== "primary") || event.agent === "compaction") return
+      if (event.model && !isDndEdition(event)) return
       const entry = sent.get(event.sessionID)
       if (!entry) return
       sent.delete(event.sessionID)

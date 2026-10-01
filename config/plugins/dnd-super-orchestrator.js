@@ -16,6 +16,7 @@ const TOKEN = process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN || process.env.OPENCODE_
 const ROUTE_URL = `http://${RUNTIME_HOST}:${RUNTIME_PORT}/internal/runtime/dnd/route`
 const TELEMETRY = process.env.DND_TELEMETRY_FILE
 const VALID_MODE = new Set(["auto", "on", "off"])
+const VALID_ROUTES = new Set(["LUNA_LOW", "LUNA_XHIGH", "LUNA_MAX", "SOL_XHIGH", "TOOL", "NO_LLM"])
 
 function mode() {
   return VALID_MODE.has(MODE) ? MODE : "auto"
@@ -72,7 +73,14 @@ async function route(event, body) {
     signal: AbortSignal.timeout(Number(process.env.DND_ROUTER_TIMEOUT_MS || 9000)),
   })
   if (!response.ok) throw new Error(`D&D orchestrator runtime ${response.status}`)
-  return response.json()
+  const result = await response.json()
+  // A 200 with a malformed/unknown decision is an unavailable router too.
+  // Validate inside decide's try block so auto mode can use its safe fallback;
+  // strict mode still reports the contract failure rather than hiding it.
+  if (!result || typeof result !== "object" || !VALID_ROUTES.has(result.decision?.route)) {
+    throw new Error("Invalid D&D orchestrator routing decision")
+  }
+  return result
 }
 
 function applyRoute(body, decision) {
@@ -106,7 +114,9 @@ async function record(event, decision, telemetry, fallback) {
     telemetry: observed,
     fallback: fallback || null,
   }
-  await appendFile(TELEMETRY, `${JSON.stringify(row)}\n`, { mode: 0o600 })
+  // Optional diagnostics must not abort a paid narrator request when the
+  // directory is missing, permissions change, or the disk is full.
+  try { await appendFile(TELEMETRY, `${JSON.stringify(row)}\n`, { mode: 0o600 }) } catch {}
 }
 
 export function isDndOrchestratorRequest(event) {

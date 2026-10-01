@@ -1,0 +1,57 @@
+name: DnD HTTP Hooks
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  dnd-http-hooks:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v7
+        with: {node-version: '22'}
+      - name: Exercise production HTTP hooks without model calls
+        run: node scripts/dnd-http-hooks-regression.mjs
+  cleanup-consolidation-branch:
+    # One-time cleanup requested for this consolidation, not a general policy
+    # that deletes contributors' future branches. Ref and ancestry are checked
+    # again at execution time; a concurrent push makes the lease fail safely.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.ref == 'fix/consolidate-audit-20261001' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Delete only the unchanged and fully merged audit branch
+        env:
+          AUDIT_BRANCH: fix/consolidate-audit-20261001
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="refs/heads/$AUDIT_BRANCH"
+          current=$(git ls-remote --heads origin "$ref" | cut -f1)
+          if [[ -z "$current" ]]; then
+            echo 'Audit branch already removed.'
+            exit 0
+          fi
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$current" == "$EXPECTED_SHA" ]]
+          git merge-base --is-ancestor "$EXPECTED_SHA" HEAD
+          git push --force-with-lease="$ref:$EXPECTED_SHA" origin ":$ref"
