@@ -49,7 +49,7 @@ DND_ROLE_DEFAULTS = {
     "reader": "openai/gpt-6-luna-direct#low",
 }
 DND_ROLE_ENV = {role: f"OPENCODE_DND_{role.upper()}_MODEL" for role in DND_ROLE_DEFAULTS}
-SOL_FORBIDDEN_MODEL_IDS = {"gpt-6-sol-fast"}
+SOL_FORBIDDEN_MODEL_IDS = {"gpt-6-sol-fast", "gpt-6.1-sol-fast"}
 ALIBABA_LOCKED_PREFIXES = (
     "qwen",
     "deepseek",
@@ -118,7 +118,7 @@ def sol_role_models() -> dict[str, str]:
         _, model, _ = _split_ref(value)
         if model.casefold() in SOL_FORBIDDEN_MODEL_IDS:
             raise ValueError(
-                f"{SOL_ROLE_ENV[role]}: gpt-6-sol-fast is disabled; use GPT-6 Luna"
+                f"{SOL_ROLE_ENV[role]}: {model} is disabled; use GPT-6 Luna"
             )
         result[role] = value
     return result

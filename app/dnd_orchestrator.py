@@ -226,7 +226,7 @@ def route_model(route: str) -> dict[str, str | None]:
         "LUNA_LOW": ("gpt-6-luna", "low", "default"),
         "LUNA_XHIGH": ("gpt-6-luna", "xhigh", "default"),
         "LUNA_MAX": ("gpt-6-luna", "max", "default"),
-        "SOL_XHIGH": ("gpt-6-sol", "xhigh", "default"),
+        "SOL_XHIGH": ("gpt-6.1-sol", "xhigh", "default"),
     }
     model, effort, tier = table.get(route, (None, None, None))
     return {"model": model, "effort": effort, "serviceTier": tier}

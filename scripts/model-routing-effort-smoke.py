@@ -175,6 +175,21 @@ else:
     raise AssertionError("SOL Fast override must be rejected")
 finally:
     os.environ.pop("OPENCODE_SOL_REVIEW_MODEL", None)
+for fast in ("gpt-6-sol-fast", "gpt-6.1-sol-fast"):
+    os.environ["OPENCODE_SOL_BUILDER_MODEL"] = f"openai/{fast}#high"
+    try:
+        sol_role_models()
+    except ValueError as error:
+        assert "disabled" in str(error) and fast in str(error), error
+    else:
+        raise AssertionError(f"SOL Fast override {fast} must be rejected")
+    finally:
+        os.environ.pop("OPENCODE_SOL_BUILDER_MODEL", None)
+os.environ["OPENCODE_SOL_BUILDER_MODEL"] = "openai/gpt-6.1-sol#high"
+try:
+    assert sol_role_models()["builder"] == "openai/gpt-6.1-sol#high", "plain GPT-6.1 Sol stays allowed"
+finally:
+    os.environ.pop("OPENCODE_SOL_BUILDER_MODEL", None)
 assert dnd_role_models()["narrator"] == "openai/gpt-6-luna-direct#low"
 os.environ["OPENCODE_DND_NARRATOR_MODEL"] = "openrouter/gpt-6-sol#medium"
 try:
