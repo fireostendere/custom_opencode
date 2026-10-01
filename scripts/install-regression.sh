@@ -358,7 +358,9 @@ python3 - "$SERVICE_CONFIG" "$TMP" "$CONFIG" <<'PY'
 import json, sys
 from pathlib import Path
 path, tmp, config_dir = map(Path, sys.argv[1:])
-env = json.loads(path.read_text(encoding='utf-8'))['env']
+raw = json.loads(path.read_text(encoding='utf-8'))
+assert raw.get('port') == 49375
+env = raw['env']
 assert env['OPENCODE_CONFIG_DIR'] == str(config_dir.parent)
 assert env['MCP_RAG_ROOT'] == str(tmp / 'rag-root')
 assert env['MCP_RAG_BIN'] == str(tmp / 'rag-bin/knowledge-mcp')
