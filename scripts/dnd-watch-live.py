@@ -32,15 +32,16 @@ def mcp(path):
             properties = {key: {"type": kind} for key, kind in {
                 "operation": "string", "campaignId": "string", "afterSeq": "integer", "pageCursor": "string",
                 "projection": "string", "delta": "boolean", "stateDelta": "boolean", "paged": "boolean",
-                "maxBytes": "integer", "includeAsks": "boolean", "knownStateRevision": "string",
+                "maxBytes": "integer", "includeAsks": "boolean", "knownStateRevision": "string", "state": "string",
             }.items()}
             result = {"tools": [{"name": "odm_narrator", "description": "Read-only ODM fixture", "inputSchema": {"type": "object", "properties": properties}}]}
         elif method == "tools/call":
             args = message["params"]["arguments"]
-            assert args["operation"] == "read", args
-            with open(path + ".reads", "a") as log:
-                log.write(json.dumps(args) + "\n")
-            state = json.loads(Path(path).read_text())
+            assert args["operation"] in ["read", "status"], args
+            if args["operation"] == "read":
+                with open(path + ".reads", "a") as log:
+                    log.write(json.dumps(args) + "\n")
+            state = json.loads(Path(path).read_text()) if args["operation"] == "read" else {"ok": True}
             if state.get("stateDelta", {}).get("revision") == args.get("knownStateRevision") and args.get("knownStateRevision"):
                 state.pop("sheets", None)
                 state["stateDelta"] = {**state["stateDelta"], "full": False, "baseRevision": args["knownStateRevision"], "patch": {"format": "odm.state.patch.v1"}}
@@ -124,6 +125,8 @@ def main():
             headers = {"Authorization": "Basic " + base64.b64encode(("opencode:" + service["password"]).encode()).decode(), "Content-Type": "application/json"}
 
             def api(method, path, body=None):
+                if "?" not in path:
+                    path += "?" + urlencode({"location[directory]": str(project)})
                 with urlopen(Request(service["url"] + path, method=method, headers=headers, data=None if body is None else json.dumps(body).encode()), timeout=15) as response:
                     raw = response.read()
                     return json.loads(raw).get("data") if raw else None
@@ -153,7 +156,7 @@ def main():
             assert len(requests) == 3, "one event woke the model twice"
             api("POST", f"/api/session/{sid}/command", {"command": "dnd-watch", "text": "status"})
             inbox = api("GET", f"/api/session/{sid}/inbox")
-            assert any('"status":"triggered"' in item.get("payload", {}).get("text", "") for item in inbox), inbox
+            assert any(any(f'"status":"{status}"' in item.get("payload", {}).get("text", "") for status in ["triggered", "waiting"]) for item in inbox), inbox
             api("POST", f"/api/session/{sid}/command", {"command": "dnd-watch", "text": "stop"})
             assert len(requests) == 3, "status/stop ran inference"
 
@@ -162,18 +165,18 @@ def main():
             reads_before = read_log.read_text()
             sid = api("POST", "/api/session", {"title": "Denied read", "agent": "dnd-denied", "model": {"providerID": "fixture", "id": "fixture"}, "location": {"directory": str(project)}})["id"]
             api("POST", f"/api/session/{sid}/prompt", {"text": "Watch this campaign", "files": []})
-            until(lambda: len(requests) == 6)
+            until(lambda: any(reason in json.dumps(requests[-1]) for reason in ["odm_read_failed", "Connect the ODM narrator MCP"]))
             assert read_log.read_text() == reads_before, "watcher bypassed denied MCP permission"
-            assert "odm_read_failed" in json.dumps(requests[-1])
 
             state.write_text(json.dumps({"campaignId": CAMPAIGN, "currentSeq": 10, "nextCursor": 10, "hasMore": False, "messages": [], "events": [], "asks": []}))
             sid = api("POST", "/api/session", {"title": "Stop wait", "agent": "dnd-narrator", "model": {"providerID": "fixture", "id": "fixture"}, "location": {"directory": str(project)}})["id"]
+            stop_requests = len(requests) + 2
             api("POST", f"/api/session/{sid}/prompt", {"text": "Watch this campaign", "files": []})
-            until(lambda: len(requests) == 8)
+            until(lambda: len(requests) == stop_requests)
             api("POST", f"/api/session/{sid}/command", {"command": "dnd-watch", "text": "stop"})
             reads_before = read_log.read_text()
             time.sleep(4)
-            assert read_log.read_text() == reads_before and len(requests) == 8, "stop left a live poller"
+            assert read_log.read_text() == reads_before and len(requests) == stop_requests, "stop left a live poller"
             baseline = {"campaignId": CAMPAIGN, "currentSeq": 10, "nextCursor": 10, "hasMore": False, "timelineEpoch": "e" * 64,
                         "sheets": [{"id": "hero", "rules": "x" * 40000}],
                         "stateDelta": {"format": "odm.state.delta.v1", "full": True, "revision": "a" * 64, "checksum": "a" * 64}}
@@ -181,7 +184,13 @@ def main():
             sid = api("POST", "/api/session", {"title": "State cache acceptance", "agent": "dnd-narrator", "model": {"providerID": "fixture", "id": "fixture"}, "location": {"directory": str(project)}})["id"]
             api("POST", f"/api/session/{sid}/prompt", {"text": "Cache state", "files": []})
             until(lambda: "CACHE_OK" in json.dumps(api("GET", f"/api/session/{sid}/context")))
-            reads = [json.loads(line) for line in read_log.read_text()[len(reads_before):].splitlines()]
+            def auto_waiting():
+                return any(json.loads(path.read_text()).get("sessions", {}).get(sid, {}).get("watch", {}).get("status") == "waiting"
+                           for path in (home / ".local/state/custom-opencode/dnd-watch").glob("*.json"))
+            until(auto_waiting)
+            api("POST", f"/api/session/{sid}/command", {"command": "dnd-watch", "text": "stop"})
+            reads = [row for line in read_log.read_text()[len(reads_before):].splitlines()
+                     if "includeAsks" not in (row := json.loads(line))]
             assert len(reads) == 2 and reads[0].get("stateDelta") is True, {"reads": reads, "tools": [message for message in requests[-1]["messages"] if message.get("role") == "tool"]}
             assert "knownStateRevision" not in reads[0], "a new session reused another session's baseline"
             assert reads[1]["knownStateRevision"] == "a" * 64, "native client did not carry the state revision"
@@ -189,7 +198,7 @@ def main():
             sizes = [len(json.dumps(value).encode()) for value in tool_results]
             assert len(sizes) == 2 and sizes[1] < sizes[0] / 10, sizes
             print(f"Native ODM cache: full={sizes[0]} bytes, unchanged delta={sizes[1]} bytes; saved {100 * (1 - sizes[1] / sizes[0]):.1f}% on repeated tool output")
-            print("Native DnD watcher passed: tool call → idle MCP polling (0 model calls) → one synthetic continuation; status/stop without inference; denied MCP permission; live cancellation. Paid calls: 0")
+            print("Native DnD watcher passed: completion → automatic MCP polling (0 model calls); one synthetic continuation; status/stop without inference; denied MCP permission; live cancellation. Paid calls: 0")
         except Exception:
             log = home / ".local/share/opencode/log/opencode.log"
             if log.exists():

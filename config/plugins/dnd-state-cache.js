@@ -198,7 +198,7 @@ export default {
     const stop = startEvents(ctx, async event => {
       const id = event.data?.sessionID
       if (RESET_EVENTS.has(event?.type)) cache.reset(id)
-      if (event?.type !== 'session.idle' || !id || !ctx.session?.get || !ctx.session?.synthetic) return
+      if (!['session.idle', 'session.execution.succeeded'].includes(event?.type) || !id || !ctx.session?.get || !ctx.session?.synthetic) return
       try {
         const session = await ctx.session.get({ sessionID: id })
         if (session.parentID || session.location?.directory !== ctx.location?.directory
