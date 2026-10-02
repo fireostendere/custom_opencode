@@ -13,6 +13,16 @@ assert.deepEqual(dnd.tools, ['odm_narrator', 'odm_narrator_odm_narrator', 'mcp_d
 assert.deepEqual(dnd.system, [], 'context-lanes owns the D&D system prompt')
 assert.deepEqual(plugin.filterDndTools(['dnd_knowledge_search', 'dnd_knowledge_get', 'dnd_knowledge_ingest', 'dnd_knowledge_status', 'odm_narrator_odm_campaigns']),
   ['dnd_knowledge_search', 'dnd_knowledge_get', 'dnd_knowledge_status'], 'project D&D RAG stays available without ingest or administration')
+const search = { description: 'Search the engineering knowledge base', inputSchema: { type: 'object' }, execute: async () => 'evidence' }
+const knowledge = { agent: 'dnd-narrator', tools: { dnd_knowledge_search: search, kb_knowledge_search: search } }
+await hook(knowledge)
+assert.deepEqual(Object.keys(knowledge.tools), ['dnd_knowledge_search'])
+assert.match(knowledge.tools.dnd_knowledge_search.description, /English original rule names.*srd_5_1_ru/)
+assert.match(knowledge.tools.dnd_knowledge_search.description, /2014 rules.*forgotten_realms_wiki_ru.*cannot establish 2024/)
+assert.equal(knowledge.tools.dnd_knowledge_search.execute, search.execute, 'retrieval execution remains authoritative')
+assert.equal(knowledge.tools.dnd_knowledge_search.inputSchema, search.inputSchema)
+assert.equal(search.description, 'Search the engineering knowledge base', 'D&D hints do not alter shared tool definitions')
+assert.match(plugin.filterDndTools([{ name: 'dnd_knowledge_search', ...search }])[0].description, /English original rule names/)
 
 const sol = { model: { providerID: 'openai', id: 'gpt-6-sol-orchestrated' }, system: [], tools: ['shell'] }
 await hook(sol)

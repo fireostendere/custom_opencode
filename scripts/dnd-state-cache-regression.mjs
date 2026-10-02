@@ -65,12 +65,37 @@ let page = page1, sent = []
 const paged = cache.wrap(async input => { sent.push(input); return result(page) })
 await paged(query, context)
 assert.equal(cache.prepare('one', query).knownStateRevision, undefined)
+await assert.rejects(execute(write, context), /Finish reading ODM.*pageCursor.*p2/)
+assert.equal(calls, 2, 'an incomplete byte page must block the write before the server is called')
+assert.equal(cache.prepare('two', write).operation, 'invoke', 'another session is not blocked')
+assert.equal(cache.prepare('one', { ...write, campaignId: 'other' }).operation, 'invoke', 'another campaign is not blocked')
 page = page2
 await paged({ ...query, pageCursor: 'p2' }, context)
 assert.deepEqual(sent[1], { ...sent[0], pageCursor: 'p2' }, 'a continuation replays the exact first-page query the server froze')
 assert.equal(cache.prepare('one', query).knownStateRevision, revision)
+assert.equal(cache.prepare('one', write).operation, 'invoke', 'draining the last byte page permits the write')
 
 cache.reset('one')
+page = page1
+await paged({ ...query, stateDelta: false }, context)
+page = { ...page2, entries: [{ key: 'currentSeq', value: 10 }] }
+await paged({ ...query, stateDelta: false, pageCursor: 'p2' }, context)
+assert.equal(cache.prepare('one', query).knownStateRevision, undefined, 'no baseline is acknowledged without stateDelta')
+assert.equal(cache.prepare('one', write).operation, 'invoke', 'a completed non-delta page clears the write barrier')
+assert.equal(cache.takePendingRead('one'), undefined, 'a completed non-delta page cannot wake another continuation')
+
+cache.reset('one')
+page = page1
+await paged({ ...query, projection: 'full' }, context)
+await assert.rejects(execute(write, context), /Finish reading ODM.*"projection":"full".*pageCursor.*p2/)
+assert.equal(calls, 2, 'a pending full-projection page blocks a default-projection write')
+for (const operation of ['set_floor', 'request_response', 'end_campaign']) {
+  assert.throws(() => cache.prepare('one', { campaignId, operation }), /Finish reading ODM/)
+  assert.equal(cache.prepare('two', { campaignId, operation }).readAfter, undefined, 'the guard never injects readAfter into these operations')
+}
+
+cache.reset('one')
+page = page2
 await paged({ ...query, pageCursor: 'p2' }, context)
 assert.equal(cache.prepare('one', query).knownStateRevision, undefined, 'never acknowledge an orphan last page')
 const oversized = cache.wrap(async () => result({ ...baseline, sheets: [{ id: 'huge', text: 'x'.repeat(140000) }] }))
@@ -132,6 +157,8 @@ assert.equal(cache.prepare('one', query).knownStateRevision, undefined)
   assert.equal(plain.prepare('p', query).knownStateRevision, revision, 'the unwrapped page still acknowledges its baseline')
   reply = { ...single, complete: false, nextPage: 'p2' }
   assert.equal(JSON.parse((await read(query, { sessionID: 'p' })).content).format, 'odm.read.page.v1')
+  await assert.rejects(read({ operation: 'narrate', campaignId, expectedSeq: 10 }, { sessionID: 'p' }), /Finish reading ODM/)
+  plain.reset('p')
   reply = { committedSeq: 11, readRequired: false, readAfter: { afterSeq: 10 }, state: single }
   assert.equal(JSON.parse((await read({ operation: 'narrate', campaignId, expectedSeq: 10 }, { sessionID: 'p' })).content).state.currentSeq, 10)
 }
@@ -171,3 +198,79 @@ console.log('D&D state cache regression passed: isolation, paging, readAfter, cl
   await cleanup()
 }
 console.log('D&D state cache plugin wiring passed: compaction events reset the baseline')
+
+// An idle primary narrator resumes an unfinished byte page once, without advancing the story cursor.
+{
+  let emit, wrapped, page = page1, failDelivery = false
+  const wakes = [], inputs = [], directory = '/game'
+  const native = { agent: 'dnd-narrator', location: { directory } }
+  const sessions = {
+    primary: native,
+    reserve: { ...native, agent: 'dnd-luna-reserve' },
+    child: { ...native, parentID: 'parent' },
+    reader: { ...native, agent: 'dnd-reader' },
+    planner: { ...native, agent: 'dnd-planner' },
+    memory: { ...native, agent: 'dnd-memory' },
+    elsewhere: { ...native, location: { directory: '/other' } },
+  }
+  const events = new ReadableStream({ start(controller) { emit = event => controller.enqueue(event) } })
+  const cleanup = await plugin.setup({
+    location: { directory },
+    tool: { transform: async apply => {
+      apply({ get: name => name === 'odm_narrator' ? {} : undefined, update: (_name, update) => {
+        const tool = { execute: async input => { inputs.push(input); return result(page) } }
+        update(tool); wrapped = tool.execute
+      } })
+      return { dispose: async () => {} }
+    } },
+    session: {
+      get: async ({ sessionID }) => sessions[sessionID] ?? native,
+      synthetic: async value => { wakes.push(value); if (failDelivery) throw new Error('delivery failed') },
+    },
+    event: { subscribe: () => events.values() },
+  })
+  const event = async (type, sessionID) => {
+    emit({ type, data: { sessionID } })
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  await wrapped(query, { sessionID: 'primary' })
+  await event('session.idle', 'primary')
+  assert.deepEqual(wakes[0].metadata.dndReadContinuation, { ...inputs[0], operation: 'read', pageCursor: 'p2' })
+  assert.equal(wakes[0].resume, true)
+  assert.equal(wakes[0].delivery, 'queue')
+  assert.match(wakes[0].text, /host bookkeeping.*not a player action/)
+  await event('session.idle', 'primary')
+  await wrapped(query, { sessionID: 'primary' })
+  await event('session.idle', 'primary')
+  assert.equal(wakes.length, 1, 'the same frozen page cannot cause repeated model turns')
+  page = { ...page1, offset: 1, nextPage: 'p3', entries: [{ key: 'currentSeq', value: 10 }] }
+  await wrapped({ ...query, pageCursor: 'p2' }, { sessionID: 'primary' })
+  await event('session.idle', 'primary')
+  assert.equal(wakes.length, 2, 'a new continuation cursor may resume once')
+  assert.equal(wakes[1].metadata.dndReadContinuation.pageCursor, 'p3')
+  page = { ...page2, offset: 2 }
+  await wrapped({ ...query, pageCursor: 'p3' }, { sessionID: 'primary' })
+  await event('session.idle', 'primary')
+  assert.equal(wakes.length, 2, 'a fully delivered baseline needs no continuation')
+  page = page1
+  for (const sessionID of ['child', 'reader', 'planner', 'memory', 'elsewhere']) {
+    await wrapped(query, { sessionID })
+    await event('session.idle', sessionID)
+  }
+  assert.equal(wakes.length, 2, 'only a primary narrator in this location is resumed')
+  await wrapped(query, { sessionID: 'reserve' })
+  await event('session.idle', 'reserve')
+  assert.equal(wakes.length, 3, 'the primary reserve narrator is supported')
+  failDelivery = true
+  await wrapped(query, { sessionID: 'failed' })
+  await event('session.idle', 'failed')
+  await event('session.idle', 'failed')
+  assert.equal(wakes.length, 4, 'a failed notification never creates a paid retry loop')
+  failDelivery = false
+  await wrapped(query, { sessionID: 'interrupted' })
+  await event('session.execution.interrupted', 'interrupted')
+  await event('session.idle', 'interrupted')
+  assert.equal(wakes.length, 4, 'a stopped narrator stays stopped')
+  await cleanup()
+}
+console.log('D&D state cache idle continuation passed: exact query, primary-only, deduplication and interruption')

@@ -129,7 +129,7 @@ try {
     ["Custom DnD Edition policy:\nSTATIC DND"],
     "DnD Edition must receive only its own policy",
   )
-  gameSkills.push({ id: 'odm-narrator', content: 'NARRATOR' }, { id: 'yolo-dm', content: 'YOLO' }, { id: 'odm-dm-policy', content: 'POLICY' }, { id: 'odm-development', content: 'CODING' })
+  gameSkills.push({ id: 'odm-narrator', content: 'NARRATOR' }, { id: 'dnd-session', content: 'SESSION' }, { id: 'yolo-dm', content: 'YOLO' }, { id: 'odm-dm-policy', content: 'POLICY' }, { id: 'odm-development', content: 'CODING' })
   // Skill reload invalidates the cached pair; ordinary steps never re-list the catalog.
   emit({ type: 'skill.updated', data: {} })
   await new Promise((resolve) => setImmediate(resolve))
@@ -137,7 +137,7 @@ try {
   await hooks.context(dnd)
   for (let step = 0; step < 5; step++) await hooks.context({ ...dnd, system: [] })
   assert.equal(skillLists, listsBeforeSteps + 1, 'D&D steps must reuse the cached game skills')
-  assert.deepEqual(dnd.system.slice(-2).map(item => item.text), ['Required game skill already loaded: odm-dm-policy\nPOLICY', 'Required game skill already loaded: odm-narrator\nNARRATOR'])
+  assert.deepEqual(dnd.system.slice(-3).map(item => item.text), ['Required game skill already loaded: odm-dm-policy\nPOLICY', 'Required game skill already loaded: odm-narrator\nNARRATOR', 'Required game skill already loaded: dnd-session\nSESSION'])
   assert.ok(!dnd.system.some(item => item.text.includes('YOLO')), 'dnd-edition.md owns the style; yolo-dm is not preloaded')
   assert.ok(!dnd.system.some(item => item.text.includes('CODING')), 'preloading must stay game-only')
   gameSkills.length = 0

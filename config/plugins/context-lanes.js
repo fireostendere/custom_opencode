@@ -19,7 +19,7 @@ const ENGINEERING_LITE = readFileSync(join(CONFIG_DIR, "prompts", "engineering-l
 const PLAN_POLICY =
   "Use plan_update only for complex or risky multi-step work. Keep 1-7 outcome-oriented items, update only at meaningful milestones in the same step as other tool calls (never a plan-only step), and never expose private reasoning."
 // dnd-edition.md owns the table style; yolo-dm stays a discoverable skill.
-const GAME_SKILLS = ["odm-dm-policy", "odm-narrator"]
+const GAME_SKILLS = ["odm-dm-policy", "odm-narrator", "dnd-session"]
 const GAME_SKILL_TTL_MS = 5 * 60_000
 const GAME_SKILL_RETRY_MS = 30_000
 const GAME_SKILL_COLD_RETRIES = 6
