@@ -586,7 +586,7 @@ PY
 
 # Private policy has its own lifecycle; disabling the public web listener must
 # not disable native permissions, budgets or context assembly.
-export OPENCODE_POLICY_PORT="${OPENCODE_POLICY_PORT:-4099}"
+export OPENCODE_POLICY_PORT="${OPENCODE_POLICY_PORT:-4100}"
 export OPENCODE_POLICY_COMMAND="$BIN_DIR/custom-opencode-policy"
 cat >"$BIN_DIR/custom-opencode-policy" <<EOF
 #!/usr/bin/env bash

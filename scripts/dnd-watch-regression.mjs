@@ -83,6 +83,24 @@ reply = state({ currentSeq: 11, nextCursor: 11, events: [{ seq: 11, type: "roll_
 await watcher.tick()
 assert.equal(wakes.at(-1).result.reason, "roll_result")
 
+watcher.start(input, context)
+reply = state({ currentSeq: 12, nextCursor: 12, events: [{ seq: 12, type: "autopilot_action_requested" }] })
+await watcher.tick()
+assert.equal(wakes.at(-1).result.reason, "autopilot_action_requested")
+
+watcher.start(input, context)
+reply = state({
+  currentSeq: 13, nextCursor: 13,
+  members: [{ userId: "u1", autopilot: true }],
+  sheets: [{ id: "c1", userId: "u1" }],
+  campaign: {
+    gameSettings: { globalTurn: { enabled: true } },
+    globalTurnState: { phase: "active", roundNumber: 1, actionsByCharacter: {} },
+  },
+})
+await watcher.tick()
+assert.equal(wakes.at(-1).result.reason, "autopilot_action_requested", "eligible autopilot member in active round wakes watcher")
+
 // Fast-mechanics pre-roll invocation test
 const invokes = []
 const fastWakes = []

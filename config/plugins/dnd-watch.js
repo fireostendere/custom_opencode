@@ -7,7 +7,7 @@ import { isDndContext } from "./orchestrated-qwen.js"
 
 const TOOL = "dnd_watch"
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const EVENTS = new Set(["pending_roll", "roll_requested", "roll_result", "pending_roll_updated", "global_turn_ready", "global_turn_narrator_trigger", "lead_response_requested", "spotlight_ready"])
+const EVENTS = new Set(["pending_roll", "roll_requested", "roll_result", "pending_roll_updated", "global_turn_ready", "global_turn_narrator_trigger", "lead_response_requested", "spotlight_ready", "autopilot_action_requested"])
 const ARRAYS = new Set(["messages", "events", "asks", "playerWhispers"])
 const sequence = value => Number.isSafeInteger(value) && value >= 0
 const enabled = (name, fallback = "1") => !/^(0|false|off|no)$/i.test(process.env[name] || fallback)
@@ -47,7 +47,7 @@ const REASONS = {
   pending_roll: "запрос броска", roll_requested: "запрос броска", roll_result: "результат броска",
   pending_roll_updated: "бросок обновлён", global_turn_ready: "раунд готов",
   global_turn_narrator_trigger: "раунд ждёт мастера", lead_response_requested: "запрос ответа",
-  spotlight_ready: "прожектор готов",
+  spotlight_ready: "прожектор готов", autopilot_action_requested: "ход автопилота",
 }
 // Signals that can never wake the DM: its own writes and table bookkeeping.
 const QUIET = new Set([
@@ -68,6 +68,37 @@ function triggerFor(state, afterSeq) {
   if (event) return { reason: event.type, key: `${event.type}:${event.seq}` }
   const players = state.messages?.filter(message => sequence(message.seq) && message.seq > afterSeq && message.authorType === "player" && message.kind !== "ooc" && !/^\s*\(ooc\)/i.test(message.content || "")) ?? []
   if (players.length) return { reason: "player", key: `player:${Math.max(...players.map(message => message.seq))}` }
+
+  // Autopilot candidate check:
+  const globalMode = Boolean(state.campaign?.gameSettings?.globalTurn?.enabled)
+  const turn = state.campaign?.globalTurnState
+  const encounter = state.encounter
+  if (!encounter) {
+    if (globalMode && turn && (turn.phase === "active" || turn.phase === "quorum_delay") && sequence(turn.roundNumber)) {
+      const actions = turn.actionsByCharacter || {}
+      const members = Array.isArray(state.members) ? state.members : []
+      const sheets = Array.isArray(state.sheets) ? state.sheets : []
+      for (const m of members) {
+        if (!m?.autopilot || m.muted || Number(m.skipTurnsCount ?? 0) > 0) continue
+        const s = sheets.find(item => item?.userId === m.userId && !item.isCompanion)
+        if (!s || s.userId === state.campaign?.dmUserId || s.deathSaves?.dead) continue
+        const usage = actions[s.id]
+        if (usage && (Number(usage.actionsCount ?? 0) > 0 || Number(usage.phrasesCount ?? 0) > 0)) continue
+        return { reason: "autopilot_action_requested", key: `autopilot:${turn.roundNumber}:${s.id}` }
+      }
+    } else if (!globalMode && state.campaign?.floor?.mode === "spotlight") {
+      const floor = state.campaign.floor
+      const members = Array.isArray(state.members) ? state.members : []
+      const sheets = Array.isArray(state.sheets) ? state.sheets : []
+      for (const m of members) {
+        if (!m?.autopilot || m.muted || Number(m.skipTurnsCount ?? 0) > 0) continue
+        if (!floor.userIds?.includes(m.userId) || floor.respondedUserIds?.includes(m.userId)) continue
+        const s = sheets.find(item => item?.userId === m.userId && !item.isCompanion)
+        if (!s || s.userId === state.campaign?.dmUserId) continue
+        return { reason: "autopilot_action_requested", key: `autopilot:spotlight:${state.currentSeq ?? 0}:${s.id}` }
+      }
+    }
+  }
 }
 
 // System-1 fast mechanics decision classifier: analyzes action-oriented player intent

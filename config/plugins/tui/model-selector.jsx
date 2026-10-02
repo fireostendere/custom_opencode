@@ -109,6 +109,8 @@ const ORCHESTRATED_MODELS = new Set([
   "openai/gpt-6-sol-orchestrated",
   "openai/gpt-6-dnd-edition",
   "openai/gpt-6-luna-direct",
+  "openai/gpt-6-luna-reserve",
+  "openai/luna-reserve",
 ])
 
 function key(model) {
