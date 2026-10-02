@@ -3,6 +3,7 @@ import { startEvents } from '../events.js'
 const TOOLS = new Set(['odm_narrator', 'odm_narrator_odm_narrator'])
 const RESET_EVENTS = new Set([
   'session.deleted', 'session.moved', 'session.agent.selected', 'session.model.selected',
+  'session.execution.interrupted',
   'session.compaction.started', 'session.compaction.ended', 'session.compacted',
 ])
 // The installer caps native tool output at 48 000 bytes (tool_output.max_bytes);
@@ -41,6 +42,16 @@ export function createDndStateCache() {
     return sessions.get(id)
   }
   const reset = id => sessions.delete(id)
+  function takePendingRead(id) {
+    const states = sessions.get(id)
+    for (const { page } of states?.values() ?? []) {
+      if (!page) continue
+      const key = JSON.stringify([page.query.campaignId, page.hash, page.nextPage])
+      if (states.continuation === key) return
+      states.continuation = key // One wake per cursor, including a failed delivery; never loop paid turns.
+      return { ...page.query, operation: 'read', pageCursor: page.nextPage }
+    }
+  }
   function readParams(id, input) {
     if (input.pageCursor) {
       // Frozen pages require the first page's exact query. The model echoes only its own
@@ -58,6 +69,10 @@ export function createDndStateCache() {
   }
   function prepare(id, input) {
     if (!id || !input?.campaignId) return input
+    if (WRITES.has(input.operation) || ['set_floor', 'request_response', 'end_campaign'].includes(input.operation)) {
+      const page = [...sessions.get(id)?.values() ?? []].find(state => state.page?.query.campaignId === input.campaignId)?.page
+      if (page) throw new Error(`Finish reading ODM before writing: call read with ${JSON.stringify({ ...page.query, operation: 'read', pageCursor: page.nextPage })}. Drain all nextPage continuations first; no action was sent.`)
+    }
     if (input.operation === 'read') return readParams(id, input)
     if (input.operation === 'connect') return { projection: 'live', stateDelta: true, ...input }
     if (input.operation === 'catalog' && !input.action) return { summaryOnly: true, ...input }
@@ -96,6 +111,8 @@ export function createDndStateCache() {
         return
       }
       state = { ...fields, currentSeq: value.currentSeq }
+      const { page: _completed, ...acknowledged } = previous ?? {}
+      states.set(key, acknowledged) // Finishing the pages clears the barrier even with stateDelta:false.
     }
     const delta = state?.stateDelta
     if (delta?.format !== 'odm.state.delta.v1' || !digest(delta.revision) || delta.checksum !== delta.revision || !digest(state.timelineEpoch) || !sequence(state.currentSeq)) return
@@ -164,7 +181,7 @@ export function createDndStateCache() {
       return result
     }
   }
-  return { prepare, wrap, reset }
+  return { prepare, wrap, reset, takePendingRead }
 }
 
 export default {
@@ -178,8 +195,21 @@ export default {
     })
     // The native host has no 'compaction' hook; compaction is observable only
     // as session events. A compacted transcript no longer proves the baseline.
-    const stop = startEvents(ctx, event => {
-      if (RESET_EVENTS.has(event?.type)) cache.reset(event.data?.sessionID)
+    const stop = startEvents(ctx, async event => {
+      const id = event.data?.sessionID
+      if (RESET_EVENTS.has(event?.type)) cache.reset(id)
+      if (event?.type !== 'session.idle' || !id || !ctx.session?.get || !ctx.session?.synthetic) return
+      try {
+        const session = await ctx.session.get({ sessionID: id })
+        if (session.parentID || session.location?.directory !== ctx.location?.directory
+          || !(session.agent === 'dnd-luna-reserve' || /^dnd-narrator(?:-|$)/.test(session.agent ?? ''))) return
+        const read = cache.takePendingRead(id)
+        if (!read) return
+        await ctx.session.synthetic({ sessionID: id, delivery: 'queue', resume: true,
+          text: `ODM read continuation (host bookkeeping, not a player action; never quote it): call odm_narrator with ${JSON.stringify(read)}. Drain every nextPage before writing or finishing. Do not replay any committed action.`,
+          metadata: { dndReadContinuation: read },
+        })
+      } catch {} // A failed notification leaves writes blocked, without retrying model execution.
     })
     return async () => { stop(); await registration?.dispose?.() }
   },
