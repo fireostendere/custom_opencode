@@ -159,7 +159,7 @@ export function createDndStateCache() {
       // Never replay a write. Unknown character references need a full roster on
       // the next read; other refusals and ambiguous failures retain their baseline.
       const restoreCharacters = error => {
-        if (prepared.operation !== 'invoke' || !CHARACTER_REF_ERROR.test(String(error)) || sessions.get(id) !== states) return
+        if (prepared.operation !== 'invoke' || !CHARACTER_REF_ERROR.test(String(error?.message ?? error)) || sessions.get(id) !== states) return
         for (const projection of ['live', 'full']) states.set(keyOf({ campaignId: input.campaignId, projection }), { restoreCharacters: true })
       }
       let result
