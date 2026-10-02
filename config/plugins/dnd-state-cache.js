@@ -14,6 +14,7 @@ const WRITES = new Set(['invoke', 'narrate', 'release_floor', 'delete_message', 
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 const sequence = value => Number.isSafeInteger(value) && value >= 0
 const keyOf = input => JSON.stringify([input.campaignId, input.projection ?? 'live'])
+const CHARACTER_REF_ERROR = /Unknown (?:characterId|targetCharacterId|casterId)|needs [^\n]*\((?:characterId|targetCharacterId|casterId)\)/i
 
 function decode(result) {
   let value = result
@@ -61,9 +62,10 @@ export function createDndStateCache() {
     }
     const requested = Number(input.maxBytes)
     const result = { projection: 'live', delta: true, paged: true, ...input, maxBytes: Number.isSafeInteger(requested) ? Math.min(requested, PAGE_BYTES) : PAGE_BYTES }
+    const known = sessions.get(id)?.get(keyOf(result))
+    if (known?.restoreCharacters) return { ...result, delta: false, stateDelta: true, knownStateRevision: undefined, knownSeq: undefined, knownSections: undefined }
     if (result.stateDelta === false || Object.keys(result.knownSections ?? {}).length) return result
     result.stateDelta = true
-    const known = sessions.get(id)?.get(keyOf(result))
     if (known?.revision) result.knownStateRevision ??= known.revision
     return result
   }
@@ -154,11 +156,17 @@ export function createDndStateCache() {
       if (!id || !input?.campaignId || context.odmBackgroundRead) return execute(input, context)
       if (input.operation === 'connect') reset(id)
       const states = session(id), prepared = prepare(id, input)
-      // Never replay a write. A refused or lost call leaves the acknowledged baseline
-      // valid (the server diffs from it or answers with a full resync), so errors pass
-      // through without a reset; dropping it made every engine refusal resend ~11 KB of sheets.
-      const result = await execute(prepared, context)
+      // Never replay a write. Unknown character references need a full roster on
+      // the next read; other refusals and ambiguous failures retain their baseline.
+      const restoreCharacters = error => {
+        if (prepared.operation !== 'invoke' || !CHARACTER_REF_ERROR.test(String(error?.message ?? error)) || sessions.get(id) !== states) return
+        for (const projection of ['live', 'full']) states.set(keyOf({ campaignId: input.campaignId, projection }), { restoreCharacters: true })
+      }
+      let result
+      try { result = await execute(prepared, context) }
+      catch (error) { restoreCharacters(error); throw error }
       if (sessions.get(id) !== states || context.signal?.aborted) return result
+      if (result?.isError) restoreCharacters(JSON.stringify(result.content))
       try {
         // A preview/artifact is not an acknowledged baseline. The runtime's default
         // inline budget is 128 KiB; honor a smaller configured limit as well.

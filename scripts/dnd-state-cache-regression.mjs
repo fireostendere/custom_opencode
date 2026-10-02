@@ -145,6 +145,39 @@ assert.equal(cache.prepare('one', query).knownStateRevision, undefined)
   assert.match((await call(catalog, ctx)).content, /pc_attack/, 'after a reset the schema is sent again')
 }
 {
+  // Unknown sheet references need a fresh roster, even at the same sequence.
+  // Ordinary engine refusals and ambiguous transport errors keep their baseline.
+  const refs = createDndStateCache(), ctx = { sessionID: 'refs' }
+  const read = refs.wrap(async () => result(baseline))
+  for (const message of ['Unknown characterId; use one from GAME STATE.', 'Unknown targetCharacterId; use one from GAME STATE.', 'Take an item needs character (characterId).']) {
+    await read(query, ctx)
+    await read({ ...query, projection: 'full' }, ctx)
+    await read({ ...query, campaignId: 'other' }, ctx)
+    let attempts = 0
+    const refused = refs.wrap(async () => { attempts++; throw new Error(message) })
+    await assert.rejects(refused(write, ctx), error => error.message === message)
+    assert.equal(attempts, 1, 'never retry or rewrite a refused write')
+    for (const projection of ['live', 'full']) assert.equal(refs.prepare('refs', { ...query, projection }).knownStateRevision, undefined, 'the next read must restore the whole roster')
+    const recovery = refs.prepare('refs', { ...query, knownStateRevision: revision, knownSeq: 10, knownSections: { sheets: revision } })
+    assert.equal(recovery.knownStateRevision, undefined, 'model-supplied stale hints cannot suppress the roster')
+    assert.equal(recovery.knownSections, undefined)
+    assert.equal(recovery.delta, false)
+    assert.equal(refs.prepare('refs', { ...query, campaignId: 'other' }).knownStateRevision, revision, 'other campaigns keep their baseline')
+  }
+  await read(query, ctx)
+  const errorResult = { isError: true, content: [{ type: 'text', text: 'Unknown characterId; use one from GAME STATE.' }] }
+  assert.deepEqual(await refs.wrap(async () => errorResult)(write, ctx), errorResult)
+  assert.equal(refs.prepare('refs', query).knownStateRevision, undefined, 'structured MCP errors also restore the roster')
+  await read(query, ctx)
+  const nativeError = { type: 'tool.execution', message: 'Unknown characterId; use one from GAME STATE.' }
+  await assert.rejects(refs.wrap(async () => { throw nativeError })(write, ctx), error => error === nativeError)
+  assert.equal(refs.prepare('refs', query).knownStateRevision, undefined, 'native plain-object tool errors also restore the roster')
+  await read(query, ctx)
+  assert.equal(refs.prepare('refs', query).knownStateRevision, revision, 'a confirmed full read restores ordinary deltas')
+  await assert.rejects(refs.wrap(async () => { throw new Error('Transport closed') })(write, ctx), /Transport closed/)
+  assert.equal(refs.prepare('refs', query).knownStateRevision, revision, 'ambiguous transport failures do not invalidate a confirmed roster')
+}
+{
   // A complete single page reaches the model as a plain object; a partial page stays a page.
   const plain = createDndStateCache()
   const single = { format: 'odm.read.page.v1', hash: 'h', shape: { currentSeq: 'value', events: 'array', stateDelta: 'value' }, offset: 0,
