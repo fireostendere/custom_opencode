@@ -199,7 +199,7 @@ console.log('D&D state cache regression passed: isolation, paging, readAfter, cl
 }
 console.log('D&D state cache plugin wiring passed: compaction events reset the baseline')
 
-// An idle primary narrator resumes an unfinished byte page once, without advancing the story cursor.
+// A completed primary narrator resumes an unfinished byte page once, without advancing the story cursor.
 {
   let emit, wrapped, page = page1, failDelivery = false
   const wakes = [], inputs = [], directory = '/game'
@@ -234,7 +234,7 @@ console.log('D&D state cache plugin wiring passed: compaction events reset the b
     await new Promise(resolve => setImmediate(resolve))
   }
   await wrapped(query, { sessionID: 'primary' })
-  await event('session.idle', 'primary')
+  await event('session.execution.succeeded', 'primary')
   assert.deepEqual(wakes[0].metadata.dndReadContinuation, { ...inputs[0], operation: 'read', pageCursor: 'p2' })
   assert.equal(wakes[0].resume, true)
   assert.equal(wakes[0].delivery, 'queue')
@@ -242,7 +242,7 @@ console.log('D&D state cache plugin wiring passed: compaction events reset the b
   await event('session.idle', 'primary')
   await wrapped(query, { sessionID: 'primary' })
   await event('session.idle', 'primary')
-  assert.equal(wakes.length, 1, 'the same frozen page cannot cause repeated model turns')
+  assert.equal(wakes.length, 1, 'success and idle cannot resume the same frozen page twice')
   page = { ...page1, offset: 1, nextPage: 'p3', entries: [{ key: 'currentSeq', value: 10 }] }
   await wrapped({ ...query, pageCursor: 'p2' }, { sessionID: 'primary' })
   await event('session.idle', 'primary')

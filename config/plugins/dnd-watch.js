@@ -988,7 +988,7 @@ export default {
         } else if (type === "session.idle" && entry.turn?.state === "running") { entry.turn = undefined; publish() }
       }
       // A model switch between turns stops the wait above; the table stays watched with the new model.
-      if (type === "session.idle" || type === "session.execution.failed" || (type === "session.model.selected" && entry?.turn?.state !== "running")) return arm(sessionID).catch(() => {})
+      if (["session.idle", "session.execution.succeeded", "session.execution.failed"].includes(type) || (type === "session.model.selected" && entry?.turn?.state !== "running")) return arm(sessionID).catch(() => {})
     })
     // ponytail: waits are process-local; the status file lets a restarted
     // process re-arm them, but a host job store would make that durable.
