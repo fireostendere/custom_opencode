@@ -101,6 +101,30 @@ reply = state({
 await watcher.tick()
 assert.equal(wakes.at(-1).result.reason, "autopilot_action_requested", "eligible autopilot member in active round wakes watcher")
 
+// Restart recovery reads past the original request; paged eligibility must still wake it.
+const autopilotState = reply
+let pagedEncounter = null
+reply = query => ({
+  format: "odm.read.page.v1", hash: "autopilot-pages", offset: query.pageCursor ? 2 : 0,
+  entries: query.pageCursor ? [
+    { key: "members", value: autopilotState.members[0] },
+    { key: "sheets", value: { ...autopilotState.sheets[0], backstory: "PRIVATE CHARACTER TEXT" } },
+  ] : [{ key: "campaign", value: autopilotState.campaign }, { key: "encounter", value: pagedEncounter }],
+  currentSeq: 13, nextCursor: 13, hasMore: false,
+  nextPage: query.pageCursor ? null : "autopilot-page-2", complete: Boolean(query.pageCursor),
+})
+watcher.start(input, context)
+const priorWakes = wakes.length
+await watcher.tick()
+assert.equal(wakes.length, priorWakes + 1, "paged eligibility wakes autopilot without a new event")
+assert.equal(wakes.at(-1).result.reason, "autopilot_action_requested")
+assert.ok(!JSON.stringify(wakes).includes("PRIVATE CHARACTER TEXT"))
+pagedEncounter = { active: true }
+watcher.start(input, context)
+await watcher.tick()
+assert.equal(wakes.length, priorWakes + 1, "paged combat state prevents global-turn autopilot")
+watcher.stop(context.sessionID)
+
 // Fast-mechanics pre-roll invocation test
 const invokes = []
 const fastWakes = []

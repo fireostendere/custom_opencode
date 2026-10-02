@@ -173,8 +173,8 @@ async function readSignals(read, query, context) {
     if (!Array.isArray(value.entries) || value.offset !== offset || (hash && hash !== value.hash) || !value.hash || value.complete !== (value.nextPage === null)) throw new Error("Invalid ODM page")
     hash = value.hash
     for (const entry of value.entries) {
-      if (ARRAYS.has(entry.key)) state[entry.key].push(entry.value)
-      if (entry.key === "timelineEpoch") state.timelineEpoch = entry.value
+      if (ARRAYS.has(entry.key) || ["members", "sheets"].includes(entry.key)) (state[entry.key] ??= []).push(entry.value)
+      if (["timelineEpoch", "campaign", "encounter"].includes(entry.key)) state[entry.key] = entry.value
     }
     offset += value.entries.length
     Object.assign(state, { currentSeq: value.currentSeq, nextCursor: value.nextCursor, hasMore: value.hasMore })
