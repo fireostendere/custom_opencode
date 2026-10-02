@@ -11,7 +11,7 @@ const RUNTIME_HOST = process.env.OPENCODE_RUNTIME_PLUGIN_HOST || "127.0.0.1"
 // The private Runtime V3 listener is separate from the web listener. Falling
 // back to OPENCODE_WEB_PORT sends the route request to the public web server,
 // which correctly returns 404 for /internal/runtime/*.
-const RUNTIME_PORT = process.env.OPENCODE_POLICY_PORT || "4099"
+const RUNTIME_PORT = process.env.OPENCODE_POLICY_PORT || "4100"
 const TOKEN = process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN || process.env.OPENCODE_SERVER_PASSWORD || ""
 const ROUTE_URL = `http://${RUNTIME_HOST}:${RUNTIME_PORT}/internal/runtime/dnd/route`
 const TELEMETRY = process.env.DND_TELEMETRY_FILE

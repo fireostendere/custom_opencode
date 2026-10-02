@@ -34,7 +34,7 @@ def token() -> str:
 
 
 def port() -> int:
-    value = int(os.environ.get("OPENCODE_POLICY_PORT", "4099"))
+    value = int(os.environ.get("OPENCODE_POLICY_PORT", "4100"))
     if not 1024 <= value <= 65535:
         raise ValueError("OPENCODE_POLICY_PORT must be 1024..65535")
     return value

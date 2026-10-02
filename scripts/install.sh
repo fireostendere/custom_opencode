@@ -586,7 +586,7 @@ PY
 
 # Private policy has its own lifecycle; disabling the public web listener must
 # not disable native permissions, budgets or context assembly.
-export OPENCODE_POLICY_PORT="${OPENCODE_POLICY_PORT:-4099}"
+export OPENCODE_POLICY_PORT="${OPENCODE_POLICY_PORT:-4100}"
 export OPENCODE_POLICY_COMMAND="$BIN_DIR/custom-opencode-policy"
 cat >"$BIN_DIR/custom-opencode-policy" <<EOF
 #!/usr/bin/env bash
@@ -680,7 +680,7 @@ SERVICE_ENV=(
   TOKEN_PLAN_OPENAI_BASE_URL TOKEN_PLAN_PROBE_MODEL OLLAMA_BASE_URL
   OPENCODE_LOCAL_AUTO_START OPENCODE_LOCAL_PROVIDER OPENCODE_LOCAL_ROUTER_URL
   OPENCODE_LOCAL_ROUTER_START OPENCODE_LOCAL_ROUTER_LOG
-  BAILIAN_CONFIG_PATH QWEN_QUOTA_PROBE_ENABLED OPENCODE_WEB_PORT
+  BAILIAN_CONFIG_PATH QWEN_QUOTA_PROBE_ENABLED OPENCODE_WEB_PORT OPENCODE_SERVICE_PORT
   OPENCODE_SERVER_PASSWORD OPENCODE_RUNTIME_PLUGIN_TOKEN
   OPENCODE_RUNTIME_PLUGIN_HOST OPENCODE_RUNTIME_PLUGIN_TIMEOUT_MS
   DND_ORCHESTRATOR DND_QWEN_URL DND_QWEN_BACKEND DND_QWEN_HEALTH_URL DND_QWEN_MODEL DND_QWEN_QUEUE
@@ -725,6 +725,14 @@ for name in names:
     else:
         service_env.pop(name, None)
 config["env"] = service_env
+service_port = os.environ.get("OPENCODE_SERVICE_PORT")
+if service_port:
+    try:
+        config["port"] = int(service_port)
+    except ValueError:
+        pass
+elif not config.get("port") or config.get("port") == 49374:
+    config["port"] = 49375
 temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
 with temporary.open("x", encoding="utf-8") as handle:
     json.dump(config, handle, ensure_ascii=False, indent=2)
