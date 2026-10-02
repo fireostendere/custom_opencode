@@ -10,6 +10,9 @@ profile to expose operator-selected private layers; existing upstreams are not m
 of the web UI. It checks native in-process MCP status every two seconds and retries
 transient connection failures up to three times, with 2/10/30-second backoffs.
 Sixty seconds of observed healthy connection resets the budget; short flaps do not.
+Empty `Streamable HTTP error: Error POSTing to endpoint:` failures also retry on
+first connection, covering a remote server deploying during OpenCode startup.
+Other first-start failures remain skipped to avoid repeated broken stdio launches.
 Disabled, removed and authentication-failed servers are not re-enabled. After the
 budget is exhausted, use the native manual reconnect control. Existing tool calls
 are never replayed: recovery restores the catalog for subsequent model requests.
