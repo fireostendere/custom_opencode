@@ -4,12 +4,13 @@ import { join } from "node:path"
 
 const DELAYS = [2000, 10000, 30000]
 const TRANSIENT = /connection closed|request timed out|ECONNRESET|ECONNREFUSED|EPIPE|socket hang up/i
+const HTTP_UNAVAILABLE = /^Streamable HTTP error: Error POSTing to endpoint:\s*$/i
+const transient = error => TRANSIENT.test(error || "") || HTTP_UNAVAILABLE.test(error || "")
 
 export function createMcpRecovery({ list, connect, now = Date.now, report = () => {} }) {
   const retries = new Map()
-  // Only a server that has worked can recover from a transient drop. A server
-  // that never connected (doomed first start, wrong workspace) is not retried:
-  // each attempt re-injects its instructions into every session history.
+  // Broken stdio first starts stay skipped. Empty HTTP failures can happen
+  // while a remote server deploys, including before our first connection.
   const connectedOnce = new Set()
   let scanning = false
   let stopped = false
@@ -34,7 +35,7 @@ export function createMcpRecovery({ list, connect, now = Date.now, report = () =
             }
             return
           }
-          if (status?.status !== "failed" || !TRANSIENT.test(status.error || "") || !connectedOnce.has(name)) {
+          if (status?.status !== "failed" || !transient(status.error) || (!connectedOnce.has(name) && !HTTP_UNAVAILABLE.test(status.error || ""))) {
             retries.delete(name)
             return
           }
@@ -44,7 +45,7 @@ export function createMcpRecovery({ list, connect, now = Date.now, report = () =
           if (retry.attempts >= DELAYS.length || now() < retry.next || stopped) return
           // Respect a manual disconnect/removal that happened during the backoff.
           const current = (await list()).find(row => row.name === name)
-          if (stopped || current?.status?.status !== "failed" || !TRANSIENT.test(current.status.error || "")) return
+          if (stopped || current?.status?.status !== "failed" || !transient(current.status.error)) return
           retry.attempts++
           report({ server: name, attempt: retry.attempts, state: "reconnecting" })
           let connected = false

@@ -8,7 +8,7 @@ assert.equal(typeof cleanup, 'function', 'Native plugin cleanup must be callable
 await cleanup()
 assert.equal(disposed, true)
 
-// A server that never connected (doomed first start) is never retried.
+// A broken first-start stdio server is never retried.
 {
   let clock = 0
   const attempts = []
@@ -19,6 +19,23 @@ assert.equal(disposed, true)
   })
   for (const at of [0, 2000, 12000, 42000]) { clock = at; await doomed.tick() }
   assert.equal(attempts.length, 0, 'a never-connected server must not be reconnected')
+}
+
+// Empty HTTP errors during a remote deployment recover even on first start.
+{
+  let clock = 0
+  const attempts = []
+  const startup = createMcpRecovery({
+    now: () => clock,
+    list: async () => [{ name:'odm_narrator', status:{ status:'failed', error:'Streamable HTTP error: Error POSTing to endpoint: ' } }],
+    connect: async name => { attempts.push(name) },
+  })
+  for (const at of [0, 1999, 2000, 11999, 12000, 41999, 42000, 999999]) {
+    clock = at
+    await startup.tick()
+    assert.equal(attempts.length, at < 2000 ? 0 : at < 12000 ? 1 : at < 42000 ? 2 : 3)
+  }
+  assert.deepEqual(attempts, ['odm_narrator', 'odm_narrator', 'odm_narrator'])
 }
 
 let clock = 0
@@ -53,7 +70,9 @@ rows[0].status = { status:'connected' }; await recovery.tick()
 clock += 60000; await recovery.tick()
 rows[0].status = { status:'failed', error:'Connection closed' }; await recovery.tick()
 clock += 2000; await recovery.tick(); assert.equal(calls.length, 4)
-for (const status of [{ status:'disabled' }, { status:'needs_auth' }, { status:'failed', error:'401 Unauthorized' }]) {
+for (const status of [{ status:'disabled' }, { status:'needs_auth' }, { status:'failed', error:'401 Unauthorized' },
+  { status:'failed', error:'Streamable HTTP error: Error POSTing to endpoint: Unauthorized' },
+  { status:'failed', error:'Streamable HTTP error: Error POSTing to endpoint: Not Found' }]) {
   rows[0].status = status
   clock += 100000; await recovery.tick()
 }
@@ -76,4 +95,4 @@ const manualDisconnect = createMcpRecovery({
 })
 await manualDisconnect.tick(); await manualDisconnect.tick(); clock = 2000; await manualDisconnect.tick()
 assert.equal(unwanted, 0, 'Recheck a manual disconnect immediately before reconnect')
-console.log('MCP recovery regression passed: never-connected skip, backoff, bounded retries, flapping, concurrency, disabled/auth/removal, cleanup')
+console.log('MCP recovery regression passed: HTTP startup recovery, stdio first-start skip, backoff, bounded retries, flapping, concurrency, disabled/auth/removal, cleanup')
