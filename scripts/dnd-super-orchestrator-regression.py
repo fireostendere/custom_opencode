@@ -173,4 +173,14 @@ for script in ("await import('./config/plugins/dnd-super-orchestrator.js')", PLU
         cwd=ROOT, env=env, capture_output=True, text=True, timeout=60,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
+class NoProbeRouter(FakeRouter):
+    url = "http://127.0.0.1:9/v1"
+
+    def health(self):
+        raise AssertionError("an off orchestrator must not probe the router")
+
+
+off = DndOrchestrator(router=NoProbeRouter())
+off.mode = "off"
+assert off.status()["enabled"] is False and off.status()["healthy"] is False
 print("D&D Super Orchestrator regression passed")

@@ -371,7 +371,9 @@ class DndOrchestrator:
         self._last: dict[str, Any] = {}
 
     def status(self) -> dict[str, Any]:
-        health = self.router.health()
+        # Off sends no router traffic at all: probing a stopped Ollama can hang
+        # for the full timeout and stall /client-runtime-v3.json with it.
+        health = self.router.health() if self.mode != "off" else {"ok": False, "backend": "off"}
         return {
             "enabled": self.mode != "off",
             "mode": self.mode,
