@@ -2,7 +2,7 @@
 
 `/rag-start` — локальная control-команда web client. Она перехватывается до отправки prompt в OpenCode model runtime и сама по себе не расходует Qwen/OpenAI tokens.
 
-Команда нужна для управляемого запуска/проверки RAG на конкретной машине и для подключения `kb` к текущему OpenCode workspace.
+Команда нужна для управляемого запуска/проверки RAG на конкретной машине и для переподключения RAG MCP текущего OpenCode workspace: глобального `kb` или проектного (`<name>_kb`, например `engineering_kb`, `cossacks_kb`, или `dnd`), который добавляет проектный конфиг или плагин.
 
 ## Режимы
 
@@ -15,19 +15,19 @@
 
 Последовательность:
 
-1. обнаружить `mcp-rag` через `MCP_RAG_ROOT`, adjacent `../mcp-rag` или `~/mcp-rag`;
-2. выполнить model-free quick preflight через `knowledge_base.runtime`;
-3. проверить Qdrant;
-4. если local loopback Qdrant остановлен — разрешено поднять только фиксированный Compose service `qdrant`;
-5. проверить непустой registry/corpus и существование Qdrant collection;
-6. только после успешного preflight сделать один локальный retrieval smoke (`DipTrace PCB layout`);
-7. получить выбранный `sessionID` из UI;
-8. server-side запросить у OpenCode directory этой session — arbitrary filesystem path от browser не принимается;
-9. dynamic add/connect `kb` через OpenCode V2 MCP API именно для выбранного workspace;
-10. дождаться `connected` в bounded window;
-11. independent MCP probe: initialization, `list_tools`, `knowledge_status`;
-12. проверить required tools;
-13. только после успешного live connection атомарно сохранить `mcp.servers.kb.disabled=false` в runtime config;
+1. получить выбранный `sessionID` из UI;
+2. server-side запросить у OpenCode directory этой session — arbitrary filesystem path от browser не принимается;
+3. найти в этом workspace включённые RAG MCP servers (`kb`, `*_kb`, `dnd`); если их нет — сразу вернуть `stage: workspace`, ничего не запуская;
+4. обнаружить `mcp-rag` через `MCP_RAG_ROOT`, adjacent `../mcp-rag` или `~/mcp-rag`;
+5. выполнить model-free quick preflight через `knowledge_base.runtime`;
+6. проверить Qdrant;
+7. если local loopback Qdrant остановлен — разрешено поднять только фиксированный Compose service `qdrant`;
+8. проверить непустой registry/corpus и существование Qdrant collection;
+9. только после успешного preflight сделать один локальный retrieval smoke (`DipTrace PCB layout`);
+10. `POST /api/mcp/<server>/connect` для каждого найденного, но не connected RAG server этого workspace (новых серверов не добавляет);
+11. дождаться `connected` в bounded window;
+12. independent MCP probe: initialization, `list_tools`, `knowledge_status`;
+13. проверить required tools.
 
 Full mode использует локальный embedding/reranker для smoke retrieval, но не внешний LLM API.
 
@@ -46,9 +46,8 @@ Quick mode пропускает embedding/reranker retrieval smoke.
 - registry/corpus;
 - collection;
 - current workspace;
-- dynamic `kb` connection;
+- reconnect RAG MCP servers этого workspace;
 - MCP protocol/tools;
-- persisted enablement после успешного connect.
 
 Это режим, который используется post-install self-test.
 
@@ -60,7 +59,7 @@ Server использует mutex: одновременно выполняетс
 
 Если Qdrant уже работает, bootstrap возвращает `already-running` и ничего не перезапускает.
 
-Если `kb` уже connected, повторный connect не нужен.
+Если RAG server уже connected, повторный connect не нужен.
 
 ## Что команда никогда не делает
 
@@ -75,7 +74,8 @@ Server использует mutex: одновременно выполняетс
 - создавать пустую collection при потерянном индексе;
 - запускать второй standalone `knowledge-mcp` daemon;
 - принимать browser-provided raw project directory;
-- зацикливаться на бесконечных retries.
+- зацикливаться на бесконечных retries;
+- добавлять MCP server в workspace (`PUT /api/mcp/...`) или менять runtime config: где RAG нужен, его объявляет проектный конфиг/плагин.
 
 ## Runtime ownership
 
@@ -104,7 +104,7 @@ Lifecycle bounded на нескольких уровнях:
 
 - Docker Compose invocation ограничен;
 - Qdrant startup wait ограничен;
-- OpenCode MCP add/connect ограничен;
+- OpenCode MCP connect ограничен;
 - polling `connected` ограничен;
 - MCP execution config ограничен 60 секундами.
 
