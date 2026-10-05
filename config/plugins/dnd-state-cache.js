@@ -10,6 +10,7 @@ const RESET_EVENTS = new Set([
 // a bigger ODM page is clipped by the host, the model sees a broken JSON page and
 // this cache has to drop its baseline. Ask for pages that always fit.
 const PAGE_BYTES = 45056
+const byteBudget = value => Number.isSafeInteger(Number(value)) ? Math.min(Number(value), PAGE_BYTES) : PAGE_BYTES
 const WRITES = new Set(['invoke', 'narrate', 'release_floor', 'delete_message', 'edit_message', 'autopilot_action', 'finish_global_round'])
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 const sequence = value => Number.isSafeInteger(value) && value >= 0
@@ -60,8 +61,7 @@ export function createDndStateCache() {
       const page = sessions.get(id)?.get(keyOf(input))?.page
       return page?.nextPage === input.pageCursor ? { ...page.query, pageCursor: input.pageCursor } : input
     }
-    const requested = Number(input.maxBytes)
-    const result = { projection: 'live', delta: true, paged: true, ...input, maxBytes: Number.isSafeInteger(requested) ? Math.min(requested, PAGE_BYTES) : PAGE_BYTES }
+    const result = { projection: 'live', delta: true, paged: true, ...input, maxBytes: byteBudget(input.maxBytes) }
     const known = sessions.get(id)?.get(keyOf(result))
     if (known?.restoreCharacters) return { ...result, delta: false, stateDelta: true, knownStateRevision: undefined, knownSeq: undefined, knownSections: undefined }
     if (result.stateDelta === false || Object.keys(result.knownSections ?? {}).length) return result
@@ -81,7 +81,7 @@ export function createDndStateCache() {
     if (input.operation === 'snapshot') {
       // The model copies read options here; ODM rejects them and the step is wasted.
       const { projection: _p, stateDelta: _s, knownStateRevision: _k, delta: _d, paged: _g, maxBytes: _m, ...snapshot } = input
-      return snapshot
+      return { ...snapshot, maxBytes: byteBudget(input.maxBytes) }
     }
     if (input.readAfter && typeof input.readAfter === 'object') {
       const { campaignId: _campaign, ...readAfter } = readParams(id, { campaignId: input.campaignId, ...input.readAfter })
@@ -125,8 +125,11 @@ export function createDndStateCache() {
   }
   // A complete single page carries paging scaffolding (shape, hash, a key/index wrapper
   // per item) the model never needs: hand it the plain object, empty arrays left out as
-  // the page left them out. Multi-page reads stay pages; their cursors matter.
-  function plainPage(value) {
+  // the page left them out. Partial pages include the exact frozen continuation query.
+  function plainPage(value, query) {
+    if (value?.format === 'odm.read.page.v1' && !value.complete && typeof value.nextPage === 'string') {
+      return { ...value, nextRead: { ...query, operation: 'read', pageCursor: value.nextPage } }
+    }
     if (value?.format !== 'odm.read.page.v1' || !value.complete || value.offset !== 0 || !value.shape) return value
     const state = {}
     for (const entry of value.entries) {
@@ -179,11 +182,11 @@ export function createDndStateCache() {
         if (value?.readRequired) { reset(id); return result }
         if (prepared.operation === 'read') {
           observe(states, prepared, value)
-          return withText(result, value, plainPage(value))
+          return withText(result, value, plainPage(value, prepared))
         }
         if (value?.state && value.readAfter) {
           observe(states, { ...value.readAfter, campaignId: input.campaignId }, value.state)
-          return withText(result, value, { ...value, state: plainPage(value.state) })
+          return withText(result, value, { ...value, state: plainPage(value.state, { ...value.readAfter, campaignId: input.campaignId }) })
         }
       } catch { reset(id) } // A cache failure must not turn a committed action into an error.
       return result

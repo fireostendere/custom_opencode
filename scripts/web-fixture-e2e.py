@@ -669,8 +669,8 @@ def desktop(browser, base_url: str, server_workflow) -> None:
     open_session(page)
     page.wait_for_function("document.querySelectorAll('#messages .message').length === 80")
     page.wait_for_function("document.querySelector('#messages').scrollHeight - document.querySelector('#messages').clientHeight - document.querySelector('#messages').scrollTop < 4")
-    assert page.locator("#messages").evaluate("el => el.scrollHeight - el.clientHeight - el.scrollTop < 4"), "initial session viewport must start at the newest messages"
     page.wait_for_timeout(1600)  # Let the initial 1.5 s resize-stabilization window close.
+    assert page.locator("#messages").evaluate("el => el.scrollHeight - el.clientHeight - el.scrollTop < 4"), "initial session viewport must start at the newest messages"
     page.locator("#messages").evaluate("el => el.scrollTo({ top:el.scrollHeight-el.clientHeight-150, behavior:'instant' })")
     page.locator("#scrollToBottom").wait_for(state="visible")
     page.wait_for_timeout(100)
