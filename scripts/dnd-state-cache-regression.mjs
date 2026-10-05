@@ -48,7 +48,9 @@ assert.equal(cache.prepare('one', { ...write, readAfter: false }).readAfter, fal
   assert.equal(injected.readAfter.maxBytes, 45056)
   assert.equal(cache.prepare('one', { operation: 'answer_ask', campaignId, askId: 'x' }).readAfter, undefined, 'non-story writes are untouched')
   assert.equal(cache.prepare('one', { ...bare, readAfter: true }).readAfter.knownStateRevision, nextRevision, 'readAfter:true means the default bounded delta, not a full state')
-  assert.deepEqual(cache.prepare('one', { operation: 'snapshot', campaignId, sections: ['party'], projection: 'live', stateDelta: true }), { operation: 'snapshot', campaignId, sections: ['party'] })
+  assert.deepEqual(cache.prepare('one', { operation: 'snapshot', campaignId, sections: ['party'], projection: 'live', stateDelta: true }), { operation: 'snapshot', campaignId, sections: ['party'], maxBytes: 45056 })
+  assert.equal(cache.prepare('one', { operation: 'snapshot', campaignId, maxBytes: 131072 }).maxBytes, 45056, 'snapshot budgets fit the host cap')
+  assert.equal(cache.prepare('one', { operation: 'snapshot', campaignId, maxBytes: 8192 }).maxBytes, 8192, 'an explicit smaller snapshot budget is preserved')
 }
 
 cache.reset('one')
@@ -63,7 +65,8 @@ const page2 = { ...page1, offset: 1, complete: true, nextPage: null,
   entries: [{ key: 'stateDelta', value: baseline.stateDelta }] }
 let page = page1, sent = []
 const paged = cache.wrap(async input => { sent.push(input); return result(page) })
-await paged(query, context)
+const partialReply = JSON.parse((await paged(query, context)).content)
+assert.deepEqual(partialReply.nextRead, { ...sent[0], operation: 'read', pageCursor: 'p2' }, 'the model gets the exact frozen continuation query before attempting a write')
 assert.equal(cache.prepare('one', query).knownStateRevision, undefined)
 await assert.rejects(execute(write, context), /Finish reading ODM.*pageCursor.*p2/)
 assert.equal(calls, 2, 'an incomplete byte page must block the write before the server is called')
@@ -194,6 +197,9 @@ assert.equal(cache.prepare('one', query).knownStateRevision, undefined)
   plain.reset('p')
   reply = { committedSeq: 11, readRequired: false, readAfter: { afterSeq: 10 }, state: single }
   assert.equal(JSON.parse((await read({ operation: 'narrate', campaignId, expectedSeq: 10 }, { sessionID: 'p' })).content).state.currentSeq, 10)
+  reply = { ...reply, readAfter: { afterSeq: 10, maxBytes: 45056, paged: true }, state: { ...single, complete: false, nextPage: 'p2' } }
+  const receipt = JSON.parse((await read({ operation: 'narrate', campaignId, expectedSeq: 10 }, { sessionID: 'p' })).content)
+  assert.deepEqual(receipt.state.nextRead, { ...reply.readAfter, campaignId, operation: 'read', pageCursor: 'p2' }, 'post-commit continuation uses the returned readAfter query, never repeats the write')
 }
 console.log('D&D state cache regression passed: isolation, paging, readAfter, clipping and command identity')
 
