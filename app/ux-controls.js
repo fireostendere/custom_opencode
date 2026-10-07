@@ -111,7 +111,7 @@ function clickNativeAgent(agentID, allowVirtual = false) {
 // Read-only: opening or re-rendering a chat never changes its agent. Web and
 // TUI share sessions, so a silent switch here used to flip Plan chats to Build
 // and fight the TUI. Agents change only on an explicit model pick (D&D in/out,
-// legacy migration) or through the Plan chip.
+// legacy migration), agent picker or Plan chip.
 function syncAgentSurface() {
   const activeAgent = rawActiveAgent()
   if (pendingAgentTarget && activeAgent === pendingAgentTarget) {
@@ -137,7 +137,7 @@ function syncPlanChip(mode) {
     chip.id = 'planModeChip'
     chip.className = 'control plan-mode-chip'
     chip.textContent = 'План · только чтение — вернуть Build'
-    chip.title = 'Этот чат в режиме Plan (переключён в TUI): агент не меняет файлы. Нажмите, чтобы вернуть Build.'
+    chip.title = 'Этот чат в режиме Plan: агент не меняет файлы. Нажмите, чтобы вернуть Build.'
     chip.addEventListener('click', async () => {
       chip.disabled = true
       try { await window.CustomOpenCodeControls?.changeAgent?.('build') } finally {
@@ -232,7 +232,7 @@ function syncPermission() {
 }
 
 function setTransitionControls(disabled) {
-  for (const id of ['input', 'composerAction', 'modelButton', 'variantSelect', 'attachButton']) {
+  for (const id of ['input', 'composerAction', 'modelButton', 'agentSelect', 'variantSelect', 'attachButton']) {
     const control = $(id)
     if (!control) continue
     if (disabled) {
