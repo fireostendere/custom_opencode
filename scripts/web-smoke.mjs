@@ -574,12 +574,7 @@ for (const marker of [
 ]) {
   if (!appSource.includes(marker)) throw new Error(`Session copy/move marker missing: ${marker}`)
 }
-if (
-  !appSource.includes(
-    "async function changeAgent(agent){const sessionID=state.selected?.id||null,previous=state.selected?.agent||state.draftAgent;if(!state.selected){state.draftAgent=agent;renderControls();",
-  )
-)
-  throw new Error("changeAgent must isolate draft and selected-session state")
+// Draft/session agent isolation is exercised by web-agent-picker-regression.mjs.
 if (!appSource.includes("const initialAgent=session.agent"))
   throw new Error("Session loading must preserve a concurrent agent switch")
 if (

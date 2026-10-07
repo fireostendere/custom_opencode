@@ -1,6 +1,6 @@
 import * as api from './api.js'
 import { escapeHtml, renderMarkdown } from './markdown.js'
-import { modeFromAgent, ORCHESTRATED_MODELS } from './ux-state.js'
+import { ORCHESTRATED_MODELS } from './ux-state.js'
 import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'
 
 const $ = (id) => document.getElementById(id)
@@ -673,11 +673,15 @@ function modelVariants(model){
   if(!variants.some((v)=>v.id==='xhigh')&&(model?.settings?.effort==='xhigh'||variants.some((v)=>v.settings?.effort==='xhigh'))) variants.push({id:'xhigh',settings:{effort:'xhigh'}})
   return variants.filter((v)=>v.id)
 }
+const pendingAgentChanges = new Set()
 function renderControls(){
   const agentID=state.selected?.agent||(!state.selected&&state.draftAgent)||state.agents.find((a)=>a.id==='build')?.id||state.agents[0]?.id
-  const mode=modeFromAgent(agentID)
-  $('agentControls').innerHTML=state.agents.map((agent)=>`<button type="button" class="${agent.id===agentID||(['build','plan'].includes(agent.id)&&agent.id===mode)?'active':''}" data-agent="${escapeHtml(agent.id)}">${escapeHtml(agent.name||agent.id)}</button>`).join('')
+  const agents=state.agents.some((agent)=>agent.id===agentID)||!agentID?state.agents:[...state.agents,{id:agentID}]
+  $('agentControls').innerHTML=agents.map((agent)=>`<button type="button" class="${agent.id===agentID?'active':''}" data-agent="${escapeHtml(agent.id)}">${escapeHtml(agent.name||agent.id)}</button>`).join('')
   document.querySelectorAll('[data-agent]').forEach((b)=>b.addEventListener('click',()=>changeAgent(b.dataset.agent)))
+  $('agentSelect').innerHTML=agents.filter((agent)=>!agent.hidden||agent.id===agentID).map((agent)=>`<option value="${escapeHtml(agent.id)}">${escapeHtml(agent.name||agent.id)}</option>`).join('')||'<option value="">Агент</option>'
+  $('agentSelect').value=agentID||''
+  $('agentSelect').disabled=!state.agents.length||pendingAgentChanges.has(state.selected?.id||null)||document.documentElement.dataset.modelTransition==='1'
   const ref=activeModelRef(), model=activeModel(), selectedVariant=ref?.variant||''; $('modelButton').disabled=!state.models.length; $('modelButton').textContent=modelRefLabel(ref)||'Модель'
   if(ref?.id==='gpt-6-dnd-edition'&&ref?.providerID==='openai'){
     $('variantSelect').innerHTML='<option value="auto">Авто</option>'; $('variantSelect').value='auto'; $('variantSelect').disabled=true; return
@@ -687,7 +691,22 @@ function renderControls(){
   $('variantSelect').innerHTML=variants.length?`<option value="">${escapeHtml(configuredEffort||'default')}</option>${variants.map((v)=>`<option value="${escapeHtml(v.id)}">${escapeHtml(v.id)}</option>`).join('')}`:'<option value="">—</option>'
   $('variantSelect').value=selectedVariant; $('variantSelect').disabled=!variants.length
 }
-async function changeAgent(agent){const sessionID=state.selected?.id||null,previous=state.selected?.agent||state.draftAgent;if(!state.selected){state.draftAgent=agent;renderControls();window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:true}}));return true}state.selected.agent=agent;renderControls();try{await api.switchAgent(sessionID,agent);if(state.selected?.id!==sessionID){window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:false,error:'session changed'}}));return false}window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:true}}));return true}catch(e){if(state.selected?.id===sessionID&&state.selected.agent===agent){state.selected.agent=previous;renderControls()}toast(`Режим: ${e.message}`);window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:false,error:String(e?.message||e)}}));return false}}
+async function changeAgent(agent){
+  const sessionID=state.selected?.id||null,previous=state.selected?.agent||state.draftAgent
+  if(pendingAgentChanges.has(sessionID))return false
+  if(!state.selected){state.draftAgent=agent;renderControls();window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:true}}));return true}
+  pendingAgentChanges.add(sessionID)
+  state.selected.agent=agent;renderControls()
+  try{
+    await api.switchAgent(sessionID,agent)
+    if(state.selected?.id!==sessionID){window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:false,error:'session changed'}}));return false}
+    window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:true}}));return true
+  }catch(e){
+    if(state.selected?.id===sessionID&&state.selected.agent===agent)state.selected.agent=previous
+    toast(`Агент: ${e.message}`)
+    window.dispatchEvent(new CustomEvent('custom-opencode:agent-changed',{detail:{sessionID,agent,previousAgent:previous,ok:false,error:String(e?.message||e)}}));return false
+  }finally{pendingAgentChanges.delete(sessionID);renderControls()}
+}
 async function changeModel(model,{source='manual'}={}) {
   const sessionID=state.selected?.id||null,previousModel=activeModelRef()?{...activeModelRef()}:null
   if(source!=='project-default'){if(sessionID)markManualModelSelection(sessionID);else markDraftModelExplicit()}
@@ -1375,6 +1394,7 @@ function bindEvents(){
   $('chooseProject').addEventListener('click',()=>openProjectDialog('create'));$('refresh').addEventListener('click',()=>{loadSessions();if(state.selected)loadContext({force:true})});$('search').addEventListener('input',renderSessions)
   $('menu').addEventListener('click',()=> $('sidebar').classList.toggle('open'));$('sessionActions').addEventListener('click',()=>openSessionActions());$('modelButton').addEventListener('click',()=>{renderModelChoices();$('modelDialog').showModal();if(!window.matchMedia('(max-width: 760px)').matches)$('modelSearch').focus()});$('modelSearch').addEventListener('input',renderModelChoices);$('modelAddButton').addEventListener('click',()=>{$('modelAddForm').reset();$('modelAddDialog').showModal();$('modelAddProvider').focus()});$('modelHiddenButton').addEventListener('click',()=>{showHiddenModels=!showHiddenModels;renderModelChoices()});$('modelAddForm').addEventListener('submit',(event)=>{event.preventDefault();try{const model=addCustomModel($('modelAddProvider').value,$('modelAddID').value,$('modelAddName').value);$('modelAddDialog').close();showHiddenModels=false;renderModelChoices();toast(`Модель ${model.name||model.id} добавлена`)}catch(error){toast(error.message||String(error),4200)}});$('modelChoices').addEventListener('click',(event)=>{const fav=event.target.closest?.('[data-fav]');if(fav){event.preventDefault();event.stopPropagation();const key=fav.dataset.fav;favorites.has(key)?favorites.delete(key):favorites.add(key);saveJson(FAV_KEY,[...favorites]);renderModelChoices();return}const remove=event.target.closest?.('[data-model-remove]');if(remove){event.preventDefault();event.stopPropagation();const key=remove.dataset.modelRemove;if(modelKey(activeModelRef())===key){toast('Сначала выберите другую модель.');return}if(hiddenModelKeys().has(key))setModelHidden(key,false);else removeModelFromPicker(key);renderModelChoices();return}const button=event.target.closest?.('[data-model][data-provider]');if(!button)return;$('modelDialog').close();changeModel({id:button.dataset.model,providerID:button.dataset.provider})})
   $('variantSelect').addEventListener('change',(e)=>{const ref=activeModelRef();if(!ref)return;const model={id:ref.id,providerID:ref.providerID};if(e.target.value)model.variant=e.target.value;changeModel(model)})
+  $('agentSelect').addEventListener('change',(e)=>changeAgent(e.target.value))
   $('form').addEventListener('submit',sendMessage);$('stop').addEventListener('click',stopSelected);$('input').addEventListener('input',()=>{notePromptInput();autosizeInput();scheduleDraftSave()});$('input').addEventListener('keydown',(e)=>{if(e.key==='ArrowUp'&&navigatePromptHistory(-1,e)){e.preventDefault();return}if(e.key==='ArrowDown'&&navigatePromptHistory(1,e)){e.preventDefault();return}if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&(e.ctrlKey||e.metaKey||!window.matchMedia('(max-width: 760px)').matches)){e.preventDefault();$('form').requestSubmit()}})
   $('attachButton').addEventListener('click',()=> $('fileInput').click());$('fileInput').addEventListener('change',(e)=>{addFiles(e.target.files);e.target.value=''});$('input').addEventListener('paste',(e)=>{const files=[...(e.clipboardData?.items||[])].filter((i)=>i.kind==='file').map((i)=>i.getAsFile()).filter(Boolean);if(files.length){e.preventDefault();addFiles(files)}})
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.addEventListener('click',()=>{state.deliveryMode=b.dataset.delivery;renderRunControls()}));$('gitButton').addEventListener('click',openGitDialog);$('usageButton').addEventListener('click',()=>{$('usageDialog').showModal()});$('notifyButton').addEventListener('click',toggleNotifications)
