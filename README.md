@@ -188,7 +188,7 @@ RAG опционален. При `MCP_RAG_ENABLED=0` или отсутствии
 
 ## Ponytail
 
-В комплект включена интеграция [Ponytail](https://github.com/DietrichGebert/ponytail) с фиксированным reviewed commit `e3ba2aa6f1e6f0bc4d69eb09c9f0d0a93af56156`. По умолчанию installer:
+В комплект включена интеграция [Ponytail](https://github.com/DietrichGebert/ponytail) v4.13.0 с фиксированным reviewed commit `08e952d7a8057a57ce561ff1330d093fd92eec67`. По умолчанию installer:
 
 - клонирует upstream в `$XDG_DATA_HOME/opencode/ponytail` или `~/.local/share/opencode/ponytail`;
 - загружает reviewed instruction builder через native V2 bridge `config/plugins/ponytail-v2.js`; upstream V1 entrypoint не регистрируется в V2;
