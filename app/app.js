@@ -941,9 +941,9 @@ function renderMessages({anchor=null,bottom=false}={}){
   if(!state.selected){
     const recent=sessionTree().roots.slice(0,3), key=`welcome1:${recent.map((s)=>`${s.id}:${sessionTitle(s)}:${sessionTime(s)}`).join(',')}`
     if(inner._lastHtml!==key){
-      const rows=recent.map((s)=>`<button class="welcome-session" data-session="${escapeHtml(s.id)}"><span class="session-title">${escapeHtml(sessionTitle(s))}</span><span class="session-meta">${escapeHtml(projectInfo(s).label)} ${timeText(sessionTime(s))}</span></button>`).join('')
+      const rows=recent.map((s)=>`<button class="welcome-session" data-recent="${escapeHtml(s.id)}"><span class="session-title">${escapeHtml(sessionTitle(s))}</span><span class="session-meta">${escapeHtml(projectInfo(s).label)} ${timeText(sessionTime(s))}</span></button>`).join('')
       inner.innerHTML=`<div class="welcome"><div class="welcome-body"><p>Выбери сессию или задай быстрый вопрос.</p><div class="welcome-recent">${rows}<button class="welcome-session welcome-new" data-welcome-new>+ Новая сессия</button></div></div></div>`
-      inner.querySelectorAll('[data-session]').forEach((b)=>b.addEventListener('click',()=>selectSession(b.dataset.session)))
+      inner.querySelectorAll('[data-recent]').forEach((b)=>b.addEventListener('click',()=>selectSession(b.dataset.recent)))
       inner.querySelector('[data-welcome-new]')?.addEventListener('click',()=>$('newSession')?.click())
       inner._lastHtml=key
     }
