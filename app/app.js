@@ -412,7 +412,7 @@ async function loadSessionsNow({ selectHash = false, background = false } = {}) 
     state.sessions = [...unique.values()].sort(compareSessions)
     if (statusGeneration === statusSyncGeneration) syncRunStatuses(statuses)
     if (state.selected) state.selected = state.sessions.find((s)=>s.id===state.selected.id) || state.selected
-    state.loading = false; renderSessions(); renderHeader(); if(state.selected&&state.models.length)renderControls(); updateBadge()
+    state.loading = false; renderSessions(); renderHeader(); if(state.selected&&state.models.length)renderControls(); else if(!state.selected)renderMessages(); updateBadge()
     if (selectHash && !state.selected) {
       const id = sessionIdFromHash()
       if (id && state.sessions.some((s)=>s.id===id)) await selectSession(id,{ push:false })
@@ -939,7 +939,14 @@ function messagePresentation(message,type) {
 function renderMessages({anchor=null,bottom=false}={}){
   const inner=$('messagesInner'), view=$('messages');
   if(!state.selected){
-    if(inner._lastHtml!=='welcome1'){inner.innerHTML='<div class="welcome">Выбери сессию или задай быстрый вопрос.</div>';inner._lastHtml='welcome1'}
+    const recent=sessionTree().roots.slice(0,3), key=`welcome1:${recent.map((s)=>`${s.id}:${sessionTitle(s)}:${sessionTime(s)}`).join(',')}`
+    if(inner._lastHtml!==key){
+      const rows=recent.map((s)=>`<button class="welcome-session" data-session="${escapeHtml(s.id)}"><span class="session-title">${escapeHtml(sessionTitle(s))}</span><span class="session-meta">${escapeHtml(projectInfo(s).label)} ${timeText(sessionTime(s))}</span></button>`).join('')
+      inner.innerHTML=`<div class="welcome"><div class="welcome-body"><p>Выбери сессию или задай быстрый вопрос.</p><div class="welcome-recent">${rows}<button class="welcome-session welcome-new" data-welcome-new>+ Новая сессия</button></div></div></div>`
+      inner.querySelectorAll('[data-session]').forEach((b)=>b.addEventListener('click',()=>selectSession(b.dataset.session)))
+      inner.querySelector('[data-welcome-new]')?.addEventListener('click',()=>$('newSession')?.click())
+      inner._lastHtml=key
+    }
     updateScrollToBottomButton();return
   }
   if(!state.context.length&&!isRunning(state.selected.id)){

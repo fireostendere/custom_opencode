@@ -156,7 +156,7 @@ function renderQwenWindow(window, fallbackLimit, fallbackMinutes) {
 }
 
 function renderQwenQuota(value) {
-  if (value?.state === 'disabled') return '<section class="quota-provider"><div class="quota-provider-head"><strong>Qwen</strong><span class="quota-muted">не используется</span></div></section>'
+  if (value?.state === 'disabled') return '' // not configured: nothing to watch, no card
   const isExpired = value?.state === 'expired' || value?.reason === 'session-expired'
   const state = value?.state === 'ok' ? 'OK' : value?.state === 'exhausted' ? 'исчерпан' : (isExpired ? 'сессия истекла' : 'нет probe')
   const stateClass = value?.state === 'exhausted' || isExpired ? 'quota-bad' : value?.state === 'ok' ? 'quota-good' : 'quota-muted'
@@ -189,6 +189,7 @@ function renderGeminiWindow(window, fallbackLabel, fallbackLimit) {
 
 function renderGeminiQuota(value) {
   if (!value?.available) {
+    if (value?.reason === 'key-not-found') return '' // not configured: nothing to watch, no card
     return `<section class="quota-provider"><div class="quota-provider-head"><strong>Google Gemini</strong><span class="quota-muted">не настроен</span></div><div class="quota-note">${escapeHtml(value?.reason === 'key-not-found' ? 'GEMINI_API_KEY не задан в .env' : 'Лимиты Gemini недоступны')}</div></section>`
   }
   const isRateLimited = Boolean(value?.rateLimited || value?.state === 'exhausted')
@@ -212,7 +213,7 @@ async function refreshLimits() {
   try {
     const value = await request('/client-limits.json')
     const openai = stableOpenAILimits(value?.openai)
-    const markup = `${renderQwenQuota(value?.qwen)}${renderOpenAIQuota(openai)}${renderGeminiQuota(value?.gemini)}`
+    const markup = `${renderQwenQuota(value?.qwen)}${renderOpenAIQuota(openai)}${renderGeminiQuota(value?.gemini)}` || '<div class="quota-note">Лимиты провайдеров не настроены.</div>'
     if (panel._lastMarkup !== markup) {
       panel._lastMarkup = markup
       panel.innerHTML = markup
