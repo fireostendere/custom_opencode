@@ -58,16 +58,20 @@ const QUIET = new Set([
   "voice_speaking", "voice_audibility_changed", "voice_mesh_signal", "map_ping", "ambience_changed", "ambience_sting",
 ])
 
-// reason is shown to the model; key identifies the exact input so an
-// automatic wait never wakes the model twice for the same ask/message/event.
-function triggerFor(state, afterSeq) {
+// Every input that could wake the model, most urgent first. reason is shown to
+// the model; key identifies the exact input so an automatic wait never wakes the
+// model twice for it. The caller takes the first one not woken yet: an
+// unanswered whisper that already woke the model once must not hide the player
+// turn that arrives after it (2026-10-09: a clarified combat turn sat unread).
+function* triggers(state, afterSeq) {
   const asks = state.asks?.filter(ask => ask.status === "pending") ?? []
-  if (asks.length) return { reason: "ask", key: `ask:${asks.map((ask, index) => ask.id ?? ask.askId ?? index).sort().join(",")}` }
-  if (state.playerWhispers?.length) return { reason: "whisper", key: `whisper:${state.playerWhispers.map((whisper, index) => whisper.id ?? index).sort().join(",")}` }
-  const event = state.events?.find(event => sequence(event.seq) && event.seq > afterSeq && EVENTS.has(event.type))
-  if (event) return { reason: event.type, key: `${event.type}:${event.seq}` }
+  if (asks.length) yield { reason: "ask", key: `ask:${asks.map((ask, index) => ask.id ?? ask.askId ?? index).sort().join(",")}` }
+  if (state.playerWhispers?.length) yield { reason: "whisper", key: `whisper:${state.playerWhispers.map((whisper, index) => whisper.id ?? index).sort().join(",")}` }
+  for (const event of state.events ?? []) {
+    if (sequence(event.seq) && event.seq > afterSeq && EVENTS.has(event.type)) yield { reason: event.type, key: `${event.type}:${event.seq}` }
+  }
   const players = state.messages?.filter(message => sequence(message.seq) && message.seq > afterSeq && message.authorType === "player" && message.kind !== "ooc" && !/^\s*\(ooc\)/i.test(message.content || "")) ?? []
-  if (players.length) return { reason: "player", key: `player:${Math.max(...players.map(message => message.seq))}` }
+  if (players.length) yield { reason: "player", key: `player:${Math.max(...players.map(message => message.seq))}` }
 
   // Autopilot candidate check:
   const globalMode = Boolean(state.campaign?.gameSettings?.globalTurn?.enabled)
@@ -84,7 +88,7 @@ function triggerFor(state, afterSeq) {
         if (!s || s.userId === state.campaign?.dmUserId || s.deathSaves?.dead) continue
         const usage = actions[s.id]
         if (usage && (Number(usage.actionsCount ?? 0) > 0 || Number(usage.phrasesCount ?? 0) > 0)) continue
-        return { reason: "autopilot_action_requested", key: `autopilot:${turn.roundNumber}:${s.id}` }
+        yield { reason: "autopilot_action_requested", key: `autopilot:${turn.roundNumber}:${s.id}` }
       }
     } else if (!globalMode && state.campaign?.floor?.mode === "spotlight") {
       const floor = state.campaign.floor
@@ -95,7 +99,7 @@ function triggerFor(state, afterSeq) {
         if (!floor.userIds?.includes(m.userId) || floor.respondedUserIds?.includes(m.userId)) continue
         const s = sheets.find(item => item?.userId === m.userId && !item.isCompanion)
         if (!s || s.userId === state.campaign?.dmUserId) continue
-        return { reason: "autopilot_action_requested", key: `autopilot:spotlight:${state.currentSeq ?? 0}:${s.id}` }
+        yield { reason: "autopilot_action_requested", key: `autopilot:spotlight:${state.currentSeq ?? 0}:${s.id}` }
       }
     }
   }
@@ -187,8 +191,18 @@ async function readSignals(read, query, context) {
 
 export function createDndWatcher({ read, wake, invoke, now = Date.now, onChange = () => {} }) {
   const entries = new Map()
-  // Per-session key of the input that last woke the model; survives re-arms.
+  // Per-session keys of the inputs that already woke the model (newest last,
+  // bounded); survives re-arms.
   const lastWake = new Map()
+  const remember = (sessionID, key) => {
+    const keys = lastWake.get(sessionID) ?? new Set()
+    keys.delete(key)
+    keys.add(key)
+    if (keys.size > 64) keys.delete(keys.values().next().value)
+    lastWake.set(sessionID, keys)
+  }
+  // The newest wake never reached a finished turn: let that input wake again.
+  const forgetLast = sessionID => { const keys = lastWake.get(sessionID); if (keys?.size) keys.delete([...keys].at(-1)) }
   // Campaigns with a live push link: their waits read on a signal, not every tick.
   const pushed = new Set()
   const view = entry => entry ? {
@@ -218,7 +232,7 @@ export function createDndWatcher({ read, wake, invoke, now = Date.now, onChange 
       if (entry.auto && status === "triggered") {
         // An automatic wake that never reached the session keeps waiting and
         // delivers the same input again after a backoff.
-        lastWake.delete(entry.context.sessionID)
+        forgetLast(entry.context.sessionID)
         entry.wakeFailures = (entry.wakeFailures ?? 0) + 1
         Object.assign(entry, { status: "waiting", reason: undefined, finishedAt: undefined, retryAt: now() + Math.min(READ_MAX_BACKOFF_MS, 3000 * 2 ** Math.min(entry.wakeFailures, 5)) })
       } else entry.status = "notification_failed"
@@ -273,7 +287,7 @@ export function createDndWatcher({ read, wake, invoke, now = Date.now, onChange 
     waiting: () => waiting().length > 0,
     campaigns: () => new Set(waiting().map(entry => entry.campaignId)),
     // A woken turn failed: the same input may wake the model again.
-    forget: sessionID => { lastWake.delete(sessionID) },
+    forget: forgetLast,
     // Push doorbell: read the campaign's waits as soon as the read gap allows.
     // Returns when the earliest of them is due, or undefined when none waits.
     poke(campaignId) {
@@ -320,12 +334,13 @@ export function createDndWatcher({ read, wake, invoke, now = Date.now, onChange 
           // A doorbell that rang during this read gets its own read; otherwise
           // a live link waits for the next signal and a missing one keeps polling.
           entry.dueAt = entry.poked ? now() + MIN_READ_GAP_MS : pushed.has(entry.campaignId) ? now() + SAFETY_READ_MS : 0
-          const trigger = entry.epoch && state.timelineEpoch !== entry.epoch
-            ? { reason: "resync", key: `resync:${state.timelineEpoch}` }
-            : triggerFor(state, entry.scanSeq)
           const sessionID = entry.context.sessionID
-          if (trigger && !(entry.auto && lastWake.get(sessionID) === trigger.key)) {
-            lastWake.set(sessionID, trigger.key)
+          const candidates = entry.epoch && state.timelineEpoch !== entry.epoch
+            ? [{ reason: "resync", key: `resync:${state.timelineEpoch}` }]
+            : triggers(state, entry.scanSeq)
+          const trigger = [...candidates].find(candidate => !(entry.auto && lastWake.get(sessionID)?.has(candidate.key)))
+          if (trigger) {
+            remember(sessionID, trigger.key)
             let fastRoll
             if (trigger.reason === "player" && typeof invoke === "function") {
               const playerMsg = state.messages?.findLast(m => sequence(m.seq) && m.seq > entry.scanSeq && m.authorType === "player" && m.kind !== "ooc")
