@@ -67,7 +67,7 @@ button:active:not(:disabled){transform:scale(.97)}
 .model-provider-body .choice:hover,.slash-item:hover,.slash-item.active{
   transition:background-color .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease;
 }
-.composer:focus-within,.search:focus,.text-input:focus,.workflow-input:focus,.workflow-select:focus,.workflow-textarea:focus{
+.composer:has(#input:focus),.search:focus,.text-input:focus,.workflow-input:focus,.workflow-select:focus,.workflow-textarea:focus{
   border-color:color-mix(in srgb,var(--accent) 55%,var(--line));
   box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent);
 }

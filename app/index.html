@@ -98,18 +98,6 @@
       </div>
 
       <div class="composer-wrap">
-          <div class="composer-meta">
-            <div class="controls">
-              <button class="control" id="modelButton" disabled>Модель</button>
-              <div class="control-select"><select class="control" id="agentSelect" aria-label="Агент" title="Выбрать агента" disabled><option>Агент</option></select></div>
-              <div class="control-select"><select class="control" id="variantSelect" aria-label="Effort" disabled><option>—</option></select></div>
-              <div id="agentControls" hidden aria-hidden="true"></div>
-            </div>
-          <div class="delivery" id="deliveryControls" hidden aria-hidden="true">
-            <button class="delivery-button active" data-delivery="steer">Steer</button>
-            <button class="delivery-button" data-delivery="queue">Queue</button>
-          </div>
-        </div>
         <div class="attachments" id="attachments" hidden></div>
         <form class="composer" id="form">
           <div class="slash-palette" id="slashPalette" hidden></div>
@@ -119,6 +107,18 @@
            <button class="send native-composer-action" id="send" type="submit" title="Отправить" aria-hidden="true" tabindex="-1">→</button>
           <button class="stop native-composer-action" id="stop" type="button" title="Остановить" hidden aria-hidden="true" tabindex="-1">■</button>
            <button class="composer-action send" id="composerAction" type="button" title="Отправить" aria-label="Отправить">→</button>
+          <div class="composer-meta">
+            <div class="controls" role="group" aria-label="Агент и модель">
+              <div class="control-select agent-chip"><select class="control" id="agentSelect" aria-label="Агент" title="Агент" disabled><option>Агент</option></select></div>
+              <button class="control" id="modelButton" type="button" disabled>Модель</button>
+              <div class="control-select effort-chip"><select class="control" id="variantSelect" aria-label="Effort" title="Effort — глубина рассуждения" disabled><option value="">—</option></select></div>
+              <div id="agentControls" hidden aria-hidden="true"></div>
+            </div>
+            <div class="delivery" id="deliveryControls" hidden aria-hidden="true">
+              <button class="delivery-button active" type="button" data-delivery="steer">Steer</button>
+              <button class="delivery-button" type="button" data-delivery="queue">Queue</button>
+            </div>
+          </div>
         </form>
       </div>
     </main>
