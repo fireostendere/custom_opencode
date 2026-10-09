@@ -94,7 +94,12 @@ def run() -> dict[str, Any]:
     )
     _check_file(
         "app/access-fix.css",
-        ("#agentControls", "display:none!important", "grid-template-columns:minmax(0,1.4fr) minmax(128px,.8fr)"),
+        ("#agentControls", "display:none!important"),
+        errors,
+    )
+    _check_file(
+        "app/design-system.css",
+        (".composer>.composer-meta{order:1;flex:1 0 100%", "grid-template-columns:auto minmax(0,max-content) auto"),
         errors,
     )
     _check_file(
