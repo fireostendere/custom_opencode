@@ -295,6 +295,21 @@ try {
   auto.start(input, autoContext, { auto: true })
   await auto.tick()
   assert.equal(woke.length, 3, "an unanswered ask must not busy-loop the model")
+  // 2026-10-09: an unanswered whisper that already woke the model hid the
+  // clarified combat turn behind it, and the cursor slid past that turn.
+  auto.start(input, autoContext, { auto: true })
+  answer = state({ playerWhispers: [{ id: "w-1" }] })
+  await auto.tick()
+  assert.equal(woke.at(-1).reason, "whisper")
+  auto.start(input, autoContext, { auto: true })
+  answer = state({ currentSeq: 13, nextCursor: 13, playerWhispers: [{ id: "w-1" }], messages: [{ seq: 13, authorType: "player", kind: "do" }] })
+  await auto.tick()
+  assert.equal(woke.at(-1).reason, "player", "a stale whisper must not hide a new player turn")
+  const settled = woke.length
+  auto.start(input, autoContext, { auto: true })
+  answer = state({ currentSeq: 13, nextCursor: 13, playerWhispers: [{ id: "w-1" }], asks: [{ id: "ask-1", status: "pending" }] })
+  await auto.tick()
+  assert.equal(woke.length, settled, "inputs already woken do not wake again when they alternate")
   auto.stop("ses_auto")
   auto.start({ ...input, afterSeq: 5 }, autoContext)
   assert.equal(auto.start(input, autoContext, { auto: true }).afterSeq, 5, "auto never replaces an explicit wait")
