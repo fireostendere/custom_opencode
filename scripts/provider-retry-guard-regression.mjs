@@ -12,6 +12,10 @@ assert.deepEqual(decision({ status:403, message:'Forbidden' }), { retry:false })
 assert.deepEqual(decision({ type:'provider.transport', message:'ECONNRESET' }, 3), { retry:false })
 assert.deepEqual(decision({ status:429, message:'slow down' }, 1, { retry:true, delay:86_400_000 }), { retry:true, delay:30_000 })
 assert.deepEqual(decision({ status:500, message:'temporary' }, 1), { retry:true, delay:2_000 })
+const decode = 'Decode error (200 POST https://chatgpt.com/backend-api/codex/responses)'
+assert.deepEqual(decision({ status:200, type:'provider.error', message:decode }, 1, { retry:false }), { retry:true, delay:3_000 })
+assert.deepEqual(decision({ status:200, type:'provider.error', message:decode }, 3, { retry:false }), { retry:false })
+assert.deepEqual(decision({ status:400, message:'could not decode error body' }, 1, { retry:false }), { retry:false })
 
 let hook
 let disposed = false
@@ -28,4 +32,4 @@ assert.deepEqual(event.decision, { retry:false })
 await cleanup()
 assert.equal(disposed, true)
 
-console.log('Provider retry guard regression OK: auth fail-fast + bounded attempts/delay')
+console.log('Provider retry guard regression OK: auth fail-fast + bounded attempts/delay + decode retry')
