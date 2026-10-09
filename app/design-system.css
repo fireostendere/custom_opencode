@@ -5,6 +5,7 @@
   --ui-radius-lg:14px;
   --ui-control-height:42px;
   --ui-gap:8px;
+  --chip-height:32px;
   --scrollbar-size:10px;
   --scrollbar-thumb:color-mix(in srgb,var(--muted) 48%,transparent);
   --scrollbar-thumb-hover:color-mix(in srgb,var(--accent) 68%,var(--muted) 24%);
@@ -51,20 +52,34 @@ body{background:var(--bg);color:var(--text)}
 body.sidebar-resizing{cursor:col-resize;user-select:none}
 body.sidebar-resizing *{cursor:col-resize!important}
 
-.composer-meta{min-width:0}
-.controls{min-width:0;flex:0 1 680px;display:grid;grid-template-columns:minmax(0,1.4fr) minmax(100px,1fr) minmax(100px,.8fr);gap:var(--ui-gap);overflow:visible}
-.control-select{position:relative;min-width:0}
-#modelButton,#agentSelect,#variantSelect{width:100%;max-width:none;min-width:0;height:var(--ui-control-height);min-height:var(--ui-control-height);padding:0 34px 0 12px;border:1px solid var(--line);border-radius:var(--ui-radius);background:var(--surface-input);color:var(--text);line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 0 #fff1 inset}
-/* Block, not flex: an anonymous flex item never ellipsizes, so a long model name ran under the chevron on phones. */
-#modelButton{position:relative;display:block;text-align:left;line-height:calc(var(--ui-control-height) - 2px)}
-#modelButton::after,.limits-summary::after,.model-provider-chevron,.permission-details>summary::after,.tool>summary::after,.trace>summary::after,.review-file>summary::after,.runtime-v3-panel>summary::after,.orchestration-trace details>summary::after{content:'';width:7px;height:7px;flex:0 0 7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform .16s ease;opacity:.72}
-#modelButton::after{position:absolute;right:14px;top:15px}
-#agentSelect,#variantSelect{appearance:none;background-image:none}
-.control-select::after{content:'';position:absolute;right:14px;top:50%;width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-65%) rotate(45deg);opacity:.72;pointer-events:none}
-.control-select:has(> select:disabled)::after{opacity:.45}
-#modelButton:hover,#agentSelect:hover:not(:disabled),#variantSelect:hover:not(:disabled){border-color:color-mix(in srgb,var(--accent) 55%,var(--line));background:var(--surface-hover)}
-#variantSelect:hover:not(:disabled){border-color:color-mix(in srgb,var(--accent) 55%,var(--line));background:var(--surface-hover)}
-#modelButton:focus-visible,#agentSelect:focus-visible,#variantSelect:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 65%,transparent);outline-offset:2px}
+/* Composer toolbar: agent, model and effort are quiet chips on the composer card's
+   bottom row. Native selects keep the OS picker on phones; field-sizing hugs the
+   chosen option. The model column alone shrinks (ellipsis); status chips wrap below. */
+.composer{flex-wrap:wrap;row-gap:0}
+.composer>.composer-meta{order:1;flex:1 0 100%;min-width:0;display:block;margin:0}
+.controls{display:grid;grid-template-columns:auto minmax(0,max-content) auto;justify-content:start;align-items:center;gap:4px 2px;width:auto;min-width:0;max-width:none;overflow:visible}
+.control-select{position:relative;display:flex;min-width:0;max-width:40vw;color:var(--muted)}
+.control-select:has(>select>option:only-child[value=""]){display:none} /* no effort variants: nothing to pick */
+.agent-chip{--chip-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 8V4H8'/%3E%3Crect width='16' height='12' x='4' y='8' rx='2'/%3E%3Cpath d='M2 14h2M20 14h2M15 13v2M9 13v2'/%3E%3C/svg%3E")}
+.effort-chip{--chip-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m12 14 4-4'/%3E%3Cpath d='M3.34 19a10 10 0 1 1 17.32 0'/%3E%3C/svg%3E")}
+#modelButton{--chip-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.94 15.5a2 2 0 0 0-1.44-1.44l-6.13-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.13a.5.5 0 0 1 .96 0l1.58 6.13a2 2 0 0 0 1.44 1.44l6.13 1.58a.5.5 0 0 1 0 .96l-6.13 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.13a.5.5 0 0 1-.96 0z'/%3E%3C/svg%3E")}
+#modelButton,#agentSelect,#variantSelect{position:relative;display:block;width:auto;max-width:100%;min-width:0;height:var(--chip-height);min-height:0;margin:0;padding:0 22px 0 29px;border:0;border-radius:999px;background:transparent;color:var(--muted);font-size:13px;font-weight:500;line-height:var(--chip-height);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:none;cursor:pointer}
+#agentSelect,#variantSelect{color:inherit;appearance:none;background-image:none;field-sizing:content}
+#modelButton .model-tag{opacity:.62}
+#modelButton::before,.control-select::before,#modelButton::after,.control-select::after{content:'';position:absolute;top:50%;pointer-events:none}
+#modelButton::before,.control-select::before{z-index:1;left:10px;width:15px;height:15px;margin-top:-7.5px;background:currentColor;-webkit-mask:var(--chip-icon) center/contain no-repeat;mask:var(--chip-icon) center/contain no-repeat}
+#modelButton::after,.control-select::after{right:10px;width:5px;height:5px;margin-top:-4px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);opacity:.75}
+html[data-model-profile="orchestrated"] #modelButton:not(:disabled)::before,html[data-model-profile="dnd-edition"] #modelButton:not(:disabled)::before{background:var(--accent)}
+#modelButton:disabled,.control-select:has(>select:disabled){opacity:.5;cursor:default}
+#agentSelect:disabled,#variantSelect:disabled{cursor:default}
+@media(hover:hover){
+  #modelButton:hover:not(:disabled),.control-select>select:hover:not(:disabled){background:var(--surface-hover);color:var(--text)}
+  .control-select:has(>select:hover:not(:disabled)){color:var(--text)}
+}
+@media(max-width:760px){#modelButton .model-tag{display:none}}
+@media(pointer:coarse){:root{--chip-height:36px}}
+#modelButton:focus-visible,#agentSelect:focus-visible,#variantSelect:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 65%,transparent);outline-offset:0}
+.limits-summary::after,.model-provider-chevron,.permission-details>summary::after,.tool>summary::after,.trace>summary::after,.review-file>summary::after,.runtime-v3-panel>summary::after,.orchestration-trace details>summary::after{content:'';width:7px;height:7px;flex:0 0 7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform .16s ease;opacity:.72}
 .composer-action.stop{font-size:0;line-height:0}
 .composer-action.stop::before,.composer-action.stop::after{content:'';position:absolute;left:50%;top:50%;width:3px;height:22px;border-radius:999px;background:currentColor;transform:translate(-50%,-50%) rotate(45deg)}
 .composer-action.stop::after{transform:translate(-50%,-50%) rotate(-45deg)}
@@ -165,7 +180,6 @@ dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
 @media(max-width:760px){
   .sidebar-resizer{display:none}
   .sidebar{width:min(88vw,360px)!important;flex-basis:min(88vw,360px)!important}
-   .controls{width:100%;max-width:none;flex-basis:auto;grid-template-columns:minmax(0,1.3fr) minmax(90px,1fr) minmax(82px,.8fr)}
   .workflow-grid{grid-template-columns:1fr;gap:10px}
   .workflow-rule{grid-template-columns:minmax(0,1fr) 40px}
   .workflow-rule>*:nth-child(2){grid-column:1/-1}
@@ -180,7 +194,7 @@ dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
 @media(prefers-reduced-motion:reduce){
   dialog[open]{animation:none}
   dialog.sheet-settling,dialog.sheet-settling::backdrop{transition:none}
-  #modelButton::after,.limits-summary::after,.model-provider-chevron,.permission-details>summary::after,.tool>summary::after,.trace>summary::after,.review-file>summary::after,.runtime-v3-panel>summary::after,.orchestration-trace details>summary::after,.pull-refresh,.pull-refresh-progress,.pull-refresh-arrow{transition:none}
+  .limits-summary::after,.model-provider-chevron,.permission-details>summary::after,.tool>summary::after,.trace>summary::after,.review-file>summary::after,.runtime-v3-panel>summary::after,.orchestration-trace details>summary::after,.pull-refresh,.pull-refresh-progress,.pull-refresh-arrow{transition:none}
   .pull-refresh[data-state="pulling"] .pull-refresh-icon,.pull-refresh[data-state="refreshing"] .pull-refresh-icon{animation:none}
 }
 
@@ -192,7 +206,6 @@ dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
   .session:hover:not(.active),.sessions .project:hover,.choice:hover,.action:hover,.model-provider-body .choice:hover{background:transparent}
   .model-provider-toggle:hover{background:var(--surface-input)}
   .question-option:hover:not(.selected){border-color:var(--border,#393939);background:var(--surface,#272727)}
-  #modelButton:hover,#variantSelect:hover:not(:disabled){border-color:var(--line);background:var(--surface-input)}
   .appearance-button:hover{background:var(--surface-input);color:var(--muted)}
   .logout-button:hover{background:var(--surface-input);color:var(--muted)}
   .accent-swatch:hover,.runtime-profile:hover,.runtime-task:hover{transform:none}
