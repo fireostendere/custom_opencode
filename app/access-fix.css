@@ -3,39 +3,6 @@
   display:none!important;
 }
 
-.composer-meta{
-  align-items:center;
-  margin-bottom:8px;
-}
-
-.controls{
-  flex:0 1 540px;
-  display:grid;
-  grid-template-columns:minmax(0,1.4fr) minmax(128px,.8fr);
-  gap:8px;
-  overflow:visible;
-}
-
-#modelButton,
-#variantSelect{
-  width:100%;
-  max-width:none;
-  min-width:0;
-  height:44px;
-  min-height:44px;
-  padding:0 12px;
-  border-radius:12px;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  line-height:1;
-}
-
-#modelButton{
-  display:block;
-  text-align:center;
-}
-
 .permission-actions{
   align-items:stretch;
 }
@@ -139,26 +106,6 @@ dialog .workflow-modal.large{
 }
 
 @media(max-width:760px){
-  .composer-meta{
-    display:block;
-    margin-bottom:7px;
-  }
-
-  .controls{
-    width:100%;
-    max-width:none;
-    grid-template-columns:minmax(0,1.3fr) minmax(116px,.9fr);
-    gap:8px;
-  }
-
-  #modelButton,
-  #variantSelect{
-    width:100%;
-    max-width:none;
-    height:44px;
-    min-height:44px;
-  }
-
   .permission-actions{
     width:100%;
     display:grid;

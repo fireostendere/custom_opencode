@@ -1398,13 +1398,12 @@ function renderStatus() {
     host._lastMarkup = ''
     return
   }
-  const model = $('modelButton')?.textContent?.trim() || 'Модель'
   const context = $('usageButton')?.textContent?.trim() || ''
   const cost = usageCost()
   const elapsed = running() ? state.runStartedAt ? fmtDuration(Date.now() - state.runStartedAt) : '' : state.lastDurationMs ? fmtDuration(state.lastDurationMs) : ''
   const queue = Number(state.queue?.count || 0)
   const rag = state.children.some((child) => state.childDetails.get(child.id)?.rag) || state.settings?.rag === 'on'
-  const markup = `<span class="wf-pill strong">${escapeHtml(model)}</span>${context ? `<span class="wf-pill">${escapeHtml(context)}</span>` : ''}${cost ? `<span class="wf-pill">${escapeHtml(cost)}</span>` : ''}${elapsed ? `<span class="wf-pill"><span class="wf-dot ${running() ? 'busy' : ''}"></span>${escapeHtml(elapsed)}</span>` : ''}${rag ? '<span class="wf-pill">RAG ✓</span>' : ''}<button type="button" class="wf-pill clickable" id="queueStatusButton">Очередь ${queue}</button>${dndWatch.markup()}`
+  const markup = `${context ? `<span class="wf-pill">${escapeHtml(context)}</span>` : ''}${cost ? `<span class="wf-pill">${escapeHtml(cost)}</span>` : ''}${elapsed ? `<span class="wf-pill"><span class="wf-dot ${running() ? 'busy' : ''}"></span>${escapeHtml(elapsed)}</span>` : ''}${rag ? '<span class="wf-pill">RAG ✓</span>' : ''}<button type="button" class="wf-pill clickable" id="queueStatusButton">Очередь ${queue}</button>${dndWatch.markup()}`
   if (host._lastMarkup === markup) return
   host._lastMarkup = markup
   host.innerHTML = markup
@@ -1556,8 +1555,6 @@ function observeRuntime() {
     renderStatus()
     renderOrchestration()
   }).observe(stop, { attributes:true, attributeFilter:['hidden'] })
-  const modelButton = $('modelButton')
-  if (modelButton) new MutationObserver(renderStatus).observe(modelButton, { childList:true, characterData:true, subtree:true })
   const usageButton = $('usageButton')
   if (usageButton) new MutationObserver(renderStatus).observe(usageButton, { childList:true, characterData:true, subtree:true })
   const gitDialog = $('gitDialog')

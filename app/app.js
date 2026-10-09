@@ -682,7 +682,10 @@ function renderControls(){
   $('agentSelect').innerHTML=agents.filter((agent)=>!agent.hidden||agent.id===agentID).map((agent)=>`<option value="${escapeHtml(agent.id)}">${escapeHtml(agent.name||agent.id)}</option>`).join('')||'<option value="">Агент</option>'
   $('agentSelect').value=agentID||''
   $('agentSelect').disabled=!state.agents.length||pendingAgentChanges.has(state.selected?.id||null)||document.documentElement.dataset.modelTransition==='1'
-  const ref=activeModelRef(), model=activeModel(), selectedVariant=ref?.variant||''; $('modelButton').disabled=!state.models.length; $('modelButton').textContent=modelRefLabel(ref)||'Модель'
+  const ref=activeModelRef(), model=activeModel(), selectedVariant=ref?.variant||''; $('modelButton').disabled=!state.models.length
+  // Suffix (" · Orchestrated") in its own span: phones hide it, textContent stays the full label for other modules.
+  const label=modelRefLabel(ref)||'Модель', cut=label.indexOf(' · ')
+  $('modelButton').innerHTML=cut<0?escapeHtml(label):`${escapeHtml(label.slice(0,cut))}<span class="model-tag">${escapeHtml(label.slice(cut))}</span>`
   if(ref?.id==='gpt-6-dnd-edition'&&ref?.providerID==='openai'){
     $('variantSelect').innerHTML='<option value="auto">Авто</option>'; $('variantSelect').value='auto'; $('variantSelect').disabled=true; return
   }
