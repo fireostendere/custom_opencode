@@ -76,7 +76,7 @@ function injectSlashSuggestion() {
   button.type = 'button'
   button.className = 'slash-item'
   button.dataset.ragStart = '1'
-  button.innerHTML = '<span class="slash-name">/rag-start</span><span class="slash-desc">Проверить/поднять RAG, сделать local retrieval smoke и подключить kb MCP · quick/full</span>'
+  button.innerHTML = '<span class="slash-name">/rag-start</span><span class="slash-desc">Проверить/поднять RAG, сделать local retrieval smoke и переподключить RAG MCP этой папки · quick/full</span>'
   button.addEventListener('pointerdown', (event) => {
     event.preventDefault()
     input.value = '/rag-start '

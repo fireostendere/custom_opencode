@@ -18,13 +18,42 @@ import server_rag
 target = server_rag._v2_workspace_target("/api/mcp", "/tmp/project")
 assert "location%5Bdirectory%5D" in target
 assert "?directory=" not in target
-config = server_rag._dynamic_mcp_config()
-assert config["type"] == "local"
-assert config["disabled"] is False
-assert config["timeout"]["execution"] == 60_000
-assert config["timeout"]["startup"] == 60_000
-assert config["command"][0] == "bash"
-assert config["command"][1].endswith("scripts/rag-mcp.sh")
+
+# Only the workspace's own enabled RAG servers are reconnected; nothing is ever
+# added (PUT) or persisted, so a project without RAG never gets a global kb.
+workspaces = {
+    "/tmp/pcb": [{"name": "engineering_kb", "status": {"status": "failed"}},
+                 {"name": "diptrace", "status": {"status": "failed"}}],
+    "/tmp/table": [{"name": "kb", "status": {"status": "disabled"}},
+                   {"name": "dnd", "status": {"status": "connected"}}],
+    "/tmp/plain": [{"name": "diptrace", "status": {"status": "connected"}}],
+}
+requests = []
+def fake_backend(method, target, body=None, timeout=0):
+    requests.append((method, target))
+    directory = target.split("location%5Bdirectory%5D=")[1].replace("%2F", "/")
+    if method == "GET":
+        return {"data": workspaces[directory]}
+    assert method == "POST" and "/connect" in target, (method, target)
+    name = target.split("/api/mcp/")[1].split("/connect")[0]
+    for server in workspaces[directory]:
+        if server["name"] == name:
+            server["status"] = {"status": "connected"}
+    return {}
+server_rag.plus._backend_request_json = fake_backend
+server_rag.plus._data = lambda payload: payload.get("data")
+
+pcb = server_rag._connect_rag("/tmp/pcb")
+assert pcb["ok"] is True and pcb["action"] == "connected", pcb
+assert [m for m, t in requests if m != "GET"] == ["POST"]
+assert any("/api/mcp/engineering_kb/connect" in t for _, t in requests)
+requests.clear()
+table = server_rag._connect_rag("/tmp/table")
+assert table["ok"] is True and table["action"] == "already-connected" and list(table["servers"]) == ["dnd"], table
+plain = server_rag._connect_rag("/tmp/plain")
+assert plain["ok"] is False and plain["action"] == "none", plain
+assert all(method == "GET" for method, _ in requests), requests
+assert not hasattr(server_rag, "_persist_kb_enabled") and not hasattr(server_rag, "_dynamic_mcp_config")
 
 # Full mode must never enter retrieval before a model-free readiness preflight.
 server_rag.plus._rag_runtime = lambda: {
@@ -60,11 +89,12 @@ server_rag._run_runtime_start = lambda mode: {
     "retrieval": {"ok": mode == "full"},
 }
 server_rag._session_directory = lambda session_id: "/tmp/selected-project" if session_id else "/tmp/scratch"
-server_rag._persist_kb_enabled = lambda: {"ok": True, "changed": True, "path": "/tmp/opencode.json"}
-server_rag._connect_kb = lambda directory: {
+server_rag._rag_servers = lambda directory: {
+    "servers": {"engineering_kb": {"status": "connected"}} if directory == "/tmp/selected-project" else {}}
+server_rag._connect_rag = lambda directory: {
     "ok": directory == "/tmp/selected-project",
     "action": "connected",
-    "status": {"status": "connected"},
+    "servers": {"engineering_kb": {"status": "connected"}},
 }
 server_rag.plus._run_rag_probe = lambda mode: {
     "ok": True,
@@ -75,8 +105,13 @@ result = server_rag.run_rag_start("full", session_id="ses_smoke")
 assert result["ok"] is True
 assert result["stage"] == "ready"
 assert result["workspace"] == "/tmp/selected-project"
-assert result["persisted"]["changed"] is True
 assert result["protocol"]["requiredToolsReady"] is True
 assert result["mcp"]["action"] == "connected"
 
-print("RAG start smoke passed: preflight gate + V2 workspace + persistence + MCP ready flow")
+
+# A workspace without its own RAG server stops before any Qdrant/runtime work.
+server_rag._run_runtime_start = lambda mode: (_ for _ in ()).throw(AssertionError("runtime must not start"))
+none = server_rag.run_rag_start("quick")
+assert none["ok"] is False and none["stage"] == "workspace", none
+
+print("RAG start smoke passed: preflight gate + V2 workspace + project-scoped reconnect + MCP ready flow")

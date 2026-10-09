@@ -184,7 +184,7 @@ Project state может задавать persistent system instructions, model/
 
 RAG опционален. При `MCP_RAG_ENABLED=0` или отсутствии usable `mcp-rag` обычные OpenCode/runtime workflows продолжают работать.
 
-`/rag-start` может без LLM inference проверить/поднять Qdrant, corpus/index, подключить `kb` к текущему workspace и проверить MCP tools.
+`/rag-start` может без LLM inference проверить/поднять Qdrant, corpus/index, переподключить RAG MCP текущего workspace (`kb`, проектные `*_kb` или `dnd`) и проверить MCP tools. Сервер она не добавляет и конфиг не меняет.
 
 ## Ponytail
 

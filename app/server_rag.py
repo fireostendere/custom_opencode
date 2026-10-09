@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
+import re
 import subprocess
-import tempfile
 import threading
 import time
 from typing import Any
@@ -16,6 +14,8 @@ import server_plus as plus
 
 RAG_START_LOCK = threading.Lock()
 RAG_QUERY = "DipTrace PCB layout"
+# Knowledge MCP servers: the global `kb`, project-scoped `<name>_kb`, the D&D table's `dnd`.
+RAG_SERVER = re.compile(r"^(?:kb|dnd|\w+_kb)$")
 
 
 def _v2_workspace_target(path: str, directory: str | None = None) -> str:
@@ -42,26 +42,32 @@ def _session_directory(session_id: str | None) -> str:
     return str(plus.ext.base.SCRATCH_ROOT)
 
 
-def _mcp_status(directory: str) -> dict[str, Any]:
+def _rag_servers(directory: str) -> dict[str, Any]:
+    """Enabled knowledge (mcp-rag) servers the workspace already has, by name.
+
+    RAG can be project-scoped (a plugin or project config adds `engineering_kb`,
+    `cossacks_kb`, `dnd`, ...), so the global `kb` may legitimately be absent.
+    """
     try:
         payload = plus._backend_request_json(
             "GET", _v2_workspace_target("/api/mcp", directory), timeout=15.0)
     except Exception as exc:
-        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        return {"error": f"{type(exc).__name__}: {exc}"}
     value = plus._data(payload)
-    if isinstance(value, list):
-        for server in value:
-            if not isinstance(server, dict) or server.get("name") != "kb":
-                continue
-            status = server.get("status")
-            return status if isinstance(status, dict) else {"status": "failed"}
-        return {"status": "missing"}
-    # Compatibility with an older beta response shape.
+    # A list is the V2 shape; a name -> status object is the older beta shape.
     if isinstance(value, dict):
-        kb = value.get("kb")
-        if isinstance(kb, dict):
-            return kb
-    return {"status": "failed", "error": "OpenCode returned invalid MCP status"}
+        value = [{"name": name, "status": status} for name, status in value.items()]
+    if not isinstance(value, list):
+        return {"error": "OpenCode returned invalid MCP status"}
+    servers = {}
+    for server in value:
+        name = server.get("name") if isinstance(server, dict) else None
+        if isinstance(name, str) and RAG_SERVER.match(name):
+            status = server.get("status")
+            status = status if isinstance(status, dict) else {"status": "failed"}
+            if status.get("status") != "disabled":
+                servers[name] = status
+    return {"servers": servers}
 
 
 def _invoke_runtime(runtime: dict[str, object], args: list[str], timeout: float) -> dict[str, Any]:
@@ -123,107 +129,48 @@ def _run_runtime_start(mode: str) -> dict[str, Any]:
     return full
 
 
-def _dynamic_mcp_config() -> dict[str, Any]:
-    script = (plus.REPO_ROOT / "scripts/rag-mcp.sh").resolve()
-    return {
-        "type": "local",
-        "command": ["bash", str(script)],
-        "cwd": str(plus.REPO_ROOT.resolve()),
-        "disabled": False,
-        "timeout": {
-            "startup": 60_000,
-            "catalog": 10_000,
-            "execution": 60_000,
-        },
-    }
+def _connect_rag(directory: str) -> dict[str, Any]:
+    """Reconnect the workspace's own RAG servers. Never adds or persists one."""
+    found = _rag_servers(directory)
+    if "error" in found:
+        return {"ok": False, "action": "status-failed", "error": found["error"]}
+    servers = found["servers"]
+    if not servers:
+        return {"ok": False, "action": "none", "servers": {},
+                "error": "this workspace has no RAG MCP server (kb, *_kb or dnd)"}
+    pending = [name for name, status in servers.items() if status.get("status") != "connected"]
+    if not pending:
+        return {"ok": True, "action": "already-connected", "servers": servers}
 
-
-def _persist_kb_enabled() -> dict[str, Any]:
-    """Persist exactly one safe bit so future workspaces/restarts auto-connect kb."""
-    config, path_text = plus._read_runtime_config()
-    if not isinstance(config, dict):
-        return {"ok": False, "changed": False, "error": f"runtime config is not readable: {path_text}"}
-    mcp = config.get("mcp")
-    servers = mcp.get("servers") if isinstance(mcp, dict) else None
-    kb = servers.get("kb") if isinstance(servers, dict) else None
-    if not isinstance(kb, dict):
-        return {"ok": False, "changed": False, "error": "runtime config has no mcp.servers.kb"}
-    if kb.get("disabled") is False:
-        return {"ok": True, "changed": False, "path": path_text}
-
-    kb["disabled"] = False
-    path = Path(path_text)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    previous_mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
-    fd, temp_name = tempfile.mkstemp(prefix=".opencode-rag-", suffix=".json", dir=str(path.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(config, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temp_name, previous_mode)
-        os.replace(temp_name, path)
-    finally:
-        try:
-            if os.path.exists(temp_name):
-                os.unlink(temp_name)
-        except OSError:
-            pass
-    return {"ok": True, "changed": True, "path": path_text}
-
-
-def _connect_kb(directory: str) -> dict[str, Any]:
-    current = _mcp_status(directory)
-    if current.get("status") == "connected":
-        return {"ok": True, "action": "already-connected", "status": current}
-
-    add_error = None
-    try:
-        plus._backend_request_json(
-            "PUT",
-            _v2_workspace_target("/api/mcp/kb", directory),
-            {"config": _dynamic_mcp_config()},
-            timeout=75.0,
-        )
-    except plus.BackendHTTPError as exc:
-        if exc.status not in (400, 404, 405, 409, 422):
-            raise
-        add_error = str(exc)
-
-    after_add = _mcp_status(directory)
-    if after_add.get("status") != "connected":
+    errors = {}
+    for name in pending:
         try:
             plus._backend_request_json(
                 "POST",
-                _v2_workspace_target("/api/mcp/kb/connect", directory),
+                _v2_workspace_target(f"/api/mcp/{quote(name, safe='')}/connect", directory),
                 None,
                 timeout=75.0,
             )
         except plus.BackendHTTPError as exc:
             if exc.status not in (404, 405):
                 raise
-            if add_error is None:
-                add_error = str(exc)
+            errors[name] = str(exc)
 
     deadline = time.monotonic() + 12.0
-    latest = _mcp_status(directory)
-    while latest.get("status") != "connected" and time.monotonic() < deadline:
+    while True:
+        latest = _rag_servers(directory).get("servers") or {}
+        down = [name for name in servers if (latest.get(name) or {}).get("status") != "connected"]
+        if not down or time.monotonic() >= deadline:
+            break
         time.sleep(0.4)
-        latest = _mcp_status(directory)
-
-    if latest.get("status") == "connected":
-        return {
-            "ok": True,
-            "action": "connected",
-            "status": latest,
-            "compatibilityNote": add_error,
-        }
+    if not down:
+        return {"ok": True, "action": "connected", "servers": latest}
     return {
         "ok": False,
         "action": "connect-failed",
-        "status": latest,
-        "error": str(latest.get("error") or add_error or "kb MCP did not reach connected state"),
+        "servers": latest,
+        "error": "; ".join(f"{name}: {(latest.get(name) or {}).get('error') or errors.get(name) or 'not connected'}"
+                           for name in down),
     }
 
 
@@ -232,6 +179,18 @@ def run_rag_start(mode: str = "full", session_id: str | None = None) -> dict[str
         return {"ok": False, "busy": True, "error": "RAG start/check is already running"}
     started = time.monotonic()
     try:
+        directory = _session_directory(session_id)
+        # A workspace without its own RAG server needs no Qdrant start at all.
+        found = _rag_servers(directory)
+        if not found.get("servers"):
+            return {
+                "ok": False,
+                "stage": "workspace",
+                "workspace": directory,
+                "elapsedMs": int((time.monotonic() - started) * 1000),
+                "error": found.get("error") or "this workspace has no RAG MCP server (kb, *_kb or dnd)",
+            }
+
         runtime = _run_runtime_start(mode)
         if not runtime.get("ok"):
             return {
@@ -241,20 +200,13 @@ def run_rag_start(mode: str = "full", session_id: str | None = None) -> dict[str
                 "runtime": runtime,
             }
 
-        directory = _session_directory(session_id)
-        connection = _connect_kb(directory)
-        persisted = _persist_kb_enabled() if connection.get("ok") else {
-            "ok": False,
-            "changed": False,
-            "skipped": True,
-            "error": "kb was not persisted because the live workspace connection failed",
-        }
+        connection = _connect_rag(directory)
         protocol = plus._run_rag_probe("status")
         tools = set(protocol.get("tools") or []) if protocol.get("ok") else set()
         required = {"knowledge_search", "knowledge_get", "knowledge_sources", "knowledge_status"}
         tools_ok = required.issubset(tools)
 
-        ok = bool(connection.get("ok") and persisted.get("ok") and protocol.get("ok") and tools_ok)
+        ok = bool(connection.get("ok") and protocol.get("ok") and tools_ok)
         return {
             "ok": ok,
             "stage": "ready" if ok else "verification",
@@ -262,7 +214,6 @@ def run_rag_start(mode: str = "full", session_id: str | None = None) -> dict[str
             "workspace": directory,
             "elapsedMs": int((time.monotonic() - started) * 1000),
             "runtime": runtime,
-            "persisted": persisted,
             "mcp": connection,
             "protocol": {
                 "ok": bool(protocol.get("ok")),
