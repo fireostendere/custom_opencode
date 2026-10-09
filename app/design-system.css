@@ -52,18 +52,19 @@ body.sidebar-resizing{cursor:col-resize;user-select:none}
 body.sidebar-resizing *{cursor:col-resize!important}
 
 .composer-meta{min-width:0}
-.controls{min-width:0;flex:0 1 540px;display:grid;grid-template-columns:minmax(0,1.4fr) minmax(128px,.8fr);gap:var(--ui-gap);overflow:visible}
+.controls{min-width:0;flex:0 1 680px;display:grid;grid-template-columns:minmax(0,1.4fr) minmax(100px,1fr) minmax(100px,.8fr);gap:var(--ui-gap);overflow:visible}
 .control-select{position:relative;min-width:0}
-#modelButton,#variantSelect{width:100%;max-width:none;min-width:0;height:var(--ui-control-height);min-height:var(--ui-control-height);padding:0 34px 0 12px;border:1px solid var(--line);border-radius:var(--ui-radius);background:var(--surface-input);color:var(--text);line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 0 #fff1 inset}
-#modelButton{position:relative;display:flex;align-items:center;text-align:left}
+#modelButton,#agentSelect,#variantSelect{width:100%;max-width:none;min-width:0;height:var(--ui-control-height);min-height:var(--ui-control-height);padding:0 34px 0 12px;border:1px solid var(--line);border-radius:var(--ui-radius);background:var(--surface-input);color:var(--text);line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 0 #fff1 inset}
+/* Block, not flex: an anonymous flex item never ellipsizes, so a long model name ran under the chevron on phones. */
+#modelButton{position:relative;display:block;text-align:left;line-height:calc(var(--ui-control-height) - 2px)}
 #modelButton::after,.limits-summary::after,.model-provider-chevron,.permission-details>summary::after,.tool>summary::after,.trace>summary::after,.review-file>summary::after,.runtime-v3-panel>summary::after,.orchestration-trace details>summary::after{content:'';width:7px;height:7px;flex:0 0 7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform .16s ease;opacity:.72}
 #modelButton::after{position:absolute;right:14px;top:15px}
-#variantSelect{appearance:none;background-image:none}
+#agentSelect,#variantSelect{appearance:none;background-image:none}
 .control-select::after{content:'';position:absolute;right:14px;top:50%;width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-65%) rotate(45deg);opacity:.72;pointer-events:none}
-.control-select:has(> #variantSelect:disabled)::after{opacity:.45}
-#modelButton:hover,#variantSelect:hover:not(:disabled){border-color:color-mix(in srgb,var(--accent) 55%,var(--line));background:var(--surface-hover)}
+.control-select:has(> select:disabled)::after{opacity:.45}
+#modelButton:hover,#agentSelect:hover:not(:disabled),#variantSelect:hover:not(:disabled){border-color:color-mix(in srgb,var(--accent) 55%,var(--line));background:var(--surface-hover)}
 #variantSelect:hover:not(:disabled){border-color:color-mix(in srgb,var(--accent) 55%,var(--line));background:var(--surface-hover)}
-#modelButton:focus-visible,#variantSelect:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 65%,transparent);outline-offset:2px}
+#modelButton:focus-visible,#agentSelect:focus-visible,#variantSelect:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 65%,transparent);outline-offset:2px}
 .composer-action.stop{font-size:0;line-height:0}
 .composer-action.stop::before,.composer-action.stop::after{content:'';position:absolute;left:50%;top:50%;width:3px;height:22px;border-radius:999px;background:currentColor;transform:translate(-50%,-50%) rotate(45deg)}
 .composer-action.stop::after{transform:translate(-50%,-50%) rotate(-45deg)}
@@ -164,7 +165,7 @@ dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
 @media(max-width:760px){
   .sidebar-resizer{display:none}
   .sidebar{width:min(88vw,360px)!important;flex-basis:min(88vw,360px)!important}
-   .controls{width:100%;max-width:none;flex-basis:auto;grid-template-columns:minmax(0,1.3fr) minmax(116px,.9fr)}
+   .controls{width:100%;max-width:none;flex-basis:auto;grid-template-columns:minmax(0,1.3fr) minmax(90px,1fr) minmax(82px,.8fr)}
   .workflow-grid{grid-template-columns:1fr;gap:10px}
   .workflow-rule{grid-template-columns:minmax(0,1fr) 40px}
   .workflow-rule>*:nth-child(2){grid-column:1/-1}

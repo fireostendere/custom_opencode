@@ -308,13 +308,13 @@ MCP_RAG_BIN=
 PONYTAIL_ENABLED=1
 PONYTAIL_DEFAULT_MODE=full
 # PONYTAIL_UPSTREAM_URL=https://github.com/DietrichGebert/ponytail.git
-# PONYTAIL_PIN_COMMIT=e3ba2aa6f1e6f0bc4d69eb09c9f0d0a93af56156
+# PONYTAIL_PIN_COMMIT=08e952d7a8057a57ce561ff1330d093fd92eec67
 # PONYTAIL_CHECKOUT_DIR=
 ```
 
 `PONYTAIL_ENABLED=1` включает managed OpenCode V2 plugin и делает provisioning обязательным. `0` убирает plugin из отрендеренного `opencode.json`, но не удаляет его checkout. `PONYTAIL_DEFAULT_MODE` принимает `off`, `lite`, `full` или `ultra` и записывается только при отсутствии `.ponytail-active`.
 
-По умолчанию используется pinned upstream commit `e3ba2aa6f1e6f0bc4d69eb09c9f0d0a93af56156`. Installer принимает только полный SHA и обновляет существующий checkout только fast-forward-ом после проверки origin `https://github.com/DietrichGebert/ponytail.git`, ветки `main`, чистого состояния и того, что pin является предком `origin/main`.
+По умолчанию используется Ponytail v4.13.0, pinned upstream commit `08e952d7a8057a57ce561ff1330d093fd92eec67`. Installer принимает только полный SHA и обновляет существующий checkout только fast-forward-ом после проверки origin `https://github.com/DietrichGebert/ponytail.git`, ветки `main`, чистого состояния и того, что pin является предком `origin/main`.
 
 Состояние режима находится в `$XDG_CONFIG_HOME/opencode/.ponytail-active` или `~/.config/opencode/.ponytail-active`. Менять режим во время работы можно командами `/ponytail`, `/ponytail lite`, `/ponytail full`, `/ponytail ultra` и `/ponytail off`.
 

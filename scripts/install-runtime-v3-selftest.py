@@ -49,7 +49,8 @@ def main() -> int:
             and ((config.get("compaction") or {}).get("keep") or {}).get("tokens") == 4096
             and (config.get("compaction") or {}).get("buffer") == 2048
             and (config.get("tool_output") or {}).get("max_bytes") == 48000
-            and kb.get("codemode") is True
+            # The global kb is optional (MCP_RAG_ENABLED=0); when present it must use Code Mode.
+            and (not kb or kb.get("codemode") is True)
         )
         add("runtime-v3-config", good, "native compaction + bounded tool output + MCP Code Mode")
     except Exception as exc:
