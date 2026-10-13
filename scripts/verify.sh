@@ -91,6 +91,7 @@ done
 DND_FAST_TIER_SELF_CHECK=1 "$NODE" "$ROOT/config/plugins/dnd-fast-tier.js"
 "$NODE" "$ROOT/scripts/visible-plan-regression.mjs"
 "$NODE" "$ROOT/scripts/ponytail-v2-regression.mjs"
+"$NODE" "$ROOT/scripts/goal-regression.mjs"
 "$NODE" "$ROOT/scripts/gemini-rate-limit-regression.mjs"
 "$NODE" "$ROOT/scripts/provider-retry-guard-regression.mjs"
 "$NODE" "$ROOT/scripts/lazy-local-router-regression.mjs"
