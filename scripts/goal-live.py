@@ -133,6 +133,7 @@ def main():
             sid = session()
             command(sid, "blocked-goal: requires user input")
             until(lambda: status(sid, "blocked"))
+            until(lambda: api("GET", f"/api/session/{sid}").get("outcome") == "succeeded")
             before = len(requests)
             time.sleep(1.5)
             assert len(requests) == before, "blocked goal kept calling the model"

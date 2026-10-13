@@ -103,7 +103,10 @@ class ExecutionLedger:
                         "Native child has no bound parent; refusing to borrow a task by directory"
                     )
                 root_id = (
-                    old["root_id"] if old and old["parent_id"] == parent_id else parent["root_id"]
+                    old["root_id"]
+                    if old and old["parent_id"] == parent_id
+                    and (not turn_id or not old["turn_id"] or old["turn_id"] == turn_id)
+                    else parent["root_id"]
                 )
             elif task:
                 metadata = task.get("metadata") or {}
@@ -170,11 +173,12 @@ class ExecutionLedger:
     ) -> dict:
         if not request_id or len(request_id) > 256:
             raise ValueError("Invalid request ID")
-        binding = self.binding(session_id)
-        if not binding:
-            raise PermissionError("Model request has no bound root budget")
         failure = None
         with self.store.transaction() as db:
+            row = db.execute("SELECT * FROM execution_bindings WHERE session_id=?", (session_id,)).fetchone()
+            if not row:
+                raise PermissionError("Model request has no bound root budget")
+            binding = dict(row)
             previous = db.execute(
                 "SELECT * FROM execution_requests WHERE id=?", (request_id,)
             ).fetchone()
@@ -250,11 +254,12 @@ class ExecutionLedger:
         )
 
     def tool(self, session_id: str) -> None:
-        binding = self.binding(session_id)
-        if not binding:
-            raise PermissionError("Native tool has no bound root budget")
         failure = None
         with self.store.transaction() as db:
+            row = db.execute("SELECT * FROM execution_bindings WHERE session_id=?", (session_id,)).fetchone()
+            if not row:
+                raise PermissionError("Native tool has no bound root budget")
+            binding = dict(row)
             row = db.execute(
                 "SELECT * FROM execution_roots WHERE id=?", (binding["root_id"],)
             ).fetchone()

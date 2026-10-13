@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from unittest.mock import patch
 import unittest
 
@@ -138,6 +139,91 @@ class LedgerTests(unittest.TestCase):
         )
         self.assertNotEqual(nextroot["rootID"], self.root["rootID"])
         self.assertEqual(self.bind("child")["rootID"], self.root["rootID"])
+
+    def test_resumed_child_turn_shares_current_parent_budget(self):
+        self.bind("child")
+        self.bind("live-grandchild", "child")
+        self.ledger.reserve("child", "old-finish", output_limit=100, finish=True)
+        nextroot = self.ledger.bind(
+            session_id="root", turn_id="turn2", parent_id=None,
+            directory=self.tmp.name, model_ref="provider/model",
+        )
+        self.ledger.reserve("root", "parent-work", output_limit=200)
+        # Continuing a running turn, including an id-less auxiliary request,
+        # must not borrow a newer parent budget or bypass the finish reserve.
+        for turn in ("child-turn", ""):
+            live = self.ledger.bind(
+                session_id="child", turn_id=turn, parent_id="root",
+                directory=self.tmp.name, model_ref="provider/reader",
+            )
+            self.assertEqual(live["rootID"], self.root["rootID"])
+            with self.assertRaises(BudgetExceeded):
+                self.ledger.tool("child")
+        resumed = self.ledger.bind(
+            session_id="child", turn_id="new-delegation", parent_id="root",
+            directory=self.tmp.name, model_ref="provider/reader",
+        )
+        self.assertEqual(resumed["rootID"], nextroot["rootID"])
+        self.assertEqual(resumed["calls"], 1)
+        self.assertEqual(resumed["output_reserved"], 200)
+        self.assertEqual(resumed["finish_used"], 0)
+        self.assertEqual(resumed["limits"], nextroot["limits"])
+        self.assertEqual(self.bind("live-grandchild", "child")["rootID"], self.root["rootID"])
+        self.ledger.reserve("child", "resumed-work", output_limit=200)
+        self.assertEqual(self.ledger.snapshot("root")["calls"], 2)
+        self.assertEqual(self.ledger.snapshot("root")["output_reserved"], 400)
+        self.assertEqual(self.ledger.approval_owner("child"), "root")
+
+    def test_new_child_turn_cannot_reset_unchanged_parent_budget(self):
+        self.bind("child")
+        for n in range(3):
+            self.ledger.reserve("child", f"work-{n}", output_limit=100)
+        for turn in ("new-delegation", "another-delegation"):
+            resumed = self.ledger.bind(
+                session_id="child", turn_id=turn, parent_id="root",
+                directory=self.tmp.name, model_ref="provider/reader",
+            )
+            self.assertEqual(resumed["rootID"], self.root["rootID"])
+            self.assertEqual(resumed["calls"], 3)
+            with self.assertRaises(BudgetExceeded):
+                self.ledger.reserve("child", "over-budget", output_limit=100)
+
+    def test_rebind_before_spending_transaction_charges_current_root(self):
+        for index, operation in enumerate(("reserve", "tool")):
+            with self.subTest(operation=operation):
+                child = f"child-{index}"
+                oldroot = self.bind(child)["rootID"]
+                with self.store.connect() as db:
+                    before = dict(db.execute("SELECT * FROM execution_roots WHERE id=?", (oldroot,)).fetchone())
+                current = self.ledger.bind(
+                    session_id="root", turn_id=f"parent-turn-{index}", parent_id=None,
+                    directory=self.tmp.name, model_ref="provider/model",
+                )
+                transaction = self.store.transaction
+
+                @contextmanager
+                def rebind_before_transaction():
+                    # Deterministically commit the rebind just before spending
+                    # acquires its transaction, after any non-atomic read.
+                    with patch.object(self.store, "transaction", transaction):
+                        self.ledger.bind(
+                            session_id=child, turn_id="new-delegation", parent_id="root",
+                            directory=self.tmp.name, model_ref="provider/reader",
+                        )
+                        with transaction() as db:
+                            yield db
+
+                with patch.object(self.store, "transaction", rebind_before_transaction):
+                    if operation == "reserve":
+                        self.assertEqual(self.ledger.reserve(child, "racing-request", output_limit=200)["rootID"], current["rootID"])
+                    else:
+                        self.ledger.tool(child)
+                spent = self.ledger.snapshot(child)
+                self.assertEqual(spent["calls"], int(operation == "reserve"))
+                self.assertEqual(spent["tools"], int(operation == "tool"))
+                with self.store.connect() as db:
+                    after = dict(db.execute("SELECT * FROM execution_roots WHERE id=?", (oldroot,)).fetchone())
+                self.assertEqual(after, before)
 
     def test_tool_and_time_limits(self):
         self.bind("child")
