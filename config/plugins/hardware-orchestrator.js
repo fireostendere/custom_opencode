@@ -8,7 +8,7 @@ import { capRequestBody, normalizeUsage } from "./tui/lib/request-budget.js"
 import { budgetError, runtimeCall } from "./server-runtime-guard.js"
 
 const MARKER = "Custom Hardware Edition policy:"
-const CORE_TOOLS = new Set(["skill", "mcp_discover", "read", "glob", "grep", "list", "code", "codemode", "mcp", "kb", "knowledge", "diptrace", "fabric"])
+const CORE_TOOLS = new Set(["skill", "mcp_discover", "read", "glob", "grep", "list", "code", "codemode", "mcp", "kb", "knowledge", "diptrace", "fabric", "goal_update"])
 const SUPPORT = new Set(["title", "summary", "compaction"])
 const WORKER_OUTPUT_LIMIT = 16384
 // Worker calls bypass the native http hooks, so they reserve and settle on the

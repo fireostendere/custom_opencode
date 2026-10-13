@@ -33,6 +33,7 @@
 - adaptive reasoning effort `auto / minimal / low / medium / high / max`;
 - AST/symbol repository index, embeddings, dependency graph, bounded Git graph и semantic symbol diff;
 - bounded dynamic context + native OpenCode durable compaction;
+- `/goal <задача>` — работа до проверенного результата с автоматическим продолжением, статусом, остановкой и восстановлением после перезапуска;
 - Git/content-aware repository, model-catalog и RAG caches;
 - task-scoped large-output artifact storage с range/search и deduplication;
 - structured mailbox, typed handoff и bounded speculative research;

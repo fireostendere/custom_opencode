@@ -135,6 +135,7 @@ grep -Fq '"app.exit": "ctrl+shift+q"' "$CLI_CONFIG"
 [[ -x "$WEBSERVER_WRAPPER" ]] || { echo "fresh install did not create webserver controller" >&2; exit 1; }
 [[ -f "$RUNTIME_GUARD" ]] || { echo "fresh install did not install runtime guard plugin" >&2; exit 1; }
 [[ -f "$VISIBLE_PLAN" ]] || { echo "fresh install did not install visible plan plugin" >&2; exit 1; }
+[[ -f "$HOME_DIR/.config/opencode/plugins/goal.js" ]] || { echo "fresh install did not install goal plugin" >&2; exit 1; }
 [[ -f "$CONTEXT_LANES" && -f "$CONTEXT_POLICY" ]] || { echo "fresh install did not install context lane plugins" >&2; exit 1; }
 [[ -f "$ENGINEERING_PROMPT" && -f "$ENGINEERING_LITE_PROMPT" ]] || { echo "fresh install did not install context lane prompts" >&2; exit 1; }
 [[ ! -e "$HOME_DIR/.config/opencode/AGENTS.md" ]] || { echo "legacy managed AGENTS.md was not migrated away" >&2; exit 1; }

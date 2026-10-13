@@ -25,6 +25,7 @@ SUITES = [
     ("request-budget-protocol", ["node", "scripts/request-budget-regression.mjs"]),
     ("tool-fabric-contracts", [sys.executable, "scripts/tool-fabric-smoke.py", "--contracts-only"]),
     ("core", ["bash", "scripts/verify.sh"]),
+    ("native-goal", [sys.executable, "scripts/goal-live.py"]),
     ("runtime-v3", ["bash", "scripts/verify-runtime-v3.sh"]),
     ("routing-effort", [sys.executable, "scripts/model-routing-effort-smoke.py"]),
     ("install-update-fixtures", ["bash", "scripts/install-regression.sh"]),
