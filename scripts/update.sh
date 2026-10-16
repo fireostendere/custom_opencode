@@ -22,6 +22,7 @@ fi
 # here: a malformed or duplicated branch.*.merge entry in local Git config can
 # make pull try to fast-forward multiple branches at once.
 git fetch --prune origin main
+PREVIOUS=$(git rev-parse HEAD)
 git merge --ff-only FETCH_HEAD
 
 # Existing installs may predate the explicit-copy TUI mode. Preserve any user
@@ -37,5 +38,11 @@ OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT=1
 EOF
 fi
 
-"$ROOT/scripts/install.sh"
+if ! "$ROOT/scripts/install.sh"; then
+  # The running web server serves static files from this checkout: leaving the
+  # tree on the new commit after a failed install mixes new JS with old handlers.
+  echo "Install failed; returning the checkout to $PREVIOUS (local edits are kept)." >&2
+  git reset --keep "$PREVIOUS" || echo "Rollback failed; run: git -C '$ROOT' reset --keep $PREVIOUS" >&2
+  exit 1
+fi
 echo "Updated from origin/main and restarted the web/shared OpenCode services."

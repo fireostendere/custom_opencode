@@ -88,17 +88,22 @@ ponytail_provision() {
       return 1
     fi
 
-    git -C "$checkout" fetch --no-tags origin "$branch" || {
-      echo "ponytail: fetch from origin failed" >&2
-      return 1
-    }
-    remote_head=$(git -C "$checkout" rev-parse "refs/remotes/origin/$branch" 2>/dev/null) || {
-      echo "ponytail: origin/$branch is unavailable" >&2
-      return 1
-    }
-    if ! git -C "$checkout" merge-base --is-ancestor "$pin" "$remote_head"; then
-      echo "ponytail: pinned commit is not an ancestor of origin/$branch" >&2
-      return 1
+    # Already at the reviewed pin: its ancestry was checked when the branch
+    # moved here, so an offline re-install (e.g. to apply a .env change) only
+    # re-validates the tree. Moving to a new pin always needs origin.
+    if [[ "$current_head" != "$pin" ]]; then
+      git -C "$checkout" fetch --no-tags origin "$branch" || {
+        echo "ponytail: fetch from origin failed" >&2
+        return 1
+      }
+      remote_head=$(git -C "$checkout" rev-parse "refs/remotes/origin/$branch" 2>/dev/null) || {
+        echo "ponytail: origin/$branch is unavailable" >&2
+        return 1
+      }
+      if ! git -C "$checkout" merge-base --is-ancestor "$pin" "$remote_head"; then
+        echo "ponytail: pinned commit is not an ancestor of origin/$branch" >&2
+        return 1
+      fi
     fi
     # Validate the target tree before moving the checked-out branch. A bad pin
     # must not replace the last known-good revision before the final checks.

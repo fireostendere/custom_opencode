@@ -124,12 +124,13 @@ def main(argv: list[str] | None = None) -> int:
             configured_dir = os.environ.get("OPENCODE_CONFIG_DIR") or str(
                 Path.home() / ".config" / "opencode")
             expected_dir = str(Path(configured_dir).expanduser())
+            # An unpaid Token Plan (OPENCODE_ALIBABA_ENABLED=0) persists no keys.
+            alibaba_enabled = os.environ.get("OPENCODE_ALIBABA_ENABLED", "1").strip().lower() not in {"0", "off", "false", "no"}
+            required_env = ("OPENCODE_CONFIG_DIR",) + (
+                ("TOKEN_PLAN_API_KEY", "TOKEN_PLAN_ANTHROPIC_BASE_URL") if alibaba_enabled else ()
+            )
             missing_env = sorted(
-                name for name in (
-                    "OPENCODE_CONFIG_DIR",
-                    "TOKEN_PLAN_API_KEY",
-                    "TOKEN_PLAN_ANTHROPIC_BASE_URL",
-                )
+                name for name in required_env
                 if not isinstance(service_env, dict) or not service_env.get(name)
             )
             wrong_dir = isinstance(service_env, dict) and service_env.get("OPENCODE_CONFIG_DIR") != expected_dir
