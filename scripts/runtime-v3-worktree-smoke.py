@@ -50,4 +50,27 @@ with tempfile.TemporaryDirectory() as temp:
     except RuntimeError as exc: assert "symlink" in str(exc)
     else: raise AssertionError("worktree merge followed an untracked symlink")
 
-print("Runtime V3 worktree smoke passed: tracked/untracked merge + dirty-target/symlink fail-closed")
+    # A session opened in a subdirectory: git apply from there would silently
+    # drop hunks outside it, so the merge must target the repository toplevel.
+    (root/"pkg").mkdir(); (root/"pkg"/"inner.txt").write_text("base\n",encoding="utf-8"); (root/"top.txt").write_text("base\n",encoding="utf-8")
+    subprocess.run(["git","-C",str(root),"add","-A"],check=True); subprocess.run(["git","-C",str(root),"commit","-qm","layout"],check=True)
+    head2=subprocess.check_output(["git","-C",str(root),"rev-parse","HEAD"],text=True).strip()
+    worktree4=tmp/"wt4"; subprocess.run(["git","-C",str(root),"worktree","add","--detach",str(worktree4),head2],stdout=subprocess.DEVNULL,check=True)
+    (worktree4/"top.txt").write_text("changed\n",encoding="utf-8"); (worktree4/"pkg"/"inner.txt").write_text("changed\n",encoding="utf-8"); (worktree4/"pkg"/"new.txt").write_text("new\n",encoding="utf-8")
+    task4=store.create_task(task_id="wt-task-4",session_id="s4",project_dir=str(worktree4),text="isolated 4",metadata={"ownershipRoot":str(root/"pkg"),"worktree":str(worktree4),"sandbox":"repo-write"},baseline={"head":head2})
+    merged=runtime_v3_ext._worktree_merge(runtime,task4,False)
+    assert merged["target"]==str(root.resolve()) and set(merged["changed"])=={"top.txt","pkg/inner.txt","pkg/new.txt"}, merged
+    assert (root/"top.txt").read_text(encoding="utf-8")=="changed\n" and (root/"pkg"/"new.txt").read_text(encoding="utf-8")=="new\n"
+    assert not (root/"pkg"/"pkg").exists()
+
+    # A worktree of another repository never merges into this root.
+    other=tmp/"other"; other.mkdir(); subprocess.run(["git","init","-q",str(other)],check=True)
+    subprocess.run(["git","-C",str(other),"-c","user.email=smoke@example.invalid","-c","user.name=Smoke","commit","-q","--allow-empty","-m","base"],check=True)
+    worktree5=tmp/"wt5"; subprocess.run(["git","-C",str(other),"worktree","add","--detach",str(worktree5),"HEAD"],stdout=subprocess.DEVNULL,check=True)
+    (worktree5/"foreign.txt").write_text("x\n",encoding="utf-8")
+    task5=store.create_task(task_id="wt-task-5",session_id="s5",project_dir=str(worktree5),text="isolated 5",metadata={"ownershipRoot":str(root),"worktree":str(worktree5),"sandbox":"repo-write"},baseline={"head":"HEAD"})
+    try: runtime_v3_ext._worktree_merge(runtime,task5,False)
+    except RuntimeError as exc: assert "does not belong" in str(exc), exc
+    else: raise AssertionError("worktree merge accepted a foreign repository")
+
+print("Runtime V3 worktree smoke passed: tracked/untracked merge + subdirectory root + dirty-target/symlink/foreign-repo fail-closed")

@@ -999,6 +999,26 @@ def _verify_finish(features: Any, task_id: str) -> None:
             VERIFYING.discard(task_id)
 
 
+_BACKEND_UNREACHABLE = False
+
+
+def _note_backend_unreachable(unreachable: bool) -> None:
+    """A backend that answers nothing is not an idle one.
+
+    Monitoring and dispatch are skipped for that tick (an idle verdict would
+    finalize running tasks and double-dispatch queued ones); only the edges are
+    recorded so a long outage does not flood the event log.
+    """
+    global _BACKEND_UNREACHABLE
+    if unreachable == _BACKEND_UNREACHABLE:
+        return
+    _BACKEND_UNREACHABLE = unreachable
+    STORE.event(
+        kind="runtime.backend_unreachable" if unreachable else "runtime.backend_recovered",
+        data={},
+    )
+
+
 def _monitor_active(features: Any, statuses: dict[str, Any]) -> None:
     current = now_ms()
     tasks = STORE.list_tasks(states=ACTIVE_STATES, limit=500, projection="summary")
@@ -1270,8 +1290,12 @@ def worker(features: Any) -> None:
                 _migrate(features)
                 pending = STORE.has_tasks(states=ACTIVE_STATES | QUEUE_STATES)
                 statuses = features._status_payload() if pending else {}
-                _monitor_active(features, statuses)
-                _dispatch_ready(features, statuses)
+                if statuses is None:
+                    _note_backend_unreachable(True)
+                else:
+                    _note_backend_unreachable(False)
+                    _monitor_active(features, statuses)
+                    _dispatch_ready(features, statuses)
                 features._apply_permission_policies()
                 if time.monotonic() - LAST_PRUNE_AT > 3600:
                     STORE.prune()
@@ -1329,7 +1353,7 @@ def _error(handler: Any, exc: Exception) -> None:
     )
 
 
-def _create_worktree(project_dir: str, task_id: str) -> str:
+def _git_toplevel(project_dir: str) -> str:
     root = Path(project_dir).resolve(strict=True)
     probe = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
@@ -1341,7 +1365,11 @@ def _create_worktree(project_dir: str, task_id: str) -> str:
     )
     if probe.returncode != 0:
         raise ValueError("worktree isolation requires a Git repository")
-    canonical = Path(probe.stdout.strip()).resolve(strict=True)
+    return str(Path(probe.stdout.strip()).resolve(strict=True))
+
+
+def _create_worktree(project_dir: str, task_id: str) -> str:
+    canonical = Path(_git_toplevel(project_dir))
     target = STORE.paths.worktrees / task_id
     if target.exists():
         raise ValueError("worktree already exists")
@@ -1376,6 +1404,22 @@ def _remove_worktree(task: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError(status.stderr.strip() or "worktree status failed")
     if status.stdout.strip():
         raise ValueError("worktree has uncommitted changes; refusing cleanup")
+    # A clean tree can still hold commits the agent made: removing the worktree
+    # drops its HEAD, the only reference to them. Merge (reset to baseline) first.
+    base = str((task.get("baseline") or {}).get("head") or "")
+    if base:
+        ahead = subprocess.run(
+            ["git", "-C", worktree, "rev-list", "--count", f"{base}..HEAD"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=8.0,
+            check=False,
+        )
+        if ahead.returncode != 0:
+            raise RuntimeError(ahead.stderr.strip() or "worktree history check failed")
+        if ahead.stdout.strip() not in {"", "0"}:
+            raise ValueError("worktree has unmerged commits; refusing cleanup")
     result = subprocess.run(
         ["git", "-C", root, "worktree", "remove", worktree],
         stdout=subprocess.PIPE,
@@ -1439,6 +1483,9 @@ def create_task_request(features: Any, payload: dict[str, Any]) -> dict[str, Any
     }
     created_session = False
     if isolate:
+        # Worktree paths are relative to the repository toplevel; a session
+        # opened in a subdirectory must not become the merge/ownership root.
+        metadata["ownershipRoot"] = _git_toplevel(directory)
         task_dir = _create_worktree(directory, task_id)
         metadata["worktree"] = task_dir
         body = {
@@ -1486,7 +1533,7 @@ def create_task_request(features: Any, payload: dict[str, Any]) -> dict[str, Any
             "created",
             summary="Standalone server task created"
             + (" in isolated Git worktree" if isolate else ""),
-            data={"worktree": metadata.get("worktree"), "ownershipRoot": directory},
+            data={"worktree": metadata.get("worktree"), "ownershipRoot": metadata["ownershipRoot"]},
         )
         return {"ok": True, "task": _public(task)}
     except Exception:

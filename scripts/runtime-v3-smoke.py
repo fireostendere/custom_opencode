@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -150,6 +151,22 @@ with tempfile.TemporaryDirectory() as temp:
         pass
     else:
         raise AssertionError("sandbox exposed the entire home directory")
+    # `cd src && npm test` must still see ../node_modules: the bind covers the
+    # project root while the command starts in the nested cwd.
+    nested = project / "nested-cwd"
+    nested.mkdir(exist_ok=True)
+    scoped = sandbox.wrap_shell("printf ok", str(nested), "repo-write", project_root=str(project))
+    assert f"--bind {project} {project}" in scoped["command"] and f"--chdir {nested}" in scoped["command"], scoped
+    assert scoped["cwd"] == str(nested)
+    # Inside WSL the `wsl` profile is the host shell: same opt-in as full-machine.
+    with patch.dict(os.environ, {"WSL_DISTRO_NAME": "Ubuntu"}):
+        os.environ.pop("OPENCODE_ALLOW_FULL_MACHINE", None)
+        try:
+            sandbox.wrap_shell("echo hi", str(project), "wsl")
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("wsl profile ran unsandboxed inside WSL without opt-in")
     assert f"--bind {project} {project}" in wrapped
 
     artifacts = ArtifactStore(store)

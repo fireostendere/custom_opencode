@@ -298,6 +298,30 @@ class MonitorAndMaintenanceTests(unittest.TestCase):
             worker.join(15)
         self.assertTrue(calls and set(calls) == {"custom-opencode-runtime-maintenance"}, calls)
 
+    def test_unreachable_backend_does_not_finalize_or_dispatch(self):
+        running = self.store.create_task(session_id="s-run", project_dir=self.tmp.name, text="running")
+        self.store.transition(running["id"], "running")
+        self.store.update_task(running["id"], metadata_patch={"backendObservedBusy": True})
+        queued = self.store.create_task(session_id="s-queued", project_dir=self.tmp.name, text="queued")
+        stop = threading.Event()
+        dispatched = []
+        features = SimpleNamespace(WORKER_STOP=stop, _status_payload=lambda: None, _apply_permission_policies=lambda: None,
+                                   STATE_LOCK=threading.Lock(), _load_state_unlocked=lambda: {},
+                                   _status_busy=lambda value: False)
+        with patch.object(self.runtime, "_dispatch_task", side_effect=lambda f, task: dispatched.append(task["id"])):
+            worker = threading.Thread(target=self.runtime.worker, args=(features,), daemon=True)
+            worker.start()
+            time.sleep(3.5)  # several 1.5 s ticks
+            stop.set()
+            worker.join(15)
+        # Worker start marks in-flight work "recovering"; without a backend
+        # verdict it must stay there instead of being paused or finalized.
+        self.assertIn(self.store.get_task(running["id"])["state"], {"running", "recovering"})
+        self.assertEqual(self.store.get_task(queued["id"])["state"], "queued")
+        self.assertEqual(dispatched, [])
+        kinds = [e["kind"] for e in self.store.events(limit=2000)]
+        self.assertEqual(kinds.count("runtime.backend_unreachable"), 1, kinds)
+
     def test_v3_maintenance_is_durable_and_lease_scoped(self):
         import runtime_v3
         import runtime_v3_ext

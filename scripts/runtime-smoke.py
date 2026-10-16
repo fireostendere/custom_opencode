@@ -297,6 +297,31 @@ with tempfile.TemporaryDirectory() as temp:
     )
     cleanup = server_runtime._remove_worktree(worktree_task)
     assert cleanup["ok"] is True and not Path(worktree).exists()
+    # A clean worktree can still hold the agent's commits; removing it would
+    # drop their only reference, so cleanup must refuse until they are merged.
+    committed_id = "t_worktree_committed"
+    committed = server_runtime._create_worktree(str(project), committed_id)
+    Path(committed, "committed.txt").write_text("kept\n", encoding="utf-8")
+    subprocess.run(["git", "-C", committed, "add", "committed.txt"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", committed, "-c", "user.email=smoke@example.invalid", "-c", "user.name=Smoke", "commit", "-qm", "agent work"],
+        check=True, capture_output=True,
+    )
+    committed_task = store.create_task(
+        task_id=committed_id,
+        session_id="ses_committed",
+        project_dir=committed,
+        text="isolated",
+        metadata={"worktree": committed, "ownershipRoot": str(project)},
+        baseline={"head": subprocess.check_output(["git", "-C", str(project), "rev-parse", "HEAD"], text=True).strip()},
+    )
+    try:
+        server_runtime._remove_worktree(committed_task)
+    except ValueError as exc:
+        assert "unmerged commits" in str(exc), exc
+    else:
+        raise AssertionError("worktree cleanup discarded committed work")
+    assert Path(committed).exists()
 
     class FakeFeatures:
         def __init__(self):

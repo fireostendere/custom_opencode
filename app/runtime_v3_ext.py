@@ -100,10 +100,33 @@ def _run_git(root:str,args:list[str],input_text:str|None=None,timeout:float=30.)
     return subprocess.run(["git","-C",root,*args],input=input_text,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=timeout,check=False)
 
 
+def _git_common_dir(root:str)->Path:
+    probe=_run_git(root,["rev-parse","--git-common-dir"])
+    if probe.returncode!=0: raise RuntimeError(probe.stderr.strip() or f"{root} is not a Git repository")
+    common=Path(probe.stdout.strip())
+    return (common if common.is_absolute() else Path(root)/common).resolve(strict=False)
+
+
+def _merge_target(owner:str,worktree:str)->str:
+    """The repository toplevel of the ownership root.
+
+    `git apply` run from a subdirectory silently ignores hunks outside it and
+    `git status -- <path>` probes a nested path, so a session opened in a
+    subdirectory would merge only part of the worktree while reporting success.
+    The worktree must also belong to that same repository.
+    """
+    probe=_run_git(owner,["rev-parse","--show-toplevel"])
+    if probe.returncode!=0: raise RuntimeError(probe.stderr.strip() or "target root is not a Git repository")
+    toplevel=str(Path(probe.stdout.strip()).resolve(strict=True))
+    if _git_common_dir(worktree)!=_git_common_dir(toplevel): raise RuntimeError("worktree does not belong to the target repository")
+    return toplevel
+
+
 def _worktree_merge(runtime:Any,task:dict[str,Any],cleanup:bool=False)->dict[str,Any]:
     metadata=task.get("metadata") if isinstance(task.get("metadata"),dict) else {}; worktree=str(metadata.get("worktree") or ""); owner=str(metadata.get("ownershipRoot") or "")
     if not worktree or not owner: raise ValueError("task is not an isolated managed worktree")
     if not Path(worktree).is_dir() or not Path(owner).is_dir(): raise ValueError("worktree/root missing")
+    owner=_merge_target(owner,worktree)
     base=str((task.get("baseline") or {}).get("head") or "HEAD")
     changed_proc=_run_git(worktree,["diff","--no-ext-diff","--no-textconv","--name-only","-z",base]); untracked_proc=_run_git(worktree,["ls-files","--others","--exclude-standard","-z"])
     if changed_proc.returncode!=0 or untracked_proc.returncode!=0: raise RuntimeError((changed_proc.stderr or untracked_proc.stderr).strip() or "worktree status failed")
@@ -196,7 +219,8 @@ def handle_post(handler:Any,parsed:Any,runtime:Any,v3mod:Any,features:Any)->bool
             task_id=str(payload.get("taskID") or ""); task=runtime.STORE.get_task(task_id)
             if not task: raise KeyError(task_id)
             sandbox=v3.sandbox.normalize(str(payload.get("sandbox") or ""))
-            if sandbox=="full-machine" and os.environ.get("OPENCODE_ALLOW_FULL_MACHINE","0").lower() not in {"1","true","yes"}: raise PermissionError("full-machine sandbox is disabled")
+            # Inside WSL the `wsl` profile has no boundary to cross: it is the host shell.
+            if (sandbox=="full-machine" or (sandbox=="wsl" and v3mod._inside_wsl())) and not v3mod._full_machine_allowed(): raise PermissionError(f"{sandbox} sandbox is disabled")
             task=runtime.STORE.update_task(task_id,metadata_patch={"sandbox":sandbox}); runtime.STORE.event(kind="sandbox.changed",task_id=task_id,session_id=task.get("session_id"),project_dir=task.get("project_dir"),data={"sandbox":sandbox}); result={"ok":True,"task":runtime._public(task)}
         elif parsed.path=="/client-worktree-merge.json":
             task=runtime.STORE.get_task(str(payload.get("taskID") or ""))

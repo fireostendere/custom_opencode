@@ -374,7 +374,11 @@ def reorder_queue(session_id: str, ids: list[str]) -> dict[str, Any]:
         return {"ok": True, "count": len(ordered)}
 
 
-def _status_payload() -> dict[str, Any]:
+def _status_payload() -> dict[str, Any] | None:
+    """Session activity map, or None when the backend gave no usable answer.
+
+    An unreachable backend must not look like "every session is idle".
+    """
     for path in ("/api/session/active", "/api/session/status"):
         try:
             value = _data(_backend_request_json("GET", path, timeout=8.0))
@@ -382,7 +386,7 @@ def _status_payload() -> dict[str, Any]:
                 return value
         except Exception:
             pass
-    return {}
+    return None
 
 
 def _status_busy(value: Any) -> bool:
@@ -536,7 +540,7 @@ def _worker() -> None:
         try:
             state = _with_state_read()
             queues = state.get("queues", {}) if isinstance(state.get("queues"), dict) else {}
-            status = _status_payload() if queues else {}
+            status = (_status_payload() or {}) if queues else {}
             for session_id in list(queues):
                 _dispatch_one_queue_item(str(session_id), status)
             _apply_permission_policies()
