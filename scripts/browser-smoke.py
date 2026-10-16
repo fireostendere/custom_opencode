@@ -79,6 +79,10 @@ def attach_listeners(page, tag: str) -> None:
         nonlocal logging_out
         if urlsplit(resp.url).path == "/auth/logout" and 200 <= resp.status < 300:
             logging_out = True
+        # After a successful logout the event stream may reconnect once before
+        # the redirect lands; a 401 then is the intended answer, not an error.
+        if resp.status == 401 and logging_out:
+            return
         if resp.status >= 400 and not expected_http(resp.url, resp.status):
             PROBLEMS.append(f"{tag} server error: {resp.status} {resp.url}")
 
