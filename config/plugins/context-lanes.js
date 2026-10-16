@@ -156,7 +156,8 @@ function removeOwned(parts) {
 // table.
 export const OPERATOR_MARKER =
   "[Оператор, вне игры. Команду вести игру выполни инструментами, в кампанию — только мир. Вопрос, отладку или жалобу обсуди только здесь: в кампанию ничего не пиши и не цитируй.]"
-const HOST_SIGNALS = ["DnD auto-watch:", "DnD watcher:", "Context class:"]
+// "ODM read continuation" is the dnd-state-cache request to finish a paged read.
+const HOST_SIGNALS = ["DnD auto-watch:", "DnD watcher:", "Context class:", "ODM read continuation"]
 
 export function labelOperatorTurn(messages) {
   let index = -1

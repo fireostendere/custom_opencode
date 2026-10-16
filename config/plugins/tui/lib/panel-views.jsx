@@ -335,7 +335,9 @@ export function createPanelViews(context) {
       if (!sessionID) return onCleanup(() => { current = false })
       ;(async () => {
         let cursor
-        do {
+        // Newest first; a todo list older than 2000 messages is not worth a
+        // full-history download on every session switch.
+        for (let page = 0; page < 10 && current; page++) {
           const response = await context.client.message.list({ sessionID, limit: 200, ...(cursor ? { cursor } : { order: "desc" }) })
           const found = latestTodos(context, response.data ?? [])
           if (found !== null) {
@@ -343,7 +345,8 @@ export function createPanelViews(context) {
             return
           }
           cursor = response.cursor?.next ?? undefined
-        } while (cursor)
+          if (!cursor || !(response.data ?? []).length) return
+        }
       })().catch(() => {})
       onCleanup(() => { current = false })
     })

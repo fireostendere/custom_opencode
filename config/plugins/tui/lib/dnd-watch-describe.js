@@ -92,6 +92,11 @@ export function describeWatch(snapshot, now = Date.now()) {
     tone = "warn"
     headline = "⚠ ожидание остановлено: ODM недоступен"
     label = "ODM недоступен"
+  } else if (watch.status === "notification_failed") {
+    tone = "warn"
+    headline = "⚠ не удалось разбудить мастера"
+    label = "Мастер не разбужен"
+    hint = "Вход игрока получен, но ход не запущен"
   } else if (watch.status === "timed_out") {
     headline = "○ ручное ожидание истекло"
     label = "Ожидание истекло"
@@ -101,6 +106,9 @@ export function describeWatch(snapshot, now = Date.now()) {
   }
   const link = linkText(snapshot.link, watch, now)
   ticking ||= Boolean(link.ticking)
+  // A writer that died stops changing the snapshot, so nothing would re-render
+  // into the stale state: consumers re-render once at this instant.
+  const staleAt = !snapshot.stoppedAt && now - (snapshot.updatedAt ?? 0) <= STALE_MS ? (snapshot.updatedAt ?? 0) + STALE_MS + 1 : undefined
   const cursor = snapshot.cursor ?? watch.afterSeq
   const mode = watch.status === "waiting" ? (watch.auto ? "авто" : "ручной") : snapshot.autoWatch === false ? "выкл" : "авто"
   const rows = [
@@ -113,5 +121,5 @@ export function describeWatch(snapshot, now = Date.now()) {
     .filter((item) => typeof item?.text === "string" && Number.isFinite(item.at))
     .slice(-LOG_ROWS)
     .map((item) => `${clockTime(item.at)} ${item.text}`)
-  return { tone, headline, label, rows, log, ...(hint ? { hint } : {}), ticking }
+  return { tone, headline, label, rows, log, ...(hint ? { hint } : {}), ticking, ...(staleAt ? { staleAt } : {}) }
 }

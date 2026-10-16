@@ -136,6 +136,9 @@ export function createDndStateCache() {
       if (value.shape[entry.key] === 'array') (state[entry.key] ??= []).push(entry.value)
       else state[entry.key] = entry.value
     }
+    // The read cursor is what dnd-watch arms auto-watch from; dropping it with
+    // the scaffolding left the table never watched.
+    for (const key of ['nextCursor', 'hasMore']) if (key in value && !(key in state)) state[key] = value[key]
     return state
   }
   function withText(result, before, after) {

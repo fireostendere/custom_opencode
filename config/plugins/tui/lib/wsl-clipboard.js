@@ -43,12 +43,14 @@ export function parseClipboardProtocol(output) {
     }
     return { kind: "image", bytes }
   }
+  let decoded
   try {
-    new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+    decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes)
   } catch {
     throw new Error("Clipboard text is not UTF-8")
   }
-  return { kind: "text", bytes }
+  // Windows clipboard text keeps CRLF; the prompt editor wants LF.
+  return { kind: "text", bytes: /\r/.test(decoded) ? Buffer.from(decoded.replace(/\r\n?/g, "\n"), "utf8") : bytes }
 }
 
 const POWERSHELL_SCRIPT = `[Console]::OutputEncoding=[Text.Encoding]::ASCII; Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; try { $image=[Windows.Forms.Clipboard]::GetImage(); if ($null -ne $image) { $stream=New-Object IO.MemoryStream; $image.Save($stream,[Drawing.Imaging.ImageFormat]::Png); Write-Output 'image/png'; [Console]::Write([Convert]::ToBase64String($stream.ToArray())); exit 0 }; if ([Windows.Forms.Clipboard]::ContainsText([Windows.Forms.TextDataFormat]::UnicodeText)) { $value=[Windows.Forms.Clipboard]::GetText([Windows.Forms.TextDataFormat]::UnicodeText); Write-Output 'text/plain'; [Console]::Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($value))); exit 0 }; Write-Output 'empty' } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }`

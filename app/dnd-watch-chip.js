@@ -31,6 +31,7 @@ export function createDndWatchChip({
   let timer = null
   let ticker = null
   let describe = null
+  let lastHeadline
 
   const serverNow = () => clock() + offset
   const schedule = (delay) => {
@@ -69,8 +70,11 @@ export function createDndWatchChip({
     const changed = JSON.stringify(next) !== JSON.stringify(snapshot)
     snapshot = next
     schedule(snapshot ? PRESENT_DELAY : ABSENT_DELAY)
-    current()
-    if (changed) onChange()
+    // An unchanged snapshot can still mean a different view: a writer that
+    // stopped updating turns "waiting" into "not responding" by time alone.
+    const headline = current()?.headline
+    if (changed || headline !== lastHeadline) onChange()
+    lastHeadline = headline
   }
 
   function current() {

@@ -326,3 +326,18 @@ console.log(
   }
   console.log("PASS config-backup: own pattern, private modes, dedupe, pruning")
 }
+
+// events.js: one failing handler must not end the shared subscription.
+{
+  const { startEvents } = await import("../config/events.js")
+  const seen = []
+  const warn = console.warn
+  console.warn = () => {}
+  try {
+    const ctx = { event: { subscribe: async function* () { yield { type: "a" }; yield { type: "b" } } } }
+    startEvents(ctx, async (event) => { seen.push(event.type); if (event.type === "a") throw new Error("boom") })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  } finally { console.warn = warn }
+  assert.deepEqual(seen, ["a", "b"])
+  console.log("PASS events: a failing handler does not stop the subscription")
+}

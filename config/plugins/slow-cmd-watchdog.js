@@ -11,7 +11,11 @@ export default {
   async setup(ctx) {
     const started = new Map()
     const before = await ctx.tool.hook("execute.before", (input) => {
-      started.set(input.id, Date.now())
+      if (!input.id) return
+      const now = Date.now()
+      // execute.after never fires for denied/aborted calls: drop stale starts.
+      if (started.size > 256) for (const [id, at] of started) if (now - at > 3_600_000) started.delete(id)
+      started.set(input.id, now)
     })
     const after = await ctx.tool.hook("execute.after", (input) => {
       const startedAt = started.get(input.id)

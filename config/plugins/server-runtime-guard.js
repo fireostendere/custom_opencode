@@ -274,6 +274,24 @@ export default {
     const contextFlights = new Map()
     const contextFailures = new Map()
     const requests = new WeakMap()
+    // A later http.request hook (typed-output) may replace event.request after
+    // ours ran, so the response arrives with a Request we never saw. Pending
+    // trackings per session let an unambiguous miss still settle its
+    // reservation instead of leaving it charged until the root finishes.
+    const pendingBySession = new Map()
+    const track = (tracking) => {
+      const set = pendingBySession.get(tracking.sessionID) ?? new Set()
+      set.add(tracking)
+      if (set.size > 32) set.delete(set.values().next().value)
+      pendingBySession.delete(tracking.sessionID)
+      pendingBySession.set(tracking.sessionID, set)
+      if (pendingBySession.size > 1000) pendingBySession.delete(pendingBySession.keys().next().value)
+    }
+    const settle = (tracking) => {
+      const set = pendingBySession.get(tracking.sessionID)
+      set?.delete(tracking)
+      if (set && !set.size) pendingBySession.delete(tracking.sessionID)
+    }
     let catalog = [],
       catalogAt = 0,
       catalogFlight = null
@@ -422,7 +440,17 @@ export default {
       // Titles, compaction and generation are never budget-gated: they must
       // not poll for approvals or fail a session over the root budget.
       const primary = !event.kind || event.kind === "primary"
-      let step = await requestBinding(event, primary)
+      let step
+      try {
+        step = await requestBinding(event, primary)
+      } catch (error) {
+        if (primary) throw error
+        // Auxiliary requests must not fail a session because the policy
+        // sidecar is restarting or the bind was refused: run them untracked.
+        requests.set(event.request, UNTRACKED)
+        warnLimited("auxiliary-bind", `${event.kind} request ran without a server binding: ${String(error?.message ?? error).slice(0, 200)}`)
+        return
+      }
       let finishOnly = primary ? await gate(event.sessionID, step.budget) : false
       const outputLimit = outputLimitFor(event.model || step.binding.model)
       let requestID = randomUUID()
@@ -462,6 +490,7 @@ export default {
         capped.reasoning_effort = "none"
       const tracking = { sessionID: event.sessionID, requestID }
       requests.set(original, tracking)
+      track(tracking)
       // An unchanged body is forwarded as-is: no re-serialization of history/media.
       if (!bodyChanged(body, capped)) return
       const headers = new Headers(original.headers)
@@ -471,14 +500,20 @@ export default {
       event.request = request
     })
     await ctx.session.hook("http.response", async (event) => {
-      const tracking = requests.get(event.request)
+      let tracking = requests.get(event.request)
       if (tracking === UNTRACKED) return
       if (!tracking) {
+        const candidates = pendingBySession.get(event.sessionID)
+        if (candidates?.size === 1) tracking = candidates.values().next().value
+      }
+      if (!tracking || tracking.settled) {
         // Never fail a finished provider call over bookkeeping.
         warnLimited("lost-request", "provider response lost its request budget identity; usage not recorded")
         return
       }
       requests.delete(event.request)
+      tracking.settled = true
+      settle(tracking)
       event.response = observeUsage(event.response, (usage, status, error) =>
         // Fire-and-forget with a short timeout; never spawn `ensure` here.
         call(

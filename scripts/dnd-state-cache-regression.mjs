@@ -189,7 +189,7 @@ assert.equal(cache.prepare('one', query).knownStateRevision, undefined)
   let reply = single
   const read = plain.wrap(async () => result(reply))
   assert.deepEqual(JSON.parse((await read(query, { sessionID: 'p' })).content),
-    { currentSeq: 10, events: [{ seq: 10 }], timelineEpoch: epoch, stateDelta: baseline.stateDelta })
+    { currentSeq: 10, events: [{ seq: 10 }], timelineEpoch: epoch, stateDelta: baseline.stateDelta, nextCursor: 10, hasMore: false })
   assert.equal(plain.prepare('p', query).knownStateRevision, revision, 'the unwrapped page still acknowledges its baseline')
   reply = { ...single, complete: false, nextPage: 'p2' }
   assert.equal(JSON.parse((await read(query, { sessionID: 'p' })).content).format, 'odm.read.page.v1')

@@ -264,6 +264,21 @@ try {
   await hooks["session:http.response"](lost)
   assert.equal(await lost.response.text(), "data: [DONE]\n\n")
   assert.ok(warnings.some((line) => line.includes("lost its request budget identity")))
+  // A later hook replaced the Request after ours ran (typed-output): the one
+  // pending reservation of that session is still settled, exactly once.
+  const replaced = request("ses_replaced")
+  await hooks["session:http.request"](replaced)
+  const afterBefore = count("/internal/runtime/request-after")
+  const swapped = { sessionID: "ses_replaced", request: new Request(replaced.request, { body: "{}", method: "POST" }), response: new Response("data: [DONE]\n\n") }
+  await hooks["session:http.response"](swapped)
+  await swapped.response.text()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(count("/internal/runtime/request-after"), afterBefore + 1, "replaced request still settles its reservation")
+  const again = { sessionID: "ses_replaced", request: replaced.request, response: new Response("data: [DONE]\n\n") }
+  await hooks["session:http.response"](again)
+  await again.response.text()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(count("/internal/runtime/request-after"), afterBefore + 1, "a reservation is never settled twice")
 
   // The terminal SSE chunk is delivered while the ledger write is still pending.
   let releaseAfter

@@ -50,7 +50,9 @@ function toast(title, message) {
 export default {
   id: "notify-win",
   async setup(ctx) {
-    let busySince = 0
+    // Per session: concurrent sessions used to share one clock, so a short
+    // run reported another's duration and reset it.
+    const busySince = new Map()
     let lastAskAt = 0
 
     async function label(sessionID) {
@@ -65,29 +67,29 @@ export default {
 
     const permission = await ctx.permission.hook("evaluate", ({ action, resources, effect }) => {
       const now = Date.now()
-      busySince ||= now
       // Evaluate runs for every tool call; only a real prompt to the user toasts.
       if (effect !== "ask") return
       if (now - lastAskAt < ASK_DEDUPE_MS) return
       lastAskAt = now
-      toast("opencode: ждёт разрешения", `${action}${resources[0] ? ` — ${resources[0]}` : ""}`)
+      toast("opencode: ждёт разрешения", `${action}${resources?.[0] ? ` — ${resources[0]}` : ""}`)
     })
 
     const stop = startEvents(ctx, async (event) => {
       const sessionID = event.data?.sessionID
       if (event.type === "session.execution.started") {
-        busySince ||= Date.now()
+        if (!busySince.has(sessionID)) busySince.set(sessionID, Date.now())
       } else if (event.type === "session.idle") {
-        const duration = busySince ? Date.now() - busySince : 0
-        busySince = 0
+        const startedAt = busySince.get(sessionID)
+        busySince.delete(sessionID)
+        const duration = startedAt ? Date.now() - startedAt : 0
         if (duration < IDLE_MIN_MS) return
         const title = await label(sessionID)
         toast("opencode: джоба завершилась", `${title ? `${title} · ` : ""}работала ${Math.round(duration / 60_000)} мин`)
       } else if (event.type === "session.execution.failed") {
-        busySince = 0
+        busySince.delete(sessionID)
         toast("opencode: ошибка в джобе", await label(sessionID) || "сессия упала с ошибкой")
-      } else if (event.type === "session.execution.interrupted") {
-        busySince = 0
+      } else if (event.type === "session.execution.interrupted" || event.type === "session.deleted") {
+        busySince.delete(sessionID)
       }
     })
 

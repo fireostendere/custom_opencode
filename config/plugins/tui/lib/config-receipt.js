@@ -18,13 +18,21 @@ function eventData(event) {
   return event?.data ?? event?.properties ?? event
 }
 
+// The TUI client (hey-api) answers list endpoints with `{ data: [...] }`;
+// test doubles and the raw HTTP client hand back the array itself.
+function rows(response) {
+  if (Array.isArray(response)) return response
+  return Array.isArray(response?.data) ? response.data : []
+}
+
 async function consume(client, sessionID, inboxID, text, marker) {
   const value = JSON.parse(text.slice(marker.length))
   try { await client.session.inbox.cancel({ sessionID, inboxID }) }
   catch (error) {
-    // A running session may already have admitted it; never cancel any
-    // replacement/user input.
-    if (![404, 409].includes(error.status ?? error.statusCode)) throw error
+    // 404/409: a running session already admitted it. Anything else leaves a
+    // stale synthetic queued, but the receipt is already in hand.
+    if (![404, 409].includes(error?.status ?? error?.statusCode))
+      console.warn(`[config-receipt] inbox cancel failed: ${error?.message ?? error}`)
   }
   return value
 }
@@ -58,13 +66,13 @@ export async function readConfigReceipt(client, sessionID, requestID, options = 
   try {
     for (let attempt = 0; ; attempt += 1) {
       if (enqueued) return await consume(client, sessionID, enqueued.inboxID, enqueued.text, marker)
-      const inbox = await client.session.inbox?.list?.({ sessionID }) || []
+      const inbox = rows(await client.session.inbox?.list?.({ sessionID }))
       const pending = inbox.find((item) => item.type === "synthetic" && item.payload?.text?.startsWith(marker))
       if (pending) return await consume(client, sessionID, pending.id, pending.payload.text, marker)
       const final = Date.now() >= deadline
       if (delivered || final || CONTEXT_ATTEMPTS.has(attempt)) {
         delivered = false
-        const messages = await client.session.context({ sessionID })
+        const messages = rows(await client.session.context({ sessionID }))
         const admitted = messages.find((item) => item.text?.startsWith(marker))
         if (admitted) return JSON.parse(admitted.text.slice(marker.length))
       }

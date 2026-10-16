@@ -170,6 +170,7 @@ export default Plugin.define({
     let dockTarget = null
     let baseline = null
     let dockRetry = null
+    let dockMisses = 0
     let dockScheduled = false
     let disposed = false
 
@@ -203,13 +204,17 @@ export default Plugin.define({
       const target = findDockTarget()
       if (!target) {
         restoreDockTarget()
-        if (!dockRetry) dockRetry = setTimeout(() => {
-          if (disposed) return
-          dockRetry = null
-          syncDockLayout()
-        }, 50)
+        if (!dockRetry) {
+          dockMisses += 1
+          dockRetry = setTimeout(() => {
+            if (disposed) return
+            dockRetry = null
+            syncDockLayout()
+          }, Math.min(1000, 50 * 2 ** Math.min(dockMisses - 1, 5)))
+        }
         return
       }
+      dockMisses = 0
       if (dockTarget !== target) {
         restoreDockTarget()
         dockTarget = target
