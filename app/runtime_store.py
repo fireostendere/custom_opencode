@@ -829,11 +829,43 @@ class RuntimeStore:
                 data or {},
                 timestamp,
             )
+            if state in {"failed", "cancelled"}:
+                self._fail_dependents_db(db, task_id, state, timestamp)
             # Return the committed row from this transaction's own read; a second
             # SELECT would copy and decode the attachment payload again.
             merged = {**dict(current), **changes}
             dependencies = self._dependency_map(db, [task_id])[task_id]
         return self._row_task(merged, dependencies) or {}
+
+    def _fail_dependents_db(self, db: Any, task_id: str, state: str, timestamp: int) -> None:
+        """A dependency that can no longer complete must not leave its
+        dependents `blocked` forever; nothing else revisits them."""
+        pending = [(task_id, state)]
+        while pending:
+            dep_id, dep_state = pending.pop()
+            rows = db.execute(
+                """SELECT task.id,task.session_id,task.project_dir
+                   FROM task_dependencies dependency JOIN tasks task ON task.id=dependency.task_id
+                   WHERE dependency.depends_on=? AND task.state IN ('queued','blocked','paused')""",
+                (dep_id,),
+            ).fetchall()
+            for row in rows:
+                dependent = str(row["id"])
+                db.execute(
+                    "UPDATE tasks SET state='failed',updated_at=?,last_progress_at=?,finished_at=?,last_error=? WHERE id=?",
+                    (timestamp, timestamp, timestamp, f"dependency {dep_id} {dep_state}", dependent),
+                )
+                db.execute("DELETE FROM patch_ownership WHERE task_id=?", (dependent,))
+                self._event_db(
+                    db,
+                    dependent,
+                    str(row["session_id"]),
+                    str(row["project_dir"]),
+                    "task.dependency_failed",
+                    {"dependency": dep_id, "dependencyState": dep_state},
+                    timestamp,
+                )
+                pending.append((dependent, "failed"))
 
     def update_task(
         self,
@@ -900,7 +932,8 @@ class RuntimeStore:
                             "INSERT OR IGNORE INTO task_dependencies(task_id,depends_on) VALUES(?,?)",
                             (task_id, dep),
                         )
-                if str(row["state"]) in {"queued", "blocked", "paused"}:
+                # A paused task stays paused: editing its dependencies is not a resume.
+                if str(row["state"]) in {"queued", "blocked"}:
                     state = "queued" if not deps else "blocked"
                     if state != row["state"]:
                         columns["state"] = state

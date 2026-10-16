@@ -11,6 +11,7 @@ import json
 import os
 import re
 import secrets
+import threading
 import stat
 import tempfile
 import time
@@ -76,46 +77,74 @@ def _secret_path() -> Path:
     return users_path().with_name("auth-secret.key")
 
 
+_SECRET_LOCK = threading.Lock()
+
+
+def _read_secret(path: Path) -> str | None:
+    if path.is_symlink() or path.is_dir():
+        raise UsersError(f"unsafe secret path: {path}")
+    if not path.is_file():
+        return None
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise UsersError(f"cannot read secret: {exc}") from exc
+    if len(value) == 64 and all(c in "0123456789abcdef" for c in value):
+        return value
+    return None
+
+
 def server_secret() -> str:
     """64-hex random secret persisted at sibling auth-secret.key.
 
-    Created on first use with 0600, parent mkdir 0700, atomic write.
+    Created on first use with 0600, parent mkdir 0700, atomic write. The
+    process-level lock serialises handler threads; `os.link` makes the create
+    atomic across processes (web and policy server start together), so every
+    caller signs with the secret that is actually on disk.
     """
     path = _secret_path()
-    if path.is_symlink() or path.is_dir():
-        raise UsersError(f"unsafe secret path: {path}")
-    if path.is_file():
-        try:
-            value = path.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise UsersError(f"cannot read secret: {exc}") from exc
-        if len(value) == 64 and all(c in "0123456789abcdef" for c in value):
-            return value
-    # Generate new secret
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    secret = secrets.token_hex(32)
-    import tempfile
-    fd = None
-    tmp_path = None
-    try:
-        fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-        os.write(fd, (secret + "\n").encode("utf-8"))
-        os.fsync(fd)
-        os.close(fd)
+    with _SECRET_LOCK:
+        existing = _read_secret(path)
+        if existing:
+            return existing
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        secret = secrets.token_hex(32)
+        import tempfile
         fd = None
-        os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, path)
         tmp_path = None
-    except OSError as exc:
-        if fd is not None:
+        try:
+            fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+            os.write(fd, (secret + "\n").encode("utf-8"))
+            os.fsync(fd)
             os.close(fd)
-        if tmp_path is not None:
+            fd = None
+            os.chmod(tmp_path, 0o600)
             try:
-                os.unlink(tmp_path)
+                os.link(tmp_path, path)
+            except FileExistsError:
+                # Another process created it between our read and link: use it.
+                existing = _read_secret(path)
+                if existing:
+                    return existing
+                os.replace(tmp_path, path)  # an unreadable leftover; replace it
+                tmp_path = None
+                return secret
             except OSError:
-                pass
-        raise UsersError(f"cannot write secret: {exc}") from exc
-    return secret
+                os.replace(tmp_path, path)  # filesystem without hard links
+                tmp_path = None
+                return secret
+            os.unlink(tmp_path)
+            tmp_path = None
+        except OSError as exc:
+            if fd is not None:
+                os.close(fd)
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            raise UsersError(f"cannot write secret: {exc}") from exc
+        return secret
 
 
 def _utf8(value: str) -> bytes:

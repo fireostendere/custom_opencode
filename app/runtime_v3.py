@@ -2190,7 +2190,7 @@ class BranchStateService:
         copied = []
         if include_state and source:
             source_project = str(source[0].get("project_dir") or "")
-            target_project = str(target[0].get("project_dir") or source_project)
+            target_project = str((target[0] if target else source[0]).get("project_dir") or source_project)
             for item in self.store.memory_list(source_project, limit=200):
                 self.store.memory_set(target_project, item["key"], item["value"], item["category"])
             for item in self.store.decision_list(source_project, limit=200):

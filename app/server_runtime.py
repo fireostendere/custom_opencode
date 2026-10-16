@@ -761,6 +761,36 @@ def _finish_async(features: Any, task: dict[str, Any]) -> None:
     ).start()
 
 
+def _after_completion(features: Any, task: dict, review: dict, verification: dict) -> None:
+    task_id = task["id"]
+    if task.get("kind") == "research":
+        target = (
+            (task.get("metadata") or {}).get("mailboxTo")
+            if isinstance(task.get("metadata"), dict)
+            else None
+        )
+        if target:
+            STORE.mailbox_send(
+                project_dir=task["project_dir"],
+                from_task=task_id,
+                to_task=str(target),
+                message_type="finding",
+                payload={
+                    "text": _last_assistant_text(features, task["session_id"])[:14000],
+                    "route": task.get("route"),
+                },
+            )
+    profile = REGISTRY.profiles().get(str(task.get("profile")), REGISTRY.profiles()["direct"])
+    if (
+        task.get("kind") in {"prompt", "verification-fix"}
+        and profile.get("autoReview")
+        and review.get("needed")
+        and os.environ.get("OPENCODE_AUTO_REVIEW", "smart").strip().lower()
+        in {"smart", "enqueue", "1", "true"}
+    ):
+        _schedule_review(features, task, review, verification)
+
+
 def _schedule_review(features: Any, task: dict, review: dict, verification: dict) -> dict:
     from execution_ledger import ExecutionLedger
 
@@ -777,82 +807,89 @@ def _schedule_review(features: Any, task: dict, review: dict, verification: dict
     ledger = ExecutionLedger(STORE)
     if not ledger.claim_review(root_id, change_id, owner):
         return {"scheduled": False, "reason": "change already assigned to its review owner"}
-    STORE.event(
-        kind="review.owner",
-        task_id=task["id"],
-        session_id=task["session_id"],
-        data={"rootID": root_id, "changeID": change_id, "owner": owner},
-    )
-    if owner == "orchestrator":
-        return {"scheduled": False, "reason": "native orchestrator owns this review"}
-    body = {
-        "location": {"directory": task["project_dir"]},
-        "title": "Independent read-only review",
-        "agent": "plan-direct",
-    }
-    created = features._data(
-        features._backend_request_json("POST", "/api/session", body, timeout=20.0)
-    )
-    if not isinstance(created, dict) or not created.get("id"):
-        raise RuntimeError(
-            "Read-only reviewer session creation failed; review claim retained for reconciliation"
+    try:
+        STORE.event(
+            kind="review.owner",
+            task_id=task["id"],
+            session_id=task["session_id"],
+            data={"rootID": root_id, "changeID": change_id, "owner": owner},
         )
-    baseline = (task.get("baseline") or {}).get("head") or "HEAD"
-    if not re.fullmatch(r"[a-f0-9]{40,64}|HEAD", baseline):
-        raise ValueError("Invalid baseline revision")
-    diff = subprocess.run(
-        [
-            "git",
-            "-C",
-            task["project_dir"],
-            "diff",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--unified=3",
-            baseline,
-            "--",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    evidence = json.dumps(verification, ensure_ascii=False, default=str)[:4000]
-    text = (
-        "Independently review this bounded change. Do not edit or run commands. Use read-only file tools to verify omitted/untracked files. Return severity, file/line, evidence and missing tests.\n"
-        + "Requirements:\n"
-        + str(task.get("text") or "")[:4000]
-        + "\nChanged files:\n"
-        + "\n".join(snapshot.get("changed") or [])[:4000]
-        + "\nVerification evidence:\n"
-        + evidence
-        + "\nDiff excerpt (read changed files for omitted sections):\n"
-        + (diff.stdout or "")[:16000]
-    )
-    review_task = STORE.create_task(
-        session_id=str(created["id"]),
-        project_dir=task["project_dir"],
-        text=text,
-        files=[],
-        profile="review",
-        priority=int(task.get("priority") or 0) - 5,
-        kind="review",
-        metadata={
-            "rootTaskID": root_id,
-            "reviewOf": task["id"],
-            "changeID": change_id,
-            "reviewOwner": "server",
-            "modeAtCreate": "plan",
-            "sandbox": "safe",
-        },
-        baseline=task.get("baseline") or snapshot,
-    )
-    with STORE.transaction() as db:
-        db.execute(
-            "UPDATE execution_review_claims SET task_id=? WHERE root_id=? AND change_id=?",
-            (review_task["id"], root_id, change_id),
+        if owner == "orchestrator":
+            return {"scheduled": False, "reason": "native orchestrator owns this review"}
+        body = {
+            "location": {"directory": task["project_dir"]},
+            "title": "Independent read-only review",
+            "agent": "plan-direct",
+        }
+        created = features._data(
+            features._backend_request_json("POST", "/api/session", body, timeout=20.0)
         )
-    return {"scheduled": True, "taskID": review_task["id"], "sessionID": created["id"]}
+        if not isinstance(created, dict) or not created.get("id"):
+            raise RuntimeError(
+                "Read-only reviewer session creation failed; review claim retained for reconciliation"
+            )
+        baseline = (task.get("baseline") or {}).get("head") or "HEAD"
+        if not re.fullmatch(r"[a-f0-9]{40,64}|HEAD", baseline):
+            raise ValueError("Invalid baseline revision")
+        diff = subprocess.run(
+            [
+                "git",
+                "-C",
+                task["project_dir"],
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--unified=3",
+                baseline,
+                "--",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        evidence = json.dumps(verification, ensure_ascii=False, default=str)[:4000]
+        text = (
+            "Independently review this bounded change. Do not edit or run commands. Use read-only file tools to verify omitted/untracked files. Return severity, file/line, evidence and missing tests.\n"
+            + "Requirements:\n"
+            + str(task.get("text") or "")[:4000]
+            + "\nChanged files:\n"
+            + "\n".join(snapshot.get("changed") or [])[:4000]
+            + "\nVerification evidence:\n"
+            + evidence
+            + "\nDiff excerpt (read changed files for omitted sections):\n"
+            + (diff.stdout or "")[:16000]
+        )
+        review_task = STORE.create_task(
+            session_id=str(created["id"]),
+            project_dir=task["project_dir"],
+            text=text,
+            files=[],
+            profile="review",
+            priority=int(task.get("priority") or 0) - 5,
+            kind="review",
+            metadata={
+                "rootTaskID": root_id,
+                "reviewOf": task["id"],
+                "changeID": change_id,
+                "reviewOwner": "server",
+                "modeAtCreate": "plan",
+                "sandbox": "safe",
+            },
+            baseline=task.get("baseline") or snapshot,
+        )
+        with STORE.transaction() as db:
+            db.execute(
+                "UPDATE execution_review_claims SET task_id=? WHERE root_id=? AND change_id=?",
+                (review_task["id"], root_id, change_id),
+            )
+        return {"scheduled": True, "taskID": review_task["id"], "sessionID": created["id"]}
+    except Exception:
+        # No review task exists for this claim (reviewer session creation or the
+        # diff failed); keeping it would reject every later attempt for the
+        # same change until the root task is pruned.
+        ledger.release_review(root_id, change_id)
+        raise
 
 
 def _verify_finish(features: Any, task_id: str) -> None:
@@ -955,34 +992,19 @@ def _verify_finish(features: Any, task_id: str) -> None:
                 summary="Task completed and durable state committed",
                 data={"repo": git_snapshot(task["project_dir"]), "verification": verification},
             )
-            if task.get("kind") == "research":
-                target = (
-                    (task.get("metadata") or {}).get("mailboxTo")
-                    if isinstance(task.get("metadata"), dict)
-                    else None
+            # The task is completed; follow-ups (mailbox, review) that fail must
+            # be recorded, not turned into a completed->failed transition the
+            # invariant layer rejects and the outer handler then swallows.
+            try:
+                _after_completion(features, task, review, verification)
+            except Exception as exc:
+                STORE.event(
+                    kind="task.followup_failed",
+                    task_id=task_id,
+                    session_id=task["session_id"],
+                    project_dir=task["project_dir"],
+                    data={"error": f"{type(exc).__name__}: {exc}"[:1000]},
                 )
-                if target:
-                    STORE.mailbox_send(
-                        project_dir=task["project_dir"],
-                        from_task=task_id,
-                        to_task=str(target),
-                        message_type="finding",
-                        payload={
-                            "text": _last_assistant_text(features, task["session_id"])[:14000],
-                            "route": task.get("route"),
-                        },
-                    )
-            profile = REGISTRY.profiles().get(
-                str(task.get("profile")), REGISTRY.profiles()["direct"]
-            )
-            if (
-                task.get("kind") in {"prompt", "verification-fix"}
-                and profile.get("autoReview")
-                and review.get("needed")
-                and os.environ.get("OPENCODE_AUTO_REVIEW", "smart").strip().lower()
-                in {"smart", "enqueue", "1", "true"}
-            ):
-                _schedule_review(features, task, review, verification)
     except Exception as exc:
         try:
             STORE.transition(
@@ -1026,80 +1048,90 @@ def _monitor_active(features: Any, statuses: dict[str, Any]) -> None:
     for task_id in [item for item in _PROGRESS_CHECKED_AT if item not in live]:
         _PROGRESS_CHECKED_AT.pop(task_id, None)
     for task in tasks:
-        busy = features._status_busy(statuses.get(task["session_id"]))
-        state = str(task.get("state"))
-        if state == "recovering":
-            STORE.transition(
-                task["id"],
-                "running" if busy else "paused",
-                event="task.recovered_attached" if busy else "task.recovery_paused",
-                data={},
-            )
+        try:
+            _monitor_task(features, statuses, task, current)
+        except ValueError:
+            # A user paused/cancelled this task between the snapshot and the
+            # transition; the next tick re-reads it. The other tasks keep their
+            # monitoring and the tick keeps its dispatch.
             continue
-        if state == "verifying":
-            continue
-        pending = _permission_pending(features, task)
-        if pending and state != "waiting_permission":
-            STORE.transition(
-                task["id"], "waiting_permission", event="task.waiting_permission", data={}
-            )
-            STORE.checkpoint(
-                task["id"],
-                "waiting_permission",
-                summary="Agent is waiting for a permission decision",
-                data={},
-            )
-            continue
-        if state == "waiting_permission" and not pending:
-            STORE.transition(
-                task["id"],
-                "running" if busy else "submitted",
-                event="task.permission_resolved",
-                data={},
-            )
-            state = "running" if busy else "submitted"
-        if busy:
-            if state == "submitted":
-                STORE.transition(task["id"], "running", event="task.running", data={})
-            metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
-            # Written once per task: an unchanged heartbeat used to rewrite the
-            # row (multi-MB with inline attachments) every 1.5 s poll.
-            if metadata.get("backendObservedBusy") is not True:
-                STORE.update_task(task["id"], metadata_patch={"backendObservedBusy": True})
-            last = max(
-                _PROGRESS_CHECKED_AT.get(str(task["id"]), 0),
-                int(metadata.get("progressCheckedAt") or 0),
-            )
-            if current - last > 7000:
-                _PROGRESS_CHECKED_AT[str(task["id"])] = current
-                _monitor_progress(features, task)
-            continue
+
+
+def _monitor_task(features: Any, statuses: dict[str, Any], task: dict[str, Any], current: int) -> None:
+    busy = features._status_busy(statuses.get(task["session_id"]))
+    state = str(task.get("state"))
+    if state == "recovering":
+        STORE.transition(
+            task["id"],
+            "running" if busy else "paused",
+            event="task.recovered_attached" if busy else "task.recovery_paused",
+            data={},
+        )
+        return
+    if state == "verifying":
+        return
+    pending = _permission_pending(features, task)
+    if pending and state != "waiting_permission":
+        STORE.transition(
+            task["id"], "waiting_permission", event="task.waiting_permission", data={}
+        )
+        STORE.checkpoint(
+            task["id"],
+            "waiting_permission",
+            summary="Agent is waiting for a permission decision",
+            data={},
+        )
+        return
+    if state == "waiting_permission" and not pending:
+        STORE.transition(
+            task["id"],
+            "running" if busy else "submitted",
+            event="task.permission_resolved",
+            data={},
+        )
+        state = "running" if busy else "submitted"
+    if busy:
+        if state == "submitted":
+            STORE.transition(task["id"], "running", event="task.running", data={})
         metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
-        started = int(task.get("started_at") or 0)
-        accepted = int(metadata.get("dispatchAcceptedAt") or 0)
-        baseline_usage = (
-            metadata.get("usageBaseline") if isinstance(metadata.get("usageBaseline"), dict) else {}
+        # Written once per task: an unchanged heartbeat used to rewrite the
+        # row (multi-MB with inline attachments) every 1.5 s poll.
+        if metadata.get("backendObservedBusy") is not True:
+            STORE.update_task(task["id"], metadata_patch={"backendObservedBusy": True})
+        last = max(
+            _PROGRESS_CHECKED_AT.get(str(task["id"]), 0),
+            int(metadata.get("progressCheckedAt") or 0),
         )
-        progressed = bool(metadata.get("backendObservedBusy")) or _usage_totals(
-            features, task["session_id"]
-        ).get("signature") != baseline_usage.get("signature")
-        settled = current - max(started, accepted) > 2500
-        queued_successor = state == "submitted" and STORE.has_tasks(
-            states=QUEUE_STATES, session_id=task["session_id"]
+        if current - last > 7000:
+            _PROGRESS_CHECKED_AT[str(task["id"])] = current
+            _monitor_progress(features, task)
+        return
+    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    started = int(task.get("started_at") or 0)
+    accepted = int(metadata.get("dispatchAcceptedAt") or 0)
+    baseline_usage = (
+        metadata.get("usageBaseline") if isinstance(metadata.get("usageBaseline"), dict) else {}
+    )
+    progressed = bool(metadata.get("backendObservedBusy")) or _usage_totals(
+        features, task["session_id"]
+    ).get("signature") != baseline_usage.get("signature")
+    settled = current - max(started, accepted) > 2500
+    queued_successor = state == "submitted" and STORE.has_tasks(
+        states=QUEUE_STATES, session_id=task["session_id"]
+    )
+    # A short backend run can start and finish entirely between 1.5 s worker polls.
+    # If the dispatch grace has elapsed, the backend is authoritatively idle and a
+    # durable successor is waiting, treat the stale submitted task as finished even
+    # when neither the busy edge nor a usage-signature change was observed.
+    if state in {"submitted", "running"} and settled and (progressed or queued_successor):
+        STORE.transition(
+            task["id"],
+            "verifying",
+            event="task.agent_idle",
+            data={"reconciledForQueue": bool(queued_successor and not progressed)},
         )
-        # A short backend run can start and finish entirely between 1.5 s worker polls.
-        # If the dispatch grace has elapsed, the backend is authoritatively idle and a
-        # durable successor is waiting, treat the stale submitted task as finished even
-        # when neither the busy edge nor a usage-signature change was observed.
-        if state in {"submitted", "running"} and settled and (progressed or queued_successor):
-            STORE.transition(
-                task["id"],
-                "verifying",
-                event="task.agent_idle",
-                data={"reconciledForQueue": bool(queued_successor and not progressed)},
-            )
-            # The finalizer re-reads the task by id; do not decode it here.
-            _finish_async(features, task)
+        # The finalizer re-reads the task by id; do not decode it here.
+        _finish_async(features, task)
 
 
 def _dispatch_ready(features: Any, statuses: dict[str, Any]) -> None:
@@ -1573,6 +1605,18 @@ def task_control(features: Any, payload: dict[str, Any]) -> dict[str, Any]:
     elif action == "resume":
         if task["state"] not in {"paused", "recovering", "needs_attention"}:
             raise ValueError("task is not resumable")
+        # Fresh run: a stuck/loop report or a stale busy observation from the
+        # previous attempt would silence the watchdog or fake progress.
+        STORE.update_task(
+            task_id,
+            metadata_patch={
+                "stuckReported": False,
+                "loopReported": False,
+                "conflictReported": False,
+                "backendObservedBusy": False,
+                "progressRepeats": 0,
+            },
+        )
         task = STORE.transition(task_id, "queued", event="task.resumed", data={"source": "user"})
     elif action == "cancel":
         if task["state"] in {"completed", "failed", "cancelled"}:

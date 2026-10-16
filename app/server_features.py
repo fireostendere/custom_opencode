@@ -77,13 +77,30 @@ def _empty_state() -> dict[str, Any]:
     return {"version": 1, "queues": {}, "projects": {}, "queueErrors": {}}
 
 
+def _quarantine_state_file(path: Path) -> None:
+    """Keep an unreadable state file for recovery instead of overwriting it."""
+    try:
+        path.replace(path.with_name(f"{path.name}.corrupt-{int(time.time())}"))
+    except OSError:
+        pass
+
+
 def _load_state_unlocked() -> dict[str, Any]:
     path = _state_path()
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return _empty_state()
+    # Any other read error is transient (EIO, EACCES): returning an empty state
+    # here would let the caller persist {} over every project's settings and
+    # queue. Let the request fail instead.
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        _quarantine_state_file(path)
         return _empty_state()
     if not isinstance(value, dict):
+        _quarantine_state_file(path)
         return _empty_state()
     value.setdefault("version", 1)
     value.setdefault("queues", {})
@@ -693,7 +710,12 @@ def git_revert(payload: dict[str, Any]) -> dict[str, Any]:
     if not patch or len(patch.encode("utf-8")) > 512_000:
         raise ValueError("invalid patch")
     header_paths: list[str] = []
+    in_hunk = False
     for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            in_hunk = False
+        elif line.startswith("@@"):
+            in_hunk = True
         # Extended headers could retarget the patch (rename/copy) or turn the
         # file into a symlink/gitlink when reversed.
         if line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")):
@@ -707,7 +729,8 @@ def git_revert(payload: dict[str, Any]) -> dict[str, Any]:
             f"diff --git {relative} {relative}",
         ):
             raise ValueError("patch touches another file")
-        if line.startswith("--- ") or line.startswith("+++ "):
+        # Inside a hunk a removed `-- comment` or added `++ x` line is body text.
+        if not in_hunk and (line.startswith("--- ") or line.startswith("+++ ")):
             value = line[4:].split("\t", 1)[0].strip()
             if value == "/dev/null":
                 continue

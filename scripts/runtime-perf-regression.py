@@ -248,6 +248,42 @@ class MonitorAndMaintenanceTests(unittest.TestCase):
             _backend_request_json=lambda method, target, payload=None, timeout=10.0: [],
         )
 
+    def test_failed_dependency_fails_dependents_instead_of_blocking_forever(self):
+        parent = self.store.create_task(session_id="s", project_dir=self.tmp.name, text="parent")
+        child = self.store.create_task(session_id="s", project_dir=self.tmp.name, text="child", dependencies=[parent["id"]])
+        grandchild = self.store.create_task(session_id="s", project_dir=self.tmp.name, text="grandchild", dependencies=[child["id"]])
+        self.assertIsNone(self.store.next_ready(session_id="s") and None)  # blocks the dependents
+        self.store.transition(parent["id"], "failed", error="boom")
+        for task in (child, grandchild):
+            row = self.store.get_task(task["id"])
+            self.assertEqual(row["state"], "failed", row)
+            self.assertIn("dependency", row["last_error"])
+        kinds = [e["kind"] for e in self.store.events(task_id=child["id"])]
+        self.assertIn("task.dependency_failed", kinds)
+
+    def test_editing_dependencies_does_not_resume_a_paused_task(self):
+        other = self.store.create_task(session_id="s", project_dir=self.tmp.name, text="other")
+        task = self.store.create_task(session_id="s", project_dir=self.tmp.name, text="t")
+        self.store.transition(task["id"], "paused")
+        self.store.update_task(task["id"], dependencies=[other["id"]])
+        self.assertEqual(self.store.get_task(task["id"])["state"], "paused")
+
+    def test_one_stale_task_does_not_abort_the_monitor_tick(self):
+        first = self.store.create_task(session_id="s1", project_dir=self.tmp.name, text="first")
+        second = self.store.create_task(session_id="s2", project_dir=self.tmp.name, text="second")
+        for task in (first, second):
+            self.store.claim_dispatch(task["id"])
+        original = self.store.transition
+
+        def racing(task_id, state, **kwargs):
+            if task_id == first["id"] and state == "running":
+                raise ValueError("invalid task transition: paused -> running")
+            return original(task_id, state, **kwargs)
+
+        with patch.object(self.store, "transition", side_effect=racing):
+            self.runtime._monitor_active(self.features(), {"s1": "busy", "s2": "busy"})
+        self.assertEqual(self.store.get_task(second["id"])["state"], "running")
+
     def test_busy_heartbeat_is_written_once(self):
         task = self.store.create_task(session_id="s", project_dir=self.tmp.name, text="t", files=[{"name": "a", "uri": ATTACHMENT}])
         self.store.claim_dispatch(task["id"])

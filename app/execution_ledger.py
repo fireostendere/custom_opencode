@@ -638,6 +638,15 @@ class ExecutionLedger:
                 == 1
             )
 
+    def release_review(self, root_id: str, change_id: str) -> None:
+        """Drop a claim no review task was created for, so the change can be
+        reviewed on a later attempt instead of being "already assigned"."""
+        with self.store.transaction() as db:
+            db.execute(
+                "DELETE FROM execution_review_claims WHERE root_id=? AND change_id=? AND task_id IS NULL",
+                (root_id, change_id),
+            )
+
     USAGE_KEYS = ("input", "output", "reasoning", "cacheRead", "cacheWrite")
 
     @staticmethod

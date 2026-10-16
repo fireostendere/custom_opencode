@@ -390,6 +390,9 @@ with tempfile.TemporaryDirectory() as temp:
     assert branched["session"]["id"].startswith("fork-")
     merged = branches.merge(fake, "source-session", "target-session")
     assert merged["ok"] and merged["sourceTasks"] >= 1
+    # A target session without tasks falls back to the source project.
+    into_empty = branches.merge(fake, "source-session", "session-without-tasks")
+    assert into_empty["ok"], into_empty
 
 print(
     "Runtime V3 smoke passed: AST/embeddings/diff + sandbox/broker/gateway + provider-pinned routing + compaction + replay/branching"

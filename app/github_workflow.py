@@ -65,11 +65,21 @@ def _number_and_repo(value: str, default_repo: str) -> tuple[int, str]:
     if parsed.netloc.lower() == "github.com":
         parts = [part for part in parsed.path.split("/") if part]
         if len(parts) >= 4 and parts[2] in {"issues", "pull"} and parts[3].isdigit():
-            return int(parts[3]), f"{parts[0]}/{parts[1]}"
+            return int(parts[3]), _valid_repo(f"{parts[0]}/{parts[1]}")
     match = re.fullmatch(r"([^/\s]+/[^#\s]+)#(\d+)", raw)
     if match:
-        return int(match.group(2)), match.group(1).removesuffix(".git")
+        return int(match.group(2)), _valid_repo(match.group(1).removesuffix(".git"))
     raise ValueError("use issue/PR number, owner/repo#number, or GitHub URL")
+
+
+_REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+
+
+def _valid_repo(repo: str) -> str:
+    """The value is interpolated into a `gh api repos/<repo>/...` path."""
+    if not _REPO_RE.fullmatch(repo) or ".." in repo.split("/"):
+        raise ValueError("invalid owner/repo")
+    return repo
 
 
 def status(directory: str) -> dict[str, Any]:
