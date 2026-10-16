@@ -267,8 +267,8 @@ Installer по умолчанию выполняет pre-install verification и
 
 ## Воспроизводимая проверка
 
-`python3 scripts/audit-regression.py --output /tmp/opencode-audit` запускает 20
-независимых model-free наборов, сохраняет каждый лог и `report.json`, продолжает
+`python3 scripts/audit-regression.py --output /tmp/opencode-audit` запускает все
+независимые model-free наборы из `SUITES`, сохраняет каждый лог и `report.json`, продолжает
 остальные проверки после отказа и возвращает ненулевой код при любой ошибке.
 Нужны Python, Node, Playwright/Chromium, bubblewrap и закреплённый `opencode2`.
 `OPENCODE2_BIN` позволяет явно указать проверяемый бинарник.

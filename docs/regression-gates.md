@@ -14,7 +14,7 @@ These checks are intentionally split between a real packaged runtime smoke and d
 
 ## Context and token-accounting gates
 
-The model-free matrix includes 25 suites, including MCP discovery contracts,
+The model-free matrix (`SUITES` in `scripts/audit-regression.py`) includes MCP discovery contracts,
 root execution budgets, provider-stream usage and actual Tool Fabric SDK protocols.
 Native clean installation and deterministic real-provider-wire tests run as
 separate jobs; the latter includes one HTTP retry and a second user turn.
