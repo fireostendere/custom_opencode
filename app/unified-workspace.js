@@ -21,10 +21,10 @@ const state={
 const refreshAllCoalesced=createRefreshCoalescer()
 
 function esc(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function sid(){const match=/^#\/session\/([^/?]+)/.exec(location.hash||'');return match?decodeURIComponent(match[1]):''}
+function sid(){const match=/^#\/session\/([^/?]+)/.exec(location.hash||'');if(!match)return '';try{return decodeURIComponent(match[1])}catch{return ''}}
 function qs(path){const session=sid();return `${path}${session?`${path.includes('?')?'&':'?'}sessionID=${encodeURIComponent(session)}`:''}`}
 async function req(path,options={}){const response=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});if(!response.ok){const text=await response.text().catch(()=>'');throw new Error(`${response.status} ${response.statusText}${text?`: ${text.slice(0,280)}`:''}`)}if(response.status===204)return null;const type=response.headers.get('content-type')||'';return type.includes('application/json')?response.json():response.text()}
-function toast(text){const el=$('toast');if(!el)return;el.textContent=text;el.hidden=false;clearTimeout(el._unifiedTimer);el._unifiedTimer=setTimeout(()=>el.hidden=true,3200)}
+function toast(text){const el=$('toast');if(!el)return;el.textContent=text;el.hidden=false;clearTimeout(el._timer);el._timer=setTimeout(()=>el.hidden=true,3200)}
 function timeLabel(value){if(!value)return'';try{return new Date(Number(value)).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return''}}
 function statusClass(ok){return ok===true?'unified-ok':ok===false?'unified-danger':''}
 

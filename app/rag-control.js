@@ -6,13 +6,14 @@ function toast(text, ms = 4000) {
   if (!el) return
   el.textContent = text
   el.hidden = false
-  clearTimeout(el._ragTimer)
-  el._ragTimer = setTimeout(() => { el.hidden = true }, ms)
+  clearTimeout(el._timer)
+  el._timer = setTimeout(() => { el.hidden = true }, ms)
 }
 
 function sessionIdFromHash() {
   const match = /^#\/session\/([^/?]+)/.exec(location.hash)
-  return match ? decodeURIComponent(match[1]) : null
+  if (!match) return null
+  try { return decodeURIComponent(match[1]) } catch { return null }
 }
 
 export function parseRagStart(value) {

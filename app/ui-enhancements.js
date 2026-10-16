@@ -52,7 +52,8 @@ function loadSet(key) {
 
 function currentSessionKey() {
   const match = /^#\/session\/([^/?]+)/.exec(location.hash)
-  return match ? decodeURIComponent(match[1]) : ''
+  if (!match) return ''
+  try { return decodeURIComponent(match[1]) } catch { return '' }
 }
 const directoryBySession = new Map()
 let scratchDirectory = null
@@ -408,7 +409,15 @@ async function browseDirectory(path) {
   const requestSeq = ++directoryBrowseSeq
   if (browser) browser.innerHTML = '<div class="loading">Загрузка…</div>'
   const query = path ? `?path=${encodeURIComponent(path)}` : ''
-  const snapshot = await request(`/client-directories.json${query}`)
+  let snapshot
+  try {
+    snapshot = await request(`/client-directories.json${query}`)
+  } catch (error) {
+    // Folder clicks and "← Выше" call this directly: a 4xx/5xx must not leave
+    // the pane on "Загрузка…" with an unhandled rejection.
+    if (requestSeq === directoryBrowseSeq) renderDirectorySnapshot({ error:error.message })
+    return
+  }
   if (requestSeq !== directoryBrowseSeq) return
   if (!path && snapshot?.roots?.length === 1) {
     await browseDirectory(snapshot.roots[0].path)
