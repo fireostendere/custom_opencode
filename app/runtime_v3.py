@@ -1010,7 +1010,12 @@ class SandboxManager:
                     return {"command": command, "cwd": workdir, "shell": "/bin/sh"}
                 raise RuntimeError("bwrap is required for safe/repo-write shell execution")
             home = Path.home().resolve(strict=False)
-            hidden = home.parent if home.parent != Path("/") else home
+            hidden_roots = [home.parent if home.parent != Path("/") else home]
+            # Under WSL the Windows drives (C:\Users\<name> with browser
+            # profiles, .ssh, tokens) are mounted below /mnt and would stay
+            # readable through --ro-bind / /.
+            if _inside_wsl() and Path("/mnt").is_dir():
+                hidden_roots.append(Path("/mnt"))
             root_path = Path(root)
             if _inside(home, root_path):
                 raise PermissionError("sandbox root cannot expose the complete home tree")
@@ -1029,15 +1034,16 @@ class SandboxManager:
                 "/dev",
                 "--tmpfs",
                 "/tmp",
-                "--tmpfs",
-                str(hidden),
             ]
-            if _inside(root_path, hidden):
-                relative = root_path.relative_to(hidden)
-                current = hidden
-                for part in relative.parts:
-                    current = current / part
-                    args.extend(["--dir", str(current)])
+            for hidden in hidden_roots:
+                args.extend(["--tmpfs", str(hidden)])
+                if _inside(root_path, hidden):
+                    # Recreate only the path down to the project; its siblings stay hidden.
+                    relative = root_path.relative_to(hidden)
+                    current = hidden
+                    for part in relative.parts:
+                        current = current / part
+                        args.extend(["--dir", str(current)])
             args.extend(
                 [
                     "--dir",

@@ -640,11 +640,15 @@ def _attempt_backend_request(command: str, target: str, host: str, port: int, au
     """(connection, response), re-resolving the backend once on connect failure."""
     headers["Authorization"] = auth
     headers["Host"] = host
+    connection = None
     try:
         connection = backend_connection(host, port, read_timeout=read_timeout)
         connection.request(command, target, body=body, headers=headers)
         return connection, connection.getresponse()
     except (OSError, http.client.HTTPException):
+        # The first socket may be connected; it must not wait for GC.
+        if connection is not None:
+            connection.close()
         # The backend may have just restarted on a new port/password.
         refreshed = current_backend(force_refresh=True)
         if refreshed == (host, port, auth):

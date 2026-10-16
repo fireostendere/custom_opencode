@@ -158,6 +158,10 @@ with tempfile.TemporaryDirectory() as temp:
     scoped = sandbox.wrap_shell("printf ok", str(nested), "repo-write", project_root=str(project))
     assert f"--bind {project} {project}" in scoped["command"] and f"--chdir {nested}" in scoped["command"], scoped
     assert scoped["cwd"] == str(nested)
+    # Inside WSL the Windows drives under /mnt are hidden like the home tree.
+    with patch.dict(os.environ, {"WSL_DISTRO_NAME": "Ubuntu"}):
+        if Path("/mnt").is_dir():
+            assert "--tmpfs /mnt" in sandbox.wrap_shell("printf ok", str(project), "repo-write")["command"]
     # Inside WSL the `wsl` profile is the host shell: same opt-in as full-machine.
     with patch.dict(os.environ, {"WSL_DISTRO_NAME": "Ubuntu"}):
         os.environ.pop("OPENCODE_ALLOW_FULL_MACHINE", None)

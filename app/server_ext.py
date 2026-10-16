@@ -188,16 +188,25 @@ class _StaleWhileRevalidate:
 
 def _terminate_group(process: subprocess.Popen[str]) -> None:
     """Stop a CLI and its children (the npm launcher spawns a native binary)."""
-    for sig, wait in ((signal.SIGTERM, 1.0), (signal.SIGKILL, 1.0)):
-        try:
-            os.killpg(process.pid, sig)
-        except (ProcessLookupError, PermissionError):
-            return
-        try:
-            process.wait(timeout=wait)
-            return
-        except subprocess.TimeoutExpired:
-            continue
+    try:
+        for sig, wait in ((signal.SIGTERM, 1.0), (signal.SIGKILL, 1.0)):
+            try:
+                os.killpg(process.pid, sig)
+            except (ProcessLookupError, PermissionError):
+                return
+            try:
+                process.wait(timeout=wait)
+                return
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        # Each limits refresh spawns one app-server; its pipes are fds too.
+        for stream in (process.stdin, process.stdout, process.stderr):
+            try:
+                if stream is not None:
+                    stream.close()
+            except OSError:
+                pass
 
 
 def _rpc_write(process: subprocess.Popen[str], payload: dict[str, object]) -> None:
