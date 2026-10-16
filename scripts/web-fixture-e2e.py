@@ -1152,6 +1152,56 @@ def mobile(browser, base_url: str) -> None:
     context.close()
 
 
+def small_phone(browser, base_url: str) -> None:
+    """360x740: pending decisions never push the composer or their own buttons
+    off-screen, and the header actions hidden on a phone stay reachable."""
+    FixtureState.reset()
+    context = browser.new_context(viewport={"width": 360, "height": 740}, is_mobile=True, has_touch=True)
+    page = context.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    login(page, base_url)
+
+    def inside(selector: str) -> bool:
+        box = page.locator(selector).bounding_box()
+        return bool(box) and box["y"] >= 0 and box["y"] + box["height"] <= 740 and box["x"] >= 0 and box["x"] + box["width"] <= 360
+
+    page.click("#menu")
+    assert page.locator("#limitsShell").evaluate("el => !el.open"), "limits start collapsed on a phone"
+    page.locator('[data-session="ses_fixture"]').click()
+    page.wait_for_function("location.hash.startsWith('#/session/ses_fixture')")
+    page.locator("#questionHost .question-card").wait_for(state="visible")
+    page.locator("#permissionBanner").wait_for(state="visible")
+    page.wait_for_timeout(400)
+    for selector in ("[data-question-submit]", ".question-actions [data-question-reject]", "#permissionBanner [data-permission='once']"):
+        assert inside(selector), f"{selector} is off-screen at 360x740"
+    # Both pending at once may exceed the screen: the column scrolls to the composer.
+    page.locator("main.main").evaluate("el => el.scrollTop = el.scrollHeight")
+    assert inside("#composerAction"), "the composer is unreachable with two pending decisions"
+    page.locator("main.main").evaluate("el => el.scrollTop = 0")
+
+    page.click(".question-actions [data-question-reject]")
+    page.wait_for_function("document.querySelector('#questionHost').hidden")
+    page.wait_for_timeout(400)
+    for selector in ("#permissionBanner [data-permission='once']", "#permissionDetails", "#composerAction", "#modelButton", "#agentSelect"):
+        assert inside(selector), f"{selector} is off-screen with one pending permission"
+    assert page.locator("#messages").bounding_box()["height"] >= 56, "the chat collapsed"
+    assert page.locator("#headerTitle").bounding_box()["width"] >= 160, "the session title has no room"
+
+    page.click("#sessionActions")
+    page.locator("#sessionActionList [data-action='usage']").click()
+    page.wait_for_function("document.querySelector('#usageDialog').open")
+    page.keyboard.press("Escape")
+    page.wait_for_function("!document.querySelector('#usageDialog').open")
+    page.click("#sessionActions")
+    page.locator("#sessionActionList [data-action='git']").click()
+    page.wait_for_function("document.querySelector('#gitDialog').open")
+    page.keyboard.press("Escape")
+    page.wait_for_function("!document.querySelector('dialog[open]')")
+    assert not errors, errors
+    context.close()
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
@@ -1206,6 +1256,7 @@ def main() -> int:
                         prompt_history_fresh_context(browser, base_url)
                         desktop(browser, base_url, server_workflow)
                         mobile(browser, base_url)
+                        small_phone(browser, base_url)
                     finally:
                         browser.close()
             finally:

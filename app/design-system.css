@@ -298,3 +298,60 @@ dialog>.modal{
 
 .check{display:inline-flex;align-items:center;gap:8px;line-height:1}
 .check input{margin:0;flex:0 0 auto}
+
+/* Main column. The chat keeps a share of the screen and the composer never
+   leaves it: question cards and permission requests above the composer
+   shrink and scroll inside themselves instead of pushing it off-screen. */
+.main>.header,.main>.composer-wrap,.main>.workflow-status{flex:0 0 auto}
+.main>.messages-frame{flex:1 1 0;min-height:min(96px,16dvh)}
+/* min-height stays auto on the host and card: only the options list shrinks
+   and scrolls, the head and the Cancel/Continue row always stay visible. */
+.main>.question-host:not([hidden]){display:flex;flex-direction:column;flex:0 1 auto}
+.question-host .question-card{flex:0 1 auto;width:100%;box-sizing:border-box}
+.question-card>.question-head,.question-card>.question-actions{flex:0 0 auto}
+.question-card>.question-sections{flex:0 1 auto}
+/* Account row: the label wraps above the buttons instead of being squeezed under them. */
+.sidebar-account{flex-wrap:wrap;row-gap:8px}
+.sidebar-account-copy{flex:1 1 120px}
+.sidebar-account-actions{flex-wrap:wrap}
+/* network-diagnostics.js adds this button unstyled; match its neighbours. */
+#networkButton{min-height:34px;padding:6px 10px;border:1px solid var(--line);background:var(--surface-input);color:var(--muted);border-radius:9px;font-size:11px}
+#networkButton:hover{background:var(--surface-hover);color:var(--text)}
+@media(max-width:760px){
+  /* A pending decision outranks history: the chat may shrink to one line,
+     but the options and the command being approved stay readable. */
+  .main>.messages-frame{min-height:min(56px,9dvh)}
+  /* Fallback only: when a question and a permission request are pending at
+     once on a short phone, the column scrolls instead of cutting off the
+     composer. When everything fits there is nothing to scroll. */
+  .main{overflow-y:auto;overscroll-behavior:contain}
+  .main>.question-host:not([hidden]){max-height:52dvh}
+  .question-host .question-sections{min-height:min(72px,10dvh);max-height:24dvh}
+  .question-actions{grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}
+  /* min-height stays auto: the banner never shrinks below its actions plus
+     the reserved text block, so its last button row cannot slide under the
+     status bar. */
+  .main>.permission-banner:not([hidden]){flex:0 1 auto;max-height:44dvh}
+  .permission-banner>.permission-main{min-height:min(60px,9dvh);overflow:auto;overscroll-behavior:contain}
+  .permission-banner>.permission-actions{flex:0 0 auto}
+  /* The project-wide rule is a secondary choice: a slim row, not a fourth big button. */
+  .permission-actions>.permission-project-button{grid-column:1/-1;min-height:32px!important;padding:4px 8px;font-size:12px;background:transparent;border-style:dashed}
+  /* Header: Project and notifications live in the session sheet (•••), so the
+     session title gets the width. */
+  .header .header-chip.project-settings-open:not([hidden]),#notifyButton{display:none!important}
+  .sidebar-account-actions{flex:1 1 100%}
+  .sidebar-account-actions>button{flex:1 1 0;min-width:0;min-height:38px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
+/* Plan and Tools sit side by side as compact chips on a phone; an opened one
+   takes the full row. The status dot keeps the state, the pill is dropped. */
+@media(max-width:700px){
+  .orchestration-panels{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .orchestration-panel[open]{grid-column:1/-1}
+  .orchestration-panel>summary{padding:8px 9px;gap:7px}
+  .orchestration-summary-status{display:none}
+  /* The one-line meta is truncated past use at this width; the open panel shows it all. */
+  .orchestration-panel:not([open]) .orchestration-summary-copy>span{display:none}
+  .orchestration-summary-copy>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
+/* The risk level badge (R0–R4) must never be squeezed into "R…" by its reason text. */
+.permission-risk-badge{flex:0 0 auto}

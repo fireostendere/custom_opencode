@@ -2,11 +2,20 @@ const shell = document.getElementById('limitsShell')
 
 if (shell) {
   const storageKey = 'custom-opencode:limits-collapsed'
+  // On a phone the expanded limits take half the drawer; start collapsed there
+  // unless the user opened them before. The automatic collapse is not a choice
+  // and must not be saved as one.
+  let automatic = false
   try {
-    if (localStorage.getItem(storageKey) === '1') shell.open = false
+    const stored = localStorage.getItem(storageKey)
+    if (stored === '1' || (stored === null && window.matchMedia('(max-width: 760px)').matches)) {
+      automatic = stored === null
+      shell.open = false
+    }
   } catch {}
 
   shell.addEventListener('toggle', () => {
+    if (automatic) { automatic = false; return }
     try { localStorage.setItem(storageKey, shell.open ? '0' : '1') } catch {}
   })
 }
