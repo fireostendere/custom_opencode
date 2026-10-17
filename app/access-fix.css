@@ -24,48 +24,12 @@
   display:none!important;
 }
 
-.composer{
-  align-items:center;
-  gap:6px;
-  min-height:60px;
-  padding:6px;
-  border-radius:16px;
-}
-
 .composer textarea{
-  min-height:46px;
-  padding:12px 4px;
   scrollbar-width:none;
 }
 
 .composer textarea::-webkit-scrollbar{
   display:none;
-}
-
-.attach,
-.composer-action{
-  flex:0 0 44px!important;
-  width:44px!important;
-  height:44px!important;
-  border-radius:50%!important;
-}
-
-.attach{
-  padding:0!important;
-  display:grid;
-  place-items:center;
-  background:#3a3a3a!important;
-  color:#d9d9d9!important;
-  font-size:22px!important;
-  line-height:1;
-}
-
-.composer-action{
-  font-size:23px;
-}
-
-.composer-action.stop{
-  font-size:27px;
 }
 
 /* Dialogs should use the available viewport instead of clipping themselves at
@@ -118,19 +82,6 @@ dialog .workflow-modal.large{
     width:100%;
     min-height:44px;
     padding:8px 6px;
-  }
-
-  .composer{
-    min-height:60px;
-    padding:6px;
-    gap:6px;
-  }
-
-  .attach,
-  .composer-action{
-    flex-basis:46px!important;
-    width:46px!important;
-    height:46px!important;
   }
 
   dialog{

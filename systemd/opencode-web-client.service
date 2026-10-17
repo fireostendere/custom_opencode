@@ -1,12 +1,20 @@
 [Unit]
 Description=OpenCode V2 ChatGPT-style web client
-# The backend is `opencode2 service`, not a systemd unit; the web server exits
-# until it is up. Without this, five quick exits park the unit in `failed`
-# (default StartLimitBurst) and it never comes back once the backend does.
+# Five quick exits would otherwise park the unit in `failed` (default
+# StartLimitBurst) and it would never come back on its own.
 StartLimitIntervalSec=0
 
 [Service]
 WorkingDirectory=__CUSTOM_OPENCODE_ROOT__/app
+# opencode2 lives in ~/.local/bin, which the systemd user PATH lacks (the web
+# server also calls it to reload provider keys).
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# The backend is `opencode2 service`, not a systemd unit: after a WSL/PC reboot
+# nothing else starts it and every /api call answers 502. Start it here (no-op
+# when it already runs); KillMode=process keeps that daemon alive when this
+# unit restarts, since it lands in this unit's cgroup.
+ExecStartPre=-/usr/bin/env -u OPENCODE_CONFIG_DIR timeout 45s opencode2 service start
+KillMode=process
 # glibc creates up to 8 malloc arenas per core for a threaded server; two keep
 # freed request/JSON memory reusable instead of fragmenting RSS (.env may override).
 Environment=MALLOC_ARENA_MAX=2

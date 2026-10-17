@@ -99,7 +99,7 @@ def run() -> dict[str, Any]:
     )
     _check_file(
         "app/design-system.css",
-        (".composer>.composer-meta{order:1;flex:1 0 100%", "grid-template-columns:auto minmax(0,max-content) auto"),
+        (".composer>.composer-meta{grid-area:meta", "grid-template-columns:auto minmax(0,max-content) auto"),
         errors,
     )
     _check_file(

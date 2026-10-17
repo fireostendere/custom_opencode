@@ -965,6 +965,10 @@ function renderMessages({anchor=null,bottom=false}={}){
   const rows=state.context.map((message,index)=>{const type=message.type||message.role;return{message,index,type,body:messageBody(message,type)}}).filter(({type,body})=>type==='user'||body)
   const articleHtmls=rows.map(({message,index,type,body})=>{const id=message.id||message.messageID||`idx-${index}`;const actor=messagePresentation(message,type),family=type==='user'?'user':'assistant';return `<article class="message ${family} ${actor.origin}" data-message-index="${index}" data-origin="${escapeHtml(actor.origin)}"><div class="avatar">${escapeHtml(actor.avatar)}</div><div class="message-body"><div class="message-head"><span class="message-role">${escapeHtml(actor.role)}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`})
   const fullHtml=articleHtmls.join('')
+  // Only messages new to an already open chat rise in (.enter); a streaming
+  // message re-rendered mid-animation continues it instead of restarting.
+  const ids=rows.map(({message,index})=>message.id||message.messageID||`idx-${index}`)
+  const seen=inner._seenFor===state.selected.id?inner._seen:null
 
   if(inner._lastHtml===fullHtml&&!anchor&&!bottom){
     updateScrollToBottomButton()
@@ -982,6 +986,8 @@ function renderMessages({anchor=null,bottom=false}={}){
         const newEl=temp.firstElementChild
         if(newEl){
           newEl._articleHtml=articleHtmls[i]
+          const age=performance.now()-(art._enterAt||-1e9)
+          if(age<450){newEl.classList.add('enter');newEl._enterAt=art._enterAt;newEl.style.animationDelay=`${-age}ms`}
           inner.replaceChild(newEl,art)
         }
       }
@@ -991,8 +997,10 @@ function renderMessages({anchor=null,bottom=false}={}){
     const children=inner.querySelectorAll(':scope > article.message')
     for(let i=0;i<children.length;i++){
       children[i]._articleHtml=articleHtmls[i]
+      if(seen&&!seen.has(ids[i])){children[i].classList.add('enter');children[i]._enterAt=performance.now()}
     }
   }
+  inner._seen=new Set(ids);inner._seenFor=state.selected.id
   inner._lastHtml=fullHtml
   if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height
   else if(bottom){
