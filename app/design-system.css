@@ -139,6 +139,10 @@ html[data-model-profile="orchestrated"] #modelButton:not(:disabled)::before,html
 .session-mirror .session-meta>span:not(.run-dot){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sessions .project .count{margin-left:auto;font-size:10px;color:var(--muted);padding-right:4px}
 .sessions .session-more{margin-right:2px}
+/* Light theme paints every row as a tile (button background): 4px between
+   tiles, taken out of their padding so the list keeps its pitch. */
+.sessions .session{margin-bottom:4px}
+.sessions .session-main{padding-block:7px}
 .project-sessions{min-width:0}
 .project-group[draggable="true"]{cursor:grab}
 .project-group[draggable="true"]:active,.session[draggable="true"]:active{cursor:grabbing}
