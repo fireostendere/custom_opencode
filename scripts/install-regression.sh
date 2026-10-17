@@ -148,6 +148,7 @@ if grep -Fq 'pin-orchestrated-recent.py' "$WRAPPER"; then
   exit 1
 fi
 grep -Fq "$COPY/app/server_workflow.py" "$SERVICE"
+grep -Fq 'opencode2 service start' "$SERVICE" || { echo "unit does not start the backend after a reboot" >&2; exit 1; }
 grep -Fq 'systemctl --user enable --now opencode-web-client.service' "$LOG"
 grep -Fq 'systemctl --user restart opencode-web-client.service' "$LOG"
 [[ $(stat -c %a "$SERVICE_CONFIG") == 600 ]] || { echo "service config permissions are not private" >&2; exit 1; }

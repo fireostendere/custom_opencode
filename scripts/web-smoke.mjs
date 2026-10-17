@@ -530,15 +530,19 @@ if (!uxCss.includes(".delivery{display:none!important}"))
   throw new Error("Manual Steer/Queue control must stay hidden")
 if (!uxCss.includes(".native-composer-action{display:none!important}"))
   throw new Error("Native send/stop controls must never create a second visible composer action")
-if (!uxCss.includes(".composer-action.stop{background:#b23a3a"))
-  throw new Error("Running empty composer must expose the red cancel action")
+if (!designSystem.includes(".composer-action.stop{background:var(--accent)"))
+  throw new Error("Running empty composer must expose a solid stop action")
 if (
-  !designSystem.includes(".attach::before") ||
-  !designSystem.includes(".composer-action.send::before") ||
-  !designSystem.includes(".composer-action.queue::before") ||
-  !designSystem.includes("rotate(90deg)")
+  !designSystem.includes(".attach::before,.composer-action::before{") ||
+  !designSystem.includes("mask:var(--icon) center/contain no-repeat") ||
+  !designSystem.includes("border-radius:12px") ||
+  accessFixCss.includes("border-radius:50%!important")
 )
-  throw new Error("Composer icons must use centered right-facing CSS geometry")
+  throw new Error("Composer buttons must be rounded squares with masked SVG icons, not forced circles")
+if (!designSystem.includes('grid-template-areas:"input input input" "attach meta action"'))
+  throw new Error("Attach, chips and send must share the row under the message field")
+if (!appSource.includes("classList.add('enter')") || !designSystem.includes("animation:grow-in"))
+  throw new Error("Only new chat messages may run the rise-in animation")
 if (!uxCss.includes("-webkit-line-clamp:2"))
   throw new Error("Permission summary must be clamped instead of expanding the layout")
 if (!uxCss.includes(".model-provider-toggle"))

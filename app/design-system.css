@@ -9,6 +9,8 @@
   --scrollbar-size:10px;
   --scrollbar-thumb:color-mix(in srgb,var(--muted) 48%,transparent);
   --scrollbar-thumb-hover:color-mix(in srgb,var(--accent) 68%,var(--muted) 24%);
+  --ease-out:cubic-bezier(.22,1,.36,1);
+  --ease-spring:cubic-bezier(.34,1.56,.64,1);
 }
 
 html,body{overflow:hidden}
@@ -54,9 +56,14 @@ body.sidebar-resizing *{cursor:col-resize!important}
 
 /* Composer toolbar: agent, model and effort are quiet chips on the composer card's
    bottom row. Native selects keep the OS picker on phones; field-sizing hugs the
-   chosen option. The model column alone shrinks (ellipsis); status chips wrap below. */
-.composer{flex-wrap:wrap;row-gap:0}
-.composer>.composer-meta{order:1;flex:1 0 100%;min-width:0;display:block;margin:0}
+   chosen option. The model column alone shrinks (ellipsis); status chips wrap below.
+   The message field spans the card; attach, chips and send share one row under it,
+   so both buttons sit on the same centre line as the chips. */
+.composer{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"input input input" "attach meta action";align-items:center;gap:2px 6px;min-height:0;padding:6px 8px 8px;border-radius:20px}
+.composer>textarea{grid-area:input;min-height:44px;padding:10px 6px 4px}
+.composer>.attach{grid-area:attach}
+.composer>.composer-action{grid-area:action}
+.composer>.composer-meta{grid-area:meta;min-width:0;display:block;margin:0}
 .controls{display:grid;grid-template-columns:auto minmax(0,max-content) auto;justify-content:start;align-items:center;gap:4px 2px;width:auto;min-width:0;max-width:none;overflow:visible}
 .control-select{position:relative;display:flex;min-width:0;max-width:40vw;color:var(--muted)}
 .control-select:has(>select>option:only-child[value=""]){display:none} /* no effort variants: nothing to pick */
@@ -76,20 +83,41 @@ html[data-model-profile="orchestrated"] #modelButton:not(:disabled)::before,html
   #modelButton:hover:not(:disabled),.control-select>select:hover:not(:disabled){background:var(--surface-hover);color:var(--text)}
   .control-select:has(>select:hover:not(:disabled)){color:var(--text)}
 }
-@media(max-width:760px){#modelButton .model-tag{display:none}}
+@media(max-width:760px){
+  #modelButton .model-tag{display:none}
+  /* Attach and send share this row: tighter chips, and a locked effort ("Авто")
+     offers no choice, so the agent name gets its room instead. */
+  #modelButton,#agentSelect,#variantSelect{padding:0 18px 0 26px}
+  #modelButton::before,.control-select::before{left:8px}
+  #modelButton::after,.control-select::after{right:8px}
+  .effort-chip:has(>select:disabled){display:none}
+}
 @media(pointer:coarse){:root{--chip-height:36px}}
 #modelButton:focus-visible,#agentSelect:focus-visible,#variantSelect:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 65%,transparent);outline-offset:0}
 .limits-summary::after,.model-provider-chevron,.permission-details>summary::after,.tool>summary::after,.trace>summary::after,.review-file>summary::after,.runtime-v3-panel>summary::after,.orchestration-trace details>summary::after{content:'';width:7px;height:7px;flex:0 0 7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform .16s ease;opacity:.72}
-.composer-action.stop{font-size:0;line-height:0}
-.composer-action.stop::before,.composer-action.stop::after{content:'';position:absolute;left:50%;top:50%;width:3px;height:22px;border-radius:999px;background:currentColor;transform:translate(-50%,-50%) rotate(45deg)}
-.composer-action.stop::after{transform:translate(-50%,-50%) rotate(-45deg)}
-.attach{position:relative;font-size:0!important;line-height:0}
-.attach::before,.attach::after{content:'';position:absolute;left:50%;top:50%;border-radius:999px;background:currentColor;transform:translate(-50%,-50%)}
-.attach::before{width:16px;height:3px}
-.attach::after{width:3px;height:16px}
-.composer-action.send,.composer-action.queue{font-size:0!important;line-height:0}
-.composer-action.send::before,.composer-action.queue::before{content:'';position:absolute;left:50%;top:50%;width:15px;height:21px;border-radius:2px;background:currentColor;clip-path:polygon(35% 100%,35% 38%,0 38%,50% 0,100% 38%,65% 38%,65% 100%);transform:translate(-50%,-50%) rotate(90deg)}
+/* Composer buttons: rounded squares, masked SVG icons. Send dims while there is
+   nothing to send; stop is a square icon with a slow "busy" ring. */
+.attach,.composer-action{--btn:36px;position:relative;flex:none;width:var(--btn);height:var(--btn);display:grid;place-items:center;padding:0;border-radius:12px;font-size:0!important;line-height:0;transition:background-color .2s var(--ease-out),color .2s var(--ease-out),border-color .2s var(--ease-out),box-shadow .25s var(--ease-out),transform .2s var(--ease-spring)}
+@media(pointer:coarse){.attach,.composer-action{--btn:40px}}
+.attach::before,.composer-action::before{content:'';position:absolute;inset:0;margin:auto;width:18px;height:18px;background:currentColor;-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat;transition:transform .3s var(--ease-spring)}
+.attach{--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M5 12h14M12 5v14'/%3E%3C/svg%3E");border:1px solid var(--line);background:transparent;color:var(--muted)}
+.composer-action{--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 7-7 7 7M12 19V5'/%3E%3C/svg%3E");border:0}
+.composer-action.send,.composer-action.queue{background:var(--accent);box-shadow:0 4px 14px -2px color-mix(in srgb,var(--accent) 45%,transparent)}
+.composer-wrap:has(#attachments[hidden]) .composer:has(#input:placeholder-shown) .composer-action.send{background:color-mix(in srgb,var(--text) 10%,transparent);color:var(--muted)!important;box-shadow:none}
+.composer-action.stop{background:var(--accent);color:var(--accent-contrast);box-shadow:none;animation:busy-ring 1.8s ease-out infinite}
+.composer-action.stop::before{width:12px;height:12px;border-radius:3px;-webkit-mask:none;mask:none}
+.composer-action::before{animation:icon-pop .32s var(--ease-spring)}
 .composer-action.send::after{display:none}
+@media(hover:hover){
+  .attach:hover:not(:disabled){border-color:color-mix(in srgb,var(--accent) 45%,var(--line));background:var(--surface-hover);color:var(--text)}
+  .attach:hover:not(:disabled)::before{transform:rotate(90deg)}
+  .composer-action:is(.send,.queue):hover:not(:disabled){box-shadow:0 6px 20px -2px color-mix(in srgb,var(--accent) 60%,transparent)}
+  .composer-action:is(.send,.queue):hover:not(:disabled)::before{transform:translateY(-2px)}
+}
+.attach:active:not(:disabled),.composer-action:active:not(:disabled){transform:scale(.88)}
+.attach:disabled,.composer-action:disabled{opacity:.55}
+@keyframes icon-pop{from{opacity:0;transform:scale(.4) rotate(-90deg)}}
+@keyframes busy-ring{from{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 50%,transparent)}to{box-shadow:0 0 0 9px transparent}}
 
 .limits-shell{margin:0 10px 10px;border-color:var(--line);border-radius:var(--ui-radius);background:var(--surface-strong);overflow:hidden}
 .limits-summary{min-height:42px;padding:0 14px 0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--text);font-size:12px;font-weight:650;letter-spacing:0;text-transform:none;list-style:none}
@@ -298,3 +326,86 @@ dialog>.modal{
 
 .check{display:inline-flex;align-items:center;gap:8px;line-height:1}
 .check input{margin:0;flex:0 0 auto}
+
+/* Main column. The chat keeps a share of the screen and the composer never
+   leaves it: question cards and permission requests above the composer
+   shrink and scroll inside themselves instead of pushing it off-screen. */
+.main>.header,.main>.composer-wrap,.main>.workflow-status{flex:0 0 auto}
+.main>.messages-frame{flex:1 1 0;min-height:min(96px,16dvh)}
+/* min-height stays auto on the host and card: only the options list shrinks
+   and scrolls, the head and the Cancel/Continue row always stay visible. */
+.main>.question-host:not([hidden]){display:flex;flex-direction:column;flex:0 1 auto}
+.question-host .question-card{flex:0 1 auto;width:100%;box-sizing:border-box}
+.question-card>.question-head,.question-card>.question-actions{flex:0 0 auto}
+.question-card>.question-sections{flex:0 1 auto}
+/* Account row: the label wraps above the buttons instead of being squeezed under them. */
+.sidebar-account{flex-wrap:wrap;row-gap:8px}
+.sidebar-account-copy{flex:1 1 120px}
+.sidebar-account-actions{flex-wrap:wrap}
+/* network-diagnostics.js adds this button unstyled; match its neighbours. */
+#networkButton{min-height:34px;padding:6px 10px;border:1px solid var(--line);background:var(--surface-input);color:var(--muted);border-radius:9px;font-size:11px}
+#networkButton:hover{background:var(--surface-hover);color:var(--text)}
+@media(max-width:760px){
+  /* A pending decision outranks history: the chat may shrink to one line,
+     but the options and the command being approved stay readable. */
+  .main>.messages-frame{min-height:min(56px,9dvh)}
+  /* Fallback only: when a question and a permission request are pending at
+     once on a short phone, the column scrolls instead of cutting off the
+     composer. When everything fits there is nothing to scroll. */
+  .main{overflow-y:auto;overscroll-behavior:contain}
+  .main>.question-host:not([hidden]){max-height:52dvh}
+  .question-host .question-sections{min-height:min(72px,10dvh);max-height:24dvh}
+  .question-actions{grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}
+  /* min-height stays auto: the banner never shrinks below its actions plus
+     the reserved text block, so its last button row cannot slide under the
+     status bar. */
+  .main>.permission-banner:not([hidden]){flex:0 1 auto;max-height:44dvh}
+  .permission-banner>.permission-main{min-height:min(60px,9dvh);overflow:auto;overscroll-behavior:contain}
+  .permission-banner>.permission-actions{flex:0 0 auto}
+  /* The project-wide rule is a secondary choice: a slim row, not a fourth big button. */
+  .permission-actions>.permission-project-button{grid-column:1/-1;min-height:32px!important;padding:4px 8px;font-size:12px;background:transparent;border-style:dashed}
+  /* Header: Project and notifications live in the session sheet (•••), so the
+     session title gets the width. */
+  .header .header-chip.project-settings-open:not([hidden]),#notifyButton{display:none!important}
+  .sidebar-account-actions{flex:1 1 100%}
+  .sidebar-account-actions>button{flex:1 1 0;min-width:0;min-height:38px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
+/* Plan and Tools sit side by side as compact chips on a phone; an opened one
+   takes the full row. The status dot keeps the state, the pill is dropped. */
+@media(max-width:700px){
+  .orchestration-panels{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .orchestration-panel[open]{grid-column:1/-1}
+  .orchestration-panel>summary{padding:8px 9px;gap:7px}
+  .orchestration-summary-status{display:none}
+  /* The one-line meta is truncated past use at this width; the open panel shows it all. */
+  .orchestration-panel:not([open]) .orchestration-summary-copy>span{display:none}
+  .orchestration-summary-copy>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
+/* The risk level badge (R0–R4) must never be squeezed into "R…" by its reason text. */
+.permission-risk-badge{flex:0 0 auto}
+
+/* Motion: short, eased, and only on what changes. New chat messages rise in
+   (app.js tags them .enter), the phone drawer glides, buttons give under the
+   finger, the composer glows on focus. appearance.css turns all of it off
+   under prefers-reduced-motion. */
+/* Scale toward the bottom edge, never a translate: a shifted message would
+   grow the chat's scrollHeight mid-animation and knock it off the bottom. */
+.message.enter{transform-origin:50% 100%;animation:grow-in .42s var(--ease-out) both}
+.welcome-session{animation:rise-in .46s var(--ease-out) both}
+.welcome-session:nth-child(2){animation-delay:.05s}
+.welcome-session:nth-child(3){animation-delay:.1s}
+.welcome-session:nth-child(4){animation-delay:.15s}
+.scroll-to-bottom:not([hidden]){animation:pop-in .3s var(--ease-spring) both}
+.composer{transition:border-color .25s var(--ease-out),box-shadow .35s var(--ease-out)}
+.composer:has(#input:focus){box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent),0 12px 32px -12px color-mix(in srgb,var(--accent) 45%,transparent)}
+.primary,.header-chip,.welcome-session,.sidebar-account-actions>button,.choice,.theme-choice{transition:background-color .18s var(--ease-out),border-color .18s var(--ease-out),color .18s var(--ease-out),box-shadow .2s var(--ease-out),transform .2s var(--ease-spring)}
+:is(.primary,.header-chip,.welcome-session,.sidebar-account-actions>button,.theme-choice):active:not(:disabled){transform:scale(.97)}
+@media(hover:hover){.primary:hover:not(:disabled){box-shadow:0 6px 18px -6px color-mix(in srgb,var(--accent) 70%,transparent)}}
+@media(max-width:760px){
+  .sidebar{transition:transform .36s var(--ease-out),box-shadow .36s var(--ease-out)}
+  .sidebar-scrim:not([hidden]){animation:fade-in .3s var(--ease-out) both}
+}
+@keyframes rise-in{from{opacity:0;transform:translateY(10px)}}
+@keyframes grow-in{from{opacity:0;transform:scale(.96)}}
+@keyframes pop-in{from{opacity:0;transform:translateY(8px) scale(.8)}}
+@keyframes fade-in{from{opacity:0}}

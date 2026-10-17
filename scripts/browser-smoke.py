@@ -289,6 +289,11 @@ def desktop_flow(context) -> bool:
         input_box = page.locator("#input").bounding_box()
         same_row = abs(model_box["y"] - agent_box["y"]) < 2 and abs(model_box["height"] - agent_box["height"]) < 2
         chips_in_card = page.locator("#form #modelButton").count() == 1 and model_box["y"] > input_box["y"]
+        def centre(box):
+            return box["y"] + box["height"] / 2
+        buttons_on_chip_row = all(
+            abs(centre(page.locator(selector).bounding_box()) - centre(model_box)) < 2
+            for selector in ("#attachButton", "#composerAction"))
         profile_badge_removed = page.locator("#runtimeProfileBadge").count() == 0
         server_profiles_removed = page.locator("#modelChoices [data-runtime-profile-group]").count() == 0
         favorite_toggle = page.locator("#modelChoices [data-favorite='0'] [data-fav]").first
@@ -322,6 +327,7 @@ def desktop_flow(context) -> bool:
         ok &= step(choices > 0, f"desktop: model dialog opened ({choices} model entries)")
         ok &= step(same_row, "desktop: agent and model chips share one row and height")
         ok &= step(chips_in_card, "desktop: agent/model chips sit inside the composer card, below the input")
+        ok &= step(buttons_on_chip_row, "desktop: attach and send sit on the chip row's centre line")
         ok &= step(profile_badge_removed, "desktop: redundant runtime profile button is removed")
         ok &= step(server_profiles_removed, "desktop: runtime server profiles are not mixed into model picker")
         ok &= step(favorites_consistent, f"desktop: favorite section appears and provider entries remain ({favorite_entries})")

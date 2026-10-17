@@ -965,6 +965,12 @@ function renderMessages({anchor=null,bottom=false}={}){
   const rows=state.context.map((message,index)=>{const type=message.type||message.role;return{message,index,type,body:messageBody(message,type)}}).filter(({type,body})=>type==='user'||body)
   const articleHtmls=rows.map(({message,index,type,body})=>{const id=message.id||message.messageID||`idx-${index}`;const actor=messagePresentation(message,type),family=type==='user'?'user':'assistant';return `<article class="message ${family} ${actor.origin}" data-message-index="${index}" data-origin="${escapeHtml(actor.origin)}"><div class="avatar">${escapeHtml(actor.avatar)}</div><div class="message-body"><div class="message-head"><span class="message-role">${escapeHtml(actor.role)}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`})
   const fullHtml=articleHtmls.join('')
+  // Only messages new to an already open chat rise in (.enter); a streaming
+  // message re-rendered mid-animation continues it instead of restarting.
+  const ids=rows.map(({message,index})=>message.id||message.messageID||`idx-${index}`)
+  const seen=inner._seenFor===state.selected.id?inner._seen:null
+  // Older history paged in above stays still: only ids past the last seen one rise.
+  const lastSeen=seen?ids.findLastIndex((id)=>seen.has(id)):-1
 
   if(inner._lastHtml===fullHtml&&!anchor&&!bottom){
     updateScrollToBottomButton()
@@ -982,6 +988,8 @@ function renderMessages({anchor=null,bottom=false}={}){
         const newEl=temp.firstElementChild
         if(newEl){
           newEl._articleHtml=articleHtmls[i]
+          const age=performance.now()-(art._enterAt||-1e9)
+          if(age<450){newEl.classList.add('enter');newEl._enterAt=art._enterAt;newEl.style.animationDelay=`${-age}ms`}
           inner.replaceChild(newEl,art)
         }
       }
@@ -991,8 +999,10 @@ function renderMessages({anchor=null,bottom=false}={}){
     const children=inner.querySelectorAll(':scope > article.message')
     for(let i=0;i<children.length;i++){
       children[i]._articleHtml=articleHtmls[i]
+      if(seen&&i>lastSeen){children[i].classList.add('enter');children[i]._enterAt=performance.now()}
     }
   }
+  inner._seen=new Set(ids);inner._seenFor=state.selected.id
   inner._lastHtml=fullHtml
   if(anchor)view.scrollTop=anchor.top+view.scrollHeight-anchor.height
   else if(bottom){
@@ -1202,8 +1212,11 @@ async function forkWithFallback(session,messageID){
   }
 }
 
-function openSessionActions(id=state.selected?.id){const session=state.sessions.find((s)=>s.id===id);if(!session)return;state.actionSession=session;const m=meta(session.id);$('sessionActionList').innerHTML=`<button class="action" data-action="rename">Переименовать</button><button class="action" data-action="pin">${m.pinned?'Открепить':'Закрепить'}</button><button class="action" data-action="duplicate">Дублировать (Fork)</button><button class="action" data-action="fork-last">Fork от последнего сообщения</button><button class="action" data-action="copy-context">Копировать с контекстом…</button><button class="action" data-action="move-project">Перенести через handoff…</button><button class="action" data-action="delete">Удалить</button>`;$('sessionActionList').querySelectorAll('[data-action]').forEach((b)=>b.addEventListener('click',()=>runSessionAction(b.dataset.action)));$('sessionDialog').showModal()}
-async function runSessionAction(action){const session=state.actionSession;if(!session)return;$('sessionDialog').close();if(action==='rename'){state.actionSession=session;$('renameInput').value=sessionTitle(session);$('renameDialog').showModal();$('renameInput').focus();return}if(action==='pin'){meta(session.id).pinned=!meta(session.id).pinned;saveMeta();renderSessions();return}if(action==='copy-context'||action==='move-project'){if(state.selected?.id!==session.id)await selectSession(session.id);openProjectDialog(action==='move-project'?'move':'copy');return}if(action==='duplicate'||action==='fork-last'){try{if(state.selected?.id!==session.id)await selectSession(session.id);const last=action==='fork-last'?[...state.context].reverse().find((m)=>m&&(m.id||m.messageID)):null;const mid=last?(last.id||last.messageID):undefined;const fork=await forkWithFallback(session,mid);state.sessions=[fork,...state.sessions.filter((s)=>s.id!==fork.id)];await selectSession(fork.id);toast('Fork создан')}catch(e){toast(`Fork: ${e.message}`)}return}if(action==='delete'){if(await confirmAction('Удалить сессию?',`«${sessionTitle(session)}» будет удалена без возможности восстановления.`))await removeSession(session)}}
+// Below 900px the header hides the Context and Git chips; the session sheet is
+// where a phone reaches them.
+function narrowSessionActions(){if(!window.matchMedia('(max-width: 900px)').matches)return'';const usage=$('usageButton'),git=$('gitButton'),project=$('projectSettingsButton'),phone=window.matchMedia('(max-width: 760px)').matches;return `<button class="action" data-action="usage">Контекст и расходы · ${escapeHtml(usage.textContent.trim())}</button>${git.disabled?'':`<button class="action" data-action="git">Изменения и Git · ${escapeHtml(git.textContent.trim())}</button>`}${phone&&project&&!project.hidden?'<button class="action" data-action="project">Настройки проекта</button>':''}${phone?`<button class="action" data-action="notify">${state.notifyEnabled?'Выключить уведомления':'Включить уведомления'}</button>`:''}`}
+function openSessionActions(id=state.selected?.id){const session=state.sessions.find((s)=>s.id===id);if(!session)return;state.actionSession=session;const m=meta(session.id);$('sessionActionList').innerHTML=`${session.id===state.selected?.id?narrowSessionActions():''}<button class="action" data-action="rename">Переименовать</button><button class="action" data-action="pin">${m.pinned?'Открепить':'Закрепить'}</button><button class="action" data-action="duplicate">Дублировать (Fork)</button><button class="action" data-action="fork-last">Fork от последнего сообщения</button><button class="action" data-action="copy-context">Копировать с контекстом…</button><button class="action" data-action="move-project">Перенести через handoff…</button><button class="action" data-action="delete">Удалить</button>`;$('sessionActionList').querySelectorAll('[data-action]').forEach((b)=>b.addEventListener('click',()=>runSessionAction(b.dataset.action)));$('sessionDialog').showModal()}
+async function runSessionAction(action){const session=state.actionSession;if(!session)return;if(action==='project'){/* opens after a fetch: let the sheet's history entry settle first */await (window.CustomOpenCodeModal?.closeAndRestore($('sessionDialog'))??$('sessionDialog').close());$('projectSettingsButton')?.click();return}$('sessionDialog').close();const proxied={usage:'usageButton',git:'gitButton',notify:'notifyButton'}[action];if(proxied){$(proxied)?.click();return}if(action==='rename'){state.actionSession=session;$('renameInput').value=sessionTitle(session);$('renameDialog').showModal();$('renameInput').focus();return}if(action==='pin'){meta(session.id).pinned=!meta(session.id).pinned;saveMeta();renderSessions();return}if(action==='copy-context'||action==='move-project'){if(state.selected?.id!==session.id)await selectSession(session.id);openProjectDialog(action==='move-project'?'move':'copy');return}if(action==='duplicate'||action==='fork-last'){try{if(state.selected?.id!==session.id)await selectSession(session.id);const last=action==='fork-last'?[...state.context].reverse().find((m)=>m&&(m.id||m.messageID)):null;const mid=last?(last.id||last.messageID):undefined;const fork=await forkWithFallback(session,mid);state.sessions=[fork,...state.sessions.filter((s)=>s.id!==fork.id)];await selectSession(fork.id);toast('Fork создан')}catch(e){toast(`Fork: ${e.message}`)}return}if(action==='delete'){if(await confirmAction('Удалить сессию?',`«${sessionTitle(session)}» будет удалена без возможности восстановления.`))await removeSession(session)}}
 async function removeSession(session){try{await api.deleteSession(session.id);state.sessions=state.sessions.filter((s)=>s.id!==session.id);delete sessionMeta[session.id];delete drafts[session.id];saveMeta();saveJson(DRAFT_KEY,drafts);state.running.delete(session.id);state.queues.delete(session.id);clearSessionModelState(session.id);if(state.selected?.id===session.id)clearSelection();else renderSessions();toast('Сессия удалена')}catch(e){toast(`Удаление: ${e.message}`)}}
 async function renameCurrent(){const session=state.actionSession||state.selected;if(!session)return;const title=$('renameInput').value.trim();if(!title)return;try{const updated=await api.renameSession(session.id,title);session.title=updated?.title||title;$('renameDialog').close();renderSessions();renderHeader()}catch(e){toast(`Rename: ${e.message}`)}}
 async function forkAtMessage(messageID){if(!state.selected)return;try{const fork=await forkWithFallback(state.selected,messageID.startsWith('idx-')?undefined:messageID);state.sessions=[fork,...state.sessions.filter((s)=>s.id!==fork.id)];await selectSession(fork.id);toast('Fork создан')}catch(e){toast(`Fork: ${e.message}`)}}
