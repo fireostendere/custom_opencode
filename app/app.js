@@ -969,6 +969,8 @@ function renderMessages({anchor=null,bottom=false}={}){
   // message re-rendered mid-animation continues it instead of restarting.
   const ids=rows.map(({message,index})=>message.id||message.messageID||`idx-${index}`)
   const seen=inner._seenFor===state.selected.id?inner._seen:null
+  // Older history paged in above stays still: only ids past the last seen one rise.
+  const lastSeen=seen?ids.findLastIndex((id)=>seen.has(id)):-1
 
   if(inner._lastHtml===fullHtml&&!anchor&&!bottom){
     updateScrollToBottomButton()
@@ -997,7 +999,7 @@ function renderMessages({anchor=null,bottom=false}={}){
     const children=inner.querySelectorAll(':scope > article.message')
     for(let i=0;i<children.length;i++){
       children[i]._articleHtml=articleHtmls[i]
-      if(seen&&!seen.has(ids[i])){children[i].classList.add('enter');children[i]._enterAt=performance.now()}
+      if(seen&&i>lastSeen){children[i].classList.add('enter');children[i]._enterAt=performance.now()}
     }
   }
   inner._seen=new Set(ids);inner._seenFor=state.selected.id

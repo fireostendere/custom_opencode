@@ -541,7 +541,7 @@ if (
   throw new Error("Composer buttons must be rounded squares with masked SVG icons, not forced circles")
 if (!designSystem.includes('grid-template-areas:"input input input" "attach meta action"'))
   throw new Error("Attach, chips and send must share the row under the message field")
-if (!appSource.includes("classList.add('enter')") || !designSystem.includes(".message.enter{animation:rise-in"))
+if (!appSource.includes("classList.add('enter')") || !designSystem.includes("animation:grow-in"))
   throw new Error("Only new chat messages may run the rise-in animation")
 if (!uxCss.includes("-webkit-line-clamp:2"))
   throw new Error("Permission summary must be clamped instead of expanding the layout")

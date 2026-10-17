@@ -388,7 +388,9 @@ dialog>.modal{
    (app.js tags them .enter), the phone drawer glides, buttons give under the
    finger, the composer glows on focus. appearance.css turns all of it off
    under prefers-reduced-motion. */
-.message.enter{animation:rise-in .42s var(--ease-out) both}
+/* Scale toward the bottom edge, never a translate: a shifted message would
+   grow the chat's scrollHeight mid-animation and knock it off the bottom. */
+.message.enter{transform-origin:50% 100%;animation:grow-in .42s var(--ease-out) both}
 .welcome-session{animation:rise-in .46s var(--ease-out) both}
 .welcome-session:nth-child(2){animation-delay:.05s}
 .welcome-session:nth-child(3){animation-delay:.1s}
@@ -404,5 +406,6 @@ dialog>.modal{
   .sidebar-scrim:not([hidden]){animation:fade-in .3s var(--ease-out) both}
 }
 @keyframes rise-in{from{opacity:0;transform:translateY(10px)}}
+@keyframes grow-in{from{opacity:0;transform:scale(.96)}}
 @keyframes pop-in{from{opacity:0;transform:translateY(8px) scale(.8)}}
 @keyframes fade-in{from{opacity:0}}

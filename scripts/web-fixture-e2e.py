@@ -1075,6 +1075,11 @@ def mobile(browser, base_url: str) -> None:
     assert page.locator(".pull-refresh").is_hidden(), "pull refresh hint is visible without a gesture"
     def pull_len() -> int:
         return len([q for q in FixtureState.message_requests_snapshot() if q.get("limit") == ["80"] and "cursor" not in q])
+    # The "mobile enter" send left the run busy; whenever the status poll sees it
+    # finish, the chat reloads. Settle that now, not inside the pull checks below.
+    page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+    page.wait_for_function("document.querySelector('#stop').hidden")
+    page.wait_for_timeout(600)
     # Snapshot only the pull-specific counter; background session polling
     # (every 30s) would otherwise make the combined (session,context) tuple flaky.
     reads = (FixtureState.session_reads_snapshot(), pull_len())
