@@ -235,7 +235,7 @@ const SHEET_SLOP = 6
 const SHEET_CLOSE_MIN = 72
 const SHEET_CLOSE_RATIO = 0.25
 const SHEET_FLICK_VELOCITY = 0.55
-const SHEET_SETTLE_MS = 240
+const SHEET_SETTLE_MS = 380
 // Release velocity is read over the last ~100 ms, not the last two events: a
 // finger lifting off jitters, and one slow sample must not cancel a flick.
 const SHEET_VELOCITY_WINDOW_MS = 100
