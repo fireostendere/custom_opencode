@@ -10,7 +10,7 @@
   --scrollbar-thumb:color-mix(in srgb,var(--muted) 48%,transparent);
   --scrollbar-thumb-hover:color-mix(in srgb,var(--accent) 68%,var(--muted) 24%);
   --ease-out:cubic-bezier(.22,1,.36,1);
-  --ease-spring:cubic-bezier(.34,1.56,.64,1);
+  --ease-spring:cubic-bezier(.34,1.56,.64,1);--ease-sheet:cubic-bezier(.32,.72,0,1);
 }
 
 html,body{overflow:hidden}
@@ -27,26 +27,39 @@ body{background:var(--bg);color:var(--text)}
 .sessions{min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:0 4px 16px 8px}
 .messages-frame{position:relative;display:flex;flex:1;min-width:0;min-height:0}.messages{position:relative;flex:1;min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
 .scroll-to-bottom{position:absolute;right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));z-index:4;display:grid;place-items:center;width:42px;height:42px;margin:0;border:1px solid color-mix(in srgb,var(--accent) 48%,var(--line));border-radius:50%;background:color-mix(in srgb,var(--surface-strong) 92%,transparent);box-shadow:0 8px 22px #0005;color:var(--text);backdrop-filter:blur(12px)}.scroll-to-bottom:hover{background:var(--surface-hover);border-color:var(--accent)}.scroll-to-bottom:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.scroll-to-bottom span{width:10px;height:10px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:translateY(-2px) rotate(45deg)}.scroll-to-bottom[hidden]{display:none}
-.pull-refresh{position:fixed;z-index:20;display:flex;align-items:center;gap:8px;min-height:40px;padding:7px 13px 7px 9px;border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--surface-strong) 92%,transparent);box-shadow:0 8px 26px #0006;color:var(--muted);font-size:11px;line-height:1.2;white-space:nowrap;pointer-events:none;opacity:0;transform:translate(-50%,10px) scale(.88);transition:opacity .18s ease,transform .18s ease;backdrop-filter:blur(12px)}
-.pull-refresh:not([hidden]){opacity:1;transform:translate(-50%,0) scale(calc(.88 + var(--pull-progress,1) * .12))}
-.pull-refresh[hidden]{display:none}
-.pull-refresh-icon{width:24px;height:24px;flex:0 0 24px;overflow:visible;transform-origin:center}
-.pull-refresh-track,.pull-refresh-progress{fill:none;stroke-width:2;transform:rotate(-90deg);transform-origin:center}
-.pull-refresh-track{stroke:color-mix(in srgb,var(--accent) 20%,transparent)}
-.pull-refresh-progress{stroke:var(--accent);stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:calc(1 - var(--pull-progress,0));transition:stroke-dashoffset .07s linear}
-.pull-refresh-arrow,.pull-refresh-check{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;transform-origin:center}
-.pull-refresh-arrow{transform:rotate(calc(var(--pull-progress,0) * 210deg));transition:transform .08s linear}
-.pull-refresh-check{display:none;stroke:var(--accent)}
-.pull-refresh[data-state="pulling"] .pull-refresh-icon{animation:pull-refresh-pull .7s ease-in-out infinite}
-.pull-refresh[data-state="holding"]{color:var(--text);border-color:color-mix(in srgb,var(--accent) 66%,var(--line))}
-.pull-refresh[data-state="refreshing"] .pull-refresh-progress{stroke-dasharray:.24 .76;stroke-dashoffset:0}
-.pull-refresh[data-state="refreshing"] .pull-refresh-icon{animation:pull-refresh-spin .75s linear infinite}
-.pull-refresh[data-state="done"]{color:var(--text)}
-.pull-refresh[data-state="done"] .pull-refresh-progress{stroke-dashoffset:0}
-.pull-refresh[data-state="done"] .pull-refresh-arrow{display:none}
-.pull-refresh[data-state="done"] .pull-refresh-check{display:block}
+/* Pull to refresh (app.js setupPullRefresh): a glass pill springs up; one ring
+   fills with the pull and then the hold while the arrow leans up and the pill
+   starts to glow; the ring breathes as a spinner, closes into a solid disc with
+   a drawn check, and the pill fades out in that state. */
+.pull-refresh{position:fixed;z-index:20;display:flex;align-items:center;gap:10px;min-height:44px;padding:8px 16px 8px 9px;border:1px solid color-mix(in srgb,var(--accent) calc(14% + var(--pull-progress,0) * 52%),var(--line));border-radius:999px;background:color-mix(in srgb,var(--surface-strong) 86%,transparent);box-shadow:0 14px 34px -14px #0009,0 0 calc(var(--pull-progress,0) * 26px) -6px var(--accent);color:var(--muted);font-size:12px;font-weight:500;line-height:1.2;white-space:nowrap;pointer-events:none;translate:-50% 0;scale:calc(.92 + var(--pull-progress,0) * .08);transition:opacity .22s var(--ease-out),transform .26s var(--ease-out),scale .12s var(--ease-out),border-color .25s,box-shadow .25s,color .25s,display .26s;transition-behavior:allow-discrete;-webkit-backdrop-filter:blur(16px) saturate(1.5);backdrop-filter:blur(16px) saturate(1.5)}
+.pull-refresh[hidden]{display:none;opacity:0;transform:translateY(10px) scale(.94)}
+.pull-refresh:is([data-state="holding"],[data-state="refreshing"],[data-state="done"]){color:var(--text)}
+.pull-refresh-label{display:inline-block}
+.pull-refresh-icon{width:26px;height:26px;flex:0 0 26px;overflow:visible}
+.pull-refresh-track,.pull-refresh-progress{fill:none;stroke-width:2.25;transform:rotate(-90deg);transform-origin:center}
+.pull-refresh-track{stroke:color-mix(in srgb,var(--text) 12%,transparent)}
+.pull-refresh-progress{fill:transparent;stroke:var(--accent);stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:calc(1 - var(--pull-progress,0));transition:stroke-dashoffset .1s linear,fill .3s var(--ease-out)}
+.pull-refresh-arrow,.pull-refresh-check{fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transform-box:fill-box;transform-origin:center}
+.pull-refresh-arrow{stroke:currentColor;translate:0 calc(1.5px - var(--pull-progress,0) * 3px);transition:translate .12s var(--ease-out),stroke .25s,opacity .2s var(--ease-out),scale .3s var(--ease-spring)}
+.pull-refresh[data-state="holding"] .pull-refresh-arrow{stroke:var(--accent)}
+.pull-refresh:is([data-state="refreshing"],[data-state="done"]) .pull-refresh-arrow{opacity:0;scale:.3}
+.pull-refresh-check{stroke:var(--accent-contrast);stroke-dasharray:1;stroke-dashoffset:1;opacity:0}
+.pull-refresh[data-state="done"] .pull-refresh-progress{stroke-dashoffset:0;fill:var(--accent)}
+.pull-refresh[data-state="done"] .pull-refresh-check{opacity:1;stroke-dashoffset:0}
+@media(prefers-reduced-motion:no-preference){
+  .pull-refresh:not([hidden]){animation:ptr-in .5s var(--ease-spring) backwards}
+  .pull-refresh[data-state="pulling"] .pull-refresh-icon{animation:pull-refresh-pull 1.1s ease-in-out infinite}
+  .pull-refresh[data-state="refreshing"] .pull-refresh-icon{animation:pull-refresh-spin 1.1s linear infinite}
+  .pull-refresh[data-state="refreshing"] .pull-refresh-progress{animation:ptr-dash 1.4s ease-in-out infinite}
+  .pull-refresh[data-state="done"] .pull-refresh-icon{animation:ptr-pop .5s var(--ease-spring)}
+  .pull-refresh[data-state="done"] .pull-refresh-check{animation:ptr-draw .36s var(--ease-out) .08s backwards}
+}
+@keyframes ptr-in{from{opacity:0;transform:translateY(16px) scale(.82)}}
+@keyframes pull-refresh-pull{50%{transform:translateY(-2.5px)}}
 @keyframes pull-refresh-spin{to{transform:rotate(360deg)}}
-@keyframes pull-refresh-pull{0%,100%{transform:translateY(-1px)}50%{transform:translateY(2px)}}
+@keyframes ptr-dash{0%,100%{stroke-dasharray:.78 .22}50%{stroke-dasharray:.16 .84;stroke-dashoffset:-.4}100%{stroke-dashoffset:-1}}
+@keyframes ptr-pop{from{transform:scale(.7)}}
+@keyframes ptr-draw{from{stroke-dashoffset:1}}
 
 .sidebar-resizer{position:relative;z-index:3;flex:0 0 9px;width:9px;cursor:col-resize;touch-action:none;background:transparent}
 .sidebar-resizer::before{content:'';position:absolute;top:0;bottom:0;left:4px;width:1px;background:var(--line);transition:width .15s,background-color .15s,left .15s}
@@ -117,7 +130,7 @@ html[data-model-profile="orchestrated"] #modelButton:not(:disabled)::before,html
 .attach:active:not(:disabled),.composer-action:active:not(:disabled){transform:scale(.88)}
 .attach:disabled,.composer-action:disabled{opacity:.55}
 @keyframes icon-pop{from{opacity:0;transform:scale(.4) rotate(-90deg)}}
-@keyframes busy-ring{from{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 50%,transparent)}to{box-shadow:0 0 0 9px transparent}}
+@keyframes busy-ring{from{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 50%,transparent)}to{box-shadow:0 0 0 var(--ring,9px) transparent}}
 
 .limits-shell{margin:0 10px 10px;border-color:var(--line);border-radius:var(--ui-radius);background:var(--surface-strong);overflow:hidden}
 .limits-summary{min-height:42px;padding:0 14px 0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--text);font-size:12px;font-weight:650;letter-spacing:0;text-transform:none;list-style:none}
@@ -227,7 +240,6 @@ dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
   dialog[open]{animation:none}
   dialog.sheet-settling,dialog.sheet-settling::backdrop{transition:none}
   .limits-summary::after,.model-provider-chevron,.permission-details>summary::after,.tool>summary::after,.trace>summary::after,.review-file>summary::after,.runtime-v3-panel>summary::after,.orchestration-trace details>summary::after,.pull-refresh,.pull-refresh-progress,.pull-refresh-arrow{transition:none}
-  .pull-refresh[data-state="pulling"] .pull-refresh-icon,.pull-refresh[data-state="refreshing"] .pull-refresh-icon{animation:none}
 }
 
 /* Touch browsers can keep :hover latched after a tap. Preserve explicit
@@ -388,28 +400,44 @@ dialog>.modal{
 /* The risk level badge (R0–R4) must never be squeezed into "R…" by its reason text. */
 .permission-risk-badge{flex:0 0 auto}
 
-/* Motion: short, eased, and only on what changes. New chat messages rise in
-   (app.js tags them .enter), the phone drawer glides, buttons give under the
-   finger, the composer glows on focus. appearance.css turns all of it off
-   under prefers-reduced-motion. */
-/* Scale toward the bottom edge, never a translate: a shifted message would
-   grow the chat's scrollHeight mid-animation and knock it off the bottom. */
-.message.enter{transform-origin:50% 100%;animation:grow-in .42s var(--ease-out) both}
-.welcome-session{animation:rise-in .46s var(--ease-out) both}
-.welcome-session:nth-child(2){animation-delay:.05s}
-.welcome-session:nth-child(3){animation-delay:.1s}
-.welcome-session:nth-child(4){animation-delay:.15s}
-.scroll-to-bottom:not([hidden]){animation:pop-in .3s var(--ease-spring) both}
-.composer{transition:border-color .25s var(--ease-out),box-shadow .35s var(--ease-out)}
-.composer:has(#input:focus){box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent),0 12px 32px -12px color-mix(in srgb,var(--accent) 45%,transparent)}
-.primary,.header-chip,.welcome-session,.sidebar-account-actions>button,.choice,.theme-choice{transition:background-color .18s var(--ease-out),border-color .18s var(--ease-out),color .18s var(--ease-out),box-shadow .2s var(--ease-out),transform .2s var(--ease-spring)}
-:is(.primary,.header-chip,.welcome-session,.sidebar-account-actions>button,.theme-choice):active:not(:disabled){transform:scale(.97)}
-@media(hover:hover){.primary:hover:not(:disabled){box-shadow:0 6px 18px -6px color-mix(in srgb,var(--accent) 70%,transparent)}}
-@media(max-width:760px){
-  .sidebar{transition:transform .36s var(--ease-out),box-shadow .36s var(--ease-out)}
-  .sidebar-scrim:not([hidden]){animation:fade-in .3s var(--ease-out) both}
+/* Motion: short, eased, and only on what changes. --ease-out for arrivals,
+   --ease-spring for what is under the finger, --ease-sheet for surfaces that
+   slide in from an edge. New chat messages grow in (app.js tags them .enter),
+   dialogs lift in and slide up as sheets on phones, toasts and banners rise,
+   the drawer glides. Under prefers-reduced-motion none of it plays. Keyframes
+   from a `from` alone end at the live style, so they fill only backwards and
+   never pin a value (the sheet drag owns the dialog's transform afterwards). */
+@media(prefers-reduced-motion:no-preference){
+  /* Scale toward the bottom edge, never a translate: a shifted message would
+     grow the chat's scrollHeight mid-animation and knock it off the bottom. */
+  .message.enter{transform-origin:50% 100%;animation:grow-in .42s var(--ease-out) backwards}
+  .welcome-session{animation:rise-in .5s var(--ease-out) backwards}
+  .welcome-session:nth-child(2){animation-delay:.06s}
+  .welcome-session:nth-child(3){animation-delay:.12s}
+  .welcome-session:nth-child(4){animation-delay:.18s}
+  .scroll-to-bottom:not([hidden]){animation:pop-in .4s var(--ease-spring) backwards}
+  .toast:not([hidden]){animation:pop-in .44s var(--ease-spring) backwards}
+  .permission-banner:not([hidden]),.question-host:not([hidden]),.workflow-status:not([hidden]){animation:rise-in .38s var(--ease-out) backwards}
+  dialog[open]{animation:lift-in .38s var(--ease-out) backwards}
+  dialog[open]>:is(.modal,.workflow-modal){animation:none}
+  dialog[open]::backdrop{animation:fade-in .32s var(--ease-out) backwards}
+  .run-dot{--ring:5px;animation:busy-ring 1.6s var(--ease-out) infinite}
+  .composer{transition:border-color .25s var(--ease-out),box-shadow .35s var(--ease-out)}
+  .primary,.header-chip,.welcome-session,.sidebar-account-actions>button,.choice,.theme-choice{transition:background-color .18s var(--ease-out),border-color .18s var(--ease-out),color .18s var(--ease-out),box-shadow .2s var(--ease-out),transform .2s var(--ease-spring)}
+  :is(.primary,.header-chip,.welcome-session,.sidebar-account-actions>button,.theme-choice):active:not(:disabled){transform:scale(.97)}
+  @media(max-width:760px){
+    dialog[open]{animation:sheet-up .46s var(--ease-sheet) backwards}
+    dialog.sheet-settling{transition:transform .34s var(--ease-sheet)}
+    .sidebar{transition:transform .42s var(--ease-sheet),box-shadow .42s var(--ease-out)}
+    .sidebar-scrim:not([hidden]){animation:fade-in .32s var(--ease-out) backwards}
+  }
 }
+.composer:has(#input:focus){box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent),0 12px 32px -12px color-mix(in srgb,var(--accent) 45%,transparent)}
+@media(hover:hover){.primary:hover:not(:disabled){box-shadow:0 6px 18px -6px color-mix(in srgb,var(--accent) 70%,transparent)}}
+dialog::backdrop{background:#0009;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
 @keyframes rise-in{from{opacity:0;transform:translateY(10px)}}
 @keyframes grow-in{from{opacity:0;transform:scale(.96)}}
-@keyframes pop-in{from{opacity:0;transform:translateY(8px) scale(.8)}}
+@keyframes pop-in{from{opacity:0;transform:translateY(12px) scale(.9)}}
+@keyframes lift-in{from{opacity:0;transform:translateY(14px) scale(.96)}}
+@keyframes sheet-up{from{transform:translateY(100%)}}
 @keyframes fade-in{from{opacity:0}}

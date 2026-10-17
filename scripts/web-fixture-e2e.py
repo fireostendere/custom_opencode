@@ -1090,7 +1090,7 @@ def mobile(browser, base_url: str) -> None:
     messages.evaluate("el => { el.scrollTop = el.scrollHeight }")
     pull_messages(page, cdp, -8, 720)
     assert pull_len() == reads[1], "short pull refreshed session data"
-    assert page.locator(".pull-refresh").is_hidden()
+    page.locator(".pull-refresh").wait_for(state="hidden", timeout=1000)
 
     messages.evaluate("el => { el.scrollTop = el.scrollHeight }")
     pull_messages(page, cdp, -44, 180)
@@ -1136,8 +1136,8 @@ def mobile(browser, base_url: str) -> None:
     page.wait_for_timeout(500)
     assert page.locator(".pull-refresh").get_attribute("data-state") == "done"
     assert page.locator(".pull-refresh svg").count() == 1
-    page.wait_for_timeout(600)
-    assert page.locator(".pull-refresh").is_hidden(), "pull refresh result did not dismiss"
+    # Shown 700ms, then a 260ms fade before display:none.
+    page.locator(".pull-refresh").wait_for(state="hidden", timeout=2000)
     page.evaluate("document.documentElement.dataset.modelProfile = 'orchestrated'")
     page.wait_for_function("document.querySelectorAll('.orchestration-plan-list li').length === 48", timeout=5000)
     plan = page.locator('.plan-panel')

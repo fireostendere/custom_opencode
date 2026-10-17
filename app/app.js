@@ -1336,13 +1336,14 @@ function setupPullRefresh(){
   const el=$('messages')
   if(!el)return
   const SWIPE_DISTANCE=18,HOLD_FLOOR=12,HOLD_DURATION=320,SWIPE_PROGRESS=0.18,MIN_REFRESH_TIME=420
+  const REDUCED_MOTION=window.matchMedia('(prefers-reduced-motion: reduce)')
   const indicator=document.createElement('div')
   indicator.className='pull-refresh'
   indicator.setAttribute('role','status')
   indicator.setAttribute('aria-live','polite')
   indicator.setAttribute('aria-atomic','true')
   indicator.hidden=true
-  indicator.innerHTML='<svg class="pull-refresh-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle class="pull-refresh-track" cx="12" cy="12" r="9" pathLength="1"></circle><circle class="pull-refresh-progress" cx="12" cy="12" r="9" pathLength="1"></circle><path class="pull-refresh-arrow" d="M17.7 6.3A8 8 0 1 0 20 12M17.7 2.8v3.5h-3.5"></path><path class="pull-refresh-check" d="m7.2 12.4 3.1 3.1 6.7-7"></path></svg><span class="pull-refresh-label">Тяните вверх для обновления</span>'
+  indicator.innerHTML='<svg class="pull-refresh-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle class="pull-refresh-track" cx="12" cy="12" r="10" pathLength="1"></circle><circle class="pull-refresh-progress" cx="12" cy="12" r="10" pathLength="1"></circle><path class="pull-refresh-arrow" d="M12 16.5v-9M8.25 11.25 12 7.5l3.75 3.75"></path><path class="pull-refresh-check" pathLength="1" d="m7.75 12.4 2.9 2.85 5.6-5.75"></path></svg><span class="pull-refresh-label">Тяните вверх для обновления</span>'
   document.body.append(indicator)
   const label=indicator.querySelector('.pull-refresh-label')
   let gesture=null,holdFrame=0,refreshing=false,hideTimer=null
@@ -1352,16 +1353,20 @@ function setupPullRefresh(){
     place()
     indicator.hidden=false
     indicator.style.setProperty('--pull-progress',String(Math.max(0,Math.min(1,ratio))))
-    if(indicator.dataset.state!==next){indicator.dataset.state=next;label.textContent=next==='pulling'?'Тяните вверх для обновления':next==='refreshing'?'Обновление сессии…':next==='done'?'Сессия обновлена':'Удерживайте для обновления'}
+    if(indicator.dataset.state!==next){
+      indicator.dataset.state=next;label.textContent=next==='pulling'?'Тяните вверх для обновления':next==='refreshing'?'Обновление сессии…':next==='done'?'Сессия обновлена':'Удерживайте для обновления'
+      if(!REDUCED_MOTION.matches)label.animate([{opacity:0,transform:'translateY(4px)'},{opacity:1,transform:'none'}],{duration:240,easing:'cubic-bezier(.22,1,.36,1)'})
+    }
   }
-  const hide=()=>{clearTimeout(hideTimer);indicator.hidden=true;indicator.dataset.state='idle';indicator.style.removeProperty('--pull-progress')}
+  // The pill fades out in its last state (design-system.css), so hiding keeps it.
+  const hide=()=>{clearTimeout(hideTimer);indicator.hidden=true}
   const stopHold=()=>{if(holdFrame)cancelAnimationFrame(holdFrame);holdFrame=0;if(gesture)gesture.holdAt=null}
   const cancelGesture=()=>{stopHold();gesture=null;if(!refreshing)hide()}
   const refreshData=async()=>{
     if(refreshing)return
     refreshing=true
     const sessionID=gesture?.sessionID
-    stopHold();gesture=null;show('refreshing',1)
+    stopHold();gesture=null;show('refreshing',1);navigator.vibrate?.(10)
     const started=performance.now()
     await Promise.allSettled([loadSessions(),sessionID?loadContext({force:true}):Promise.resolve()])
     const remaining=MIN_REFRESH_TIME-(performance.now()-started)
