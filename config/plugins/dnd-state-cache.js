@@ -57,9 +57,10 @@ export function createDndStateCache() {
   function readParams(id, input) {
     if (input.pageCursor) {
       // Frozen pages require the first page's exact query. The model echoes only its own
-      // arguments, so replay the prepared one or every continuation is a 409.
+      // arguments, so replay the prepared one or every continuation is a 409. A page opened
+      // by a write's readAfter has no operation in its query; without it every read is refused.
       const page = sessions.get(id)?.get(keyOf(input))?.page
-      return page?.nextPage === input.pageCursor ? { ...page.query, pageCursor: input.pageCursor } : input
+      return page?.nextPage === input.pageCursor ? { ...page.query, operation: 'read', pageCursor: input.pageCursor } : input
     }
     const result = { projection: 'live', delta: true, paged: true, ...input, maxBytes: byteBudget(input.maxBytes) }
     const known = sessions.get(id)?.get(keyOf(result))

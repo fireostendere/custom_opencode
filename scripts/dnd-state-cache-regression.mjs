@@ -187,7 +187,8 @@ assert.equal(cache.prepare('one', query).knownStateRevision, undefined)
     entries: [{ key: 'currentSeq', value: 10 }, { key: 'events', index: 0, value: { seq: 10 } }, { key: 'timelineEpoch', value: epoch },
       { key: 'stateDelta', value: baseline.stateDelta }], nextPage: null, complete: true, currentSeq: 10, nextCursor: 10, hasMore: false }
   let reply = single
-  const read = plain.wrap(async () => result(reply))
+  let sentRead
+  const read = plain.wrap(async input => { sentRead = input; return result(reply) })
   assert.deepEqual(JSON.parse((await read(query, { sessionID: 'p' })).content),
     { currentSeq: 10, events: [{ seq: 10 }], timelineEpoch: epoch, stateDelta: baseline.stateDelta, nextCursor: 10, hasMore: false })
   assert.equal(plain.prepare('p', query).knownStateRevision, revision, 'the unwrapped page still acknowledges its baseline')
@@ -200,6 +201,8 @@ assert.equal(cache.prepare('one', query).knownStateRevision, undefined)
   reply = { ...reply, readAfter: { afterSeq: 10, maxBytes: 45056, paged: true }, state: { ...single, complete: false, nextPage: 'p2' } }
   const receipt = JSON.parse((await read({ operation: 'narrate', campaignId, expectedSeq: 10 }, { sessionID: 'p' })).content)
   assert.deepEqual(receipt.state.nextRead, { ...reply.readAfter, campaignId, operation: 'read', pageCursor: 'p2' }, 'post-commit continuation uses the returned readAfter query, never repeats the write')
+  await read({ ...query, pageCursor: 'p2' }, { sessionID: 'p' })
+  assert.deepEqual(sentRead, receipt.state.nextRead, 'a readAfter page continues as a read, not an operation-less call the tool schema refuses')
 }
 console.log('D&D state cache regression passed: isolation, paging, readAfter, clipping and command identity')
 
