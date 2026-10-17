@@ -233,6 +233,16 @@ with tempfile.TemporaryDirectory() as temp:
     ).stdout
     hunk = server_features.git_revert({"directory": str(project / "sub"), "path": "nested.txt", "mode": "hunk", "patch": patch})
     assert hunk["ok"] is True and (project / "sub" / "nested.txt").read_text(encoding="utf-8") == "one\ntwo\nthree\n"
+    # A removed `-- SQL comment` line becomes `--- SQL comment` inside the hunk
+    # body; only real file headers may be read as paths.
+    (project / "sub" / "nested.txt").write_text("one\n-- comment\ntwo\nthree\n", encoding="utf-8")
+    body_patch = subprocess.run(
+        ["git", "-C", str(project / "sub"), "diff", "--no-ext-diff", "--relative", "--", "nested.txt"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "\n+-- comment" in body_patch, body_patch
+    hunk = server_features.git_revert({"directory": str(project / "sub"), "path": "nested.txt", "mode": "hunk", "patch": body_patch})
+    assert hunk["ok"] is True and (project / "sub" / "nested.txt").read_text(encoding="utf-8") == "one\ntwo\nthree\n"
     for hostile_patch in (
         patch.replace("a/nested.txt", "a/../tracked.txt"),
         "diff --git a/nested.txt b/nested.txt\nrename from nested.txt\nrename to evil.txt\n",

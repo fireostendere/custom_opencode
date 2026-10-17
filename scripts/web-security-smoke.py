@@ -162,6 +162,11 @@ with tempfile.TemporaryDirectory() as temp:
         authed_headers = {**remote_headers, "Cookie": cookie}
         status, _, _ = request("GET", "/auth/session", headers=authed_headers)
         assert status == 200, status
+        # Another app on the same host may set cookies SimpleCookie cannot
+        # parse; ours must still be found next to them.
+        sibling_headers = {**remote_headers, "Cookie": f'weird={{"a":1}}; a(b)=1; {cookie}; tail=x'}
+        status, _, _ = request("GET", "/auth/session", headers=sibling_headers)
+        assert status == 200, status
 
         # Installer health checks must authenticate when Basic and localhost
         # bypass are unavailable, without changing production auth defaults.

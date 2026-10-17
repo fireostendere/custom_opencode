@@ -105,55 +105,6 @@ function* triggers(state, afterSeq) {
   }
 }
 
-// System-1 fast mechanics decision classifier: analyzes action-oriented player intent
-// and derives canonical D&D 5e checks with discrete DC for instant pre-roll dispatch.
-export function evaluateFastMechanics(message) {
-  if (!message || message.kind === "ooc") return null
-  const content = String(message.content || "").trim()
-  if (!content || /^\s*\(ooc\)/i.test(content)) return null
-  const isDo = message.kind === "do" || /^\*.*\*$/.test(content) || /^(я |пытаюсь |делаю |иду |хочу )/i.test(content)
-  if (!isDo) return null
-
-  const text = content.toLowerCase()
-  if (/(крадус|прячус|тихо|бесшумн|незаметн|stealth)/i.test(text)) {
-    return { kind: "skill_check", skill: "stealth", dc: 14, reason: "Скрытное перемещение" }
-  }
-  if (/(отмычк|взлом|замок|карман|ловкост.*рук|срезаю.*кошел|подсовыва|sleight)/i.test(text)) {
-    return { kind: "skill_check", skill: "sleight_of_hand", dc: 15, reason: "Взлом или ловкость рук" }
-  }
-  if (/(выбива|карабка|лезу|взбира|прыга|толка|прорыва|плыву|залеза|athletics)/i.test(text)) {
-    return { kind: "skill_check", skill: "athletics", dc: 14, reason: "Физическое усилие (атлетика)" }
-  }
-  if (/(кувырок|балансир|уворачива|соскальзыва|acrobatics)/i.test(text)) {
-    return { kind: "skill_check", skill: "acrobatics", dc: 13, reason: "Ловкий манёвр (акробатика)" }
-  }
-  if (/(вглядыва|прислушива|осматрива|perception)/i.test(text)) {
-    return { kind: "skill_check", skill: "perception", dc: 13, reason: "Внимательность (восприятие)" }
-  }
-  if (/(обыскива|ищу.*тайник|ищу.*улик|осматрива.*механизм|investigation)/i.test(text)) {
-    return { kind: "skill_check", skill: "investigation", dc: 14, reason: "Поиск улик или механизмов (анализ)" }
-  }
-  if (/(вру|блефу|ложное.*имя|притворя|обман|deception)/i.test(text)) {
-    return { kind: "skill_check", skill: "deception", dc: 14, reason: "Попытка обмана (обман)" }
-  }
-  if (/(убежда|уговарива|дипломатич|persuasion)/i.test(text)) {
-    return { kind: "skill_check", skill: "persuasion", dc: 14, reason: "Дипломатическая попытка (убеждение)" }
-  }
-  if (/(угрожа|запугива|приставляю.*клинок|рычу|хватаю.*за.*горло|intimidation)/i.test(text)) {
-    return { kind: "skill_check", skill: "intimidation", dc: 14, reason: "Угроза (запугивание)" }
-  }
-  if (/(врет.*ли|блефует.*ли|глаза|мимик|намерени|правду.*ли|insight)/i.test(text)) {
-    return { kind: "skill_check", skill: "insight", dc: 13, reason: "Оценка искренности (проницательность)" }
-  }
-  if (/(магическ.*символ|руны|заклинани|аур|arcana)/i.test(text)) {
-    return { kind: "skill_check", skill: "arcana", dc: 14, reason: "Магическое познание (магия)" }
-  }
-  if (/(след.*в.*гряз|следы|ориентир|развожу.*костер|survival)/i.test(text)) {
-    return { kind: "skill_check", skill: "survival", dc: 13, reason: "Выживание и следопытство" }
-  }
-  return null
-}
-
 // The last cursor a narrator read fully drained; undefined for partial pages,
 // artifacts or anything that is not a complete story read.
 export function drainedCursor(value) {
@@ -189,7 +140,7 @@ async function readSignals(read, query, context) {
   throw new Error("ODM page limit exceeded")
 }
 
-export function createDndWatcher({ read, wake, invoke, now = Date.now, onChange = () => {} }) {
+export function createDndWatcher({ read, wake, now = Date.now, onChange = () => {} }) {
   const entries = new Map()
   // Per-session keys of the inputs that already woke the model (newest last,
   // bounded); survives re-arms.
@@ -208,7 +159,6 @@ export function createDndWatcher({ read, wake, invoke, now = Date.now, onChange 
   const view = entry => entry ? {
     status: entry.status, campaignId: entry.campaignId, afterSeq: entry.afterSeq,
     expiresAt: entry.expiresAt, ...(entry.reason ? { reason: entry.reason } : {}),
-    ...(entry.fastRoll ? { fastRoll: entry.fastRoll } : {}),
     ...(entry.auto ? { auto: true } : {}),
   } : { status: "stopped" }
   const changed = sessionID => { try { onChange(sessionID) } catch {} }
@@ -219,11 +169,12 @@ export function createDndWatcher({ read, wake, invoke, now = Date.now, onChange 
     if (entry) { entry.status = "stopped"; entry.controller.abort(); entries.delete(sessionID); changed(sessionID) }
     return { status: "stopped" }
   }
-  async function finish(entry, status, reason, fastRoll = undefined) {
+  // A table that left this process (deleted, taken over): its wake keys go too.
+  const drop = sessionID => { stop(sessionID); lastWake.delete(sessionID); return { status: "stopped" } }
+  async function finish(entry, status, reason) {
     if (!active(entry)) return
     entry.status = status
     entry.reason = reason
-    if (fastRoll) entry.fastRoll = fastRoll
     entry.finishedAt = now()
     changed(entry.context.sessionID)
     try { await wake(entry.context.sessionID, view(entry), entry.controller.signal) }
@@ -288,6 +239,7 @@ export function createDndWatcher({ read, wake, invoke, now = Date.now, onChange 
     campaigns: () => new Set(waiting().map(entry => entry.campaignId)),
     // A woken turn failed: the same input may wake the model again.
     forget: forgetLast,
+    drop,
     // Push doorbell: read the campaign's waits as soon as the read gap allows.
     // Returns when the earliest of them is due, or undefined when none waits.
     poke(campaignId) {
@@ -341,37 +293,7 @@ export function createDndWatcher({ read, wake, invoke, now = Date.now, onChange 
           const trigger = [...candidates].find(candidate => !(entry.auto && lastWake.get(sessionID)?.has(candidate.key)))
           if (trigger) {
             remember(sessionID, trigger.key)
-            let fastRoll
-            if (trigger.reason === "player" && typeof invoke === "function") {
-              const playerMsg = state.messages?.findLast(m => sequence(m.seq) && m.seq > entry.scanSeq && m.authorType === "player" && m.kind !== "ooc")
-              const check = evaluateFastMechanics(playerMsg)
-              if (check && playerMsg?.characterId) {
-                try {
-                  const invokeRes = await invoke({
-                    action: "narrator.invoke",
-                    params: {
-                      campaignId: entry.campaignId,
-                      expectedSeq: state.currentSeq,
-                      name: "request_roll",
-                      args: {
-                        characterId: playerMsg.characterId,
-                        kind: check.kind,
-                        skill: check.skill,
-                        dc: check.dc,
-                        advantage: "none",
-                        reason: check.reason,
-                      },
-                    },
-                  }, entry.context)
-                  if (invokeRes?.ok) {
-                    fastRoll = { skill: check.skill, dc: check.dc, characterId: playerMsg.characterId }
-                  }
-                } catch {
-                  // Fall back gracefully to standard wake if fast invoke is unavailable
-                }
-              }
-            }
-            await finish(entry, "triggered", trigger.reason, fastRoll)
+            await finish(entry, "triggered", trigger.reason)
             return
           }
           // Nothing new, or an automatic wait already woke the model for exactly this input.
@@ -695,22 +617,13 @@ export default {
         // The native MCP executor still checks this session/agent's permissions.
         return decodeResult(await narrator.execute(query, { ...context, odmBackgroundRead: true, progress: async () => {} }))
       },
-      invoke: async (query, context) => {
-        const session = await ctx.session.get({ sessionID: context.sessionID })
-        if (session.parentID || session.agent !== context.agent || session.location?.directory !== ctx.location.directory) throw new Error(SESSION_CHANGED)
-        const narrator = await getNarrator()
-        return decodeResult(await narrator.execute(query, { ...context, odmBackgroundRead: true, progress: async () => {} }))
-      },
       wake: async (sessionID, result, signal) => {
         signal.throwIfAborted()
-        const fastRollNote = result.fastRoll
-          ? `\nFast-mechanics: A pending roll for ${result.fastRoll.skill} (DC ${result.fastRoll.dc}) has been requested on the table via ODM. The player is already rolling. Do not issue a duplicate request_roll; narrate the immediate scene tension or await the roll result.`
-          : ""
         const autopilotNote = "Check current autopilot eligibility before waiting for players or closing a round. For an opted-in member missing a declaration in an active global-turn without combat, load dnd-doppelganger and submit one conservative action via autopilot_action yourself, using fresh characterId, roundNumber, expectedSeq, timelineEpoch and a saved commandId; confirm the commit through readAfter/read. The host only wakes you: it does not generate or submit the action. Do not act for players outside this verified opt-in."
         const text = result.auto
           // Every wake stays in the session; the turn rules already live in the system prompt.
-          ? `DnD auto-watch: ${JSON.stringify(result)}\nWake signal (host bookkeeping, not a player action; never quote it). Read ODM from afterSeq, resolve the new input as the DM and publish it.${fastRollNote} In combat the last narration of a resolved turn carries passTurn:true. ${autopilotNote} Do not call dnd_watch. Reply to the operator with one short line.`
-          : `DnD watcher: ${JSON.stringify(result)}\nThis is a wake signal, not a player action or an authoritative game receipt. Read ODM from afterSeq, drain pages/events, check asks and pending rolls, and obey initiative/global-turn barriers.${fastRollNote} ${autopilotNote} After processing, re-arm dnd_watch only while the operator's waiting request remains active. On timeout or error, report the stopped wait; do not claim it is still running.`
+          ? `DnD auto-watch: ${JSON.stringify(result)}\nWake signal (host bookkeeping, not a player action; never quote it). Read ODM from afterSeq, resolve the new input as the DM and publish it. In combat the last narration of a resolved turn carries passTurn:true. ${autopilotNote} Do not call dnd_watch. Reply to the operator with one short line.`
+          : `DnD watcher: ${JSON.stringify(result)}\nThis is a wake signal, not a player action or an authoritative game receipt. Read ODM from afterSeq, drain pages/events, check asks and pending rolls, and obey initiative/global-turn barriers. ${autopilotNote} After processing, re-arm dnd_watch only while the operator's waiting request remains active. On timeout or error, report the stopped wait; do not claim it is still running.`
         await ctx.session.synthetic({ sessionID, delivery: "queue", resume: true, text, metadata: { dndWatch: result } })
         const entry = tables.get(sessionID)
         if (!entry) return
@@ -818,7 +731,7 @@ export default {
     const evict = (sessionID, campaignId) => {
       let dropped = 0
       for (const [other, entry] of tables) if (other !== sessionID && entry.campaignId === campaignId) {
-        watcher.stop(other)
+        watcher.drop(other)
         tables.delete(other)
         dropped++
       }
@@ -1006,7 +919,7 @@ export default {
         || (type === "session.inbox.enqueued" && event.data?.item?.type === "user")) watcher.stop(sessionID)
       // A changed agent invalidates the remembered tool context until the next ODM call.
       if (["session.agent.selected", "session.moved"].includes(type) && tables.has(sessionID)) tables.get(sessionID).context = undefined
-      if (type === "session.deleted") { tables.delete(sessionID); publish() }
+      if (type === "session.deleted") { tables.delete(sessionID); watcher.drop(sessionID); publish() }
       const entry = sessionID ? tables.get(sessionID) : undefined
       if (entry) {
         const woke = entry.woke

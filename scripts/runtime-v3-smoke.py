@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -150,6 +151,26 @@ with tempfile.TemporaryDirectory() as temp:
         pass
     else:
         raise AssertionError("sandbox exposed the entire home directory")
+    # `cd src && npm test` must still see ../node_modules: the bind covers the
+    # project root while the command starts in the nested cwd.
+    nested = project / "nested-cwd"
+    nested.mkdir(exist_ok=True)
+    scoped = sandbox.wrap_shell("printf ok", str(nested), "repo-write", project_root=str(project))
+    assert f"--bind {project} {project}" in scoped["command"] and f"--chdir {nested}" in scoped["command"], scoped
+    assert scoped["cwd"] == str(nested)
+    # Inside WSL the Windows drives under /mnt are hidden like the home tree.
+    with patch.dict(os.environ, {"WSL_DISTRO_NAME": "Ubuntu"}):
+        if Path("/mnt").is_dir():
+            assert "--tmpfs /mnt" in sandbox.wrap_shell("printf ok", str(project), "repo-write")["command"]
+    # Inside WSL the `wsl` profile is the host shell: same opt-in as full-machine.
+    with patch.dict(os.environ, {"WSL_DISTRO_NAME": "Ubuntu"}):
+        os.environ.pop("OPENCODE_ALLOW_FULL_MACHINE", None)
+        try:
+            sandbox.wrap_shell("echo hi", str(project), "wsl")
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("wsl profile ran unsandboxed inside WSL without opt-in")
     assert f"--bind {project} {project}" in wrapped
 
     artifacts = ArtifactStore(store)
@@ -373,6 +394,9 @@ with tempfile.TemporaryDirectory() as temp:
     assert branched["session"]["id"].startswith("fork-")
     merged = branches.merge(fake, "source-session", "target-session")
     assert merged["ok"] and merged["sourceTasks"] >= 1
+    # A target session without tasks falls back to the source project.
+    into_empty = branches.merge(fake, "source-session", "session-without-tasks")
+    assert into_empty["ok"], into_empty
 
 print(
     "Runtime V3 smoke passed: AST/embeddings/diff + sandbox/broker/gateway + provider-pinned routing + compaction + replay/branching"

@@ -44,7 +44,9 @@ GIT_METADATA_NAME_RE = re.compile(
     r"(?:\.git|git~\d+|\.gitattributes|gitatt~\d+|\.gitmodules|gitmod~\d+)",
     re.IGNORECASE,
 )
-SHELL_META_RE = re.compile(r"[;&|><`\n]|\$\(")
+# `$` covers $VAR, ${VAR}, $(cmd) and $'…' quoting; braces cover {a,b} expansion.
+# Both are expanded by the shell after this classifier sees the literal text.
+SHELL_META_RE = re.compile(r"[;&|><`\n${}]")
 SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(token|api[_-]?key|password|secret|authorization)\s*=\s*([^\s,;]+)"
 )
@@ -151,8 +153,15 @@ def _shell_command(request: dict[str, Any]) -> str:
 
 def _unsafe_path_argument(argv: list[str], workspace: str | None) -> str | None:
     for arg in argv[1:]:
-        if not arg or arg == "-" or arg.startswith("-"):
+        if not arg or arg == "-":
             continue
+        if arg.startswith("-"):
+            # `--file=/etc/passwd` style option values are paths too.
+            if not arg.startswith("--") or "=" not in arg:
+                continue
+            arg = arg.split("=", 1)[1]
+            if not arg:
+                continue
         if _looks_sensitive(arg):
             return arg
         if not _path_within_workspace(arg, workspace):
@@ -200,7 +209,8 @@ def _shell_risk(command: str, preset: str, workspace: str | None) -> tuple[str, 
             return "R3", False, "git remote mutation requires confirmation"
         if any(arg == "-o" or arg.startswith("--output") for arg in argv[2:]):
             return "R3", False, "git output option can mutate the filesystem"
-        if any(arg in {"--ext-diff", "--textconv"} or arg.startswith("--open-files-in-pager") for arg in argv[2:]):
+        # `-O<pager>` is the short form of --open-files-in-pager (`git grep -Orm`).
+        if any(arg in {"--ext-diff", "--textconv"} or arg.startswith(("--open-files-in-pager", "-O")) for arg in argv[2:]):
             return "R3", False, "git option can execute an external helper"
         return "R0", True, f"read-only git {argv[1]}"
 

@@ -85,12 +85,13 @@ function toast(text, ms = 2800) {
   if (!el) return
   el.textContent = text
   el.hidden = false
-  clearTimeout(el._advancedTimer)
-  el._advancedTimer = setTimeout(() => { el.hidden = true }, ms)
+  clearTimeout(el._timer)
+  el._timer = setTimeout(() => { el.hidden = true }, ms)
 }
 function sessionFromHash() {
   const match = /^#\/session\/([^/?]+)/.exec(location.hash || '')
-  return match ? decodeURIComponent(match[1]) : null
+  if (!match) return null
+  try { return decodeURIComponent(match[1]) } catch { return null }
 }
 async function request(path, options = {}) {
   const response = await fetch(path, {

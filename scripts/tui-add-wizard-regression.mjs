@@ -508,6 +508,21 @@ assert.equal(await readFile(registryPath, 'utf8'), beforeProfileCancel, 'Cancel 
   const admittedClient = fakeClient(300, { admitted: true })
   assert.deepEqual(await readConfigReceipt(admittedClient, 'ses_r', 'slow'), { ok: 2 }, 'An admitted receipt is still found')
 
+  // The real TUI client answers `{ data: [...] }`; a failing cancel after the
+  // receipt was parsed must not throw the value away.
+  const envelope = {
+    session: {
+      inbox: {
+        list: async () => ({ data: [{ id: 'inb_e', type: 'synthetic', payload: { text: `${marker('env')}{"ok":3}` } }] }),
+        cancel: async () => { const error = new Error('busy'); error.status = 503; throw error },
+      },
+      context: async () => ({ data: [] }),
+    },
+  }
+  assert.deepEqual(await readConfigReceipt(envelope, 'ses_r', 'env'), { ok: 3 }, 'enveloped inbox rows are read')
+  const admittedEnvelope = { session: { inbox: { list: async () => ({ data: [] }), cancel: async () => {} }, context: async () => ({ data: [{ text: `${marker('env2')}{"ok":4}` }] }) } }
+  assert.deepEqual(await readConfigReceipt(admittedEnvelope, 'ses_r', 'env2', { timeoutMs: 300 }), { ok: 4 }, 'enveloped context rows are read')
+
   const listeners = new Map()
   const on = (type, handler) => { listeners.set(type, handler); return () => listeners.delete(type) }
   const evented = fakeClient(60_000)

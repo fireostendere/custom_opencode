@@ -11,7 +11,6 @@ import gzip
 import hashlib
 import hmac
 import http.client
-from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
@@ -23,6 +22,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from urllib.parse import parse_qs, quote, unquote, urlsplit
@@ -147,10 +147,20 @@ def write_env_value(path: Path, name: str, value: str) -> None:
             lines.append("")
         lines.append(replacement)
     mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.chmod(temporary, mode)
-    os.replace(temporary, path)
+    # Unique per call (two handler threads may write concurrently) and private
+    # before the secret is written, not chmod-ed afterwards.
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
 
 
 def configure_qwen_token_plan(api_key: str, model: str) -> None:
@@ -630,11 +640,15 @@ def _attempt_backend_request(command: str, target: str, host: str, port: int, au
     """(connection, response), re-resolving the backend once on connect failure."""
     headers["Authorization"] = auth
     headers["Host"] = host
+    connection = None
     try:
         connection = backend_connection(host, port, read_timeout=read_timeout)
         connection.request(command, target, body=body, headers=headers)
         return connection, connection.getresponse()
     except (OSError, http.client.HTTPException):
+        # The first socket may be connected; it must not wait for GC.
+        if connection is not None:
+            connection.close()
         # The backend may have just restarted on a new port/password.
         refreshed = current_backend(force_refresh=True)
         if refreshed == (host, port, auth):
@@ -685,8 +699,13 @@ def _auth_key_v2() -> bytes:
 
 
 def _env_password_fingerprint() -> str:
-    """Fingerprint of current CLIENT_PASSWORD for env-user token invalidation."""
-    return hashlib.sha256(f"custom-opencode-env-fp\0{CLIENT_PASSWORD}".encode()).hexdigest()
+    """Fingerprint of current CLIENT_PASSWORD for env-user token invalidation.
+
+    Keyed with the server secret: the value travels in the readable cookie
+    payload, so an unkeyed hash of the admin password would be an offline
+    brute-force target for anyone holding a (possibly expired) cookie.
+    """
+    return hmac.new(_auth_key_v2(), f"custom-opencode-env-fp\0{CLIENT_PASSWORD}".encode(), hashlib.sha256).hexdigest()
 
 
 def issue_session_token(ttl_seconds: int, username: str | None = None) -> str:
@@ -870,15 +889,20 @@ def forget_session_directory(session_id: str) -> None:
         _SESSION_DIR_CACHE.pop(session_id, None)
 
 
+SCRATCH_SESSION_NAME_RE = re.compile(r"session-[0-9a-f]{16}")
+
+
 def heal_missing_scratch_directory(value: object) -> None:
     """Recreate a scratch session directory that was removed out-of-band.
 
     The backend resolves the session workspace before serving most session
     endpoints; a missing directory makes those calls fail until the session
-    is deleted. Recreating the empty directory restores access.
+    is deleted. Recreating the empty directory restores access. Only the
+    directories allocate_scratch_directory() creates qualify: a request may
+    name any path, and nothing cleans up arbitrary trees under the root.
     """
     candidate = resolve_directory(value)
-    if candidate is None or candidate == SCRATCH_ROOT or SCRATCH_ROOT not in candidate.parents:
+    if candidate is None or candidate.parent != SCRATCH_ROOT or not SCRATCH_SESSION_NAME_RE.fullmatch(candidate.name):
         return
     if candidate.exists():
         return
@@ -970,6 +994,9 @@ HUMAN_ONLY_ROUTES = frozenset({
     "/client-git-revert.json",
     "/client-project-settings.json",
     "/client-provider-config.json",
+    # Connects MCP servers and starts the RAG runtime: the same consent as the
+    # direct POST /api/mcp/* calls it issues on the caller's behalf.
+    "/client-rag-start.json",
     "/client-remote-action.json",
     "/client-task-sandbox.json",
     "/client-worktree-merge.json",
@@ -1082,16 +1109,20 @@ class Handler(BaseHTTPRequestHandler):
         super().end_headers()
 
     def cookie_token(self) -> str:
+        """Our cookie only. SimpleCookie stops at the first sibling it cannot
+        parse (another app on the same host setting a JSON-valued cookie), which
+        locked users out after a successful login."""
         header = self.headers.get("Cookie", "")
         if not header:
             return ""
-        try:
-            cookie = SimpleCookie()
-            cookie.load(header)
-            morsel = cookie.get(AUTH_COOKIE_NAME)
-            return morsel.value if morsel else ""
-        except Exception:
-            return ""
+        for part in header.split(";"):
+            name, separator, value = part.strip().partition("=")
+            if separator and name.strip() == AUTH_COOKIE_NAME:
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] == '"':
+                    value = value[1:-1]
+                return value
+        return ""
 
     def local_bypass(self) -> bool:
         """Passwordless loopback only for a direct localhost request.
@@ -1553,7 +1584,7 @@ class Handler(BaseHTTPRequestHandler):
             key: value
             for key, value in self.headers.items()
             if key.lower() not in HOP_BY_HOP
-            and key.lower() not in ("authorization", "content-length", "cookie")
+            and key.lower() not in ("authorization", "content-length", "cookie", "host")
             and key.lower() not in FORWARDED_HEADERS
         }
         host, port, auth = current_backend()

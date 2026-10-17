@@ -146,7 +146,7 @@ export default {
       if (shaped === body) return
       const headers = new Headers(event.request.headers)
       headers.delete("content-length")
-      pending.set(event.sessionID, { model: body.model, original: JSON.stringify(body) })
+      pending.set(event.sessionID, { model: body.model, original: JSON.stringify(body), agent: event.agent, kind: event.kind })
       if (pending.size > 256) pending.delete(pending.keys().next().value)
       event.request = new Request(event.request, { headers, body: JSON.stringify(shaped) })
     }))
@@ -154,6 +154,9 @@ export default {
     registrations.push(await ctx.session.hook("http.response", async (event) => {
       const sent = pending.get(event.sessionID)
       if (!sent) return
+      // A title/compaction response in the same session must not consume the
+      // typed request's fallback (cf. dnd-fast-tier).
+      if ((event.agent && event.agent !== sent.agent) || (event.kind && sent.kind && event.kind !== sent.kind)) return
       pending.delete(event.sessionID)
       if (event.response.status !== 400) return
       const detail = await event.response.clone().text().catch(() => "")

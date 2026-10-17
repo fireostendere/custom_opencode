@@ -20,9 +20,10 @@ export default Plugin.define({
     const [states, setStates] = createSignal(new Map(), { equals: sameWatchStates })
     const [now, setNow] = createSignal(Date.now())
     let ticking = false
+    let staleAt
     const stopWatching = watchWatchStates((next) => setStates(next))
     const clock = setInterval(() => {
-      if (ticking) setNow(Date.now())
+      if (ticking || (staleAt && Date.now() >= staleAt)) setNow(Date.now())
     }, 1000)
     clock.unref?.()
     const toneColor = (tone) =>
@@ -46,6 +47,7 @@ export default Plugin.define({
         if (!isTableSession(session, snapshot)) return null
         const view = describeWatch(snapshot, now())
         ticking = view.ticking
+        staleAt = view.staleAt
         return (
           <box flexDirection="column" flexShrink={0}>
             <text fg={theme.text.default}><b>🎲 Вотчер стола</b></text>

@@ -23,7 +23,8 @@ function loadProfiles() {
 }
 function profileSessionKey() {
   const match = /^#\/session\/([^/?]+)/.exec(location.hash || '')
-  return match ? decodeURIComponent(match[1]) : '__new__'
+  if (!match) return '__new__'
+  try { return decodeURIComponent(match[1]) } catch { return '__new__' }
 }
 function storedProfile() {
   const value = loadProfiles()[profileSessionKey()]

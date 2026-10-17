@@ -77,13 +77,30 @@ def _empty_state() -> dict[str, Any]:
     return {"version": 1, "queues": {}, "projects": {}, "queueErrors": {}}
 
 
+def _quarantine_state_file(path: Path) -> None:
+    """Keep an unreadable state file for recovery instead of overwriting it."""
+    try:
+        path.replace(path.with_name(f"{path.name}.corrupt-{int(time.time())}"))
+    except OSError:
+        pass
+
+
 def _load_state_unlocked() -> dict[str, Any]:
     path = _state_path()
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return _empty_state()
+    # Any other read error is transient (EIO, EACCES): returning an empty state
+    # here would let the caller persist {} over every project's settings and
+    # queue. Let the request fail instead.
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        _quarantine_state_file(path)
         return _empty_state()
     if not isinstance(value, dict):
+        _quarantine_state_file(path)
         return _empty_state()
     value.setdefault("version", 1)
     value.setdefault("queues", {})
@@ -374,7 +391,11 @@ def reorder_queue(session_id: str, ids: list[str]) -> dict[str, Any]:
         return {"ok": True, "count": len(ordered)}
 
 
-def _status_payload() -> dict[str, Any]:
+def _status_payload() -> dict[str, Any] | None:
+    """Session activity map, or None when the backend gave no usable answer.
+
+    An unreachable backend must not look like "every session is idle".
+    """
     for path in ("/api/session/active", "/api/session/status"):
         try:
             value = _data(_backend_request_json("GET", path, timeout=8.0))
@@ -382,7 +403,7 @@ def _status_payload() -> dict[str, Any]:
                 return value
         except Exception:
             pass
-    return {}
+    return None
 
 
 def _status_busy(value: Any) -> bool:
@@ -536,7 +557,7 @@ def _worker() -> None:
         try:
             state = _with_state_read()
             queues = state.get("queues", {}) if isinstance(state.get("queues"), dict) else {}
-            status = _status_payload() if queues else {}
+            status = (_status_payload() or {}) if queues else {}
             for session_id in list(queues):
                 _dispatch_one_queue_item(str(session_id), status)
             _apply_permission_policies()
@@ -689,7 +710,12 @@ def git_revert(payload: dict[str, Any]) -> dict[str, Any]:
     if not patch or len(patch.encode("utf-8")) > 512_000:
         raise ValueError("invalid patch")
     header_paths: list[str] = []
+    in_hunk = False
     for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            in_hunk = False
+        elif line.startswith("@@"):
+            in_hunk = True
         # Extended headers could retarget the patch (rename/copy) or turn the
         # file into a symlink/gitlink when reversed.
         if line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")):
@@ -703,7 +729,8 @@ def git_revert(payload: dict[str, Any]) -> dict[str, Any]:
             f"diff --git {relative} {relative}",
         ):
             raise ValueError("patch touches another file")
-        if line.startswith("--- ") or line.startswith("+++ "):
+        # Inside a hunk a removed `-- comment` or added `++ x` line is body text.
+        if not in_hunk and (line.startswith("--- ") or line.startswith("+++ ")):
             value = line[4:].split("\t", 1)[0].strip()
             if value == "/dev/null":
                 continue

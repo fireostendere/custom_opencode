@@ -26,6 +26,9 @@ if [[ -z "$PYTHON3" ]]; then
   exit 1
 fi
 
+# A pin passed by the caller (bootstrap --opencode-package) must win over the
+# value .env sets when it is sourced below.
+CALLER_CLI_PACKAGE=${OPENCODE_CLI_PACKAGE:-}
 source "$ROOT/scripts/user-config.sh"
 custom_opencode_load_env "$ROOT"
 USER_CONFIG=${CUSTOM_OPENCODE_USER_CONFIG:-}
@@ -62,7 +65,10 @@ export CUSTOM_OPENCODE_SERVICE_MODE="$SERVICE_MODE"
 # custom_opencode targets one reviewed OpenCode V2 build. An explicit .env
 # override can advance the pin after the regression suite is run against it.
 export PATH="$BIN_DIR:$PATH"
-OPENCODE_CLI_PACKAGE=${OPENCODE_CLI_PACKAGE:-@opencode-ai/cli@0.0.0-beta-19271}
+# Bare opencode2 calls below run before any config with "update": "disable"
+# exists; without this the CLI's own updater can reinstall @latest over the pin.
+export OPENCODE_DISABLE_AUTOUPDATE=1
+OPENCODE_CLI_PACKAGE=${CALLER_CLI_PACKAGE:-${OPENCODE_CLI_PACKAGE:-@opencode-ai/cli@0.0.0-beta-19271}}
 OPENCODE_CLI_VERSION=${OPENCODE_CLI_PACKAGE##*@}
 CURRENT_OPENCODE_VERSION=$(opencode2 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//' || true)
 if [[ "$CURRENT_OPENCODE_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
@@ -698,6 +704,7 @@ SERVICE_ENV=(
   MCP_RAG_ROOT MCP_RAG_BIN
   OPENCODE_TOOL_FABRIC OPENCODE_FABRIC_PYTHON OPENCODE_FABRIC_LAUNCHER OPENCODE_FABRIC_CONFIG
   OPENCODE_PROJECT_ROOTS OPENCODE_DEFAULT_MODEL OPENCODE_FREE_ONLY_PROVIDERS
+  OPENCODE_CONFIG_BACKUP_DIR OPENCODE_CONFIG_BACKUP_KEEP
 )
 install -d -m 0700 "$CONFIG_DIR"
 "$PYTHON3" - "$CONFIG_DIR/service.json" "$CONFIG_DIR" "${SERVICE_ENV[@]}" <<'PY'

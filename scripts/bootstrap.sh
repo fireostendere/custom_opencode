@@ -157,6 +157,11 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
     git -C "$INSTALL_DIR" rev-parse HEAD >"$backup_dir/revision"
   fi
   [[ ! -f "$INSTALL_DIR/.env" ]] || run cp -p "$INSTALL_DIR/.env" "$backup_dir/.env"
+  # Each backup holds a copy of .env (secrets): keep the newest 10 only.
+  if [[ "$DRY_RUN" == 0 ]]; then
+    find "$backup_root" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | head -n -10 |
+      while IFS= read -r old; do rm -rf -- "${backup_root:?}/$old"; done
+  fi
   note "Fetching pinned repository ref: $REF"
   run git -C "$INSTALL_DIR" fetch --prune -- origin "$REF"
   run git -C "$INSTALL_DIR" merge --ff-only FETCH_HEAD

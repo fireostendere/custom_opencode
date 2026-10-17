@@ -401,7 +401,11 @@ async def main():
 
         # A real upstream process: pin its schema then run through our facade.
         upstream_params = StdioServerParameters(
-            command=sys.executable, args=[str(ROOT / "scripts/fixtures/tool-fabric-upstream.py")]
+            command=sys.executable,
+            args=[str(ROOT / "scripts/fixtures/tool-fabric-upstream.py")],
+            # The SDK's default child environment drops PYTHONPATH; keep the
+            # same import path as the wire case so a user-site mcp is found.
+            env={"PYTHONPATH": os.environ.get("PYTHONPATH", "")},
         )
         print("fabric: upstream federation", flush=True)
         async with Client(stdio_client(upstream_params)) as client:

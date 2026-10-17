@@ -43,6 +43,13 @@ def main() -> None:
         expect({"action":"shell", "metadata":{"command":"pytest -q"}}, effect="ask", risk="R3", workspace=str(workspace))
         expect({"action":"shell", "resources":["rm -rf build"]}, effect="ask", risk="R3", workspace=str(workspace))
         expect({"action":"shell", "resources":["cat README.md && rm -rf build"]}, effect="ask", risk="R3", workspace=str(workspace))
+        # The shell expands $VAR, braces and `--opt=/path` values after the
+        # classifier has seen the literal text; none of these may stay R0.
+        expect({"action":"shell", "resources":["cat $HOME/.netrc"]}, effect="ask", risk="R3", workspace=str(workspace))
+        expect({"action":"shell", "resources":["cat {/etc/passwd,README.md}"]}, effect="ask", risk="R3", workspace=str(workspace))
+        expect({"action":"shell", "resources":["grep --file=/etc/passwd x ."]}, effect="ask", risk="R3", workspace=str(workspace))
+        expect({"action":"shell", "resources":["git grep -Orm -- ."]}, effect="ask", risk="R3", workspace=str(workspace))
+        expect({"action":"shell", "resources":["git log --format=%H -n 3"]}, effect="allow", risk="R0", workspace=str(workspace))
         expect({"action":"edit", "resources":["app/api.js"]}, effect="allow", risk="R2", workspace=str(workspace))
         expect({"action":"edit", "resources":["../outside.txt"]}, effect="ask", risk="R3", workspace=str(workspace))
         expect({"action":"edit", "resources":[]}, effect="ask", risk="R3", workspace=str(workspace))

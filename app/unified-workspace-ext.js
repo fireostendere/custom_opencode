@@ -2,10 +2,10 @@ const $=(id)=>document.getElementById(id)
 const previousTasks=new Map()
 let enrichBusy=false
 
-function sid(){const match=/^#\/session\/([^/?]+)/.exec(location.hash||'');return match?decodeURIComponent(match[1]):''}
+function sid(){const match=/^#\/session\/([^/?]+)/.exec(location.hash||'');if(!match)return '';try{return decodeURIComponent(match[1])}catch{return ''}}
 function esc(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function req(path,options={}){const response=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});if(!response.ok){const text=await response.text().catch(()=>'');throw new Error(`${response.status} ${response.statusText}${text?`: ${text.slice(0,240)}`:''}`)}return response.json()}
-function toast(text){const el=$('toast');if(!el)return;el.textContent=text;el.hidden=false;clearTimeout(el._workspaceExtTimer);el._workspaceExtTimer=setTimeout(()=>el.hidden=true,3200)}
+function toast(text){const el=$('toast');if(!el)return;el.textContent=text;el.hidden=false;clearTimeout(el._timer);el._timer=setTimeout(()=>el.hidden=true,3200)}
 
 async function addPermissionRule(rule){
   const sessionID=sid()
@@ -71,7 +71,10 @@ function observeRuntime(){
 async function serviceWorkerNotify(task,sessionID){
   if(!('serviceWorker'in navigator)||!('Notification'in window)||Notification.permission!=='granted')return
   try{
-    const registration=await navigator.serviceWorker.ready
+    // `ready` never settles when registration failed (insecure LAN origin);
+    // the 7 s watcher has no re-entrancy guard, so pending awaits would pile up.
+    const registration=await Promise.race([navigator.serviceWorker.ready.catch(()=>null),new Promise((resolve)=>setTimeout(()=>resolve(null),1500))])
+    if(!registration?.showNotification){new Notification('OpenCode task',{body:`${task.kind||'task'}: ${task.state}`,tag:`runtime-actionable-${task.id}`});return}
     const actions=[]
     if(['failed','needs_attention'].includes(task.state))actions.push({action:'retry-task',title:'Retry'})
     if(['running','submitted','waiting_permission','verifying'].includes(task.state))actions.push({action:'cancel-task',title:'Cancel'})

@@ -71,6 +71,19 @@ print("  ✓ user_exists works correctly")
 print("\nTest 3: authenticate")
 assert server_users.authenticate("envuser", "envpass123"), "envuser should authenticate"
 assert not server_users.authenticate("envuser", "wrongpass"), "envuser should fail with wrong password"
+
+# First-use secret generation: concurrent callers must all end up with the one
+# secret that is on disk, or sessions signed in memory die at the next restart.
+race_secret = temp_path / "race" / "auth-secret.key"
+with patch.object(server_users, "_secret_path", return_value=race_secret):
+    race_results: list[str] = []
+    race_threads = [threading.Thread(target=lambda: race_results.append(server_users.server_secret())) for _ in range(8)]
+    for thread in race_threads:
+        thread.start()
+    for thread in race_threads:
+        thread.join()
+assert len(set(race_results)) == 1 and race_results[0] == race_secret.read_text(encoding="utf-8").strip(), race_results
+assert (race_secret.stat().st_mode & 0o777) == 0o600
 assert server_users.authenticate("alice", "alicepass123"), "alice should authenticate"
 assert not server_users.authenticate("alice", "wrongpass"), "alice should fail with wrong password"
 assert not server_users.authenticate("nonexistent", "anypass"), "nonexistent should fail"

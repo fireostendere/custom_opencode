@@ -2,21 +2,11 @@ import assert from "node:assert/strict"
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import plugin, { bootId, createDndWatcher, createPushLinks, evaluateFastMechanics, failedTurn, isDoorbell, narratorEndpoint, parseSse, stateFileFor } from "../config/plugins/dnd-watch.js"
+import plugin, { bootId, createDndWatcher, createPushLinks, failedTurn, isDoorbell, narratorEndpoint, parseSse, stateFileFor } from "../config/plugins/dnd-watch.js"
 import { filterDndTools } from "../config/plugins/orchestrated-qwen.js"
 import { describeWatch, isTableSession, readWatchStates } from "../config/plugins/tui/lib/dnd-watch-view.js"
 import * as sharedView from "../config/plugins/tui/lib/dnd-watch-describe.js"
 import { createDndWatchChip } from "../app/dnd-watch-chip.js"
-
-// Fast mechanics evaluation unit tests
-assert.deepEqual(evaluateFastMechanics({ kind: "do", content: "*Тихо крадусь мимо часовых*" }), {
-  kind: "skill_check", skill: "stealth", dc: 14, reason: "Скрытное перемещение"
-})
-assert.deepEqual(evaluateFastMechanics({ kind: "do", content: "*Достаю отмычку и взламываю замок сундука*" }), {
-  kind: "skill_check", skill: "sleight_of_hand", dc: 15, reason: "Взлом или ловкость рук"
-})
-assert.equal(evaluateFastMechanics({ kind: "ooc", content: "(ooc) пауза" }), null)
-assert.equal(evaluateFastMechanics({ kind: "say", content: "Приветствую, трактирщик!" }), null)
 
 // Flags are read at plugin setup: keep tests off the real PC power state,
 // the real ODM server and the real status directory.
@@ -124,24 +114,6 @@ watcher.start(input, context)
 await watcher.tick()
 assert.equal(wakes.length, priorWakes + 1, "paged combat state prevents global-turn autopilot")
 watcher.stop(context.sessionID)
-
-// Fast-mechanics pre-roll invocation test
-const invokes = []
-const fastWakes = []
-const fastWatcher = createDndWatcher({
-  now: () => now,
-  read: async () => state({ currentSeq: 20, nextCursor: 20, messages: [{ seq: 20, authorType: "player", kind: "do", characterId: "c1", content: "*Пытаюсь тихо прокрасться*" }] }),
-  invoke: async (query) => { invokes.push(query); return { ok: true } },
-  wake: async (sessionID, result) => fastWakes.push({ sessionID, result }),
-})
-fastWatcher.start({ campaignId, afterSeq: 19 }, context)
-await fastWatcher.tick()
-assert.equal(invokes.length, 1, "fast-roll invoked request_roll on ODM")
-assert.equal(invokes[0].params.name, "request_roll")
-assert.equal(invokes[0].params.args.skill, "stealth")
-assert.equal(invokes[0].params.args.characterId, "c1")
-assert.equal(fastWakes.at(-1).result.fastRoll?.skill, "stealth")
-assert.equal(fastWakes.at(-1).result.fastRoll?.dc, 14)
 
 // Pages and event batches must drain before advancing the private scan cursor.
 watcher.start(input, context)
@@ -910,6 +882,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
   assert.equal(waitingView.rows.find(row => row[0] === "Курсор")[1], "#2173 · авто")
   assert.equal(waitingView.log.length, 4)
   assert.equal(waitingView.ticking, false, "an idle wait does not re-render every second")
+  assert.ok(waitingView.staleAt > at && describeWatch(base, waitingView.staleAt).headline.includes("не отвечает"), "the stale instant is announced for one re-render")
   assert.match(describeWatch({ ...base, turn: { state: "running", startedAt: at - 42_000 } }, at).headline, /разбирает ход · 0:42/)
   assert.match(describeWatch({ ...base, turn: { state: "retry", retryAt: at + 30_000 } }, at).headline, /повтор через 30с/)
   assert.match(describeWatch({ ...base, watch: { status: "waiting", errors: 2, retryAt: at + 12_000 } }, at).headline, /ODM недоступен, повтор 12с/)

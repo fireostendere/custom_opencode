@@ -112,8 +112,12 @@ custom_opencode/.env
 ~/.config/opencode/plugins/
 ~/.local/share/opencode/auth.json
 ~/.config/opencode/webserver.json
+~/.config/opencode/service.json
 ~/.config/systemd/user/opencode-web-client.service
+~/.local/state/custom-opencode/bootstrap-backups/
 ```
+
+`service.json` хранит переданное сервису окружение, включая ключи провайдеров; `bootstrap-backups/` содержит копии `.env` (последние 10).
 
 Для RAG отдельно важно сохранить/зафиксировать:
 
@@ -128,7 +132,7 @@ custom_opencode/.env
 
 ## Runtime config backup
 
-Installer перед заменой существующего `opencode.json` создаёт timestamped backup.
+Installer перед заменой существующего `opencode.json` копирует его в `opencode.json.backup` (один слот, перезаписывается при каждом запуске). История с метками времени ведётся плагином `config-backup.js` при старте сервиса (`OPENCODE_CONFIG_BACKUP_DIR`, `OPENCODE_CONFIG_BACKUP_KEEP`).
 
 Это не заменяет backup `.env` и auth storage.
 

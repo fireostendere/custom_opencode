@@ -59,6 +59,16 @@ projects = json.loads(server.transform_json_response("GET", "/api/project", b"[]
 assert projects[-1]["id"] == server.SCRATCH_PROJECT_ID
 server.cleanup_scratch_directory(workspace)
 assert not os.path.exists(workspace)
+# Healing recreates only directories allocate_scratch_directory() hands out,
+# never an arbitrary tree a request names under the scratch root.
+server.heal_missing_scratch_directory(workspace)
+assert os.path.isdir(workspace)
+nested = os.path.join(str(server.SCRATCH_ROOT), "a", "b", "c")
+server.heal_missing_scratch_directory(nested)
+assert not os.path.exists(os.path.join(str(server.SCRATCH_ROOT), "a"))
+server.heal_missing_scratch_directory(os.path.join(str(server.SCRATCH_ROOT), "session-notahexname"))
+assert not os.path.exists(os.path.join(str(server.SCRATCH_ROOT), "session-notahexname"))
+server.cleanup_scratch_directory(workspace)
 
 root = server_plus.directory_snapshot()
 assert len(root["roots"]) == 1

@@ -67,6 +67,16 @@ ENGINEERING_HINT = re.compile(
 )
 
 
+def _inside_wsl() -> bool:
+    return bool(os.environ.get("WSL_DISTRO_NAME")) or os.path.exists(
+        "/proc/sys/fs/binfmt_misc/WSLInterop"
+    )
+
+
+def _full_machine_allowed() -> bool:
+    return os.environ.get("OPENCODE_ALLOW_FULL_MACHINE", "0").lower() in {"1", "true", "yes"}
+
+
 def _inside(path: Path, root: Path) -> bool:
     try:
         path.resolve(strict=False).relative_to(root.resolve(strict=False))
@@ -965,28 +975,30 @@ class SandboxManager:
     def path_allowed(self, path: str, root: str, profile: str, *, write: bool) -> bool:
         profile = self.normalize(profile)
         if profile == "full-machine":
-            return os.environ.get("OPENCODE_ALLOW_FULL_MACHINE", "0").lower() in {
-                "1",
-                "true",
-                "yes",
-            }
+            return _full_machine_allowed()
         target = Path(path).expanduser()
         target = target if target.is_absolute() else Path(root) / target
         return _inside(target, Path(root)) and (profile != "safe" or not write)
 
-    def wrap_shell(self, command: str, cwd: str, profile: str) -> dict[str, str]:
+    def wrap_shell(
+        self, command: str, cwd: str, profile: str, project_root: str | None = None
+    ) -> dict[str, str]:
+        """Wrap a shell command for `profile`.
+
+        `cwd` is where the command runs; `project_root` (default: cwd) is what
+        the sandbox exposes. A `cd src && npm test` must still see
+        `../node_modules`, so the bind covers the project, not the subdirectory.
+        """
         profile = self.normalize(profile)
-        root = str(Path(cwd).resolve(strict=False))
+        cwd_path = Path(cwd).resolve(strict=False)
+        root = str(Path(project_root).resolve(strict=False)) if project_root else str(cwd_path)
+        workdir = str(cwd_path) if _inside(cwd_path, Path(root)) else root
         if profile == "safe" and DANGEROUS_SHELL.search(command):
             raise PermissionError("dangerous shell command denied in safe sandbox")
         if profile == "full-machine":
-            if os.environ.get("OPENCODE_ALLOW_FULL_MACHINE", "0").lower() not in {
-                "1",
-                "true",
-                "yes",
-            }:
+            if not _full_machine_allowed():
                 raise PermissionError("full-machine sandbox requires explicit opt-in")
-            return {"command": command, "cwd": root, "shell": "/bin/sh"}
+            return {"command": command, "cwd": workdir, "shell": "/bin/sh"}
         if profile in {"safe", "repo-write"}:
             bwrap = shutil.which("bwrap")
             if not bwrap:
@@ -995,10 +1007,15 @@ class SandboxManager:
                     "true",
                     "yes",
                 }:
-                    return {"command": command, "cwd": root, "shell": "/bin/sh"}
+                    return {"command": command, "cwd": workdir, "shell": "/bin/sh"}
                 raise RuntimeError("bwrap is required for safe/repo-write shell execution")
             home = Path.home().resolve(strict=False)
-            hidden = home.parent if home.parent != Path("/") else home
+            hidden_roots = [home.parent if home.parent != Path("/") else home]
+            # Under WSL the Windows drives (C:\Users\<name> with browser
+            # profiles, .ssh, tokens) are mounted below /mnt and would stay
+            # readable through --ro-bind / /.
+            if _inside_wsl() and Path("/mnt").is_dir():
+                hidden_roots.append(Path("/mnt"))
             root_path = Path(root)
             if _inside(home, root_path):
                 raise PermissionError("sandbox root cannot expose the complete home tree")
@@ -1017,15 +1034,16 @@ class SandboxManager:
                 "/dev",
                 "--tmpfs",
                 "/tmp",
-                "--tmpfs",
-                str(hidden),
             ]
-            if _inside(root_path, hidden):
-                relative = root_path.relative_to(hidden)
-                current = hidden
-                for part in relative.parts:
-                    current = current / part
-                    args.extend(["--dir", str(current)])
+            for hidden in hidden_roots:
+                args.extend(["--tmpfs", str(hidden)])
+                if _inside(root_path, hidden):
+                    # Recreate only the path down to the project; its siblings stay hidden.
+                    relative = root_path.relative_to(hidden)
+                    current = hidden
+                    for part in relative.parts:
+                        current = current / part
+                        args.extend(["--dir", str(current)])
             args.extend(
                 [
                     "--dir",
@@ -1037,13 +1055,13 @@ class SandboxManager:
                     root,
                     root,
                     "--chdir",
-                    root,
+                    workdir,
                     "/bin/sh",
                     "-c",
                     command,
                 ]
             )
-            return {"command": shlex.join(args), "cwd": root, "shell": "/bin/sh"}
+            return {"command": shlex.join(args), "cwd": workdir, "shell": "/bin/sh"}
         if profile == "docker":
             if not shutil.which("docker"):
                 raise RuntimeError("docker sandbox requested but docker is unavailable")
@@ -1053,22 +1071,27 @@ class SandboxManager:
             network = (
                 "--network none " if os.environ.get("OPENCODE_DOCKER_NETWORK", "0") != "1" else ""
             )
-            wrapped = f"docker run --rm {network}-v {shlex.quote(mount)} -w /workspace {shlex.quote(self.docker_image)} /bin/sh -lc {shlex.quote(command)}"
-            return {"command": wrapped, "cwd": root, "shell": "/bin/sh"}
+            container_dir = str(Path("/workspace") / Path(workdir).relative_to(root))
+            wrapped = f"docker run --rm {network}-v {shlex.quote(mount)} -w {shlex.quote(container_dir)} {shlex.quote(self.docker_image)} /bin/sh -lc {shlex.quote(command)}"
+            return {"command": wrapped, "cwd": workdir, "shell": "/bin/sh"}
         if profile == "wsl":
-            if os.environ.get("WSL_DISTRO_NAME") or os.path.exists(
-                "/proc/sys/fs/binfmt_misc/WSLInterop"
-            ):
-                return {"command": command, "cwd": root, "shell": "/bin/sh"}
+            if _inside_wsl():
+                # Already inside WSL there is no boundary to cross: this is the
+                # host shell and needs the same opt-in as full-machine.
+                if not _full_machine_allowed():
+                    raise PermissionError(
+                        "wsl sandbox inside WSL runs on the host; requires OPENCODE_ALLOW_FULL_MACHINE=1"
+                    )
+                return {"command": command, "cwd": workdir, "shell": "/bin/sh"}
             wsl = shutil.which("wsl.exe") or shutil.which("wsl")
             if not wsl:
                 raise RuntimeError("WSL sandbox requested but wsl is unavailable")
             return {
-                "command": f"{shlex.quote(wsl)} --cd {shlex.quote(root)} -- /bin/sh -lc {shlex.quote(command)}",
-                "cwd": root,
+                "command": f"{shlex.quote(wsl)} --cd {shlex.quote(workdir)} -- /bin/sh -lc {shlex.quote(command)}",
+                "cwd": workdir,
                 "shell": "/bin/sh",
             }
-        return {"command": command, "cwd": root, "shell": "/bin/sh"}
+        return {"command": command, "cwd": workdir, "shell": "/bin/sh"}
 
 
 class SharedRAGService:
@@ -2032,7 +2055,7 @@ class ToolGateway:
         target = target.resolve(strict=False)
         if not self.sandbox.path_allowed(str(target), str(root), profile, write=False):
             raise PermissionError(f"shell cwd outside {profile} sandbox: {cwd}")
-        wrapped = self.sandbox.wrap_shell(command, str(target), profile)
+        wrapped = self.sandbox.wrap_shell(command, str(target), profile, project_root=str(root))
         scope = f"task:{task['id']}:shell"
         allowed_names = [
             x.strip()
@@ -2173,7 +2196,7 @@ class BranchStateService:
         copied = []
         if include_state and source:
             source_project = str(source[0].get("project_dir") or "")
-            target_project = str(target[0].get("project_dir") or source_project)
+            target_project = str((target[0] if target else source[0]).get("project_dir") or source_project)
             for item in self.store.memory_list(source_project, limit=200):
                 self.store.memory_set(target_project, item["key"], item["value"], item["category"])
             for item in self.store.decision_list(source_project, limit=200):

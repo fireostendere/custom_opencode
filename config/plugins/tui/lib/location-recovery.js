@@ -7,9 +7,11 @@ export function installLocationRecovery(context, onChange) {
   let disposed = false
 
   function current() {
-    const route = context.ui.router.current()
+    const route = context.ui.router?.current?.()
     if (route?.type !== "session") return
-    const ref = context.data.session.get(route.sessionID)?.location
+    let session
+    try { session = context.data.session.get(route.sessionID) } catch { return }
+    const ref = session?.location
     if (ref) return { sessionID: route.sessionID, ...ref }
   }
   function matches(a, b) {
@@ -55,7 +57,7 @@ export function installLocationRecovery(context, onChange) {
           if (!live()) break
           onChange({ ...target, attempt, checking: true })
           try {
-            location.invalidate(ref)
+            location.invalidate?.(ref)
             return await original.call(location, ref)
           } catch (error) { cause = error }
         }

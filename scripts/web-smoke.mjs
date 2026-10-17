@@ -1097,6 +1097,14 @@ for (const marker of ["doctorButton", "doctorDialog", "doctor.js", "doctor.css",
   if (index.includes(marker)) throw new Error(`Removed Doctor surface is still present: ${marker}`)
 }
 
+// Emphasis must not rewrite hrefs; an info string may follow the fence language.
+const linked = markdown.renderMarkdown("[init](https://example.invalid/pkg/__init__.py) *em* [**b**](https://example.invalid/a*b*c)")
+for (const marker of ['href="https://example.invalid/pkg/__init__.py"', "<em>em</em>", "<strong>b</strong>", 'href="https://example.invalid/a*b*c"']) {
+  if (!linked.includes(marker)) throw new Error(`markdown link/emphasis regression: ${marker} in ${linked}`)
+}
+const fenced = markdown.renderMarkdown("```python title=main.py\nprint(1)\n```\nafter")
+if (!fenced.includes('data-lang="python"') || fenced.includes("<p>```")) throw new Error(`markdown fence info string regression: ${fenced}`)
+
 console.log(
   "Web smoke passed: Build-only UX + always-on activity + native TUI Plan + dedicated Qwen/SOL orchestration + Runtime V2/V3",
 )

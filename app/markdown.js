@@ -51,13 +51,24 @@ function renderInline(text) {
     return key
   })
   value = escapeHtml(value)
-  value = value.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+  // Links are stashed like code so the emphasis passes below cannot rewrite
+  // `__init__.py` or `*` inside an href; only the label gets emphasis.
+  value = value.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g, (_, label, href) => {
+    const key = `\u0000CODE${codes.length}\u0000`
+    codes.push(`<a href="${href}" target="_blank" rel="noopener noreferrer">${emphasis(label)}</a>`)
+    return key
+  })
+  value = emphasis(value)
+  // split/join, not replace(): code such as `$&` or `$$` must not be read as a replacement pattern.
+  codes.forEach((html, index) => { value = value.split(`\u0000CODE${index}\u0000`).join(html) })
+  return value
+}
+
+function emphasis(value) {
   value = value.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   value = value.replace(/__([^_]+)__/g, '<strong>$1</strong>')
   value = value.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
   value = value.replace(/~~([^~]+)~~/g, '<del>$1</del>')
-  // split/join, not replace(): code such as `$&` or `$$` must not be read as a replacement pattern.
-  codes.forEach((html, index) => { value = value.split(`\u0000CODE${index}\u0000`).join(html) })
   return value
 }
 
@@ -75,7 +86,8 @@ export function renderMarkdown(markdown) {
   let i = 0
   while (i < lines.length) {
     const line = lines[i]
-    const fence = /^```([^\s`]*)\s*$/.exec(line)
+    // An info string may carry attributes after the language (```js title=x).
+    const fence = /^```([^\s`]*)(?:\s.*)?$/.exec(line)
     if (fence) {
       const lang = normalizeLang(fence[1])
       const code = []

@@ -22,6 +22,7 @@ assert.deepEqual(image.bytes, png)
 const text = parseClipboardProtocol(protocol("text/plain", Buffer.from("Привет", "utf8")))
 assert.equal(text.kind, "text")
 assert.equal(text.bytes.toString("utf8"), "Привет")
+assert.equal(parseClipboardProtocol(protocol("text/plain", Buffer.from("a\r\nb\rc", "utf8"))).bytes.toString("utf8"), "a\nb\nc", "Windows line endings are normalized")
 assert.equal(parseClipboardProtocol("empty\n").kind, "empty")
 for (const bad of [
   "wat\n",

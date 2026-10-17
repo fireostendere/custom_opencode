@@ -17,11 +17,15 @@ function currentDialog() {
   return null
 }
 
+let titleCounter = 0
+
 function prepareDialog(dialog) {
   dialog.setAttribute('aria-modal', 'true')
   const title = dialog.querySelector('.modal-head h3')
   if (title && !dialog.hasAttribute('aria-labelledby')) {
-    if (!title.id) title.id = `modal-title-${openDialogs.length + 1}`
+    // Static dialogs are all prepared at load with no dialog open, so a
+    // counter based on openDialogs gave every title the same id.
+    if (!title.id) title.id = `modal-title-${dialog.id || ++titleCounter}`
     dialog.setAttribute('aria-labelledby', title.id)
   }
   dialog.querySelectorAll('[data-close], [data-appearance-close], [data-workflow-close], [data-runtime-close]').forEach((button) => {

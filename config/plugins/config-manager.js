@@ -421,8 +421,9 @@ export default {
       bounded(mcpObserved, sessionID, true)
     }
     const stopEvents = ctx.event?.subscribe
-      ? startEvents(ctx, (event) => {
+      ? startEvents(ctx, async (event) => {
           if (event?.type === "mcp.status.changed" || event?.type === "mcp.tools.changed") mcpObserved.clear()
+          if (event?.type === "session.deleted") await forgetSessionProfiles(event.data?.sessionID)
         })
       : () => {}
     const receipt = async (sessionID, input, data) => {
@@ -437,6 +438,18 @@ export default {
     const save = async () => {
       syncManagedOrchestrations(registry.orchestrations)
       await ctx.storage.set(STORAGE_KEY, registry)
+    }
+    // `/mcp-profile` without scope stores a key per session (and session/agent);
+    // nothing else ever removes them from the durable registry.
+    async function forgetSessionProfiles(sessionID) {
+      const sessions = registry.mcpSettings?.sessions
+      if (!sessionID || !sessions) return
+      const keys = Object.keys(sessions).filter((key) => key === sessionID || key.startsWith(`${sessionID}/`))
+      if (!keys.length) return
+      const kept = { ...sessions }
+      for (const key of keys) delete kept[key]
+      registry = { ...registry, mcpSettings: { ...registry.mcpSettings, sessions: kept } }
+      await save()
     }
     const reloadAll = async () => {
       discovery.clear()

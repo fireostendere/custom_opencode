@@ -20,7 +20,7 @@ jobs:
           python-version: '3.12'
       - name: Install Playwright
         run: |
-          python -m pip install --disable-pip-version-check playwright
+          python -m pip install --disable-pip-version-check playwright==1.57.0
           python -m playwright install --with-deps chromium
       - name: Syntax check
         run: python -m py_compile scripts/local-web-harness.py scripts/browser-smoke.py scripts/web-fixture-e2e.py

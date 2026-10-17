@@ -8,7 +8,8 @@ let lastAttemptAt = 0
 
 function sessionID() {
   const match = /^#\/session\/([^/?]+)/.exec(location.hash || '')
-  return match ? decodeURIComponent(match[1]) : null
+  if (!match) return null
+  try { return decodeURIComponent(match[1]) } catch { return null }
 }
 
 async function request(path, options = {}) {

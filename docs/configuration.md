@@ -359,11 +359,11 @@ Edge-панели `План` и `Лимиты` одинаково работаю
 ## Repository index
 
 ```text
-OPENCODE_REPO_EMBEDDINGS=auto
+OPENCODE_REPO_EMBEDDINGS=hash
 OPENCODE_REPO_EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2
 ```
 
-`auto` использует sentence-transformers при наличии и иначе deterministic hashed embeddings. Внешний model API для repository index не обязателен.
+По умолчанию `hash`: deterministic hashed embeddings без загрузки моделей во время запроса. `auto` использует sentence-transformers при наличии и иначе тот же hashed index. Внешний model API для repository index не обязателен.
 
 ## Runtime/tool policy
 
@@ -383,7 +383,7 @@ OPENCODE_STUCK_ACTION=warn
 ## Secrets
 
 ```text
-OPENCODE_SECRET_PREFIXES=TOKEN_PLAN_;OPENAI_;GITHUB_;MCP_;QDRANT_;HF_
+OPENCODE_SECRET_PREFIXES='TOKEN_PLAN_;OPENAI_;GITHUB_;MCP_;QDRANT_;HF_;GEMINI_;GOOGLE_'
 OPENCODE_SECRET_SCOPES=
 OPENCODE_SHELL_SECRET_REFS=
 ```
@@ -473,7 +473,7 @@ OPENCODE_AUTH_COOKIE_SECURE=auto
 OPENCODE_WEB_HOST=localhost
 OPENCODE_WEB_PORT=4098
 OPENCODE_WEB_ALLOW_LOCAL=0
-OPENCODE_PROJECT_ROOTS=~/code;~/projects
+OPENCODE_PROJECT_ROOTS='~/code;~/projects'
 
 TOKEN_PLAN_API_KEY=<set>
 TOKEN_PLAN_ANTHROPIC_BASE_URL=https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1

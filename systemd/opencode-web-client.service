@@ -1,6 +1,9 @@
 [Unit]
 Description=OpenCode V2 ChatGPT-style web client
-After=opencode.service
+# The backend is `opencode2 service`, not a systemd unit; the web server exits
+# until it is up. Without this, five quick exits park the unit in `failed`
+# (default StartLimitBurst) and it never comes back once the backend does.
+StartLimitIntervalSec=0
 
 [Service]
 WorkingDirectory=__CUSTOM_OPENCODE_ROOT__/app
@@ -14,7 +17,7 @@ EnvironmentFile=-__CUSTOM_OPENCODE_ROOT__/.env
 # server_workflow.py composes the existing app/server_rag.py lifecycle with persistent workflow features.
 ExecStart=__PYTHON3__ __CUSTOM_OPENCODE_ROOT__/app/server_workflow.py
 Restart=always
-RestartSec=2
+RestartSec=5
 
 [Install]
 WantedBy=default.target

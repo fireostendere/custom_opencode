@@ -74,7 +74,7 @@ async function doPort(context, current) {
   const portString = await ask(context, {
     title: "Порт web server",
     placeholder: "1-65535",
-    value: String(current.port),
+    value: current.port ? String(current.port) : undefined,
     validate: (value) => {
       const n = Number.parseInt(value, 10)
       if (!Number.isInteger(n) || n < 1 || n > 65535 || String(n) !== value) return "Порт должен быть числом 1-65535"
@@ -136,6 +136,7 @@ async function doAddUser(context) {
 
   if (mode === "generate") {
     const value = await runControl(context, ["user-add", "--username", username])
+    if (!value?.generatedPassword) throw new Error("пароль не получен от webserver-control; пользователь мог быть создан без показа пароля")
     await context.ui.dialog.alert({
       title: "Пароль показан один раз",
       message: `${username}: ${value.generatedPassword}`,
@@ -249,7 +250,13 @@ async function menuLoop(context, initial) {
     } catch (error) {
       toast(context, `Server: ${error.message}`)
     }
-    current = await refreshStatus(context)
+    try {
+      current = await refreshStatus(context)
+    } catch (error) {
+      // A restart after "Порт и адрес" may time out one status call; keep the
+      // menu open with the previous status instead of closing the wizard.
+      toast(context, `Server: ${error.message}`)
+    }
   }
 }
 

@@ -637,4 +637,27 @@ env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR
   exit 1
 }
 
+# A failed install after the fast-forward returns the checkout to the previous
+# commit instead of leaving new static assets next to the old running server.
+ROLLBACK=$(mktemp -d)
+mkdir -p "$ROLLBACK/scripts" "$ROLLBACK/bin"
+cp "$ROOT/scripts/update.sh" "$ROLLBACK/scripts/update.sh"
+printf '#!/usr/bin/env bash\nexit 7\n' >"$ROLLBACK/scripts/install.sh"
+chmod +x "$ROLLBACK/scripts/install.sh"
+cat >"$ROLLBACK/bin/git" <<'EOF'
+#!/usr/bin/env bash
+printf 'git %s\n' "$*" >>"${ROLLBACK_LOG:?}"
+if [[ "${1:-}" == rev-parse ]]; then
+  if [[ "${2:-}" == HEAD ]]; then echo previous-sha; else pwd; fi
+fi
+exit 0
+EOF
+chmod +x "$ROLLBACK/bin/git"
+if ROLLBACK_LOG="$ROLLBACK/log" PATH="$ROLLBACK/bin:$PATH" bash "$ROLLBACK/scripts/update.sh" >"$ROLLBACK/out" 2>&1; then
+  echo "update.sh reported success after a failed install" >&2
+  exit 1
+fi
+grep -Fxq 'git reset --keep previous-sha' "$ROLLBACK/log"
+rm -rf "$ROLLBACK"
+
 echo "Install/update regression passed: isolated V3 render + exact TUI tree + Code Mode/compaction + pinned origin/main updater"

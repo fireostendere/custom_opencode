@@ -76,7 +76,10 @@ export default Plugin.define({
         }
         const pathBytes = Buffer.from(file.path, "utf8")
         inject(editor, pathBytes, { mimeType: "text/plain", kind: "text" })
-        const timer = setTimeout(() => cleanup(), 60_000)
+        // The path is sent with the prompt, which may be typed for minutes:
+        // keep the file well past that; dispose still removes it.
+        const timer = setTimeout(() => cleanup(), 30 * 60_000)
+        timer.unref?.()
         const cleanup = () => {
           clearTimeout(timer)
           cleanups.delete(cleanup)

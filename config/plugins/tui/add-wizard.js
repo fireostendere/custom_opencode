@@ -262,7 +262,8 @@ async function configure(context) {
   if (action === "status") {
     const state = await managed(context)
     const report = state.exposure
-    const connections = await context.client.mcp.list({ location: context.location })
+    const listed = await context.client.mcp.list({ location: context.location })
+    const connections = Array.isArray(listed) ? listed : Array.isArray(listed?.data) ? listed.data : []
     return context.ui.dialog.alert({
       title: `MCP profile: ${state.mode}`,
       message: [
@@ -276,7 +277,7 @@ async function configure(context) {
               ...report.warnings,
             ]
           : ["No model request observed yet. Send a prompt to measure exposure."]),
-        ...connections.map((server) => `${server.name}: ${server.status.status}`),
+        ...connections.map((server) => `${server.name}: ${server.status?.status ?? "unknown"}`),
         "Profiles use native tool definitions; stored Code Mode resumes when no profiles exist.",
       ].join("\n"),
     })
@@ -766,7 +767,10 @@ export default Plugin.define({
   setup(context) {
     let busy = false
     const run = (parsed) => {
-      if (busy) return true
+      if (busy) {
+        toast(context, "Визард уже открыт: закройте его и повторите команду")
+        return true
+      }
       if (parsed?.type !== "wizard") return processParsed(context, parsed)
       busy = true
       void openWizard(context, parsed.kind).finally(() => {

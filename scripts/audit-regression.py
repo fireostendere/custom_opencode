@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import site
 import subprocess
 import sys
 import tempfile
@@ -69,6 +70,11 @@ def main() -> int:
             Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ms-playwright"
         ).resolve()
     )
+    # pip --user installs (playwright, mcp) live in the real HOME's user site;
+    # swapping HOME per suite would hide them exactly like the browser cache.
+    user_site = site.getusersitepackages() if site.ENABLE_USER_SITE else ""
+    if not (user_site and os.path.isdir(user_site)):
+        user_site = ""
     rows = []
     report = {
         "startedAt": datetime.now(timezone.utc).isoformat(),
@@ -111,6 +117,10 @@ def main() -> int:
             )
             if os.environ.get("OPENCODE2_BIN"):
                 env["OPENCODE2_BIN"] = os.environ["OPENCODE2_BIN"]
+            if user_site:
+                env["PYTHONPATH"] = os.pathsep.join(
+                    part for part in (user_site, os.environ.get("PYTHONPATH", "")) if part
+                )
             # Safety valve, not harness contamination: keep the pinned CLI's own updater
             # detached from any bare invocation inside suites (the OPENCODE_* strip above
             # would otherwise drop the workflow-level gate).
