@@ -291,6 +291,76 @@ try {
   auto.close()
 }
 
+// One narrator per campaign: an explicit start takes it; an automatic re-arm never takes it back.
+{
+  const owned = createDndWatcher({ now: () => 0, read: async () => state(), wake: async () => {} })
+  const first = { sessionID: "ses_first", agent: "dnd-narrator" }, second = { sessionID: "ses_second", agent: "dnd-narrator" }
+  owned.start(input, first, { auto: true })
+  owned.start(input, second)
+  assert.equal(owned.status(first.sessionID).status, "stopped", "an explicit start stops the other session's wait on the campaign")
+  assert.equal(owned.start(input, first, { auto: true }).status, "stopped", "an automatic re-arm does not take the campaign back")
+  assert.equal(owned.status(second.sessionID).status, "waiting")
+  assert.equal(owned.start({ ...input, campaignId: "00000000-0000-4000-8000-000000000002" }, first, { auto: true }).status, "waiting", "other campaigns stay free")
+  owned.drop(second.sessionID)
+  assert.equal(owned.start(input, first, { auto: true }).status, "waiting", "a dropped owner frees the campaign")
+  owned.close()
+}
+
+// Global rounds: declarations wait for the barrier; a sealed round left unresolved wakes the DM again.
+{
+  let clock = 0
+  let answer
+  const woke = []
+  const round = createDndWatcher({ now: () => clock, read: async () => answer, wake: async (_sessionID, result) => woke.push(result) })
+  const roundContext = { sessionID: "ses_round", agent: "dnd-narrator" }
+  const campaign = phase => ({ status: "active", gameSettings: { globalTurn: { enabled: true } }, globalTurnState: { phase, roundNumber: 4, actionsByCharacter: {} } })
+  const declaration = { seq: 11, authorType: "player", kind: "do" }
+  const rearm = () => { round.stop(roundContext.sessionID); round.start(input, roundContext, { auto: true }) }
+  for (const phase of ["active", "quorum_delay"]) {
+    rearm()
+    answer = state({ currentSeq: 11, nextCursor: 11, messages: [declaration], campaign: campaign(phase) })
+    await round.tick()
+  }
+  assert.equal(woke.length, 0, "a declaration during round collection does not wake the DM")
+  rearm()
+  answer = state({ currentSeq: 11, nextCursor: 11, messages: [declaration], playerWhispers: [{ id: "w" }], campaign: campaign("active") })
+  await round.tick()
+  assert.equal(woke.at(-1).reason, "whisper", "whispers still wake during collection")
+  rearm()
+  answer = state({ currentSeq: 11, nextCursor: 11, messages: [declaration], campaign: campaign("active"), encounter: { encounter: { id: "fight" } } })
+  await round.tick()
+  assert.equal(woke.at(-1).reason, "player", "turns in a fight still wake")
+
+  rearm()
+  answer = state({ currentSeq: 12, nextCursor: 12, events: [{ seq: 12, type: "global_turn_ready" }], campaign: campaign("ready") })
+  await round.tick()
+  assert.equal(woke.at(-1).reason, "global_turn_ready")
+  const sealed = woke.length
+  // The DM's read failed and its turn ended unresolved: the re-arm starts from the old cursor.
+  rearm()
+  await round.tick()
+  clock += 4 * 60_000
+  await round.tick()
+  assert.equal(woke.length, sealed, "the event wakes once and a fresh wait stays quiet")
+  clock += 60_000
+  await round.tick()
+  assert.equal(woke.length, sealed + 1, "a round still sealed after 5 quiet minutes wakes the DM again")
+  assert.equal(woke.at(-1).reason, "global_turn_ready")
+  rearm()
+  await round.tick()
+  assert.equal(woke.length, sealed + 1, "each wake starts a new quiet period")
+  clock += 5 * 60_000
+  answer = state({ ...answer, pendingRolls: [{ id: "roll" }] })
+  await round.tick()
+  assert.equal(woke.length, sealed + 1, "an open physical roll is the players' move")
+  answer = state({ currentSeq: 13, nextCursor: 13, campaign: campaign("waiting") })
+  await round.tick()
+  clock += 5 * 60_000
+  await round.tick()
+  assert.equal(woke.length, sealed + 1, "a closed round never wakes again")
+  round.close()
+}
+
 // Auto-watch plugin: a drained narrator read arms the wait after the turn; the operator controls it.
 {
   let events, command
@@ -852,18 +922,31 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
   try {
     const old = { sessionID: "ses_old", agent: "dnd-narrator", messageID: "msg_o", id: "call_o" }
     const young = { sessionID: "ses_young", agent: "dnd-narrator", messageID: "msg_y", id: "call_y" }
+    // The table restored from the previous block holds the campaign: a reader does not join it.
     await narratorTool.execute({ operation: "read", campaignId, afterSeq: 0 }, old)
     await shared.emit("session.idle", { sessionID: old.sessionID })
+    assert.equal((await shared.status(old.sessionID)).status, "stopped", "a restored table keeps its campaign")
+    await narratorTool.execute({ operation: "connect", campaignId }, old)
+    await shared.emit("session.idle", { sessionID: old.sessionID })
     assert.equal((await shared.status(old.sessionID)).status, "waiting")
+    assert.equal((await shared.status(narrator.sessionID)).status, "stopped", "connect takes the table from the restored session")
     await narratorTool.execute({ operation: "read", campaignId, afterSeq: 0 }, young)
     await shared.emit("session.idle", { sessionID: young.sessionID })
     assert.equal((await shared.status(old.sessionID)).status, "waiting", "reading alone does not take the table")
+    assert.equal((await shared.status(young.sessionID)).status, "stopped", "nor does it narrate alongside")
     await narratorTool.execute({ operation: "connect", campaignId }, young)
-    await wait(50)
+    await shared.emit("session.idle", { sessionID: young.sessionID })
     assert.equal((await shared.status(young.sessionID)).status, "waiting")
     assert.equal((await shared.status(old.sessionID)).status, "stopped", "a new connection stops the old narrator")
     await shared.emit("session.idle", { sessionID: old.sessionID })
     assert.equal((await shared.status(old.sessionID)).status, "stopped", "the old narrator does not re-arm itself")
+    // 2026-10-18: an operator prompt in the evicted session read ODM again, and its
+    // re-arm narrated the table alongside the new session for 3 hours.
+    await narratorTool.execute({ operation: "read", campaignId, afterSeq: 0 }, old)
+    await shared.emit("session.idle", { sessionID: old.sessionID })
+    assert.equal((await shared.status(old.sessionID)).status, "stopped", "an evicted narrator that reads again stays off")
+    assert.equal((await shared.status(young.sessionID)).status, "waiting")
+    await shared.emit("session.deleted", { sessionID: old.sessionID })
     await wait(300)
     const sessions = Object.keys(JSON.parse(readFileSync(stateFileFor(location), "utf8")).sessions)
     assert.ok(sessions.includes(young.sessionID) && !sessions.includes(old.sessionID), "the panel shows one narrator for the table")
