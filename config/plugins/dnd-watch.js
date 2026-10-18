@@ -36,6 +36,8 @@ const ENDPOINT_CACHE_MS = 60_000
 const TURN_RETRY_MS = 30_000
 const TURN_RETRY_MAX_MS = 10 * 60_000
 const TURN_MAX_ATTEMPTS = 6
+// A sealed global round waits for the DM: a quiet wait wakes it again this often.
+const READY_REWAKE_MS = 5 * 60_000
 const LOG_LIMIT = 8
 const STATE_HEARTBEAT_MS = 15_000
 // DM status reports ("Мастер думает…" for players; DND_WATCH_STATUS=0
@@ -63,22 +65,33 @@ const QUIET = new Set([
 // model twice for it. The caller takes the first one not woken yet: an
 // unanswered whisper that already woke the model once must not hide the player
 // turn that arrives after it (2026-10-09: a clarified combat turn sat unread).
-function* triggers(state, afterSeq) {
+// quietSlot is set once the wait has been quiet for READY_REWAKE_MS.
+function* triggers(state, afterSeq, quietSlot) {
+  const globalMode = Boolean(state.campaign?.gameSettings?.globalTurn?.enabled)
+  const turn = state.campaign?.globalTurnState
+  const encounter = state.encounter
+  // A global round still collecting declarations: each one only waits for the
+  // barrier (global_turn_ready), so waking the DM for it writes nothing
+  // (2026-10-18 audit: 198 empty wakes). Combat turns still wake.
+  const collecting = globalMode && !encounter && (turn?.phase === "active" || turn?.phase === "quorum_delay")
   const asks = state.asks?.filter(ask => ask.status === "pending") ?? []
   if (asks.length) yield { reason: "ask", key: `ask:${asks.map((ask, index) => ask.id ?? ask.askId ?? index).sort().join(",")}` }
   if (state.playerWhispers?.length) yield { reason: "whisper", key: `whisper:${state.playerWhispers.map((whisper, index) => whisper.id ?? index).sort().join(",")}` }
   for (const event of state.events ?? []) {
     if (sequence(event.seq) && event.seq > afterSeq && EVENTS.has(event.type)) yield { reason: event.type, key: `${event.type}:${event.seq}` }
   }
-  const players = state.messages?.filter(message => sequence(message.seq) && message.seq > afterSeq && message.authorType === "player" && message.kind !== "ooc" && !/^\s*\(ooc\)/i.test(message.content || "")) ?? []
+  const players = collecting ? [] : state.messages?.filter(message => sequence(message.seq) && message.seq > afterSeq && message.authorType === "player" && message.kind !== "ooc" && !/^\s*\(ooc\)/i.test(message.content || "")) ?? []
   if (players.length) yield { reason: "player", key: `player:${Math.max(...players.map(message => message.seq))}` }
+  // A sealed round the DM left unresolved (its read failed, its turn died) has
+  // nothing else to ring for it: wake again while it stays sealed (2026-10-18:
+  // an hour of ODM errors, then an hour of silence with the round ready).
+  // An open physical roll is the players' move, not the DM's.
+  if (quietSlot !== undefined && globalMode && turn?.phase === "ready" && state.campaign?.status === "active" && !state.pendingRolls?.length)
+    yield { reason: "global_turn_ready", key: `ready:${turn.roundNumber}:${quietSlot}` }
 
   // Autopilot candidate check:
-  const globalMode = Boolean(state.campaign?.gameSettings?.globalTurn?.enabled)
-  const turn = state.campaign?.globalTurnState
-  const encounter = state.encounter
   if (!encounter) {
-    if (globalMode && turn && (turn.phase === "active" || turn.phase === "quorum_delay") && sequence(turn.roundNumber)) {
+    if (collecting && sequence(turn.roundNumber)) {
       const actions = turn.actionsByCharacter || {}
       const members = Array.isArray(state.members) ? state.members : []
       const sheets = Array.isArray(state.sheets) ? state.sheets : []
@@ -128,7 +141,7 @@ async function readSignals(read, query, context) {
     if (!Array.isArray(value.entries) || value.offset !== offset || (hash && hash !== value.hash) || !value.hash || value.complete !== (value.nextPage === null)) throw new Error("Invalid ODM page")
     hash = value.hash
     for (const entry of value.entries) {
-      if (ARRAYS.has(entry.key) || ["members", "sheets"].includes(entry.key)) (state[entry.key] ??= []).push(entry.value)
+      if (ARRAYS.has(entry.key) || ["members", "sheets", "pendingRolls"].includes(entry.key)) (state[entry.key] ??= []).push(entry.value)
       if (["timelineEpoch", "campaign", "encounter"].includes(entry.key)) state[entry.key] = entry.value
     }
     offset += value.entries.length
@@ -169,8 +182,22 @@ export function createDndWatcher({ read, wake, now = Date.now, onChange = () => 
     if (entry) { entry.status = "stopped"; entry.controller.abort(); entries.delete(sessionID); changed(sessionID) }
     return { status: "stopped" }
   }
-  // A table that left this process (deleted, taken over): its wake keys go too.
-  const drop = sessionID => { stop(sessionID); lastWake.delete(sessionID); return { status: "stopped" } }
+  // One narrator per campaign: the session that explicitly took it (explicit
+  // start, connect) stops the other waits there, and their automatic re-arms
+  // stay off. 2026-10-18: an evicted session re-armed itself after an operator
+  // prompt and narrated the table alongside the new one for 3 hours.
+  const owners = new Map()
+  const claim = (campaignId, sessionID) => {
+    owners.set(campaignId, sessionID)
+    for (const entry of waiting()) if (entry.campaignId === campaignId && entry.context.sessionID !== sessionID) stop(entry.context.sessionID)
+  }
+  // A table that left this process (deleted, taken over): its wake keys and campaigns go too.
+  const drop = sessionID => {
+    stop(sessionID)
+    lastWake.delete(sessionID)
+    for (const [campaignId, owner] of owners) if (owner === sessionID) owners.delete(campaignId)
+    return { status: "stopped" }
+  }
   async function finish(entry, status, reason) {
     if (!active(entry)) return
     entry.status = status
@@ -197,6 +224,7 @@ export function createDndWatcher({ read, wake, now = Date.now, onChange = () => 
       const timeout = input.timeoutSeconds ?? 3600
       if (!Number.isInteger(timeout) || timeout < 60 || timeout > 86400) throw new Error("timeoutSeconds must be 60..86400")
       if (!context.sessionID) throw new Error("Missing session identity")
+      if (auto && (owners.get(input.campaignId) ?? context.sessionID) !== context.sessionID) return view()
       const previous = entries.get(context.sessionID)
       if (previous?.status === "waiting") {
         if (previous.campaignId === input.campaignId && previous.afterSeq === input.afterSeq && Boolean(previous.auto) === auto) return view(previous)
@@ -204,6 +232,7 @@ export function createDndWatcher({ read, wake, now = Date.now, onChange = () => 
         if (!previous.auto && auto) return view(previous)
         if (!previous.auto && !auto) throw new Error("Stop the active watcher before changing campaign or cursor")
       }
+      if (!auto) claim(input.campaignId, context.sessionID)
       stop(context.sessionID)
       // Bound the map: evict the oldest finished entries first.
       for (const [id, old] of entries) {
@@ -217,7 +246,7 @@ export function createDndWatcher({ read, wake, now = Date.now, onChange = () => 
         expiresAt: now() + timeout * 1000, timeoutMs: timeout * 1000, controller,
         context: { ...context, signal: controller.signal }, busy: false,
         auto, errors: 0, retryAt: delayMs > 0 ? now() + delayMs : 0,
-        dueAt: 0, poked: false, lastReadAt: 0,
+        dueAt: 0, poked: false, lastReadAt: 0, armedAt: now(),
       }
       entries.set(context.sessionID, entry)
       changed(context.sessionID)
@@ -240,6 +269,7 @@ export function createDndWatcher({ read, wake, now = Date.now, onChange = () => 
     // A woken turn failed: the same input may wake the model again.
     forget: forgetLast,
     drop,
+    claim,
     // Push doorbell: read the campaign's waits as soon as the read gap allows.
     // Returns when the earliest of them is due, or undefined when none waits.
     poke(campaignId) {
@@ -289,7 +319,7 @@ export function createDndWatcher({ read, wake, now = Date.now, onChange = () => 
           const sessionID = entry.context.sessionID
           const candidates = entry.epoch && state.timelineEpoch !== entry.epoch
             ? [{ reason: "resync", key: `resync:${state.timelineEpoch}` }]
-            : triggers(state, entry.scanSeq)
+            : triggers(state, entry.scanSeq, now() - entry.armedAt >= READY_REWAKE_MS ? Math.floor(now() / READY_REWAKE_MS) : undefined)
           const trigger = [...candidates].find(candidate => !(entry.auto && lastWake.get(sessionID)?.has(candidate.key)))
           if (trigger) {
             remember(sessionID, trigger.key)
@@ -741,6 +771,7 @@ export default {
     async function takeOver(sessionID, campaignId) {
       if (disposed || (await ctx.session.get({ sessionID })).parentID || tables.get(sessionID)?.campaignId !== campaignId) return
       const dropped = evict(sessionID, campaignId)
+      watcher.claim(campaignId, sessionID)
       if (!dropped) return
       note(sessionID, `стол забран у прошлых сессий нарратора (${dropped})`)
       reconcileLinks()
@@ -796,7 +827,10 @@ export default {
         return false
       }
       const delayMs = entry.turn?.state === "retry" ? Math.max(0, entry.turn.retryAt - Date.now()) : 0
-      watcher.start({ campaignId: entry.campaignId, afterSeq: entry.cursor, timeoutSeconds: AUTO_TIMEOUT_SECONDS }, entry.context, { auto: true, delayMs })
+      if (watcher.start({ campaignId: entry.campaignId, afterSeq: entry.cursor, timeoutSeconds: AUTO_TIMEOUT_SECONDS }, entry.context, { auto: true, delayMs }).status !== "waiting") {
+        note(sessionID, "автоожидание не взведено: стол ведёт другая сессия (connect заберёт)")
+        return false
+      }
       reconcileLinks()
       kick()
       return true
@@ -820,6 +854,7 @@ export default {
         })
         // Older files may hold several sessions on one campaign: the last one saved keeps it.
         evict(sessionID, value.campaignId)
+        watcher.claim(value.campaignId, sessionID)
         restored.push(sessionID)
         note(sessionID, "восстановлен после перезапуска opencode")
       }
@@ -833,7 +868,7 @@ export default {
         await Promise.all(sessionIDs.map(sessionID => arm(sessionID).catch(() => { failed.push(sessionID) })))
         if (!failed.length || disposed) return
         if (attempt < 2) return rearm(failed, attempt + 1)
-        for (const sessionID of failed) tables.delete(sessionID)
+        for (const sessionID of failed) { tables.delete(sessionID); watcher.drop(sessionID) }
         publish()
       }, attempt ? 10_000 : 1000)
       restoreTimer.unref?.()
@@ -900,6 +935,8 @@ export default {
         if (action === "auto") {
           const entry = table(sessionID)
           Object.assign(entry, { auto: true, failures: 0, turn: undefined })
+          // The operator's explicit choice takes the table for this session.
+          if (entry.campaignId) watcher.claim(entry.campaignId, sessionID)
           note(sessionID, "включён оператором")
           await arm(sessionID)
         }
