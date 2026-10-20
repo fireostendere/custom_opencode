@@ -1,4 +1,5 @@
 import { startEvents } from '../events.js'
+import { createHash } from 'node:crypto'
 
 const TOOLS = new Set(['odm_narrator', 'odm_narrator_odm_narrator'])
 const RESET_EVENTS = new Set([
@@ -16,6 +17,13 @@ const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value
 const sequence = value => Number.isSafeInteger(value) && value >= 0
 const keyOf = input => JSON.stringify([input.campaignId, input.projection ?? 'live'])
 const CHARACTER_REF_ERROR = /Unknown (?:characterId|targetCharacterId|casterId)|needs [^\n]*\((?:characterId|targetCharacterId|casterId)\)/i
+const CATALOG_ENTRIES = 64
+const hash = value => createHash('sha256').update(value).digest('hex')
+const canonical = value => {
+  if (Array.isArray(value)) return value.map(canonical)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])]))
+}
 
 function decode(result) {
   let value = result
@@ -153,8 +161,15 @@ export function createDndStateCache() {
     const text = typeof result?.content === 'string' ? result.content
       : Array.isArray(result?.content) && result.content.length === 1 && result.content[0].type === 'text' ? result.content[0].text : null
     if (!text || result.isError) return result
-    const seen = states.catalogs ??= new Map(), key = JSON.stringify({ ...query, campaignId: undefined })
-    if (seen.get(key) !== text) { seen.set(key, text); return result }
+    // Only equality is needed: retaining a whole schema for every distinct lookup
+    // kept megabytes of old tool output alive even after its turn had finished.
+    const seen = states.catalogs ??= new Map()
+    const key = hash(JSON.stringify(canonical({ ...query, campaignId: undefined }))), value = hash(text)
+    const unchanged = seen.get(key) === value
+    seen.delete(key)
+    seen.set(key, value)
+    while (seen.size > CATALOG_ENTRIES) seen.delete(seen.keys().next().value)
+    if (!unchanged) return result
     return withText(result, null, { unchanged: true, note: 'Same catalog answer as your earlier call with these arguments in this session.' })
   }
   function wrap(execute) {

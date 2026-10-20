@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { mock } from "node:test"
 import { setImmediate as immediate } from "node:timers/promises"
+import { createHash } from "node:crypto"
 import plugin from "../config/plugins/goal.js"
 import { filterHardwareTools } from "../config/plugins/hardware-orchestrator.js"
 
@@ -19,6 +20,7 @@ async function harness() {
   const ctx = {
     location: { directory },
     storage: {
+      get: async key => structuredClone(db.get(key)),
       scan: async ({ prefix, after, limit }) => {
         const entries = [...db].filter(([key]) => key.startsWith(prefix) && (!after || key > after)).sort(([a], [b]) => a.localeCompare(b)).slice(0, limit).map(([key, value]) => ({ key, value }))
         return { entries }
@@ -173,9 +175,106 @@ try {
   assert.equal(h.goal().status, "blocked")
   await h.emit("session.deleted")
   assert.equal(db.size, 0)
+
+  await h.cleanup()
+  const prefix = `goals:${createHash('sha256').update(directory).digest('hex')}:`
+  const historical = (id, status = 'completed') => ({ id: 'goal-' + id, status, objective: 'Historical ' + id, summary: 'Saved result', turns: 2, failures: 0 })
+  for (let i = 0; i < 100; i++) db.set(prefix + 'history-' + i, historical(i))
+  db.set(prefix + 'untouched-completed', historical('untouched'))
+  db.set(prefix + 'paused', historical('paused', 'paused'))
+  db.set(prefix + 'legacy-blocked', { ...historical('legacy', 'blocked'), summary: 'Provider error '.repeat(160) })
+  h = await harness()
+  const commandFor = (id, text) => h.command.execute({ sessionID: id, prompt: { text } })
+  await commandFor('legacy-blocked', 'status')
+  assert.match(h.notices.at(-1).text, /Goal: blocked\nHistorical legacy/, 'older blocked summaries may exceed the tool summary limit')
+  await commandFor('legacy-blocked', 'resume')
+  await advance(0)
+  assert.equal(h.wakes().at(-1).sessionID, 'legacy-blocked')
+  await commandFor('legacy-blocked', 'stop')
+  for (let i = 0; i < 100; i++) {
+    await commandFor('history-' + i, 'status')
+    assert.match(h.notices.at(-1).text, new RegExp('Historical ' + i))
+  }
+  await commandFor('history-0', 'status')
+  assert.match(h.notices.at(-1).text, /Historical 0/, 'eviction must not discard durable goal history')
+  await assert.rejects(commandFor('history-0', 'resume'), /Нет незавершённой/)
+  await commandFor('paused', 'resume')
+  await advance(0)
+  assert.equal(h.wakes().at(-1).sessionID, 'paused', 'paused goals restore and resume on demand')
+  await commandFor('paused', 'stop')
+  await h.emit('session.deleted', { sessionID: 'untouched-completed' })
+  assert.equal(db.has(prefix + 'untouched-completed'), false, 'deletion must remove a goal that was never loaded into RAM')
+
+  const storageGet = h.ctx.storage.get
+  const deletedValue = historical('deleted', 'paused')
+  db.set(prefix + 'race-delete', deletedValue)
+  let releaseRead
+  h.ctx.storage.get = key => key === prefix + 'race-delete' ? new Promise(resolve => { releaseRead = resolve }) : storageGet(key)
+  const restoringDeleted = commandFor('race-delete', 'resume')
+  await flush()
+  assert.equal(typeof releaseRead, 'function')
+  await h.emit('session.deleted', { sessionID: 'race-delete' })
+  releaseRead(deletedValue)
+  await restoringDeleted
+  await advance(0)
+  assert.equal(db.has(prefix + 'race-delete'), false, 'a delayed read cannot resurrect a deleted goal')
+  assert.equal(h.wakes().some(value => value.sessionID === 'race-delete'), false)
+  h.ctx.storage.get = storageGet
+
+  db.set(prefix + 'race-move', historical('moved', 'paused'))
+  const sessionGet = h.ctx.session.get
+  let releasePrimary
+  h.ctx.session.get = input => input.sessionID === 'race-move' ? new Promise(resolve => { releasePrimary = resolve }) : sessionGet(input)
+  const restoringMoved = commandFor('race-move', 'resume')
+  await flush()
+  assert.equal(typeof releasePrimary, 'function')
+  await h.emit('session.moved', { sessionID: 'race-move' })
+  releasePrimary({ agent: 'build', location: { directory } })
+  await restoringMoved
+  await advance(0)
+  assert.equal(db.get(prefix + 'race-move').status, 'paused')
+  assert.equal(h.wakes().some(value => value.sessionID === 'race-move'), false, 'moving during validation cancels the stale resume')
+  h.ctx.session.get = sessionGet
+
+  const storageSet = h.ctx.storage.set
+  let releaseWrite
+  h.ctx.storage.set = async (key, value) => {
+    if (key === prefix + 'race-write') await new Promise(resolve => { releaseWrite = resolve })
+    return storageSet(key, value)
+  }
+  const writingDeleted = commandFor('race-write', 'Start a new goal')
+  await flush()
+  assert.equal(typeof releaseWrite, 'function')
+  await h.emit('session.deleted', { sessionID: 'race-write' })
+  releaseWrite()
+  await writingDeleted
+  await advance(0)
+  assert.equal(db.has(prefix + 'race-write'), false, 'serialized removal follows a slow snapshot write')
+  assert.equal(h.wakes().some(value => value.sessionID === 'race-write'), false)
+  h.ctx.storage.set = storageSet
+
+  const previousValue = historical('replaced', 'paused')
+  db.set(prefix + 'race-replace', previousValue)
+  let releaseOld, firstRead = true
+  h.ctx.storage.get = key => {
+    if (key === prefix + 'race-replace' && firstRead) {
+      firstRead = false
+      return new Promise(resolve => { releaseOld = resolve })
+    }
+    return storageGet(key)
+  }
+  const staleStatus = commandFor('race-replace', 'status')
+  await flush()
+  await commandFor('race-replace', 'Newer objective')
+  releaseOld(previousValue)
+  await staleStatus
+  await commandFor('race-replace', 'status')
+  assert.match(h.notices.at(-1).text, /Newer objective/, 'an obsolete history read cannot replace a newly saved active goal')
+  assert.equal(db.get(prefix + 'race-replace').objective, 'Newer objective')
+  await commandFor('race-replace', 'stop')
 } finally {
   await h.cleanup()
   mock.timers.reset()
 }
-assert.equal(disposed, 9)
-console.log("Goal regression passed: continued finals, completion, stop/resume, steering, bounded retries, budgets, restart, isolation, deletion and cancellation race")
+assert.equal(disposed, 12)
+console.log("Goal regression passed: continued finals, completion, stop/resume, steering, bounded retries, budgets, restart, on-demand history, isolation, deletion/move/write races and cancellation")

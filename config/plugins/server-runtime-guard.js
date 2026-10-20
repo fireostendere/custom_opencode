@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { bodyChanged, capRequestBody, observeUsage } from "./tui/lib/request-budget.js"
+import { linkProviderRequest } from "./tui/lib/pending-provider-requests.js"
 import { resolveContextPolicy } from "./tui/lib/context-policy.js"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
@@ -495,7 +496,7 @@ export default {
       if (!bodyChanged(body, capped)) return
       const headers = new Headers(original.headers)
       headers.delete("content-length")
-      const request = new Request(original, { headers, body: JSON.stringify(capped) })
+      const request = linkProviderRequest(original, new Request(original, { headers, body: JSON.stringify(capped) }))
       requests.set(request, tracking)
       event.request = request
     })
