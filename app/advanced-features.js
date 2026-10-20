@@ -41,8 +41,6 @@ const state = {
   runStartedAt: null,
   observedRunning: false,
   lastDurationMs: 0,
-  attachments: [],
-  attachmentReads: [],
   submitPending: false,
   reviewDiffs: [],
 }
@@ -236,8 +234,7 @@ function selectSessionState(id) {
     state.currentActivityID = ''
     state.activityHydrated = false
     state.activityHydrating = false
-  state.attachments = []
-  state.attachmentReads = []
+  window.CustomOpenCodeControls?.clearAttachments?.()
   state.runStartedAt = null
   state.lastDurationMs = 0
   state.observedRunning = running()
@@ -391,47 +388,15 @@ async function chooseConcreteModel(ref) {
   return Boolean(await window.CustomOpenCodeControls?.changeModel?.({ providerID:provider, id:model },{source:'project-default'}))
 }
 
-function readAttachment(file, slot, sessionID = state.sessionID, revision = state.orchestrationRevision, attachments = state.attachments) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const value = { uri:reader.result, name:file.name || `file-${Date.now()}`, mime:file.type || 'application/octet-stream' }
-      if (state.sessionID === sessionID && state.orchestrationRevision === revision && state.attachments === attachments) attachments[slot] = value
-      resolve(value)
-    }
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  })
-}
-function captureFiles(files) {
-  const sessionID = state.sessionID, revision = state.orchestrationRevision, attachments = state.attachments
-  for (const file of [...(files || [])]) {
-    if (!file) continue
-    const slot = state.attachments.length
-    state.attachments.push(null)
-    state.attachmentReads.push(readAttachment(file, slot, sessionID, revision, attachments).catch((error) => {
-      if (state.sessionID === sessionID && state.orchestrationRevision === revision && state.attachments === attachments) attachments[slot] = null
-      console.warn('attachment mirror failed', error)
-    }))
-  }
-}
-async function awaitAttachments(attachments = state.attachments, reads = state.attachmentReads) {
-  const pending = [...reads]
-  if (state.attachments === attachments && state.attachmentReads === reads) state.attachmentReads = []
-  if (pending.length) await Promise.allSettled(pending)
-  return attachments.filter(Boolean)
-}
-function clearComposer() {
+function clearComposer(attachments) {
   const input = $('input')
   if (input) {
     input.value = ''
     input.dispatchEvent(new Event('input', { bubbles:true }))
   }
-  state.attachments = []
-  state.attachmentReads = []
   // Remove buttons carry indexes into app.js' list and are re-rendered after
   // each click, so clicking a captured batch left chips (and empty sends) behind.
-  if (window.CustomOpenCodeControls?.clearAttachments) window.CustomOpenCodeControls.clearAttachments()
+  if (window.CustomOpenCodeControls?.clearAttachments) window.CustomOpenCodeControls.clearAttachments(attachments)
   else for (let guard = 0; guard < 50; guard++) {
     const button = document.querySelector('[data-remove-attachment]')
     if (!button) break
@@ -466,32 +431,44 @@ async function interceptSubmit(event) {
   }
   const text = $('input')?.value.trim() || ''
   if (text.startsWith('/') && !text.startsWith('//')) return
+  const controls = window.CustomOpenCodeControls
+  const attachments = controls?.attachmentSnapshot?.()
   const hasAttachmentSurface = Boolean($('attachments') && !$('attachments').hidden && $('attachments').children.length)
-  if (!text && !hasAttachmentSurface && !state.attachments.length && !state.attachmentReads.length) return
+  if (!text && !hasAttachmentSurface && !attachments?.items.length) return
   event.preventDefault()
   event.stopImmediatePropagation()
   if (state.submitPending) return
   state.submitPending = true
-  const sessionID = state.sessionID, revision = state.orchestrationRevision, attachments = state.attachments, reads = state.attachmentReads
+  const sessionID = state.sessionID, revision = state.orchestrationRevision
   const input = $('input'),action = $('composerAction'),attach = $('attachButton')
   if (input) { input.value = ''; input.readOnly = true; input.dispatchEvent(new Event('input', { bubbles:true })) }
   if (action) action.disabled = true
   if (attach) attach.disabled = true
   try {
-    const files = await awaitAttachments(attachments, reads)
+    // Share the core composer's reads. A second FileReader used to keep every
+    // removed data URL alive through a completed promise, and race its indexes.
+    if (hasAttachmentSurface && !attachments) throw new Error('Вложения ещё не готовы — повторите отправку')
+    const files = attachments ? await controls.readAttachments(attachments) : []
     if (state.sessionID !== sessionID || state.orchestrationRevision !== revision) return
+    // Reopening the same chat clears the core composer without changing our
+    // session revision. Its cancelled file reads must cancel this send too.
+    if (attachments && controls.attachmentSnapshot().attachments !== attachments.attachments) {
+      if (input && !input.value) input.value = text
+      return
+    }
+    if (!text && !files.length) return
     const profile = currentProfile() === 'orchestrated' ? 'orchestrated' : 'direct'
     if (running()) {
       await request('/client-queue.json', { method:'POST', body:JSON.stringify({ sessionID, text, files, profile }) })
       if (state.sessionID !== sessionID || state.orchestrationRevision !== revision) return
-      clearComposer()
+      clearComposer(attachments)
       await refreshQueue(undefined, true)
       toast('Добавлено в серверную очередь')
       return
     }
     const accepted = await request('/client-send.json', { method:'POST', body:JSON.stringify({ sessionID, text, files, profile }) })
     if (state.sessionID !== sessionID || state.orchestrationRevision !== revision) return
-    clearComposer()
+    clearComposer(attachments)
     window.CustomOpenCodeControls?.startRun?.(sessionID, 'managed-send')
     if ($('stop')) $('stop').hidden = false
     if (!state.runStartedAt) state.runStartedAt = Date.now()
@@ -1586,18 +1563,6 @@ function bindEvents() {
     handleQuestionEvent(payload);renderActivityFromEvent(payload)
   })
   $('form')?.addEventListener('submit', interceptSubmit, true)
-  $('fileInput')?.addEventListener('change', (event) => captureFiles(event.target.files), true)
-  $('input')?.addEventListener('paste', (event) => {
-    const files = [...(event.clipboardData?.items || [])].filter((item) => item.kind === 'file').map((item) => item.getAsFile()).filter(Boolean)
-    if (files.length) captureFiles(files)
-  }, true)
-  document.addEventListener('click', (event) => {
-    const remove = event.target.closest?.('[data-remove-attachment]')
-    if (remove) {
-      const index = Number(remove.dataset.removeAttachment)
-      if (Number.isInteger(index) && index >= 0) state.attachments.splice(index, 1)
-    }
-  }, true)
   document.addEventListener('click', (event) => {
     const host = $('orchestrationTrace')
     if (host && !host.contains(event.target)) host.querySelectorAll('details').forEach((detail) => detail.removeAttribute('open'))

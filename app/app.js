@@ -273,9 +273,7 @@ async function transferSessionToProject(session,project,{select=false,removeSour
     saveJson(DRAFT_KEY,drafts)
     try{
       await api.deleteSession(session.id)
-      state.sessions=state.sessions.filter((item)=>item.id!==session.id)
-      delete sessionMeta[session.id];delete drafts[session.id];saveMeta();saveJson(DRAFT_KEY,drafts)
-      state.running.delete(session.id);state.queues.delete(session.id);clearSessionModelState(session.id);sourceRemoved=true
+      forgetSessionState(session.id);sourceRemoved=true
     }catch{
       toast('Копия создана, но исходную сессию удалить не удалось')
     }
@@ -308,6 +306,17 @@ async function handleDrop(event) {
 function activeModelRef() { return state.selected?.model || (!state.selected && state.draftModel) || state.defaultModel || null }
 function modelRefChanged(a,b) { return a?.id!==b?.id || a?.providerID!==b?.providerID || a?.variant!==b?.variant }
 function clearSessionModelState(id) { sessionModelVersions.delete(id);sessionModelOverrides.delete(id);sessionModelQueues.delete(id) }
+function forgetSessionState(id) {
+  sessionSyncGeneration += 1
+  invalidateRunSync()
+  state.sessions=state.sessions.filter((session)=>session.id!==id)
+  delete sessionMeta[id];delete drafts[id];saveMeta();saveJson(DRAFT_KEY,drafts)
+  state.running.delete(id);state.queues.delete(id);clearSessionModelState(id)
+  state.mirrorHistory.delete(id);createdHere.delete(id);discardContextCache(id)
+  if(state.selected?.id===id)state.context=[]
+  for(let index=historyProbeQueue.length-1;index>=0;index--)if(historyProbeQueue[index].id===id)historyProbeQueue.splice(index,1)
+  if(state.actionSession?.id===id)state.actionSession=null
+}
 function hasSession(id) { return state.selected?.id===id||state.sessions.some((session)=>session.id===id) }
 function dispatchModelChanged(sessionID,model,previousModel,ok,error) { window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok,...(error?{error}:{})}})) }
 // Tab-scoped flags. Storage can be unavailable (privacy modes, blocked site
@@ -409,6 +418,8 @@ async function loadSessionsNow({ selectHash = false, background = false } = {}) 
       if(model!==session.model)unique.set(id,{...session,model})
     }
     for(const id of new Set([...sessionModelVersions.keys(),...sessionModelOverrides.keys()]))if(!unique.has(id)&&state.selected?.id!==id){sessionModelVersions.delete(id);sessionModelOverrides.delete(id)}
+    for(const id of state.contextCache.keys())if(!unique.has(id)&&state.selected?.id!==id)discardContextCache(id)
+    for(const id of state.mirrorHistory.keys())if(!unique.has(id)&&state.selected?.id!==id)state.mirrorHistory.delete(id)
     state.sessions = [...unique.values()].sort(compareSessions)
     if (statusGeneration === statusSyncGeneration) syncRunStatuses(statuses)
     if (state.selected) state.selected = state.sessions.find((s)=>s.id===state.selected.id) || state.selected
@@ -539,7 +550,8 @@ async function selectSession(id,{push=true,saveDraft=true,waitForDetails=true}={
   const session=state.sessions.find((s)=>s.id===id); if(!session)return
   if(saveDraft)saveDraftNow()
   const cachedContext=state.contextCache.get(id)
-  state.selected=session; state.context=cachedContext?.messages||[]; state.attachments=[]; state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
+  clearAttachments()
+  state.selected=session; state.context=cachedContext?.messages||[]; state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
   meta(id).lastOpenedAt=Date.now();saveMeta()
   initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=id;historyPaginationIntent=false;clearTimeout(historyPaginationIntentTimer);historyPaginationIntentTimer=0;historyPaginationTouch=null
   resetPromptHistory(id)
@@ -558,8 +570,9 @@ async function selectSession(id,{push=true,saveDraft=true,waitForDetails=true}={
   if (waitForDetails) await hydrate()
   else void hydrate().catch((error) => { if(state.selected?.id===id)toast(`Загрузка сессии: ${error.message}`) })
 }
-function clearSelection() {
-  saveDraftNow();initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=null;historyPaginationIntent=false;clearTimeout(historyPaginationIntentTimer);historyPaginationIntentTimer=0;historyPaginationTouch=null; state.selected=null;state.context=[];state.attachments=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
+function clearSelection({saveDraft=true}={}) {
+  if(saveDraft)saveDraftNow()
+  clearAttachments();initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=null;historyPaginationIntent=false;clearTimeout(historyPaginationIntentTimer);historyPaginationIntentTimer=0;historyPaginationTouch=null; state.selected=null;state.context=[];state.agents=[];state.models=[];state.providers=[];state.defaultModel=null
   resetPromptHistory(null)
   location.hash=''
   window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:null}}))
@@ -586,11 +599,26 @@ function mergeContextMessages(current,incoming,older=false,liveSince=0) {
 }
 // Bounded LRU: long transcripts of every chat opened in a tab used to stay in memory.
 const CONTEXT_CACHE_LIMIT=12
+function discardContextCache(id) {
+  const cache=state.contextCache.get(id)
+  if(!cache)return
+  state.contextCache.delete(id)
+  cache.messages=[];cache.seenCursors?.clear();cache.refreshQueued=false
+}
+function pruneContextCache(keepID=state.selected?.id) {
+  for(const id of state.contextCache.keys()){
+    if(state.contextCache.size<=CONTEXT_CACHE_LIMIT)break
+    if(id!==keepID&&id!==state.selected?.id)discardContextCache(id)
+  }
+}
 function contextCacheFor(id) {
   let value=state.contextCache.get(id)
-  if(value){state.contextCache.delete(id);state.contextCache.set(id,value);return value}
-  value={messages:[],loaded:false,loading:false,refreshQueued:false,nextCursor:null,hasMore:true,complete:false,seenCursors:new Set()};state.contextCache.set(id,value)
-  for(const [key,entry] of state.contextCache){if(state.contextCache.size<=CONTEXT_CACHE_LIMIT)break;if(key!==id&&key!==state.selected?.id&&!entry.loading)state.contextCache.delete(key)}
+  if(value)state.contextCache.delete(id)
+  else value={messages:[],loaded:false,loading:false,refreshQueued:false,nextCursor:null,hasMore:true,complete:false,seenCursors:new Set()}
+  state.contextCache.set(id,value)
+  // Loading entries may be evicted too. Their replies must still belong to
+  // this exact entry before they can retain history or update the selected chat.
+  pruneContextCache(id)
   return value
 }
 function setContextPageCursor(cache,cursor,nextCursor) {
@@ -607,6 +635,7 @@ async function loadContext({force=false,initial=false}={}) {
   try {
     const fetchStartedAt=Date.now()
     const page=await api.getContextPage(id,{limit:CONTEXT_PAGE_SIZE})
+    if(state.contextCache.get(id)!==cache)return
     const incoming=contextMessages(page.messages)
     const hadConversation=cache.messages.length>0
     cache.messages=wasLoaded?mergeContextMessages(cache.messages,incoming,false,fetchStartedAt):incoming
@@ -620,10 +649,11 @@ async function loadContext({force=false,initial=false}={}) {
       syncPromptHistory();renderMessages({bottom:initial||!wasLoaded});renderUsage()
     }
   }catch(error){
-    if(state.selected?.id===id){if(cache.messages.length)toast(`История: ${error.message}`);else $('messagesInner').innerHTML=`<div class="empty">Не удалось открыть сессию: ${escapeHtml(error.message)}</div>`}
+    if(state.contextCache.get(id)===cache&&state.selected?.id===id){if(cache.messages.length)toast(`История: ${error.message}`);else $('messagesInner').innerHTML=`<div class="empty">Не удалось открыть сессию: ${escapeHtml(error.message)}</div>`}
   }finally{
     cache.loading=false
-    if(cache.refreshQueued){cache.refreshQueued=false;if(state.selected?.id===id)void loadContext({force:true})}
+    pruneContextCache()
+    if(cache.refreshQueued){cache.refreshQueued=false;if(state.contextCache.get(id)===cache&&state.selected?.id===id)void loadContext({force:true})}
   }
 }
 async function loadOlderContext() {
@@ -635,6 +665,7 @@ async function loadOlderContext() {
   const anchor={top:view.scrollTop,height:view.scrollHeight}
   try {
     const page=await api.getContextPage(id,{cursor,limit:CONTEXT_PAGE_SIZE})
+    if(state.contextCache.get(id)!==cache)return
     cache.messages=mergeContextMessages(cache.messages,contextMessages(page.messages),true)
     if(page.complete){cache.complete=true;cache.nextCursor=null;cache.hasMore=false}
     else setContextPageCursor(cache,cursor,page.nextCursor)
@@ -644,11 +675,12 @@ async function loadOlderContext() {
     }
   }catch(error){
     cache.seenCursors.delete(cursor)
-    if(state.selected?.id===id)toast(`История: ${error.message}`)
+    if(state.contextCache.get(id)===cache&&state.selected?.id===id)toast(`История: ${error.message}`)
   }
   finally{
     cache.loading=false
-    if(cache.refreshQueued){cache.refreshQueued=false;if(state.selected?.id===id)void loadContext({force:true})}
+    pruneContextCache()
+    if(cache.refreshQueued){cache.refreshQueued=false;if(state.contextCache.get(id)===cache&&state.selected?.id===id)void loadContext({force:true})}
   }
 }
 function scheduleContextReload(delay=250) { clearTimeout(contextReloadTimer); contextReloadTimer=setTimeout(()=>loadContext({force:true}),delay) }
@@ -736,7 +768,7 @@ function directModelRef(){
   if(current&&!ORCHESTRATED_MODELS.some((model)=>model.id===current.id&&model.providerID===current.providerID))return {...current}
   return state.defaultModel?{...state.defaultModel}:null
 }
-window.CustomOpenCodeControls={changeModel,changeAgent,activeModel:activeModelRef,directModel:directModelRef,wasModelManuallySelected,wasCreatedHere,clearAttachments,ensureQuickSession,sessions:()=>state.sessions,startRun:markStarted}
+window.CustomOpenCodeControls={changeModel,changeAgent,activeModel:activeModelRef,directModel:directModelRef,wasModelManuallySelected,wasCreatedHere,clearAttachments,attachmentSnapshot,readAttachments,ensureQuickSession,sessions:()=>state.sessions,startRun:markStarted}
 
 const NIGHT_DISCOUNT_MODELS = new Set([
   'qwen3.8-max',
@@ -1088,10 +1120,91 @@ function renderGitDialog(){
 }
 async function openFileByIndex(index){const file=state.git.files[index];if(!file||!state.selected)return;const path=file.path||file.file||file.name;if(!path)return;try{const value=await api.getFileContent(directory(state.selected),path);$('fileTitle').textContent=path;$('fileContent').textContent=typeof value==='string'?value:value?.content||JSON.stringify(value,null,2);$('fileDialog').showModal()}catch(e){toast(`Файл: ${e.message}`)}}
 
-function clearAttachments(){state.attachments=[];renderAttachments()}
-function renderAttachments(){$('attachments').hidden=!state.attachments.length;$('attachments').innerHTML=state.attachments.map((f,i)=>`<span class="attachment"><span>${escapeHtml(f.name)}</span><button data-remove-attachment="${i}">×</button></span>`).join('');document.querySelectorAll('[data-remove-attachment]').forEach((b)=>b.addEventListener('click',()=>{state.attachments.splice(Number(b.dataset.removeAttachment),1);renderAttachments()}))}
-function readFile(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve({uri:r.result,name:file.name||`file-${Date.now()}`,mime:file.type});r.onerror=()=>reject(r.error);r.readAsDataURL(file)})}
-async function addFiles(files){try{state.attachments.push(...await Promise.all([...files].map(readFile)));renderAttachments()}catch(e){toast(`Файл: ${e.message}`)}}
+// One read per file, shared by the native and managed send paths. Only pending
+// reads live in this map; their promises never resolve to the large data URL.
+const attachmentReads=new Map()
+const pendingAttachmentSends=new WeakSet()
+function releaseAttachment(attachment) {
+  attachmentReads.get(attachment)?.cancel()
+  delete attachment.uri
+  delete attachment.error
+}
+function clearAttachments(snapshot) {
+  const previous=state.attachments
+  if(snapshot){
+    for(const attachment of snapshot.items){
+      const index=previous.indexOf(attachment)
+      if(index>=0)previous.splice(index,1)
+      releaseAttachment(attachment)
+    }
+  }else{
+    state.attachments=[]
+    for(const attachment of previous)releaseAttachment(attachment)
+    previous.length=0
+  }
+  renderAttachments()
+}
+function removeAttachment(attachment) {
+  const index=state.attachments.indexOf(attachment)
+  if(index<0)return
+  state.attachments.splice(index,1)
+  releaseAttachment(attachment)
+  renderAttachments()
+}
+function renderAttachments() {
+  const attachments=state.attachments
+  $('attachments').hidden=!attachments.length
+  $('attachments').innerHTML=attachments.map((file,index)=>`<span class="attachment"><span>${escapeHtml(file.name)}</span><button data-remove-attachment="${index}">×</button></span>`).join('')
+  document.querySelectorAll('[data-remove-attachment]').forEach((button)=>{
+    const attachment=attachments[Number(button.dataset.removeAttachment)]
+    button.addEventListener('click',()=>removeAttachment(attachment))
+  })
+}
+function readFile(file,attachment,attachments) {
+  const reader=new FileReader()
+  let settled=false,resolveRead
+  const promise=new Promise((resolve)=>{resolveRead=resolve})
+  const finish=(error)=>{
+    if(settled)return
+    settled=true
+    reader.onload=reader.onerror=reader.onabort=null
+    attachmentReads.delete(attachment)
+    if(error&&state.attachments===attachments&&attachments.includes(attachment))attachment.error=error.message||String(error)
+    resolveRead()
+  }
+  attachmentReads.set(attachment,{promise,cancel(){finish();try{reader.abort()}catch{}}})
+  reader.onload=()=>{
+    if(settled)return
+    if(state.attachments===attachments&&attachments.includes(attachment))attachment.uri=reader.result
+    finish()
+  }
+  reader.onerror=()=>finish(reader.error||new Error('Не удалось прочитать файл'))
+  reader.onabort=()=>finish(new Error('Чтение файла отменено'))
+  try{reader.readAsDataURL(file)}catch(error){finish(error)}
+  return promise
+}
+async function addFiles(files) {
+  const attachments=state.attachments,reads=[]
+  for(const file of [...(files||[])]){
+    if(!file)continue
+    const attachment={name:file.name||`file-${Date.now()}`,mime:file.type||'application/octet-stream'}
+    attachments.push(attachment)
+    reads.push(readFile(file,attachment,attachments))
+  }
+  renderAttachments()
+  await Promise.all(reads)
+  if(state.attachments!==attachments)return
+  const failed=attachments.find((attachment)=>attachment.error)
+  if(failed)toast(`Файл ${failed.name}: ${failed.error}`)
+}
+function attachmentSnapshot() { return {attachments:state.attachments,items:[...state.attachments]} }
+async function readAttachments(snapshot=attachmentSnapshot()) {
+  await Promise.all(snapshot.items.map((attachment)=>attachmentReads.get(attachment)?.promise))
+  const remaining=snapshot.items.filter((attachment)=>snapshot.attachments.includes(attachment))
+  const failed=remaining.find((attachment)=>attachment.error)
+  if(failed)throw new Error(`Файл ${failed.name}: ${failed.error}`)
+  return remaining.filter((attachment)=>attachment.uri).map(({uri,name,mime})=>({uri,name,mime}))
+}
 
 async function ensureQuickSession(){if(state.selected)return state.selected;const session=await createAt(state.clientConfig.scratchDirectory);return session}
 async function createAt(dir,title){
@@ -1117,10 +1230,18 @@ async function createNewSession(){
 }
 async function sendMessage(event){
   event?.preventDefault();const input=$('input'),text=input.value.trim();if(!text&&!state.attachments.length)return
-  const claimedAttachments=state.attachments,files=claimedAttachments.map(({uri,name,mime})=>({uri,name,mime}))
-  input.value='';state.attachments=[];drafts[draftKey()]='';saveJson(DRAFT_KEY,drafts);renderAttachments();autosizeInput()
-  let session=null,previousRun
+  const claimedAttachments=state.attachments,snapshot=attachmentSnapshot(),sourceSessionID=state.selected?.id
+  if(pendingAttachmentSends.has(claimedAttachments))return
+  pendingAttachmentSends.add(claimedAttachments)
+  const wasReadOnly=input.readOnly
+  input.readOnly=true
+  let session=null,previousRun,submittedFiles=[]
   try {
+    const files=await readAttachments(snapshot)
+    if(state.attachments!==claimedAttachments||state.selected?.id!==sourceSessionID)return
+    if(!text&&!files.length)return
+    submittedFiles=files
+    input.value='';clearAttachments(snapshot);drafts[draftKey()]='';saveJson(DRAFT_KEY,drafts);autosizeInput()
     session=await ensureQuickSession();const running=isRunning(session.id)
     if(running&&state.deliveryMode==='queue'){
       queueFor(session.id).push({text,files});rememberSubmittedPrompt(session.id,text);renderSessions();toast('Добавлено в очередь');return
@@ -1130,10 +1251,14 @@ async function sendMessage(event){
     await api.sendPrompt(session,{text,files,delivery:running?'steer':'normal'});rememberSubmittedPrompt(session.id,text);setTimeout(()=>loadContext({force:true}),180)
   } catch(error){
     if(session){invalidateRunSync();previousRun?state.running.set(session.id,previousRun):state.running.delete(session.id);renderHeader();renderSessions();updateBadge()}
+    if(state.selected?.id!==(session?.id??sourceSessionID))return
     toast(`Отправка: ${error.message}`)
     if(text&&!input.value)input.value=text
-    if(claimedAttachments.length){state.attachments=[...claimedAttachments,...state.attachments];renderAttachments()}
+    if(submittedFiles.length){state.attachments.unshift(...submittedFiles);renderAttachments()}
     drafts[draftKey()]=input.value;saveJson(DRAFT_KEY,drafts);autosizeInput()
+  } finally {
+    pendingAttachmentSends.delete(claimedAttachments)
+    if(state.selected?.id===(session?.id??sourceSessionID))input.readOnly=wasReadOnly
   }
 }
 async function flushQueue(sessionID){const queue=queueFor(sessionID);if(!queue.length||isRunning(sessionID))return;const session=state.sessions.find((s)=>s.id===sessionID);if(!session)return;const next=queue.shift();invalidateRunSync();state.running.set(sessionID,{status:'queued-start',since:Date.now(),optimistic:true});statusPolling.wake();rateLimitPolling.wake();renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge();try{await api.sendPrompt(session,{...next,delivery:'normal'})}catch(e){invalidateRunSync();state.running.delete(sessionID);queue.unshift(next);notifyUser('OpenCode: очередь остановлена',e.message,`queue-${sessionID}`)}renderSessions();if(state.selected?.id===sessionID)renderHeader();updateBadge()}
@@ -1217,7 +1342,7 @@ async function forkWithFallback(session,messageID){
 function narrowSessionActions(){if(!window.matchMedia('(max-width: 900px)').matches)return'';const usage=$('usageButton'),git=$('gitButton'),project=$('projectSettingsButton'),phone=window.matchMedia('(max-width: 760px)').matches;return `<button class="action" data-action="usage">Контекст и расходы · ${escapeHtml(usage.textContent.trim())}</button>${git.disabled?'':`<button class="action" data-action="git">Изменения и Git · ${escapeHtml(git.textContent.trim())}</button>`}${phone&&project&&!project.hidden?'<button class="action" data-action="project">Настройки проекта</button>':''}${phone?`<button class="action" data-action="notify">${state.notifyEnabled?'Выключить уведомления':'Включить уведомления'}</button>`:''}`}
 function openSessionActions(id=state.selected?.id){const session=state.sessions.find((s)=>s.id===id);if(!session)return;state.actionSession=session;const m=meta(session.id);$('sessionActionList').innerHTML=`${session.id===state.selected?.id?narrowSessionActions():''}<button class="action" data-action="rename">Переименовать</button><button class="action" data-action="pin">${m.pinned?'Открепить':'Закрепить'}</button><button class="action" data-action="duplicate">Дублировать (Fork)</button><button class="action" data-action="fork-last">Fork от последнего сообщения</button><button class="action" data-action="copy-context">Копировать с контекстом…</button><button class="action" data-action="move-project">Перенести через handoff…</button><button class="action" data-action="delete">Удалить</button>`;$('sessionActionList').querySelectorAll('[data-action]').forEach((b)=>b.addEventListener('click',()=>runSessionAction(b.dataset.action)));$('sessionDialog').showModal()}
 async function runSessionAction(action){const session=state.actionSession;if(!session)return;if(action==='project'){/* opens after a fetch: let the sheet's history entry settle first */await (window.CustomOpenCodeModal?.closeAndRestore($('sessionDialog'))??$('sessionDialog').close());$('projectSettingsButton')?.click();return}$('sessionDialog').close();const proxied={usage:'usageButton',git:'gitButton',notify:'notifyButton'}[action];if(proxied){$(proxied)?.click();return}if(action==='rename'){state.actionSession=session;$('renameInput').value=sessionTitle(session);$('renameDialog').showModal();$('renameInput').focus();return}if(action==='pin'){meta(session.id).pinned=!meta(session.id).pinned;saveMeta();renderSessions();return}if(action==='copy-context'||action==='move-project'){if(state.selected?.id!==session.id)await selectSession(session.id);openProjectDialog(action==='move-project'?'move':'copy');return}if(action==='duplicate'||action==='fork-last'){try{if(state.selected?.id!==session.id)await selectSession(session.id);const last=action==='fork-last'?[...state.context].reverse().find((m)=>m&&(m.id||m.messageID)):null;const mid=last?(last.id||last.messageID):undefined;const fork=await forkWithFallback(session,mid);state.sessions=[fork,...state.sessions.filter((s)=>s.id!==fork.id)];await selectSession(fork.id);toast('Fork создан')}catch(e){toast(`Fork: ${e.message}`)}return}if(action==='delete'){if(await confirmAction('Удалить сессию?',`«${sessionTitle(session)}» будет удалена без возможности восстановления.`))await removeSession(session)}}
-async function removeSession(session){try{await api.deleteSession(session.id);state.sessions=state.sessions.filter((s)=>s.id!==session.id);delete sessionMeta[session.id];delete drafts[session.id];saveMeta();saveJson(DRAFT_KEY,drafts);state.running.delete(session.id);state.queues.delete(session.id);clearSessionModelState(session.id);if(state.selected?.id===session.id)clearSelection();else renderSessions();toast('Сессия удалена')}catch(e){toast(`Удаление: ${e.message}`)}}
+async function removeSession(session){try{await api.deleteSession(session.id);forgetSessionState(session.id);if(state.selected?.id===session.id)clearSelection({saveDraft:false});else renderSessions();toast('Сессия удалена')}catch(e){toast(`Удаление: ${e.message}`)}}
 async function renameCurrent(){const session=state.actionSession||state.selected;if(!session)return;const title=$('renameInput').value.trim();if(!title)return;try{const updated=await api.renameSession(session.id,title);session.title=updated?.title||title;$('renameDialog').close();renderSessions();renderHeader()}catch(e){toast(`Rename: ${e.message}`)}}
 async function forkAtMessage(messageID){if(!state.selected)return;try{const fork=await forkWithFallback(state.selected,messageID.startsWith('idx-')?undefined:messageID);state.sessions=[fork,...state.sessions.filter((s)=>s.id!==fork.id)];await selectSession(fork.id);toast('Fork создан')}catch(e){toast(`Fork: ${e.message}`)}}
 
@@ -1270,6 +1395,10 @@ function handleEvent(payload){
   window.dispatchEvent(new CustomEvent('custom-opencode:event',{detail:payload}))
   if(['session.created','session.deleted'].includes(payload.type))sessionPolling.wake()
   const data=payload.data||payload.properties||{}, sid=data.sessionID||data.session?.id
+  if(payload.type==='session.deleted'){
+    const deletedID=sid||data.info?.id||data.id
+    if(deletedID){forgetSessionState(deletedID);if(state.selected?.id===deletedID)clearSelection({saveDraft:false});else renderSessions()}
+  }
   if(['session.execution.started','session.busy','session.status.running'].includes(payload.type))markStarted(sid,payload.type)
   if(payload.type==='session.status'){const type=data.status?.type||data.type;if(['busy','retry','running'].includes(type))markStarted(sid,type);if(type==='idle')markFinished(sid,'готово')}
   if(['session.execution.succeeded','session.idle'].includes(payload.type))markFinished(sid,'готово')

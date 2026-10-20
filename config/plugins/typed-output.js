@@ -1,6 +1,8 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
+import { startEvents } from "../events.js"
+import { createPendingProviderRequests, FALLBACK_RESET_EVENTS, providerErrorDetail } from "./tui/lib/pending-provider-requests.js"
 
 // Typed (JEV-style) agent traffic: machine-to-machine replies are JSON, prose
 // stays only where a person reads it. OpenCode V2 sends Responses tools with
@@ -131,7 +133,7 @@ export default {
     } catch {
       return // no registry installed: nothing to type
     }
-    const pending = new Map() // sessionID -> { model, original }
+    const pending = createPendingProviderRequests()
     const registrations = []
 
     registrations.push(await ctx.session.hook("http.request", async (event) => {
@@ -146,25 +148,30 @@ export default {
       if (shaped === body) return
       const headers = new Headers(event.request.headers)
       headers.delete("content-length")
-      pending.set(event.sessionID, { model: body.model, original: JSON.stringify(body), agent: event.agent, kind: event.kind })
-      if (pending.size > 256) pending.delete(pending.keys().next().value)
-      event.request = new Request(event.request, { headers, body: JSON.stringify(shaped) })
+      const original = event.request
+      const request = new Request(original, { headers, body: JSON.stringify(shaped) })
+      if (pending.add({ ...event, request }, JSON.stringify(body), { model: body.model }, [original])) event.request = request
     }))
 
     registrations.push(await ctx.session.hook("http.response", async (event) => {
-      const sent = pending.get(event.sessionID)
+      const sent = pending.claim(event)
       if (!sent) return
       // A title/compaction response in the same session must not consume the
       // typed request's fallback (cf. dnd-fast-tier).
-      if ((event.agent && event.agent !== sent.agent) || (event.kind && sent.kind && event.kind !== sent.kind)) return
-      pending.delete(event.sessionID)
-      if (event.response.status !== 400) return
-      const detail = await event.response.clone().text().catch(() => "")
-      if (!FORMAT_ERROR.test(detail)) return
-      if (typeof sent.model === "string") rememberRejection(sent.model)
-      const headers = new Headers(event.request.headers)
-      headers.delete("content-length")
-      event.response = await fetch(new Request(event.request, { headers, body: sent.original }))
+      try {
+        if (event.response?.status !== 400 || !event.request) return
+        const detail = await providerErrorDetail(event.response, sent.signal)
+        if (!sent.body || !FORMAT_ERROR.test(detail)) return
+        if (typeof sent.model === "string") rememberRejection(sent.model)
+        const headers = new Headers(event.request.headers)
+        headers.delete("content-length")
+        const response = await fetch(new Request(event.request, { headers, body: sent.body,
+          signal: AbortSignal.any([event.request.signal, sent.signal]) }))
+        if (!sent.signal.aborted) event.response = response
+        else void response.body?.cancel().catch(() => {})
+      } catch (error) {
+        if (!sent.signal.aborted) throw error
+      } finally { pending.release(sent) }
     }))
 
     registrations.push(await ctx.tool.hook("execute.before", async (event) => {
@@ -173,6 +180,13 @@ export default {
       if (errors.length) throw new Error(`Typed delegation rejected: ${errors.slice(0, 6).join("; ")}`)
     }))
 
-    return async () => Promise.allSettled(registrations.map((registration) => registration?.dispose?.()))
+    const stopEvents = ctx.event?.subscribe ? startEvents(ctx, event => {
+      if (FALLBACK_RESET_EVENTS.has(event.type)) pending.forget(event.data?.sessionID)
+    }) : () => {}
+    return async () => {
+      stopEvents()
+      pending.dispose()
+      await Promise.allSettled(registrations.map((registration) => registration?.dispose?.()))
+    }
   },
 }

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { appendFile } from "node:fs/promises"
 import { isDndEdition } from "./orchestrated-qwen.js"
+import { linkProviderRequest } from "./tui/lib/pending-provider-requests.js"
 import { ensureRouter } from "./lazy-local-router.js"
 import { isIsolatedNarratorRole } from "./tui/lib/context-policy.js"
 
@@ -193,7 +194,7 @@ export default {
       }
       const headers = new Headers(original.headers)
       headers.delete("content-length")
-      event.request = new Request(original, { headers, body: JSON.stringify(routed) })
+      event.request = linkProviderRequest(original, new Request(original, { headers, body: JSON.stringify(routed) }))
     })
   },
 }

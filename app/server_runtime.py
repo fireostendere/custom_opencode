@@ -7,6 +7,7 @@ its JSON FIFO with SQLite-backed tasks and a single worker loop.
 """
 from __future__ import annotations
 
+from collections import deque
 import hashlib
 import json
 import os
@@ -242,8 +243,12 @@ def queue_snapshot(session_id: str | None = None) -> dict[str, Any]:
 
 
 def _usage_totals(features: Any, session_id: str) -> dict[str, Any]:
-    totals = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0, "cost": 0.0}
-    rows = []
+    empty = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0, "cost": 0.0}
+    totals = dict(empty)
+    seen_ids = set()
+    # A progress poll needs numeric totals and the last 20 unique messages'
+    # signature, never a second in-memory copy of the complete transcript.
+    digest: deque[str] = deque(maxlen=20)
     cursor = None
     seen_cursors = set()
     try:
@@ -254,11 +259,35 @@ def _usage_totals(features: Any, session_id: str) -> dict[str, Any]:
             page = features._data(raw)
             if not isinstance(page, list):
                 raise ValueError("malformed native message page")
-            rows.extend(page)
-            cursor = (raw.get("cursor") or {}).get("next") if isinstance(raw, dict) else None
-            if not cursor:
+            next_cursor = (raw.get("cursor") or {}).get("next") if isinstance(raw, dict) else None
+            for row in page:
+                blob = (
+                    row.get("info") if isinstance(row, dict) and isinstance(row.get("info"), dict) else row
+                )
+                if not isinstance(blob, dict):
+                    continue
+                ident = blob.get("id") or row.get("id")
+                if ident and ident in seen_ids:
+                    continue
+                if ident:
+                    seen_ids.add(ident)
+                tokens = blob.get("tokens") if isinstance(blob.get("tokens"), dict) else {}
+                cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+                for key in ("input", "output", "reasoning"):
+                    if isinstance(tokens.get(key), (int, float)):
+                        totals[key] += max(0, int(tokens[key]))
+                for src, dst in (("read", "cacheRead"), ("write", "cacheWrite")):
+                    if isinstance(cache.get(src), (int, float)):
+                        totals[dst] += max(0, int(cache[src]))
+                if isinstance(blob.get("cost"), (int, float)):
+                    totals["cost"] += max(0.0, float(blob["cost"]))
+                digest.append(json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)[-4000:])
+            # Drop the page before fetching the next one. seen_ids retains only
+            # IDs to preserve native pagination-overlap/deduplication semantics.
+            del raw, page
+            if not next_cursor:
                 break
-            cursor = str(cursor)
+            cursor = str(next_cursor)
             if cursor in seen_cursors:
                 raise ValueError("native message cursor repeated")
             seen_cursors.add(cursor)
@@ -266,38 +295,15 @@ def _usage_totals(features: Any, session_id: str) -> dict[str, Any]:
             raise ValueError("native usage history exceeds page safety limit")
     except Exception as exc:
         return {
-            **totals,
+            # Partial traversal is unavailable, not an invented usage delta.
+            **empty,
             "signature": "",
             "available": False,
             "error": f"{type(exc).__name__}: {exc}"[:500],
         }
-    seen_ids = set()
-    digest = []
-    for row in rows:
-        blob = (
-            row.get("info") if isinstance(row, dict) and isinstance(row.get("info"), dict) else row
-        )
-        if not isinstance(blob, dict):
-            continue
-        ident = blob.get("id") or row.get("id")
-        if ident and ident in seen_ids:
-            continue
-        if ident:
-            seen_ids.add(ident)
-        tokens = blob.get("tokens") if isinstance(blob.get("tokens"), dict) else {}
-        cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
-        for key in ("input", "output", "reasoning"):
-            if isinstance(tokens.get(key), (int, float)):
-                totals[key] += max(0, int(tokens[key]))
-        for src, dst in (("read", "cacheRead"), ("write", "cacheWrite")):
-            if isinstance(cache.get(src), (int, float)):
-                totals[dst] += max(0, int(cache[src]))
-        if isinstance(blob.get("cost"), (int, float)):
-            totals["cost"] += max(0.0, float(blob["cost"]))
-        digest.append(json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)[-4000:])
     totals.update(
         signature=(
-            hashlib.sha256("\n".join(digest[-20:]).encode()).hexdigest()[:20] if digest else ""
+            hashlib.sha256("\n".join(digest).encode()).hexdigest()[:20] if digest else ""
         ),
         available=True,
     )

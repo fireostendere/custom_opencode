@@ -6,6 +6,7 @@ import {
 } from "./tui/lib/hardware-core.js"
 import { capRequestBody, normalizeUsage } from "./tui/lib/request-budget.js"
 import { budgetError, runtimeCall } from "./server-runtime-guard.js"
+import { linkProviderRequest } from "./tui/lib/pending-provider-requests.js"
 
 const MARKER = "Custom Hardware Edition policy:"
 const CORE_TOOLS = new Set(["skill", "mcp_discover", "read", "glob", "grep", "list", "code", "codemode", "mcp", "kb", "knowledge", "diptrace", "fabric", "goal_update"])
@@ -175,7 +176,7 @@ export default {
       // Context filtering is the normal path; filter here too without dropping
       // existing tool results or message/image payloads.
       if (routed.tools) routed.tools = filterHardwareTools(routed.tools, true)
-      event.request = new Request(original, { headers, body: JSON.stringify(routed) })
+      event.request = linkProviderRequest(original, new Request(original, { headers, body: JSON.stringify(routed) }))
     }))
 
     registrations.push(await ctx.tool.transform(tools => {

@@ -16,6 +16,7 @@
 - [`/rag-start`](rag-start.md) — запуск/проверка RAG без LLM-токенов.
 - [Эксплуатация и recovery](operations.md) — systemd, update, backup, logs и recovery.
 - [Troubleshooting](troubleshooting.md) — типовые симптомы, включая login/theme/mobile cases.
+- [Исправления памяти — 20 октября 2026](memory-fixes-2026-10-20.md) — lifecycle вложений, лимиты кэшей, потоковое чтение и memory regression.
 - [TUI add wizard](tui-add-wizard.md) — `/add` для provider/model/MCP/skill/orchestration, тестовые сценарии и regression.
 - [TUI server wizard](tui-server-wizard.md) — `/server` для управления web server: статус, запуск/остановка, автозапуск, порт/адрес, пользователи.
 - [VSCode: хоткеи терминала](vscode-terminal.md) — проброс `ctrl+f/p/r/b` в OpenCode TUI вместо команд VSCode (перехват по фокусу).

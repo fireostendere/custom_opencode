@@ -1,4 +1,6 @@
 import { isDndEdition } from "./orchestrated-qwen.js"
+import { startEvents } from "../events.js"
+import { createPendingProviderRequests, FALLBACK_RESET_EVENTS, providerErrorDetail } from "./tui/lib/pending-provider-requests.js"
 
 // GPT-6 Luna "Fast" is service_tier=priority. The bundled AI SDK drops
 // providerOptions.serviceTier for model IDs it does not list as
@@ -25,8 +27,9 @@ export default {
   async setup(ctx) {
     if (TIER === "off" || TIER === "default") return
     const rejected = new Map() // model -> until
-    const sent = new Map() // sessionID -> { model, body }
-    await ctx.session.hook("http.request", async (event) => {
+    const sent = createPendingProviderRequests()
+    const registrations = []
+    registrations.push(await ctx.session.hook("http.request", async (event) => {
       if (!isPrimaryEditionRequest(event)) return
       const original = event.request
       let body
@@ -41,29 +44,41 @@ export default {
       if (tiered === body) return
       const headers = new Headers(original.headers)
       headers.delete("content-length")
-      event.request = new Request(original, { headers, body: JSON.stringify(tiered) })
-      if (event.sessionID) {
-        sent.set(event.sessionID, { model, body })
-        if (sent.size > 256) sent.delete(sent.keys().next().value)
-      }
-    })
-    if (!ctx.session.hook) return
-    await ctx.session.hook("http.response", async (event) => {
+      const request = new Request(original, { headers, body: JSON.stringify(tiered) })
+      // If the body cannot fit the fallback budget, keep the original request;
+      // adding a tier without being able to undo a provider rejection is unsafe.
+      if (sent.add({ ...event, request }, JSON.stringify(body), { model }, [original])) event.request = request
+    }))
+    registrations.push(await ctx.session.hook("http.response", async (event) => {
       // Title/compaction requests can share a session with a live narrator
       // request. They must neither consume its retry state nor replay its body.
       if ((event.kind && event.kind !== "primary") || event.agent === "compaction") return
       if (event.model && !isDndEdition(event)) return
-      const entry = sent.get(event.sessionID)
+      const entry = sent.claim(event)
       if (!entry) return
-      sent.delete(event.sessionID)
-      if (event.response?.status !== 400) return
-      const detail = await event.response.clone().text().catch(() => "")
-      if (!TIER_ERROR.test(detail)) return
-      rejected.set(entry.model, Date.now() + REJECTED_MS)
-      const headers = new Headers(event.request.headers)
-      headers.delete("content-length")
-      event.response = await fetch(new Request(event.request, { headers, body: JSON.stringify(entry.body) }))
-    })
+      try {
+        if (event.response?.status !== 400 || !event.request) return
+        const detail = await providerErrorDetail(event.response, entry.signal)
+        if (!entry.body || !TIER_ERROR.test(detail)) return
+        rejected.set(entry.model, Date.now() + REJECTED_MS)
+        const headers = new Headers(event.request.headers)
+        headers.delete("content-length")
+        const response = await fetch(new Request(event.request, { headers, body: entry.body,
+          signal: AbortSignal.any([event.request.signal, entry.signal]) }))
+        if (!entry.signal.aborted) event.response = response
+        else void response.body?.cancel().catch(() => {})
+      } catch (error) {
+        if (!entry.signal.aborted) throw error
+      } finally { sent.release(entry) }
+    }))
+    const stopEvents = ctx.event?.subscribe ? startEvents(ctx, event => {
+      if (FALLBACK_RESET_EVENTS.has(event.type)) sent.forget(event.data?.sessionID)
+    }) : () => {}
+    return async () => {
+      stopEvents()
+      sent.dispose()
+      await Promise.allSettled(registrations.map(registration => registration?.dispose?.()))
+    }
   },
 }
 

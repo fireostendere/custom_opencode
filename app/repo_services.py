@@ -2,8 +2,10 @@
 """Repository index, context cache, artifacts and verification helpers."""
 from __future__ import annotations
 import base64
+from collections import OrderedDict, deque
 import ctypes
 import gzip
+import io
 
 import hashlib
 import json
@@ -121,9 +123,13 @@ def safe_repo_file(root: Path, relative: str) -> Path | None:
         return None
 
 
-_GIT_SNAPSHOT_LOCK = threading.Lock()
+_GIT_SNAPSHOT_LOCK = threading.RLock()
 _GIT_SNAPSHOT_CACHE: dict[str, tuple[float, tuple[Any, ...], dict[str, Any]]] = {}
+_GIT_ROOTS: OrderedDict[str, object] = OrderedDict()
+_GIT_SNAPSHOT_SIZES: dict[str, int] = {}
+_GIT_SNAPSHOT_BYTES = 0
 _GIT_REFRESHING: set[str] = set()
+_GIT_REFRESH_TOKENS: dict[str, object] = {}
 _GIT_REFRESH_RETRY_AT: dict[str, float] = {}
 _GIT_GENERATION: dict[str, int] = {}
 # Roots whose snapshot was invalidated by a tool write: the last snapshot keeps
@@ -133,10 +139,98 @@ _GIT_INVALIDATED: set[str] = set()
 # fork+kill per cache hit validated nothing, so skip it for a while.
 _GIT_VALIDATOR_SLOW_UNTIL: dict[str, float] = {}
 _GIT_VALIDATOR_BACKOFF_SECONDS = 600.0
-_SLOW_FS: dict[str, bool] = {}
+_SLOW_FS: OrderedDict[str, bool] = OrderedDict()
 _V9FS_MAGIC = 0x01021997  # WSL2 drvfs (/mnt/<drive>) is served over 9P
-_GIT_TOPLEVEL: dict[str, tuple[float, str | None]] = {}
+_GIT_TOPLEVEL: OrderedDict[str, tuple[float, str | None]] = OrderedDict()
 _GIT_VALIDATED_AT: dict[str, float] = {}
+
+
+def _git_cache_limits() -> tuple[int, int]:
+    def setting(name: str, default: int, low: int, high: int) -> int:
+        try:
+            value = int(os.environ.get(name) or default)
+        except ValueError:
+            value = default
+        return max(low, min(high, value))
+
+    return (
+        setting("OPENCODE_GIT_CACHE_MAX_PROJECTS", 128, 1, 4096),
+        setting("OPENCODE_GIT_CACHE_MAX_BYTES", 16 * 1024 * 1024, 1024, 256 * 1024 * 1024),
+    )
+
+
+def _forget_git_root_locked(key: str) -> None:
+    global _GIT_SNAPSHOT_BYTES
+    _GIT_ROOTS.pop(key, None)
+    _GIT_SNAPSHOT_CACHE.pop(key, None)
+    _GIT_SNAPSHOT_BYTES -= _GIT_SNAPSHOT_SIZES.pop(key, 0)
+    for memo in (
+        _GIT_GENERATION, _GIT_REFRESH_RETRY_AT, _GIT_REFRESH_TOKENS,
+        _GIT_VALIDATOR_SLOW_UNTIL, _GIT_VALIDATED_AT, _SLOW_FS, _GIT_TOPLEVEL,
+    ):
+        memo.pop(key, None)
+    _GIT_REFRESHING.discard(key)
+    _GIT_INVALIDATED.discard(key)
+
+
+def _touch_git_root_locked(key: str) -> object:
+    token = _GIT_ROOTS.get(key)
+    if token is None:
+        # Identity survives only while this incarnation of a root is cached.
+        # An evicted root revisited during a slow refresh gets a different token
+        # even when its integer write generation happens to be equal (ABA).
+        token = object()
+        _GIT_ROOTS[key] = token
+    _GIT_ROOTS.move_to_end(key)
+    count, _ = _git_cache_limits()
+    while len(_GIT_ROOTS) > count:
+        _forget_git_root_locked(next(iter(_GIT_ROOTS)))
+    return token
+
+
+def _git_memo_locked(memo: OrderedDict, key: str, value: Any) -> None:
+    """Filesystem/toplevel probes can be used without a snapshot; bound them too."""
+    memo[key] = value
+    memo.move_to_end(key)
+    count, _ = _git_cache_limits()
+    while len(memo) > count:
+        memo.popitem(last=False)
+
+
+def _snapshot_size(value: Any) -> int:
+    # Run only on captures, never on the hot/9P cache-hit path. Count decoded
+    # strings/containers rather than JSON bytes and count shared paths once.
+    pending = [value]
+    seen = set()
+    size = 0
+    while pending:
+        item = pending.pop()
+        ident = id(item)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        size += sys.getsizeof(item)
+        if isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, (tuple, list)):
+            pending.extend(item)
+    return size
+
+
+def _put_git_snapshot_locked(key: str, token: object, captured_at: float, stamp: tuple[Any, ...], value: dict[str, Any]) -> bool:
+    global _GIT_SNAPSHOT_BYTES
+    if _GIT_ROOTS.get(key) is not token:
+        return False
+    entry = (captured_at, stamp, value)
+    size = _snapshot_size(entry) + sys.getsizeof(key)
+    _GIT_SNAPSHOT_BYTES += size - _GIT_SNAPSHOT_SIZES.get(key, 0)
+    _GIT_SNAPSHOT_SIZES[key] = size
+    _GIT_SNAPSHOT_CACHE[key] = entry
+    _, max_bytes = _git_cache_limits()
+    while _GIT_SNAPSHOT_BYTES > max_bytes:
+        _forget_git_root_locked(next(iter(_GIT_ROOTS)))
+    return _GIT_ROOTS.get(key) is token
 
 
 def _statfs_type(path: str) -> int | None:
@@ -156,10 +250,14 @@ def _statfs_type(path: str) -> int | None:
 def slow_filesystem(root: Path) -> bool:
     """True for 9P/drvfs trees (WSL /mnt/<drive>), where every git call is slow."""
     key = str(root)
-    cached = _SLOW_FS.get(key)
+    with _GIT_SNAPSHOT_LOCK:
+        cached = _SLOW_FS.get(key)
+        if cached is not None:
+            _SLOW_FS.move_to_end(key)
     if cached is None:
         cached = key == "/mnt" or key.startswith("/mnt/") or _statfs_type(key) == _V9FS_MAGIC
-        _SLOW_FS[key] = cached
+        with _GIT_SNAPSHOT_LOCK:
+            _git_memo_locked(_SLOW_FS, key, cached)
     return cached
 
 
@@ -238,6 +336,8 @@ def _cached_snapshot_valid(root: Path, snapshot: dict[str, Any]) -> bool:
     if not snapshot.get("git"):
         return True
     key = str(root)
+    with _GIT_SNAPSHOT_LOCK:
+        token = _GIT_ROOTS.get(key)
     if time.monotonic() < _GIT_VALIDATOR_SLOW_UNTIL.get(key, 0.0):
         # Known to exceed its budget here; rely on the TTL refresh and on tool
         # writes invalidating the snapshot.
@@ -259,7 +359,9 @@ def _cached_snapshot_valid(root: Path, snapshot: dict[str, Any]) -> bool:
         # On very large/slow filesystems the validator must never become the
         # new hot-path stall. Tool writes explicitly invalidate the cache and a
         # full refresh is already scheduled in the background.
-        _GIT_VALIDATOR_SLOW_UNTIL[key] = time.monotonic() + _GIT_VALIDATOR_BACKOFF_SECONDS
+        with _GIT_SNAPSHOT_LOCK:
+            if token is not None and _GIT_ROOTS.get(key) is token:
+                _GIT_VALIDATOR_SLOW_UNTIL[key] = time.monotonic() + _GIT_VALIDATOR_BACKOFF_SECONDS
         return True
     if proc.returncode != 0:
         return True
@@ -272,6 +374,8 @@ def _cached_snapshot_ok(root: Path, key: str, captured_at: float, snapshot: dict
     """_cached_snapshot_valid, throttled on 9P where each dirty-file lstat costs
     ~1 ms (110 dirty files = 110 ms per cache hit). A capture counts as a
     validation; tool writes still invalidate immediately."""
+    with _GIT_SNAPSHOT_LOCK:
+        token = _GIT_ROOTS.get(key)
     if slow_filesystem(root):
         try:
             interval = float(os.environ.get("OPENCODE_GIT_SLOW_FS_VALIDATE_SECONDS") or 5.0)
@@ -281,7 +385,9 @@ def _cached_snapshot_ok(root: Path, key: str, captured_at: float, snapshot: dict
             return True
     valid = _cached_snapshot_valid(root, snapshot)
     if valid:
-        _GIT_VALIDATED_AT[key] = time.monotonic()
+        with _GIT_SNAPSHOT_LOCK:
+            if token is not None and _GIT_ROOTS.get(key) is token:
+                _GIT_VALIDATED_AT[key] = time.monotonic()
     return valid
 
 
@@ -424,7 +530,7 @@ def _capture_git_snapshot(root: Path, *, include_untracked: bool, timeout: float
     }
 
 
-def _refresh_git_snapshot(key: str, root: Path, generation: int) -> None:
+def _refresh_git_snapshot(key: str, root: Path, generation: int, token: object, refresh_token: object) -> None:
     try:
         try:
             delay_seconds = max(
@@ -435,6 +541,9 @@ def _refresh_git_snapshot(key: str, root: Path, generation: int) -> None:
             delay_seconds = 0.75
         if delay_seconds:
             time.sleep(delay_seconds)
+        with _GIT_SNAPSHOT_LOCK:
+            if _GIT_ROOTS.get(key) is not token or _GIT_GENERATION.get(key, 0) != generation:
+                return
         try:
             value = _capture_git_snapshot(root, include_untracked=True, timeout=12.0)
         except OSError:
@@ -442,36 +551,56 @@ def _refresh_git_snapshot(key: str, root: Path, generation: int) -> None:
         value["generation"] = generation
         now = time.monotonic()
         with _GIT_SNAPSHOT_LOCK:
-            if _GIT_GENERATION.get(key, 0) != generation:
+            if (
+                _GIT_ROOTS.get(key) is not token
+                or _GIT_GENERATION.get(key, 0) != generation
+                or _GIT_REFRESH_TOKENS.get(key) is not refresh_token
+            ):
                 return
             previous = _GIT_SNAPSHOT_CACHE.get(key)
             # Never replace a usable snapshot with a timed-out background probe.
             if not value.get("partial") or previous is None:
-                _GIT_SNAPSHOT_CACHE[key] = (now, _repo_quick_stamp(root), value)
                 _GIT_REFRESH_RETRY_AT[key] = now + _git_snapshot_ttl(root)
                 _GIT_INVALIDATED.discard(key)
+                _put_git_snapshot_locked(key, token, now, _repo_quick_stamp(root), value)
             else:
                 # Large WSL/NTFS trees can exceed even the background budget.
                 # Back off instead of continuously rescanning them on each turn.
                 _GIT_REFRESH_RETRY_AT[key] = now + 30.0
     finally:
         with _GIT_SNAPSHOT_LOCK:
-            _GIT_REFRESHING.discard(key)
+            # A delayed refresh of an evicted root must neither repopulate the
+            # cache nor remove a newer incarnation's in-flight marker.
+            if _GIT_REFRESH_TOKENS.get(key) is refresh_token:
+                _GIT_REFRESH_TOKENS.pop(key, None)
+                _GIT_REFRESHING.discard(key)
 
 
-def _schedule_git_refresh(key: str, root: Path) -> None:
+def _schedule_git_refresh(key: str, root: Path, token: object | None = None) -> None:
     with _GIT_SNAPSHOT_LOCK:
+        current_token = _GIT_ROOTS.get(key)
+        if current_token is None or (token is not None and current_token is not token):
+            return
         now = time.monotonic()
         if key in _GIT_REFRESHING or now < _GIT_REFRESH_RETRY_AT.get(key, 0.0):
             return
         _GIT_REFRESHING.add(key)
         generation = _GIT_GENERATION.get(key, 0)
-    threading.Thread(
-        target=_refresh_git_snapshot,
-        args=(key, root, generation),
-        name="custom-opencode-git-refresh",
-        daemon=True,
-    ).start()
+        refresh_token = object()
+        _GIT_REFRESH_TOKENS[key] = refresh_token
+    try:
+        threading.Thread(
+            target=_refresh_git_snapshot,
+            args=(key, root, generation, current_token, refresh_token),
+            name="custom-opencode-git-refresh",
+            daemon=True,
+        ).start()
+    except Exception:
+        with _GIT_SNAPSHOT_LOCK:
+            if _GIT_REFRESH_TOKENS.get(key) is refresh_token:
+                _GIT_REFRESH_TOKENS.pop(key, None)
+                _GIT_REFRESHING.discard(key)
+        raise
 
 
 def invalidate_git_snapshot(project_dir: str | None = None) -> None:
@@ -484,18 +613,26 @@ def invalidate_git_snapshot(project_dir: str | None = None) -> None:
     `git status` (~0.65 s on 9P) on the interactive path. Callers that need
     the current tree pass ``fresh=True``.
     """
+    global _GIT_SNAPSHOT_BYTES
     with _GIT_SNAPSHOT_LOCK:
         if project_dir is None:
-            keys = set(_GIT_SNAPSHOT_CACHE) | set(_GIT_REFRESHING) | set(_GIT_GENERATION)
+            # Dropping identity tokens invalidates captures already in flight;
+            # no unbounded generation tombstones are needed for forgotten roots.
+            # Keep the separately bounded static filesystem/toplevel probes.
+            _GIT_ROOTS.clear()
             _GIT_SNAPSHOT_CACHE.clear()
+            _GIT_SNAPSHOT_SIZES.clear()
+            _GIT_SNAPSHOT_BYTES = 0
+            _GIT_GENERATION.clear()
+            _GIT_REFRESHING.clear()
+            _GIT_REFRESH_TOKENS.clear()
             _GIT_REFRESH_RETRY_AT.clear()
             _GIT_INVALIDATED.clear()
             _GIT_VALIDATOR_SLOW_UNTIL.clear()
             _GIT_VALIDATED_AT.clear()
-            for key in keys:
-                _GIT_GENERATION[key] = _GIT_GENERATION.get(key, 0) + 1
             return
         key = str(Path(project_dir).resolve(strict=False))
+        _touch_git_root_locked(key)
         if key in _GIT_SNAPSHOT_CACHE:
             _GIT_INVALIDATED.add(key)
         _GIT_REFRESH_RETRY_AT.pop(key, None)
@@ -519,10 +656,11 @@ def git_snapshot(
     key = str(root)
     now = time.monotonic()
     with _GIT_SNAPSHOT_LOCK:
+        token = _touch_git_root_locked(key)
         cached = _GIT_SNAPSHOT_CACHE.get(key)
         invalidated = key in _GIT_INVALIDATED
     if cached and not refresh and not fresh and invalidated:
-        _schedule_git_refresh(key, root)
+        _schedule_git_refresh(key, root, token)
         return _snapshot_copy(
             cached[2],
             cacheHit=True,
@@ -541,7 +679,7 @@ def git_snapshot(
         age = now - cached[0]
         ttl = _git_snapshot_ttl(root)
         if age >= ttl:
-            _schedule_git_refresh(key, root)
+            _schedule_git_refresh(key, root, token)
         return _snapshot_copy(
             cached[2],
             cacheHit=True,
@@ -561,21 +699,25 @@ def git_snapshot(
     )
     with _GIT_SNAPSHOT_LOCK:
         value["generation"] = generation
-        _GIT_SNAPSHOT_CACHE[key] = (time.monotonic(), _repo_quick_stamp(root), value)
-        # A write that landed during the capture keeps the snapshot stale.
-        if _GIT_GENERATION.get(key, 0) == generation:
-            _GIT_INVALIDATED.discard(key)
-        else:
-            _GIT_INVALIDATED.add(key)
+        if _GIT_ROOTS.get(key) is token:
+            # A write that landed during the capture keeps the snapshot stale.
+            if _GIT_GENERATION.get(key, 0) == generation:
+                _GIT_INVALIDATED.discard(key)
+            else:
+                _GIT_INVALIDATED.add(key)
+            _put_git_snapshot_locked(key, token, time.monotonic(), _repo_quick_stamp(root), value)
     if not refresh:
-        _schedule_git_refresh(key, root)
+        _schedule_git_refresh(key, root, token)
     return _snapshot_copy(value, cacheHit=False, stale=False, ageMs=0.0)
 
 
 def _git_toplevel(root: Path) -> str | None:
     """`git rev-parse --show-toplevel`, cached: a checkout does not move."""
     key = str(root)
-    cached = _GIT_TOPLEVEL.get(key)
+    with _GIT_SNAPSHOT_LOCK:
+        cached = _GIT_TOPLEVEL.get(key)
+        if cached is not None:
+            _GIT_TOPLEVEL.move_to_end(key)
     if cached is not None and time.monotonic() - cached[0] < 300.0:
         return cached[1]
     try:
@@ -583,7 +725,8 @@ def _git_toplevel(root: Path) -> str | None:
         top = proc.stdout.strip() if proc.returncode == 0 and proc.stdout.strip() else None
     except (OSError, subprocess.SubprocessError):
         top = None
-    _GIT_TOPLEVEL[key] = (time.monotonic(), top)
+    with _GIT_SNAPSHOT_LOCK:
+        _git_memo_locked(_GIT_TOPLEVEL, key, (time.monotonic(), top))
     return top
 
 
@@ -848,6 +991,98 @@ class RepoIndexer:
         }
 
 
+_ARTIFACT_READ_CHARS = 64 * 1024
+_ARTIFACT_LINE_BREAK = re.compile(r"\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]")
+
+
+def _artifact_search_lines(handle: Any, query: str, limit: int, counted: list[int]):
+    """splitlines() as bounded chunks: even a single huge line stays bounded.
+
+    Keep only the prefix a returned context can expose and a folded suffix
+    needed to detect a query crossing chunks. The rest of the line is scanned
+    and discarded. counted tracks original decoded characters, including line
+    separators, for the existing nextOffset contract.
+    """
+    prefix: list[str] = []
+    kept = 0
+    matched = False
+    tail = ""
+    has_text = False
+    pending_cr = False
+
+    def consume(piece: str) -> None:
+        nonlocal kept, matched, tail, has_text
+        if not piece:
+            return
+        has_text = True
+        if kept < limit:
+            start = piece[:limit - kept]
+            prefix.append(start)
+            kept += len(start)
+        if not matched:
+            folded = tail + piece.casefold()
+            matched = query in folded
+            tail = folded[-(len(query) - 1):] if len(query) > 1 else ""
+
+    while chunk := handle.read(_ARTIFACT_READ_CHARS):
+        counted[0] += len(chunk)
+        start = 1 if pending_cr and chunk.startswith("\n") else 0
+        pending_cr = False
+        for match in _ARTIFACT_LINE_BREAK.finditer(chunk, start):
+            consume(chunk[start:match.start()])
+            yield "".join(prefix), matched
+            prefix, kept, matched, tail, has_text = [], 0, False, "", False
+            start = match.end()
+            pending_cr = start == len(chunk) and match.group() == "\r"
+        consume(chunk[start:])
+    if has_text:
+        yield "".join(prefix), matched
+
+
+def _artifact_text_page(handle: Any, offset: int, limit: int, query: str | None):
+    if not query:
+        skipped = 0
+        while skipped < offset:
+            part = handle.read(min(_ARTIFACT_READ_CHARS, offset - skipped))
+            if not part:
+                return "", skipped, False
+            skipped += len(part)
+        content = handle.read(limit)
+        more = bool(handle.read(1))
+        return content, skipped + len(content), more
+
+    counted = [0]
+    window: deque[tuple[int, str, bool]] = deque(maxlen=5)
+    matches = []
+    used = 0
+    number = 0
+
+    def record(line: int) -> None:
+        nonlocal used
+        target = next(row for row in window if row[0] == line)
+        if target[2] and used < limit and len(matches) < 50:
+            context = "\n".join(row[1] for row in window if line - 2 <= row[0] <= line + 2)[:limit - used]
+            matches.append({"line": line, "context": context})
+            used += len(context)
+
+    lines = _artifact_search_lines(handle, query.casefold(), limit, counted)
+    for number, (prefix, found) in enumerate(lines, 1):
+        window.append((number, prefix, found))
+        if number >= 3:
+            record(number - 2)  # the following two lines have now arrived
+        if used >= limit or len(matches) >= 50:
+            # nextOffset for query results depends on the full character count.
+            # The rest needs counting only, not line/context allocation.
+            lines.close()
+            while chunk := handle.read(_ARTIFACT_READ_CHARS):
+                counted[0] += len(chunk)
+            break
+    else:
+        for line in range(max(1, number - 1), number + 1):
+            record(line)
+    return matches, min(counted[0], offset + limit), True
+
+
 class ArtifactStore:
     INLINE_LIMIT = 24000
 
@@ -958,7 +1193,12 @@ class ArtifactStore:
         }
         if not textual:
             try:
-                data = self._read_file(str(row["file_path"])) if row["file_path"] else b""
+                data = b""
+                if row["file_path"]:
+                    path = str(row["file_path"])
+                    with gzip.open(path, "rb") if path.endswith(".gz") else open(path, "rb") as handle:
+                        handle.seek(offset)
+                        data = handle.read(limit)
             except (OSError, EOFError, zlib.error):
                 data = b""
             return {
@@ -972,47 +1212,21 @@ class ArtifactStore:
                 "sha256": row["sha256"],
                 "offset": offset,
                 "encoding": "base64",
-                "content": base64.b64encode(data[offset : offset + limit]).decode("ascii"),
+                "content": base64.b64encode(data).decode("ascii"),
             }
-        if row["inline_text"] is not None:
-            text = str(row["inline_text"])
-        elif row["file_path"] and str(row["file_path"]).endswith(".gz"):
-            try:
-                text = self._read_file(str(row["file_path"])).decode("utf-8", errors="replace")
-                # Same universal-newline view read_text() gives plain files.
-                text = text.replace("\r\n", "\n").replace("\r", "\n")
-            except (OSError, EOFError, zlib.error):
-                text = ""
-        elif row["file_path"]:
-            try:
-                text = Path(str(row["file_path"])).read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                text = ""
-        else:
-            text = ""
-        if query:
-            q = query.casefold()
-            lines = text.splitlines()
-            matched = []
-            for index, line in enumerate(lines):
-                if q in line.casefold():
-                    used = sum(len(item["context"]) for item in matched)
-                    remaining = limit - used
-                    if remaining <= 0:
-                        break
-                    matched.append(
-                        {
-                            "line": index + 1,
-                            "context": "\n".join(
-                                lines[max(0, index - 2) : min(len(lines), index + 3)]
-                            )[:remaining],
-                        }
-                    )
-                    if len(matched) >= 50:
-                        break
-            content: Any = matched
-        else:
-            content = text[offset : offset + limit]
+        try:
+            if row["inline_text"] is not None or not row["file_path"]:
+                # Inline text historically preserves CR/CRLF, unlike file text.
+                with io.StringIO(str(row["inline_text"] or "")) as handle:
+                    content, next_offset, truncated = _artifact_text_page(handle, offset, limit, query)
+            else:
+                path = str(row["file_path"])
+                # Both plain and gzip streams decode incrementally with the
+                # same replacement/universal-newline semantics as read_text().
+                with gzip.open(path, "rt", encoding="utf-8", errors="replace", newline=None) if path.endswith(".gz") else open(path, "r", encoding="utf-8", errors="replace", newline=None) as handle:
+                    content, next_offset, truncated = _artifact_text_page(handle, offset, limit, query)
+        except (OSError, EOFError, zlib.error):
+            content, next_offset, truncated = ([] if query else ""), 0, bool(query)
         return {
             "id": row["id"],
             "taskID": row["task_id"],
@@ -1024,14 +1238,9 @@ class ArtifactStore:
             "sha256": row["sha256"],
             "offset": offset,
             "content": content,
-            "nextOffset": min(len(text), offset + limit),
-            "truncated": bool(query) or offset + limit < len(text),
+            "nextOffset": next_offset,
+            "truncated": truncated,
         }
-
-    @staticmethod
-    def _read_file(path: str) -> bytes:
-        data = Path(path).read_bytes()
-        return gzip.decompress(data) if path.endswith(".gz") else data
 
     def list(self, task_id: str, limit: int = 100) -> list[dict[str, Any]]:
         self.store.initialize()
