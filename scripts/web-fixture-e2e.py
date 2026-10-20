@@ -908,7 +908,16 @@ def desktop(browser, base_url: str, server_workflow) -> None:
     page.locator(".plan-panel > summary").click()
     page.wait_for_function("document.querySelector('.plan-panel').open && document.querySelector('.live-panel').open")
     def equal_panels():
-        boxes = [page.locator(selector).bounding_box() for selector in ('.plan-panel', '.live-panel')]
+        # A live render can replace both panels between protocol round trips.
+        # Read their geometry together before JavaScript yields to that render.
+        boxes = page.evaluate("""() => ['.plan-panel', '.live-panel'].map(selector => {
+            const element = document.querySelector(selector)
+            if (!element) return null
+            const rect = element.getBoundingClientRect()
+            const visibility = getComputedStyle(element).visibility
+            if (visibility === 'hidden' || visibility === 'collapse' || rect.width <= 0 || rect.height <= 0) return null
+            return {x: rect.x, y: rect.y, width: rect.width, height: rect.height}
+        })""")
         assert all(boxes), boxes
         assert abs(boxes[0]['height'] - boxes[1]['height']) <= 1, boxes
         assert abs(boxes[0]['width'] - boxes[1]['width']) <= 1, boxes
