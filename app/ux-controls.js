@@ -436,6 +436,77 @@ function installSelectedChatScrollSettle() {
   })
 }
 
+// Desktop chip menus. The native <select> popup ignores the app theme (a white
+// list over the dark composer), so hover-capable devices open a themed popover
+// instead; phones keep the OS picker. The select stays the state holder: a pick
+// sets its value and fires the same change event app.js already listens to.
+function installChipMenus() {
+  if (!matchMedia('(hover:hover) and (pointer:fine)').matches || !('showPopover' in HTMLElement.prototype)) return
+  const menu = document.createElement('div')
+  menu.id = 'chipMenu'
+  menu.className = 'chip-menu'
+  menu.popover = 'auto'
+  menu.setAttribute('role', 'listbox')
+  document.body.append(menu)
+  let owner = null
+  const close = () => { if (menu.matches(':popover-open')) menu.hidePopover() }
+  const open = (select) => {
+    owner = select
+    menu.replaceChildren(...[...select.options].map((option) => {
+      const item = document.createElement('button')
+      item.type = 'button'
+      item.role = 'option'
+      item.dataset.value = option.value
+      item.textContent = option.textContent
+      item.setAttribute('aria-selected', String(option.selected))
+      return item
+    }))
+    const chip = select.closest('.control-select'), box = chip.getBoundingClientRect()
+    menu.style.minWidth = `${Math.round(box.width)}px`
+    menu.style.bottom = `${Math.round(innerHeight - box.top + 6)}px`
+    menu.style.left = '0px'
+    menu.showPopover()
+    menu.style.left = `${Math.round(Math.max(8, Math.min(box.left, innerWidth - menu.offsetWidth - 8)))}px`
+    chip.classList.add('is-open')
+    menu.querySelector('[aria-selected="true"]')?.focus()
+  }
+  menu.addEventListener('toggle', (event) => {
+    if (event.newState !== 'closed') return
+    owner?.closest('.control-select')?.classList.remove('is-open')
+    owner = null
+  })
+  menu.addEventListener('click', (event) => {
+    const item = event.target.closest('[data-value]')
+    if (!item || !owner) return
+    const select = owner, value = item.dataset.value
+    close()
+    if (select.value === value) return
+    select.value = value
+    select.dispatchEvent(new Event('change', { bubbles:true }))
+  })
+  menu.addEventListener('keydown', (event) => {
+    if (event.key === 'Tab') return close()
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    event.preventDefault()
+    const items = [...menu.children], index = items.indexOf(document.activeElement)
+    items.at((index + (event.key === 'ArrowDown' ? 1 : -1)) % items.length)?.focus()
+  })
+  for (const select of document.querySelectorAll('.control-select > select')) {
+    select.addEventListener('mousedown', (event) => {
+      if (select.disabled || event.button !== 0) return
+      event.preventDefault()
+      if (owner === select) close(); else open(select)
+    })
+    select.addEventListener('keydown', (event) => {
+      const opens = event.key === 'Enter' || event.key === ' ' || (event.altKey && (event.key === 'ArrowDown' || event.key === 'ArrowUp'))
+      if (select.disabled || !opens) return
+      event.preventDefault()
+      open(select)
+    })
+  }
+  addEventListener('resize', close)
+}
+
 function init() {
   window.addEventListener('custom-opencode:model-changed', (event) => finishModelTransition(event.detail))
   window.addEventListener('custom-opencode:agent-changed', (event) => finishAgentTransition(event.detail))
@@ -446,6 +517,7 @@ function init() {
   installPermissionSummary()
   installSessionProfileRestore()
   installSelectedChatScrollSettle()
+  installChipMenus()
   syncAgentSurface()
   syncModelSurface()
   window.CustomOpenCodeUX = {

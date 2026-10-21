@@ -25,19 +25,7 @@ class BackendHTTPError(RuntimeError):
 
 
 def _project_roots() -> tuple[Path, ...]:
-    raw = ext.base.setting("OPENCODE_PROJECT_ROOTS", "~") or "~"
-    roots: list[Path] = []
-    for item in raw.split(";"):
-        value = item.strip()
-        if not value:
-            continue
-        try:
-            candidate = Path(value).expanduser().resolve(strict=True)
-        except (OSError, RuntimeError):
-            continue
-        if candidate.is_dir() and candidate not in roots:
-            roots.append(candidate)
-    return tuple(roots)
+    return ext.base.project_roots()
 
 
 def _inside(candidate: Path, root: Path) -> bool:
@@ -67,6 +55,7 @@ def validate_project_directory(raw_path: object) -> tuple[int, dict[str, object]
         return 404, {"ok": False, "error": "directory-not-found"}
     if not current.is_dir():
         return 404, {"ok": False, "error": "directory-not-found"}
+    ext.base.remember_explicit_directory(current)
     return 200, {
         "ok": True,
         "directory": str(current),
