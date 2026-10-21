@@ -46,7 +46,7 @@ def main() -> int:
         kb = ((config.get("mcp") or {}).get("servers") or {}).get("kb") or {}
         good = (
             (config.get("compaction") or {}).get("auto") is True
-            and ((config.get("compaction") or {}).get("keep") or {}).get("tokens") == 4096
+            and ((config.get("compaction") or {}).get("keep") or {}).get("tokens") == 16384
             and (config.get("compaction") or {}).get("buffer") == 2048
             and (config.get("tool_output") or {}).get("max_bytes") == 48000
             # The global kb is optional (MCP_RAG_ENABLED=0); when present it must use Code Mode.

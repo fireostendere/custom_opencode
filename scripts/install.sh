@@ -474,7 +474,9 @@ config.pop("plugins", None)
 # MCP schemas out of the provider tool list until the namespace is actually used.
 # Keep one compaction owner. These are margins, not a context-window cap.
 # Native itself reserves max(min(model.output, 32000), buffer) from context.
-config["compaction"] = {"auto": True, "keep": {"tokens": 4096}, "buffer": 2048}
+# keep = recent tokens that survive compaction verbatim; one D&D table read is
+# ~10K, so 4096 left the narrator without even its last round.
+config["compaction"] = {"auto": True, "keep": {"tokens": 16384}, "buffer": 2048}
 config["tool_output"] = {"max_lines": 1600, "max_bytes": 48000}
 kb = (((config.get("mcp") or {}).get("servers") or {}).get("kb"))
 if isinstance(kb, dict):
