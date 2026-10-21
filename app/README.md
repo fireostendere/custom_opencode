@@ -15,7 +15,7 @@
 - short reduced-motion-aware microanimations;
 - native slash commands и control-команда `/rag-start`;
 - isolated quick-session workspaces и безопасный browser локальных project roots;
-- проекты и сессии из временных папок (`/tmp`, `/var/tmp`, `AppData/Local/Temp`, корень `/`) скрыты из sidebar и project picker: их создают бенчмарки, probes и agent scratchpads; `OPENCODE_PROJECT_ROOTS`, quick-workspaces и папки, открытые вручную по точному пути («Открыть путь»), остаются видимыми — последние запоминаются в `explicit-directories.json` рядом с feature-state;
+- проекты и сессии из временных папок (`/tmp`, `/var/tmp`, `AppData/Local/Temp`, `~/.cache`, `~/.local`, корень `/`) и из папок, которых больше нет на диске, скрыты из sidebar и project picker: их оставляют бенчмарки, probes, smoke-клоны и agent scratchpads; `OPENCODE_PROJECT_ROOTS`, quick-workspaces и папки, открытые вручную по точному пути («Открыть путь»), остаются видимыми — последние запоминаются в `explicit-directories.json` рядом с feature-state. Прокси запрашивает у бэкенда `Accept-Encoding: identity`: сжатый JSON раньше проходил мимо этого фильтра и mapping quick-сессий;
 - на десктопе чипы «Агент»/«Effort» открывают тёмное popover-меню вместо нативного списка `<select>`; на телефоне остаётся системный picker;
 - web всегда использует `Build`, native `Plan` остаётся доступен в TUI;
 - web- и TUI-model picker с зеркальной секцией favorites, collapsible providers, free-model group, ordinary models и server profiles;

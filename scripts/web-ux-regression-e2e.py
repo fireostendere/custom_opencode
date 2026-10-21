@@ -36,7 +36,9 @@ AGENTS = [
 MODELS = [
     {"providerID": "bailian-cli", "id": "qwen3.8-max", "name": "Qwen3.8 Max", "enabled": True, "cost": [{"input": 1, "output": 1}], "limit": {"context": 262144}},
     {"providerID": "openai", "id": "gpt-6-sol", "name": "GPT-6 Sol", "enabled": True, "cost": [{"input": 1, "output": 1}], "variants": {"low": {}, "high": {}}},
+    {"providerID": "bailian-cli", "id": "qwen3.8-orchestrated", "name": "Qwen3.8 Max · Orchestrated", "enabled": True, "cost": [{"input": 1, "output": 1}]},
 ]
+ORCHESTRATED = {"providerID": "bailian-cli", "id": "qwen3.8-orchestrated"}
 
 
 def now_ms() -> int:
@@ -303,6 +305,56 @@ def stale_override_expires(browser) -> None:
     page.close()
 
 
+def direct_pick_from_orchestrated_chat(browser) -> None:
+    # <html data-orchestrated-model> marks the active profile; the model list's
+    # click handler used to find it via closest() and swallow every pick, so a
+    # D&D or orchestrated chat could not change its model from the dialog.
+    world, base, page = scenario(browser, lambda w: w.add("s0", model=ORCHESTRATED))
+    page.goto(f"{base}/#/session/s0")
+    time.sleep(3.5)
+    check(page.evaluate("document.documentElement.dataset.orchestratedModel") == "qwen3.8-orchestrated", "an orchestrated chat must mark its profile on <html>")
+    page.click("#modelButton")
+    time.sleep(1.0)
+    page.click('#modelChoices [data-model="gpt-6-sol"][data-provider="openai"] .choice-title')
+    time.sleep(1.5)
+    writes = world.requests(lambda row: row["method"] == "POST" and row["path"] == "/api/session/s0/model")
+    check([row["body"]["model"]["id"] for row in writes] == ["gpt-6-sol"], f"picking a model in an orchestrated chat wrote {writes}")
+    check(not page.evaluate("document.getElementById('modelDialog').open"), "the model dialog must close after a successful pick")
+    check("Sol" in page.evaluate("document.getElementById('modelButton').textContent"), "the chip must show the picked model")
+    page.close()
+
+
+def chip_menu_mouse_and_keyboard(browser) -> None:
+    # Desktop agent/effort chips open a themed menu. It must survive the mouseup
+    # that ends the opening click (an auto popover light-dismissed there), close
+    # on outside click and Escape, and write the pick through the <select>.
+    world, base, page = scenario(browser, lambda w: w.add("s0"))
+    page.goto(f"{base}/#/session/s0")
+    time.sleep(3.5)
+    is_open = "document.getElementById('chipMenu')?.matches(':popover-open') === true"
+    page.click("#agentSelect")
+    time.sleep(0.4)
+    check(page.evaluate(is_open), "the agent menu must stay open after the click that opened it")
+    check(page.evaluate("document.querySelectorAll('#chipMenu [role=option]').length") >= 3, "the menu must list the visible agents")
+    page.mouse.click(640, 200)
+    time.sleep(0.3)
+    check(not page.evaluate(is_open), "a click outside must close the menu")
+    page.click("#agentSelect")
+    time.sleep(0.3)
+    page.keyboard.press("Escape")
+    time.sleep(0.3)
+    check(not page.evaluate(is_open), "Escape must close the menu")
+    page.click("#agentSelect")
+    time.sleep(0.3)
+    page.click('#chipMenu [data-value="review"]')
+    time.sleep(1.5)
+    check(not page.evaluate(is_open), "a pick must close the menu")
+    writes = world.requests(lambda row: row["method"] == "POST" and row["path"] == "/api/session/s0/agent")
+    check([row["body"].get("agent") for row in writes] == ["review"], f"the menu pick must switch the agent once, wrote {writes}")
+    check(page.evaluate("document.getElementById('agentSelect').value") == "review", "the select must hold the picked agent")
+    page.close()
+
+
 def project_defaults_only_new_chats(browser) -> None:
     def setup(world: World) -> None:
         world.add("e1", messages=[])
@@ -437,6 +489,8 @@ def main() -> int:
         ("passive agents", passive_agents),
         ("live model + plan chip", live_model_and_plan_chip),
         ("stale model override", stale_override_expires),
+        ("direct pick from orchestrated chat", direct_pick_from_orchestrated_chat),
+        ("chip menu mouse + keyboard", chip_menu_mouse_and_keyboard),
         ("project defaults", project_defaults_only_new_chats),
         ("composer focus + attachments", lambda browser: composer_focus_and_attachments(browser, scratch)),
         ("event stream recovery", event_stream_recovers),

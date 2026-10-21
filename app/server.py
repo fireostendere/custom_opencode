@@ -850,16 +850,41 @@ def remember_explicit_directory(directory: Path) -> None:
         print(f"explicit directory not persisted: {error}", file=sys.stderr)
 
 
+_DIRECTORY_PRESENT_CACHE: dict[str, tuple[float, bool]] = {}
+DIRECTORY_PRESENT_TTL_SECONDS = 60.0
+
+
+def directory_present(path: str) -> bool:
+    """os.path.isdir with a short cache: /mnt/c stats are slow and lists are polled."""
+    now = time.monotonic()
+    cached = _DIRECTORY_PRESENT_CACHE.get(path)
+    if cached is not None and 0 <= now - cached[0] < DIRECTORY_PRESENT_TTL_SECONDS:
+        return cached[1]
+    present = os.path.isdir(path)
+    if len(_DIRECTORY_PRESENT_CACHE) > 4096:
+        _DIRECTORY_PRESENT_CACHE.clear()
+    _DIRECTORY_PRESENT_CACHE[path] = (now, present)
+    return present
+
+
 def is_operational_directory(value: object) -> bool:
     """A session/project directory the web client must not list.
 
-    Quick-session scratch workspaces, anything under OPENCODE_PROJECT_ROOTS and
-    exact paths the user opened on purpose stay visible even under a temp root.
+    Throwaway roots are hidden unless they hold OPENCODE_PROJECT_ROOTS or a
+    path the user opened on purpose; elsewhere a directory that no longer
+    exists is hidden (smoke clones, removed worktrees: nothing can run there).
+    Quick-session scratch workspaces always stay, the server recreates them.
     """
     raw = value.strip().replace("\\", "/") if isinstance(value, str) else ""
+    if not raw:
+        return False
     if raw == "/":
         return True
-    if not OPERATIONAL_DIRECTORY_RE.search(raw) or is_scratch_path(raw):
+    if raw.startswith(str(SCRATCH_ROOT)) and is_scratch_path(raw):
+        return False
+    if not directory_present(raw):
+        return True
+    if not OPERATIONAL_DIRECTORY_RE.search(raw):
         return False
     candidate = resolve_directory(raw)
     if candidate is None:
@@ -1669,12 +1694,17 @@ class Handler(BaseHTTPRequestHandler):
             key: value
             for key, value in self.headers.items()
             if key.lower() not in HOP_BY_HOP
-            and key.lower() not in ("authorization", "content-length", "cookie", "host")
+            and key.lower() not in ("authorization", "content-length", "cookie", "host", "accept-encoding")
             and key.lower() not in FORWARDED_HEADERS
         }
         host, port, auth = current_backend()
         headers["Authorization"] = auth
         headers["Host"] = host
+        # Plain bytes from the backend: transform_json_response rewrites session
+        # and project lists, and a gzip body (browsers always accept it) used to
+        # slip through untouched, so the junk filter and quick-project mapping
+        # only worked for curl.
+        headers["Accept-Encoding"] = "identity"
         if body is not None:
             headers["Content-Length"] = str(len(body))
 
