@@ -8,6 +8,7 @@ OpenCode state is touched.
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import gzip
 import json
 import os
 from pathlib import Path
@@ -147,6 +148,11 @@ class Backend(BaseHTTPRequestHandler):
         body = json.dumps(value, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        # The native backend gzips JSON whenever the caller accepts it; the web
+        # proxy must still be able to rewrite session/project lists.
+        if "gzip" in self.headers.get("Accept-Encoding", ""):
+            body = gzip.compress(body)
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

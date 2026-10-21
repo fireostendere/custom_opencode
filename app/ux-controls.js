@@ -354,8 +354,11 @@ function installModelProfileProxy() {
   const root = $('modelChoices')
   if (!root) return
   root.addEventListener('click', (event) => {
+    // Scoped to the list: <html> carries data-orchestrated-model for the active
+    // profile, and closest() used to reach it and swallow every pick in a D&D or
+    // orchestrated chat.
     const orchestrated = event.target.closest('[data-orchestrated-model]')
-    if (orchestrated) {
+    if (orchestrated && root.contains(orchestrated)) {
       event.preventDefault()
       event.stopImmediatePropagation()
       const model = ORCHESTRATED_MODELS.find((item) => item.id === orchestrated.dataset.model)
@@ -440,17 +443,28 @@ function installSelectedChatScrollSettle() {
 // list over the dark composer), so hover-capable devices open a themed popover
 // instead; phones keep the OS picker. The select stays the state holder: a pick
 // sets its value and fires the same change event app.js already listens to.
+// popover="manual": an auto popover light-dismisses on the pointerup that ends
+// the opening click, so the menu only lived while the mouse button was held.
 function installChipMenus() {
   if (!matchMedia('(hover:hover) and (pointer:fine)').matches || !('showPopover' in HTMLElement.prototype)) return
   const menu = document.createElement('div')
   menu.id = 'chipMenu'
   menu.className = 'chip-menu'
-  menu.popover = 'auto'
+  menu.popover = 'manual'
   menu.setAttribute('role', 'listbox')
   document.body.append(menu)
   let owner = null
-  const close = () => { if (menu.matches(':popover-open')) menu.hidePopover() }
+  const isOpen = () => menu.matches(':popover-open')
+  const close = ({ refocus = false } = {}) => {
+    if (!isOpen()) return
+    const select = owner
+    menu.hidePopover()
+    select?.closest('.control-select')?.classList.remove('is-open')
+    owner = null
+    if (refocus) select?.focus()
+  }
   const open = (select) => {
+    close()
     owner = select
     menu.replaceChildren(...[...select.options].map((option) => {
       const item = document.createElement('button')
@@ -470,16 +484,11 @@ function installChipMenus() {
     chip.classList.add('is-open')
     menu.querySelector('[aria-selected="true"]')?.focus()
   }
-  menu.addEventListener('toggle', (event) => {
-    if (event.newState !== 'closed') return
-    owner?.closest('.control-select')?.classList.remove('is-open')
-    owner = null
-  })
   menu.addEventListener('click', (event) => {
     const item = event.target.closest('[data-value]')
     if (!item || !owner) return
     const select = owner, value = item.dataset.value
-    close()
+    close({ refocus:true })
     if (select.value === value) return
     select.value = value
     select.dispatchEvent(new Event('change', { bubbles:true }))
@@ -491,6 +500,10 @@ function installChipMenus() {
     const items = [...menu.children], index = items.indexOf(document.activeElement)
     items.at((index + (event.key === 'ArrowDown' ? 1 : -1)) % items.length)?.focus()
   })
+  document.addEventListener('pointerdown', (event) => {
+    if (isOpen() && !menu.contains(event.target) && !owner?.closest('.control-select')?.contains(event.target)) close()
+  }, true)
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && isOpen()) { event.stopPropagation(); close({ refocus:true }) } }, true)
   for (const select of document.querySelectorAll('.control-select > select')) {
     select.addEventListener('mousedown', (event) => {
       if (select.disabled || event.button !== 0) return
@@ -504,7 +517,7 @@ function installChipMenus() {
       open(select)
     })
   }
-  addEventListener('resize', close)
+  addEventListener('resize', () => close())
 }
 
 function init() {

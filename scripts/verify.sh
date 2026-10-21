@@ -74,9 +74,14 @@ server.cleanup_scratch_directory(workspace)
 # web project picker and sidebar; project roots and quick workspaces under a
 # temp root stay visible.
 assert all(map(server.is_operational_directory, ("/tmp/agent-prison-v3", "/", "/srv/.local/share/opencode/tool-output", "/mnt/c/x/AppData/Local/Temp/y")))
-assert not server.is_operational_directory("/srv/.config/opencode")
-server.remember_explicit_directory(server.Path("/tmp/opened-on-purpose"))
-assert not server.is_operational_directory("/tmp/opened-on-purpose/sub") and server.is_operational_directory("/tmp/opened-elsewhere")
+assert not server.OPERATIONAL_DIRECTORY_RE.search("/srv/.config/opencode"), "dot-config dirs are not throwaway"
+assert server.is_operational_directory(os.path.join(os.environ["OPENCODE_PROJECT_ROOTS"], "removed-clone")), "a workspace that no longer exists is hidden"
+assert not server.is_operational_directory(os.environ["OPENCODE_PROJECT_ROOTS"])
+opened = os.path.join(os.path.dirname(os.environ["HOME"]), "opened-on-purpose")
+os.makedirs(os.path.join(opened, "sub"))
+assert server.is_operational_directory(opened), "a temp directory outside the roots starts hidden"
+server.remember_explicit_directory(server.Path(opened))
+assert not server.is_operational_directory(os.path.join(opened, "sub")) and server.is_operational_directory(os.path.join(os.path.dirname(opened), "opened-elsewhere"))
 assert not server.is_operational_directory(os.path.join(os.environ["OPENCODE_PROJECT_ROOTS"], "alpha"))
 assert not server.is_operational_directory(workspace)
 junk = {"data": [{"id": "junk", "location": {"directory": "/tmp/gulag-swe/work"}}, {"id": "root", "location": {"directory": workspace}}]}
