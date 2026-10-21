@@ -789,6 +789,90 @@ def is_scratch_path(value: object, *, include_root: bool = True) -> bool:
     return SCRATCH_ROOT in candidate.parents
 
 
+def project_roots() -> tuple[Path, ...]:
+    """OPENCODE_PROJECT_ROOTS (';'-separated), resolved; missing entries are skipped."""
+    roots: list[Path] = []
+    for item in (setting("OPENCODE_PROJECT_ROOTS", "~") or "~").split(";"):
+        value = item.strip()
+        if not value:
+            continue
+        try:
+            candidate = Path(value).expanduser().resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if candidate.is_dir() and candidate not in roots:
+            roots.append(candidate)
+    return tuple(roots)
+
+
+# Throwaway locations: benchmark runs, probes and agent scratchpads create
+# OpenCode projects and sessions there (WSL wipes /tmp on restart anyway), and
+# ~/.cache / ~/.local hold application data such as OpenCode's tool-output.
+OPERATIONAL_DIRECTORY_RE = re.compile(r"^/(?:tmp|var/tmp|dev/shm|run/user/\d+)(?:/|$)|/(?:appdata/local/temp|\.cache|\.local)(?:/|$)", re.IGNORECASE)
+
+
+def explicit_directories_path() -> Path:
+    configured = setting("CUSTOM_OPENCODE_FEATURE_STATE")
+    if configured:
+        return Path(configured).expanduser().with_name("explicit-directories.json")
+    return Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local/state")) / "custom-opencode" / "explicit-directories.json"
+
+
+_EXPLICIT_DIRECTORIES_CACHE: tuple[float, frozenset[str]] = (-1.0, frozenset())
+
+
+def explicit_directories() -> frozenset[str]:
+    """Exact paths a user opened through the web project dialog, even under a temp root."""
+    global _EXPLICIT_DIRECTORIES_CACHE
+    path = explicit_directories_path()
+    try:
+        stamp = path.stat().st_mtime
+    except OSError:
+        return frozenset()
+    if stamp != _EXPLICIT_DIRECTORIES_CACHE[0]:
+        try:
+            rows = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            rows = []
+        _EXPLICIT_DIRECTORIES_CACHE = (stamp, frozenset(row for row in rows if isinstance(row, str)) if isinstance(rows, list) else frozenset())
+    return _EXPLICIT_DIRECTORIES_CACHE[1]
+
+
+def remember_explicit_directory(directory: Path) -> None:
+    if not is_operational_directory(str(directory)):
+        return  # ponytail: only throwaway paths need remembering; roots and scratch are visible anyway
+    path = explicit_directories_path()
+    rows = [row for row in explicit_directories() if row != str(directory)][-199:] + [str(directory)]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+    except OSError as error:
+        print(f"explicit directory not persisted: {error}", file=sys.stderr)
+
+
+def is_operational_directory(value: object) -> bool:
+    """A session/project directory the web client must not list.
+
+    Quick-session scratch workspaces, anything under OPENCODE_PROJECT_ROOTS and
+    exact paths the user opened on purpose stay visible even under a temp root.
+    """
+    raw = value.strip().replace("\\", "/") if isinstance(value, str) else ""
+    if raw == "/":
+        return True
+    if not OPERATIONAL_DIRECTORY_RE.search(raw) or is_scratch_path(raw):
+        return False
+    candidate = resolve_directory(raw)
+    if candidate is None:
+        return False
+    keep = [*project_roots(), *(Path(row) for row in explicit_directories())]
+    return not any(candidate == root or root in candidate.parents for root in keep)
+
+
+def session_location(session: object) -> object:
+    location = session.get("location") if isinstance(session, dict) else None
+    return location.get("directory") if isinstance(location, dict) else None
+
+
 def allocate_scratch_directory() -> str:
     SCRATCH_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     for _ in range(32):
@@ -935,9 +1019,7 @@ def heal_request_scratch(command: str, parsed: SplitResult) -> None:
 def mark_quick_session(session: object) -> object:
     if not isinstance(session, dict):
         return session
-    location = session.get("location")
-    directory = location.get("directory") if isinstance(location, dict) else None
-    if is_scratch_path(directory):
+    if is_scratch_path(session_location(session)):
         session = dict(session)
         session["projectID"] = SCRATCH_PROJECT_ID
     return session
@@ -960,25 +1042,28 @@ def transform_json_response(method: str, path: str, body: bytes) -> bytes:
         elif isinstance(payload, dict):
             payload = mark_quick_session(payload)
     elif path == "/api/session":
+        def sessions(rows: list) -> list:
+            return [mark_quick_session(session) for session in rows if not is_operational_directory(session_location(session))]
         if isinstance(payload, dict) and isinstance(payload.get("data"), list):
             payload = dict(payload)
-            payload["data"] = [mark_quick_session(session) for session in payload["data"]]
+            payload["data"] = sessions(payload["data"])
         elif isinstance(payload, list):
-            payload = [mark_quick_session(session) for session in payload]
+            payload = sessions(payload)
     elif path == "/api/project":
         quick_project = {
             "id": SCRATCH_PROJECT_ID,
             "name": SCRATCH_PROJECT_NAME,
             "canonical": SCRATCH_DIRECTORY,
         }
+        def projects(rows: list) -> list:
+            kept = [project for project in rows if not (isinstance(project, dict) and (project.get("id") == SCRATCH_PROJECT_ID or is_operational_directory(project.get("canonical")) or is_scratch_path(project.get("canonical"))))]
+            kept.append(quick_project)
+            return kept
         if isinstance(payload, list):
-            payload = [project for project in payload if not (isinstance(project, dict) and project.get("id") == SCRATCH_PROJECT_ID)]
-            payload.append(quick_project)
+            payload = projects(payload)
         elif isinstance(payload, dict) and isinstance(payload.get("data"), list):
             payload = dict(payload)
-            projects = [project for project in payload["data"] if not (isinstance(project, dict) and project.get("id") == SCRATCH_PROJECT_ID)]
-            projects.append(quick_project)
-            payload["data"] = projects
+            payload["data"] = projects(payload["data"])
 
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 

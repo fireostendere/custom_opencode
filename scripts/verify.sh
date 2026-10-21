@@ -70,6 +70,24 @@ server.heal_missing_scratch_directory(os.path.join(str(server.SCRATCH_ROOT), "se
 assert not os.path.exists(os.path.join(str(server.SCRATCH_ROOT), "session-notahexname"))
 server.cleanup_scratch_directory(workspace)
 
+# Throwaway directories (benchmarks, probes, agent scratchpads) stay out of the
+# web project picker and sidebar; project roots and quick workspaces under a
+# temp root stay visible.
+assert all(map(server.is_operational_directory, ("/tmp/agent-prison-v3", "/", "/srv/.local/share/opencode/tool-output", "/mnt/c/x/AppData/Local/Temp/y")))
+assert not server.is_operational_directory("/srv/.config/opencode")
+server.remember_explicit_directory(server.Path("/tmp/opened-on-purpose"))
+assert not server.is_operational_directory("/tmp/opened-on-purpose/sub") and server.is_operational_directory("/tmp/opened-elsewhere")
+assert not server.is_operational_directory(os.path.join(os.environ["OPENCODE_PROJECT_ROOTS"], "alpha"))
+assert not server.is_operational_directory(workspace)
+junk = {"data": [{"id": "junk", "location": {"directory": "/tmp/gulag-swe/work"}}, {"id": "root", "location": {"directory": workspace}}]}
+assert [s["id"] for s in json.loads(server.transform_json_response("GET", "/api/session", json.dumps(junk).encode()))["data"]] == ["root"]
+projects = json.loads(server.transform_json_response("GET", "/api/project", json.dumps([
+    {"id": "global", "canonical": "/"}, {"id": "tmp", "canonical": "/tmp/odm-probe"},
+    {"id": "per-session", "canonical": os.path.join(str(server.SCRATCH_ROOT), "session-0123456789abcdef")},
+    {"id": "real", "canonical": os.environ["OPENCODE_PROJECT_ROOTS"]},
+]).encode()))
+assert [p["id"] for p in projects] == ["real", server.SCRATCH_PROJECT_ID], projects
+
 root = server_plus.directory_snapshot()
 assert len(root["roots"]) == 1
 projects_root = root["roots"][0]["path"]

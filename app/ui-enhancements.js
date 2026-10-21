@@ -354,27 +354,28 @@ function ensureProjectBrowser() {
   const modal = $('projectDialog')?.querySelector('.modal')
   if (!modal || $('projectBrowser')) return
   const choices = $('projectChoices')
-  const actions = document.createElement('div')
-  actions.className = 'project-browser-actions'
-  actions.innerHTML = '<button type="button" class="project-browser-open" id="browseProjects">Папки на ПК</button>'
-  choices.before(actions)
   const pathForm = document.createElement('form')
   pathForm.id = 'projectPathForm'
-  pathForm.className = 'directory-create-form project-path-form'
-  pathForm.innerHTML = '<input id="projectPathInput" name="path" maxlength="4096" required autocomplete="off" placeholder="Точный путь: /mnt/c/Users/…" aria-label="Путь к проекту"><button type="submit" class="primary">Открыть путь</button>'
+  pathForm.className = 'project-path-form'
+  pathForm.innerHTML = '<input id="projectPathInput" name="path" maxlength="4096" required autocomplete="off" spellcheck="false" placeholder="Путь к папке: /mnt/c/Users/…" aria-label="Путь к проекту"><button type="submit" class="primary">Открыть</button>'
   const pathError = document.createElement('div')
   pathError.id = 'projectPathError'
   pathError.className = 'directory-create-error'
   pathError.hidden = true
+  // One row under the path field: the list/browser switch. CSS :has() shows
+  // the button for the view that is not open, so app.js can reset the view
+  // by toggling [hidden] alone.
+  const actions = document.createElement('div')
+  actions.className = 'project-browser-actions'
+  actions.innerHTML = '<span class="project-browser-label">Недавние проекты</span><button type="button" class="project-browser-open" id="browseProjects">Обзор папок…</button><button type="button" class="project-browser-open" id="projectListBack">← К проектам</button>'
   const browser = document.createElement('div')
   browser.id = 'projectBrowser'
   browser.className = 'project-browser'
   browser.hidden = true
-  actions.after(pathForm)
-  pathForm.after(pathError)
-  pathError.after(browser)
+  choices.before(pathForm, pathError, actions, browser)
   pathForm.addEventListener('submit', openExactProjectPath)
   $('browseProjects').addEventListener('click', openProjectBrowser)
+  $('projectListBack').addEventListener('click', () => { choices.hidden = false; browser.hidden = true })
 }
 
 let directoryBrowseSeq = 0
@@ -387,16 +388,20 @@ function renderDirectorySnapshot(snapshot) {
     browser.hidden = false
     return
   }
+  const folder = (item) => `<button type="button" class="directory-choice" data-directory="${escapeHtml(item.path)}" title="${escapeHtml(item.path)}"><strong>${escapeHtml(item.name)}</strong></button>`
   if (!snapshot?.current) {
-    browser.innerHTML = `<div class="project-browser-title">Корни проектов</div>${(snapshot?.roots || []).map((root) => `<button type="button" class="directory-choice" data-directory="${escapeHtml(root.path)}"><strong>${escapeHtml(root.name)}</strong><span>${escapeHtml(root.path)}</span></button>`).join('') || '<div class="project-browser-error">Не настроены OPENCODE_PROJECT_ROOTS</div>'}`
+    browser.innerHTML = `<div class="project-browser-path">Корни проектов</div><div class="project-browser-list">${(snapshot?.roots || []).map(folder).join('') || '<div class="project-browser-error">Не настроены OPENCODE_PROJECT_ROOTS</div>'}</div>`
   } else {
     browser.innerHTML = `<div class="project-browser-nav">
-      ${snapshot.parent ? `<button type="button" data-directory="${escapeHtml(snapshot.parent)}">← Выше</button>` : '<span></span>'}
-      <button type="button" class="primary" data-open-directory="${escapeHtml(snapshot.current)}">Открыть эту папку</button>
+      <button type="button" class="project-browser-up" data-directory="${escapeHtml(snapshot.parent || '')}"${snapshot.parent ? '' : ' disabled'} title="На уровень выше">← Выше</button>
+      <div class="project-browser-path" title="${escapeHtml(snapshot.current)}">${escapeHtml(snapshot.current)}</div>
     </div>
-    <div class="project-browser-path">${escapeHtml(snapshot.current)}</div>
-    <form class="directory-create-form" data-create-directory><input name="name" maxlength="120" required placeholder="Имя новой папки" aria-label="Имя новой папки"><button type="submit" class="primary">Создать папку</button></form><div class="directory-create-error" hidden></div>
-    ${(snapshot.directories || []).map((item) => `<button type="button" class="directory-choice" data-directory="${escapeHtml(item.path)}"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.path)}</span></button>`).join('') || '<div class="project-browser-empty">Нет вложенных папок</div>'}`
+    <div class="project-browser-list">${(snapshot.directories || []).map(folder).join('') || '<div class="project-browser-empty">Нет вложенных папок</div>'}</div>
+    <div class="project-browser-foot">
+      <form class="directory-create-form" data-create-directory><input name="name" maxlength="120" required placeholder="Новая папка" aria-label="Имя новой папки"><button type="submit">Создать</button></form>
+      <button type="button" class="primary" data-open-directory="${escapeHtml(snapshot.current)}">Открыть эту папку</button>
+      <div class="directory-create-error" hidden></div>
+    </div>`
   }
   browser.hidden = false
   browser.querySelectorAll('[data-directory]').forEach((button) => button.addEventListener('click', () => browseDirectory(button.dataset.directory)))
