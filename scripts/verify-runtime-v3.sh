@@ -66,7 +66,7 @@ for marker in ('/runtime-v3-dashboard.js','/runtime-v3-dashboard.css'):
 text=(root/"config/opencode.json.template").read_text(encoding="utf-8")
 text=text.replace("__CONFIG_DIR__","/tmp/opencode").replace("__CUSTOM_OPENCODE_ROOT__","/tmp/custom-opencode").replace("__RAG_DISABLED__","true")
 config=json.loads(text)
-config["compaction"]={"auto":True,"keep":{"tokens":4096},"buffer":2048}
+config["compaction"]={"auto":True,"keep":{"tokens":16384},"buffer":2048}
 config["tool_output"]={"max_lines":1600,"max_bytes":48000}
 config["mcp"]["servers"]["kb"]["codemode"]=True
 assert config["compaction"]["auto"] is True

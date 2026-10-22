@@ -349,7 +349,7 @@ assert diptrace.get('cwd') == str(root)
 # lives in config-manager's catalog instead.
 assert 'model' not in config
 assert (config.get('agents') or {}).get('title', {}).get('model') == 'openai/gpt-6-luna-direct#none'
-assert config.get('compaction') == {'auto': True, 'keep': {'tokens': 4096}, 'buffer': 2048}
+assert config.get('compaction') == {'auto': True, 'keep': {'tokens': 16384}, 'buffer': 2048}
 assert config.get('tool_output') == {'max_lines': 1600, 'max_bytes': 48000}
 assert str(root / 'scripts' / 'rag-mcp.sh') in (kb.get('command') or [])
 # When PONYTAIL_ENABLED=0, the V2 plugins field should be absent or empty.
