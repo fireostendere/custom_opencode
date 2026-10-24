@@ -365,7 +365,7 @@ async function executeSlash(value) {
   closePalette()
   try {
     const sessionID = await ensureSessionID()
-    const body = { command:parsed.command, text:parsed.arguments }
+    const body = { name:parsed.command, text:parsed.arguments }
     await request(`/api/session/${encodeURIComponent(sessionID)}/command`, { method:'POST', body:JSON.stringify(body) })
     toast(`/${parsed.command} выполнена`)
     setTimeout(() => $('refresh')?.click(), 250)

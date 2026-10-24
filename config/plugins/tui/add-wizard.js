@@ -1,4 +1,4 @@
-import { Plugin } from "@opencode-ai/plugin/tui"
+import { Plugin } from "@opencode/plugin/tui"
 import { readFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, join } from "node:path"
@@ -111,7 +111,7 @@ async function managed(context) {
   const requestID = globalThis.crypto.randomUUID()
   await context.client.session.command({
     sessionID: current,
-    command: "managed",
+    name: "managed",
     text: JSON.stringify({ requestID }),
   })
   const on = typeof context.data?.on === "function" ? (type, handler) => context.data.on(type, handler) : undefined
@@ -243,7 +243,7 @@ async function selectProfile(context) {
   if (scope == null) return
   await context.client.session.command({
     sessionID: sessionID(context),
-    command: "mcp-profile",
+    name: "mcp-profile",
     text: JSON.stringify({ mode, scope }),
   })
   toast(context, `MCP profile: ${mode} · ${scope}`, "success")
@@ -304,7 +304,7 @@ async function configure(context) {
     ) {
       await context.client.session.command({
         sessionID: sessionID(context),
-        command: "remove-managed",
+        name: "remove-managed",
         text: item,
       })
       toast(context, "Configuration removed", "success")
@@ -346,7 +346,7 @@ async function providerInput(context) {
   const packageName = await ask(
     context,
     "Provider package",
-    "@opencode-ai/ai/providers/openai-compatible",
+    "@opencode/ai/providers/openai-compatible",
     null,
     true,
   )
@@ -378,7 +378,7 @@ async function providerInput(context) {
   return {
     id,
     name: name || id,
-    package: packageName || "@opencode-ai/ai/providers/openai-compatible",
+    package: packageName || "@opencode/ai/providers/openai-compatible",
     ...(env.length ? { env } : {}),
     ...(Object.keys(settings).length ? { settings } : {}),
   }
@@ -627,7 +627,7 @@ async function saveNative(context, parsed) {
   try {
     await context.client.session.command({
       sessionID: current,
-      command: parsed.command,
+      name: parsed.command,
       text: parsed.arguments,
     })
     toast(context, `${TITLES[parsed.kind]} сохранён`, "success")

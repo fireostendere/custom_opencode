@@ -9,7 +9,7 @@
  * signal is equality-checked and the clock only ticks while a countdown or a
  * turn timer is on screen.
  */
-import { Plugin } from "@opencode-ai/plugin/tui"
+import { Plugin } from "@opencode/plugin/tui"
 import { createSignal, For, Show } from "solid-js"
 import { describeWatch, isTableSession, sameWatchStates, watchWatchStates } from "./lib/dnd-watch-view.js"
 
@@ -28,12 +28,12 @@ export default Plugin.define({
     clock.unref?.()
     const toneColor = (tone) =>
       tone === "ok"
-        ? theme.text.feedback.success.default
+        ? theme.text.feedback.success.base
         : tone === "busy"
-          ? theme.text.status.running
+          ? theme.text.formfield.selected
           : tone === "warn"
-            ? theme.text.feedback.warning.default
-            : theme.text.subdued
+            ? theme.text.feedback.warning.base
+            : theme.text.muted
 
     const unslot = context.ui.slot({
       append: "sidebar.content",
@@ -50,23 +50,23 @@ export default Plugin.define({
         staleAt = view.staleAt
         return (
           <box flexDirection="column" flexShrink={0}>
-            <text fg={theme.text.default}><b>🎲 Вотчер стола</b></text>
+            <text fg={theme.text.base}><b>🎲 Вотчер стола</b></text>
             <text fg={toneColor(view.tone)} wrapMode="word"><span>{view.headline}</span></text>
             <For each={view.rows}>
               {([label, value]) => (
                 <box flexDirection="row" gap={1} flexShrink={0}>
-                  <text fg={theme.text.subdued}><span>{label}</span></text>
-                  <text fg={theme.text.default} wrapMode="word"><span>{value}</span></text>
+                  <text fg={theme.text.muted}><span>{label}</span></text>
+                  <text fg={theme.text.base} wrapMode="word"><span>{value}</span></text>
                 </box>
               )}
             </For>
             <Show when={view.hint}>
-              <text fg={theme.text.subdued} wrapMode="word"><span>{view.hint}</span></text>
+              <text fg={theme.text.muted} wrapMode="word"><span>{view.hint}</span></text>
             </Show>
             <Show when={view.log.length > 0}>
-              <text fg={theme.text.subdued}><span>Последнее</span></text>
+              <text fg={theme.text.muted}><span>Последнее</span></text>
               <For each={view.log}>
-                {(line) => <text fg={theme.text.subdued} wrapMode="word"><span>{line}</span></text>}
+                {(line) => <text fg={theme.text.muted} wrapMode="word"><span>{line}</span></text>}
               </For>
             </Show>
           </box>

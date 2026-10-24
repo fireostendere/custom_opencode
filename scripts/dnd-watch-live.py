@@ -158,10 +158,10 @@ def main():
             assert "PRIVATE INTENT" not in json.dumps(requests), "wake leaked player text"
             time.sleep(4)
             assert len(requests) == 3, "one event woke the model twice"
-            api("POST", f"/api/session/{sid}/command", {"command": "dnd-watch", "text": "status"})
+            api("POST", f"/api/session/{sid}/command", {"name": "dnd-watch", "text": "status"})
             inbox = api("GET", f"/api/session/{sid}/inbox")
             assert any(any(f'"status":"{status}"' in item.get("payload", {}).get("text", "") for status in ["triggered", "waiting"]) for item in inbox), inbox
-            api("POST", f"/api/session/{sid}/command", {"command": "dnd-watch", "text": "stop"})
+            api("POST", f"/api/session/{sid}/command", {"name": "dnd-watch", "text": "stop"})
             assert len(requests) == 3, "status/stop ran inference"
 
             # Nested polling must still use native MCP permission enforcement.
@@ -177,7 +177,7 @@ def main():
             stop_requests = len(requests) + 2
             api("POST", f"/api/session/{sid}/prompt", {"text": "Watch this campaign", "files": []})
             until(lambda: len(requests) == stop_requests)
-            api("POST", f"/api/session/{sid}/command", {"command": "dnd-watch", "text": "stop"})
+            api("POST", f"/api/session/{sid}/command", {"name": "dnd-watch", "text": "stop"})
             reads_before = read_log.read_text()
             time.sleep(4)
             assert read_log.read_text() == reads_before and len(requests) == stop_requests, "stop left a live poller"
@@ -192,7 +192,7 @@ def main():
                 return any(json.loads(path.read_text()).get("sessions", {}).get(sid, {}).get("watch", {}).get("status") == "waiting"
                            for path in (home / ".local/state/custom-opencode/dnd-watch").glob("*.json"))
             until(auto_waiting)
-            api("POST", f"/api/session/{sid}/command", {"command": "dnd-watch", "text": "stop"})
+            api("POST", f"/api/session/{sid}/command", {"name": "dnd-watch", "text": "stop"})
             reads = [row for line in read_log.read_text()[len(reads_before):].splitlines()
                      if "includeAsks" not in (row := json.loads(line))]
             assert len(reads) == 2 and reads[0].get("stateDelta") is True, {"reads": reads, "tools": [message for message in requests[-1]["messages"] if message.get("role") == "tool"]}

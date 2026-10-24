@@ -61,6 +61,17 @@ chmod 0600 "$COPY/.env"
 # XDG state convention rather than relying on HOME's default paths.
 export XDG_CONFIG_HOME="$HOME_DIR/xdg-config"
 export XDG_DATA_HOME="$HOME_DIR/xdg-data"
+export XDG_STATE_HOME="$HOME_DIR/xdg-state"
+
+# Stable V2 uses latest/tui instead of beta/tui. Seed custom state once without
+# replacing state already written by the stable runtime.
+OLD_TUI_STATE="$XDG_STATE_HOME/opencode/beta/tui"
+NEW_TUI_STATE="$XDG_STATE_HOME/opencode/latest/tui"
+mkdir -p "$OLD_TUI_STATE" "$NEW_TUI_STATE"
+printf '%s\n' '{"right":{"view":"limits"}}' >"$OLD_TUI_STATE/plugin.custom.tui-bundle.workspace-panel.state.json"
+printf '%s\n' '{"models":[]}' >"$OLD_TUI_STATE/plugin.custom.tui-bundle.model-selector.recent.json"
+printf '%s\n' '{"models":[{"providerID":"openai","modelID":"luna"}]}' >"$NEW_TUI_STATE/plugin.custom.tui-bundle.model-selector.recent.json"
+cp "$NEW_TUI_STATE/plugin.custom.tui-bundle.model-selector.recent.json" "$TMP/stable-recent-before.json"
 
 cat >"$FAKE_BIN/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -74,7 +85,7 @@ cat >"$FAKE_BIN/opencode2" <<'EOF'
 set -euo pipefail
 printf 'opencode2 %s\n' "$*" >>"${CUSTOM_OPENCODE_REGRESSION_LOG:?}"
 if [[ "${1:-}" == "--version" ]]; then
-  printf 'opencode2 v0.0.0-beta-19271\n'
+  printf 'opencode v2.1.4\n'
   printf 'runtime-env WSL_DISTRO_NAME=%s DISPLAY=%s WAYLAND_DISPLAY=%s WAYLAND_SOCKET=%s\n' \
     "${WSL_DISTRO_NAME-}" "${DISPLAY-}" "${WAYLAND_DISPLAY-}" "${WAYLAND_SOCKET-}" \
     >>"${CUSTOM_OPENCODE_REGRESSION_LOG:?}"
@@ -129,6 +140,8 @@ ENGINEERING_LITE_PROMPT="$HOME_DIR/.config/opencode/prompts/engineering-lite.md"
 TUI_DIR="$HOME_DIR/.config/opencode/plugins/tui"
 [[ -f "$CONFIG" ]] || { echo "fresh install did not render config" >&2; exit 1; }
 cmp -s "$COPY/config/cli.json" "$CLI_CONFIG" || { echo "fresh install did not seed TUI defaults" >&2; exit 1; }
+cmp "$OLD_TUI_STATE/plugin.custom.tui-bundle.workspace-panel.state.json" "$NEW_TUI_STATE/plugin.custom.tui-bundle.workspace-panel.state.json"
+cmp "$TMP/stable-recent-before.json" "$NEW_TUI_STATE/plugin.custom.tui-bundle.model-selector.recent.json"
 grep -Fq '"app.exit": "ctrl+shift+q"' "$CLI_CONFIG"
 [[ -f "$SERVICE" ]] || { echo "fresh install did not render systemd unit" >&2; exit 1; }
 [[ -x "$WRAPPER" ]] || { echo "fresh install did not create executable wrapper" >&2; exit 1; }
@@ -161,8 +174,8 @@ fi
 # TUI flags and an optional directory reconcile state; subcommands do not.
 TUI_STATE="$TMP/tui-state"
 TUI_ROOT="$TUI_STATE/opencode"
-mkdir -p "$TUI_ROOT/beta/tui"
-cat >"$TUI_ROOT/beta/tui/plugin.custom.tui-bundle.model-selector.recent.json" <<'EOF'
+mkdir -p "$TUI_ROOT/latest/tui"
+cat >"$TUI_ROOT/latest/tui/plugin.custom.tui-bundle.model-selector.recent.json" <<'EOF'
 {"models":[{"providerID":"openai","modelID":"astra"}]}
 EOF
 printf '%s\n' '{"recent":[{"providerID":"openai","modelID":"luna"}],"variant":{"openai/astra":"high"},"favorite":["keep"],"unknown":true}' >"$TUI_ROOT/model.json"

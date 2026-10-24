@@ -3,7 +3,7 @@
  * Four-zone workspace dock for OpenCode V2.
  * One manager owns left/right/top/bottom geometry; views never mutate layout.
  */
-import { Plugin } from "@opencode-ai/plugin/tui"
+import { Plugin } from "@opencode/plugin/tui"
 import { createEffect, For, onCleanup, Show } from "solid-js"
 import { PANEL_DEFS, PANEL_IDS, createPanelViews } from "./lib/panel-views.jsx"
 import { PANEL_SIDES, PANEL_VIEWS } from "./lib/panel-command.js"
@@ -287,14 +287,14 @@ export default Plugin.define({
       const active = () => zone(props.side).active === props.view
       return (
         <box paddingX={1} onMouseDown={(event) => { event?.stopPropagation?.(); setZoneView(props.side, props.view) }}>
-          <text fg={active() ? theme.text.formfield.$selected : theme.text.subdued}><span>{active() ? `[${props.label}]` : props.label}</span></text>
+          <text fg={active() ? theme.text.formfield.selected : theme.text.muted}><span>{active() ? `[${props.label}]` : props.label}</span></text>
         </box>
       )
     }
     function Handle(props) {
       return (
         <box width="100%" height="100%" justifyContent="center" alignItems="center" onMouseDown={() => setCollapsed(props.side, false)}>
-          <text fg={theme.text.subdued}><span>{EXPAND_ICON[props.side]}</span></text>
+          <text fg={theme.text.muted}><span>{EXPAND_ICON[props.side]}</span></text>
         </box>
       )
     }
@@ -312,7 +312,7 @@ export default Plugin.define({
           alignItems="center"
           onMouseDown={(event) => { event?.stopPropagation?.(); setCollapsed(props.side, true) }}
         >
-          <text fg={theme.text.subdued}><span>{COLLAPSE_ICON[props.side]}</span></text>
+          <text fg={theme.text.muted}><span>{COLLAPSE_ICON[props.side]}</span></text>
         </box>
       )
     }
@@ -360,21 +360,21 @@ export default Plugin.define({
             height={!vertical() ? extent(props.side) : undefined}
             minWidth={vertical() ? HANDLE : 0}
             minHeight={!vertical() ? HANDLE : 0}
-            backgroundColor={theme.background.default}
+            backgroundColor={theme.background.base}
             border={item().collapsed ? false : props.side === "left" ? ["right"] : props.side === "right" ? ["left"] : props.side === "top" ? ["bottom"] : ["top"]}
-            borderColor={theme.border.default}
+            borderColor={theme.border.base}
             flexDirection="column"
           >
             <Show when={!item().collapsed} fallback={<Handle side={props.side} />}>
               <box flexDirection="column" flexShrink={0} paddingX={1} paddingTop={1} gap={1}>
                 <box flexDirection="row" justifyContent="space-between" width="100%">
                   <box flexDirection="row" gap={1}>
-                    <text fg={theme.text.subdued}><span>{SIDE_LABEL[props.side]}</span></text>
-                    <text fg={theme.text.default}><b>{panelTitle(item().active)}</b></text>
+                    <text fg={theme.text.muted}><span>{SIDE_LABEL[props.side]}</span></text>
+                    <text fg={theme.text.base}><b>{panelTitle(item().active)}</b></text>
                   </box>
                   <box flexDirection="row" gap={1}>
-                    <box backgroundColor={item().pinned ? theme.background.action.primary.default : undefined} onMouseDown={() => setPinned(props.side, !item().pinned)}><text fg={item().pinned ? theme.text.action.primary.default : theme.text.subdued}><span>{PIN_ICON}</span></text></box>
-                    <box onMouseDown={() => disableZone(props.side)}><text fg={theme.text.subdued}><span>×</span></text></box>
+                    <box backgroundColor={item().pinned ? theme.background.action.primary.base : undefined} onMouseDown={() => setPinned(props.side, !item().pinned)}><text fg={item().pinned ? theme.text.action.primary.base : theme.text.muted}><span>{PIN_ICON}</span></text></box>
+                    <box onMouseDown={() => disableZone(props.side)}><text fg={theme.text.muted}><span>×</span></text></box>
                   </box>
                 </box>
                 <box flexDirection="row" flexWrap="wrap" width="100%">
@@ -394,7 +394,7 @@ export default Plugin.define({
                   verticalScrollbarOptions={{
                     visible: true,
                     paddingLeft: 1,
-                    trackOptions: { backgroundColor: theme.background.surface.offset, foregroundColor: theme.scrollbar.default },
+                    trackOptions: { backgroundColor: theme.background.raised.base, foregroundColor: theme.scrollbar.base },
                   }}
                 >
                   <box flexDirection="column" width="100%" minWidth={0} paddingX={1} paddingTop={1} paddingBottom={1} gap={1} flexShrink={0}>
@@ -406,7 +406,7 @@ export default Plugin.define({
                 </Show>
               </box>
               <box flexDirection="row" justifyContent="flex-end" paddingX={1} paddingRight={props.side === "left" ? HANDLE + 1 : 1} flexShrink={0}>
-                <box onMouseDown={() => jumpToEnd(props.side)}><text fg={theme.text.action.secondary.default}><span>↓ конец</span></text></box>
+                <box onMouseDown={() => jumpToEnd(props.side)}><text fg={theme.text.action.secondary.base}><span>↓ конец</span></text></box>
               </box>
               <ExpandedHandle side={props.side} />
             </Show>

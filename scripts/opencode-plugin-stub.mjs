@@ -1,4 +1,4 @@
-// Minimal @opencode-ai/plugin stub for plain Node regression tests.
+// Minimal @opencode/plugin stub for plain Node regression tests.
 // Plugin.define is the identity function so tests receive the raw
 // { id, setup } definition from config/plugins/config-manager.js.
 export const Plugin = {

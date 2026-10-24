@@ -111,7 +111,7 @@ def main():
             return api("POST", "/api/session", {"agent": "build", "model": {"providerID": "fixture", "id": "fixture"}, "location": {"directory": str(project)}})["id"]
 
         def command(sid, text):
-            return api("POST", f"/api/session/{sid}/command", {"command": "goal", "text": text})
+            return api("POST", f"/api/session/{sid}/command", {"name": "goal", "text": text})
 
         def status(sid, expected):
             command(sid, "status")

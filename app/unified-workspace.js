@@ -214,7 +214,7 @@ function openConfigWizard(kind){
       else{const id=wizardValue(form,'id'),name=wizardValue(form,'name'),description=wizardValue(form,'description'),content=wizardValue(form,'content');if(!validID(id))throw new Error('ID must start with a letter and be at most 64 characters.');if(!name||!description||!content)throw new Error('Name, description, and content are required.');input={id,name,description,content,autoinvoke:form.elements.autoinvoke.checked}}
     }catch(error){wizardError(form,error.message);return}
     form.dataset.pending='1';const submit=form.querySelector('[type="submit"]');submit.disabled=true
-    try{await req(`/api/session/${encodeURIComponent(session)}/command`,{method:'POST',body:JSON.stringify({command:isMcp?'addmcp':'addskill',text:JSON.stringify(input)})});close();toast(`${isMcp?'MCP':'Skill'} saved`);await refreshAll(true)}catch(error){wizardError(form,`Save failed: ${error.message}`);submit.disabled=false;delete form.dataset.pending}
+    try{await req(`/api/session/${encodeURIComponent(session)}/command`,{method:'POST',body:JSON.stringify({name:isMcp?'addmcp':'addskill',text:JSON.stringify(input)})});close();toast(`${isMcp?'MCP':'Skill'} saved`);await refreshAll(true)}catch(error){wizardError(form,`Save failed: ${error.message}`);submit.disabled=false;delete form.dataset.pending}
   })
   dialog.showModal()
   requestAnimationFrame(()=>form.elements[isMcp?'name':'id'].focus())

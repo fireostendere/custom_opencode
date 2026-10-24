@@ -82,7 +82,7 @@ export default {
     cleanupTimer.unref?.()
     const catalog = async () => {
       if (Date.now() - catalogAt > 30000 || !cachedCatalog.length) {
-        const value = await ctx.catalog.model.list({})
+        const value = await ctx.model.list({})
         cachedCatalog = Array.isArray(value) ? value : value?.data || []
         catalogAt = Date.now()
       }
@@ -103,11 +103,11 @@ export default {
       workerUsage: record.usage, revisionPolicy: "exact evidence-packet + image hash; current turn only",
     } : { profile: HARDWARE_MODEL, active: false }
 
-    registrations.push(await ctx.catalog.transform(catalogDraft => {
-      const base = catalogDraft.model.get("openai", overrides.luna || "gpt-6-luna-direct") ||
-        catalogDraft.model.get("openai", "gpt-6-luna")
+    registrations.push(await ctx.model.transform(models => {
+      const base = models.get("openai", overrides.luna || "gpt-6-luna-direct") ||
+        models.get("openai", "gpt-6-luna")
       if (!base || base.enabled === false) return // Never fabricate an unavailable provider/model.
-      catalogDraft.model.update("openai", HARDWARE_MODEL, draft => {
+      models.update("openai", HARDWARE_MODEL, draft => {
         Object.assign(draft, structuredClone(base), {
           id: HARDWARE_MODEL, modelID: base.modelID || base.id,
           name: "GPT-6 · Hardware Edition",

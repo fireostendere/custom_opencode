@@ -298,10 +298,10 @@ export default {
       catalogFlight = null
 
     function refreshCatalog() {
-      if (!ctx.catalog?.model?.list) return Promise.resolve()
+      if (!ctx.model?.list) return Promise.resolve()
       catalogFlight ??= (async () => {
         try {
-          const value = await ctx.catalog.model.list({})
+          const value = await ctx.model.list({})
           catalog = Array.isArray(value) ? value : value?.data || []
         } catch {
           // Catalog refresh is metadata only. Keep the last snapshot so a
@@ -595,7 +595,7 @@ export default {
       let binding
       // Unit adapters without native introspection retain the legacy contract;
       // the pinned native runtime always supports catalog and session.get.
-      if (ctx.catalog?.model?.list) {
+      if (ctx.model?.list) {
         ;({ binding } = await bindNative(event, turn?.id || "", { messages: event.messages }))
       }
       if (!policy.runtime) {
@@ -712,7 +712,7 @@ export default {
         ...c,
         tool: event.tool,
         input: event.input,
-        countBudget: Boolean(ctx.catalog?.model?.list && !controlTool),
+        countBudget: Boolean(ctx.model?.list && !controlTool),
       }
       let decision
       try {

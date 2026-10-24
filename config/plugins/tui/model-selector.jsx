@@ -23,7 +23,7 @@
  * the directory default model; choosing a model creates the first session
  * with the selected model and its saved variant.
  */
-import { Plugin } from "@opencode-ai/plugin/tui"
+import { Plugin } from "@opencode/plugin/tui"
 import { createEffect } from "solid-js"
 import { getNightPromoStatus, isNightDiscountModel } from "./lib/limits-helper.js"
 import { installPanelSubmitRouter } from "./lib/panel-submit-router.js"
@@ -124,8 +124,8 @@ function option(model, providerNames, category, favorite = false, theme = null, 
   const promoActive = Boolean(promo?.active)
   const promoColor = isPromo
     ? (promoActive
-        ? (theme?.text?.feedback?.success?.default || "green")
-        : (theme?.text?.feedback?.warning?.default || "yellow"))
+        ? (theme?.text?.feedback?.success?.base || "green")
+        : (theme?.text?.feedback?.warning?.base || "yellow"))
     : undefined
   const title = `${favorite ? "★ " : ""}${model.name}`
   return {

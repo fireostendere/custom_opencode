@@ -203,7 +203,7 @@ if (enhancements.parseSlash("ordinary text") !== null)
   throw new Error("Slash parser accepted normal text")
 if (enhancements.commandName({ name: "/init" }) !== "init")
   throw new Error("Slash command normalization failed")
-if (!enhancementsSource.includes("const body = { command:parsed.command, text:parsed.arguments }"))
+if (!enhancementsSource.includes("const body = { name:parsed.command, text:parsed.arguments }"))
   throw new Error("Slash command transport must use OpenCode V2 text")
 if (
   enhancementsSource.includes("const body = { command:parsed.command, arguments:parsed.arguments }")

@@ -69,17 +69,17 @@ const synthetic = []
 const consumed = new Set()
 const reloads = []
 const hooks = new Map()
-let catalogTransform
+let providerTransform
+let modelTransform
 let mcpTransform
 let skillTransform
 const serverContext = {
   storage: store,
-  catalog: {
-    transform: async (callback) => { catalogTransform = callback },
+  provider: {
+    transform: async (callback) => { providerTransform = callback },
     reload: async () => { reloads.push('catalog') },
-    provider: { update: () => {} },
-    model: { get: () => undefined, update: () => {} },
   },
+  model: { transform: async (callback) => { modelTransform = callback } },
   mcp: {
     transform: async (callback) => { mcpTransform = callback },
     reload: async () => { reloads.push('mcp') },
@@ -117,15 +117,11 @@ function appliedSettings() {
   }
   const mcp = new Map()
   const skills = {}
-  catalogTransform({
-    provider: {
-      update: (id, updater) => {
-        const draft = {}
-        updater(draft)
-        providers[id] = draft
-      },
-    },
-    model: {
+  providerTransform({
+    get: () => undefined,
+    add: ({ info }) => { providers[info.id] = info },
+  })
+  modelTransform({
       get: (providerID, id) => models[`${providerID}/${id}`],
       update: (providerID, id, updater) => {
         const key = `${providerID}/${id}`
@@ -133,7 +129,6 @@ function appliedSettings() {
         updater(draft)
         models[key] = draft
       },
-    },
   })
   mcpTransform({ set: (name, config) => mcp.set(name, config) })
   skillTransform({ add: (definition) => { skills[definition.id] = definition } })
@@ -206,7 +201,7 @@ const context = {
         list: async () => synthetic.flatMap((text, index) => consumed.has(index) ? [] : [{ id: String(index), type: 'synthetic', payload: { text } }]),
         cancel: async ({ inboxID }) => { consumed.add(Number(inboxID)) },
       },
-      command: async ({ sessionID, command, text: argumentsText }) => {
+      command: async ({ sessionID, name: command, text: argumentsText }) => {
         assert.equal(typeof argumentsText, 'string', 'V2 session.command requires text')
         if (command === 'managed') {
           if (managedDelay) {
@@ -386,6 +381,8 @@ assert.equal(registry.orchestrations['acme-ui/coder-orchestrated'].prompt, 'Veri
 
 const applied = appliedSettings()
 assert.deepEqual(applied.providers['acme-ui'], {
+  id: 'acme-ui',
+  activation: 'enabled',
   name: 'Acme UI',
   package: 'aisdk:@ai-sdk/openai-compatible',
   env: ['REGION', 'ACME_UI_KEY'],
@@ -436,7 +433,7 @@ assert.equal(applied.skills.review.name, 'Review')
 assert.equal(applied.skills.review.description, 'Review changes')
 assert.equal(applied.skills.review.content, 'Review the current changes.\nVerify the result.')
 assert.equal(applied.skills.review.autoinvoke, false)
-assert.match(applied.skills.review.location, /managed-skills[\\/]review[\\/]SKILL\.md$/)
+assert.match(applied.skills.review.path, /managed-skills[\\/]review[\\/]SKILL\.md$/)
 const orchestrationEvent = { model: { providerID: 'acme-ui', id: 'coder-orchestrated' }, system: [] }
 await hooks.get('context')(orchestrationEvent)
 assert.equal(orchestrationEvent.system.length, 0, 'config-manager leaves system injection to context-lanes')

@@ -42,6 +42,10 @@ JSON-файлы, а генератор `scripts/generate-themes.mjs`: он хр�
 `cli.json`; переключить можно в TUI: `Ctrl+P` → настройки → Theme
 или команда `/theme`.
 
+Формат OpenCode 2.1.4: общая карта ролей — в `base`, палитры — в
+`dark.hue` / `light.hue`; токены используют `base`, `muted`, `raised` и
+`@dialog`. В JSON состояния записываются как `$selected`, в API TUI — `selected`.
+
 ## Как добавить тему
 
 1. В `scripts/generate-themes.mjs` добавь запись в `THEMES`: имя файла,

@@ -11,7 +11,7 @@ export function sessionInterruptCommand(context, sessionID) {
       if (!id || pending.has(id) || context.data.session.status(id) !== "running") return
       pending.add(id)
       try {
-        await context.client.session.interrupt({ sessionID: id, continue: false })
+        await context.client.session.interrupt({ sessionID: id, resume: false })
       } catch (error) {
         context.ui.toast.show({ message: `Не удалось остановить: ${error.message}`, variant: "error" })
       } finally {

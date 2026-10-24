@@ -68,7 +68,8 @@ export PATH="$BIN_DIR:$PATH"
 # Bare opencode2 calls below run before any config with "update": "disable"
 # exists; without this the CLI's own updater can reinstall @latest over the pin.
 export OPENCODE_DISABLE_AUTOUPDATE=1
-OPENCODE_CLI_PACKAGE=${CALLER_CLI_PACKAGE:-${OPENCODE_CLI_PACKAGE:-@opencode-ai/cli@0.0.0-beta-19271}}
+OPENCODE_CLI_PACKAGE=${CALLER_CLI_PACKAGE:-${OPENCODE_CLI_PACKAGE:-@opencode/cli@2.1.4}}
+OPENCODE_CLI_NAME=${OPENCODE_CLI_PACKAGE%@*}
 OPENCODE_CLI_VERSION=${OPENCODE_CLI_PACKAGE##*@}
 CURRENT_OPENCODE_VERSION=$(opencode2 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//' || true)
 if [[ "$CURRENT_OPENCODE_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
@@ -78,11 +79,26 @@ if [[ "$CURRENT_OPENCODE_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
     exit 1
   fi
   echo "==> Installing OpenCode V2 ($OPENCODE_CLI_PACKAGE)"
-  "$NPM" install --global --prefix "$HOME/.local" "$OPENCODE_CLI_PACKAGE"
+  CLI_PREFIX="$HOME/.local"
+  if [[ "$OPENCODE_CLI_NAME" == @opencode/cli && ( -e "$BIN_DIR/opencode" || -L "$BIN_DIR/opencode" ) && ! "$BIN_DIR/opencode" -ef "$HOME/.local/lib/node_modules/@opencode/cli/bin/opencode.exe" ]]; then
+    # The stable package also exports opencode. Keep unrelated V1/clipboard
+    # wrappers by installing its aliases in a private prefix instead.
+    CLI_PREFIX="$HOME/.local/share/custom-opencode/cli"
+  fi
+  # The renamed package owns the same opencode/opencode2 executables. npm
+  # refuses to replace the legacy package's links unless it is removed first.
+  if [[ "$OPENCODE_CLI_NAME" == @opencode/cli && -f "$HOME/.local/lib/node_modules/@opencode-ai/cli/package.json" ]]; then
+    "$NPM" uninstall --global --prefix "$HOME/.local" @opencode-ai/cli
+  fi
+  "$NPM" install --global --prefix "$CLI_PREFIX" "$OPENCODE_CLI_PACKAGE"
+  if [[ "$CLI_PREFIX" != "$HOME/.local" ]]; then
+    install -d "$BIN_DIR"
+    ln -sfn "$CLI_PREFIX/bin/opencode2" "$BIN_DIR/opencode2"
+  fi
   hash -r
   # npm 12 may block lifecycle scripts, leaving the package's placeholder binary.
   if [[ $(opencode2 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//' || true) != "$OPENCODE_CLI_VERSION" ]]; then
-    node "$HOME/.local/lib/node_modules/@opencode-ai/cli/postinstall.mjs"
+    node "$CLI_PREFIX/lib/node_modules/$OPENCODE_CLI_NAME/postinstall.mjs"
   fi
 fi
 if ! command -v opencode2 >/dev/null 2>&1; then
@@ -108,14 +124,14 @@ read_package_version() {
 # The TUI plugin bundle resolves solid-js and @opentui from $CONFIG_DIR/node_modules,
 # which this installer does not manage. Those packages carry their own copy of the
 # renderer context, so when they drift from the pinned CLI the TUI can fail at render
-# time while headless regressions stay green (they stub @opencode-ai/plugin via
+# time while headless regressions stay green (they stub @opencode/plugin via
 # scripts/opencode-plugin-stub-hooks.mjs). Warn, never fail: an existing install keeps
 # working and the drift becomes visible instead of silent.
-PLUGIN_SDK_VERSION=$(read_package_version "$CONFIG_DIR/node_modules/@opencode-ai/plugin/package.json")
+PLUGIN_SDK_VERSION=$(read_package_version "$CONFIG_DIR/node_modules/@opencode/plugin/package.json")
 if [[ -n "$PLUGIN_SDK_VERSION" && "$PLUGIN_SDK_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
   echo "warning: TUI plugin SDK is $PLUGIN_SDK_VERSION but the pinned CLI is $OPENCODE_CLI_VERSION" >&2
   echo "         $CONFIG_DIR/node_modules is not managed by this installer. Reinstall it" >&2
-  echo "         against @opencode-ai/plugin@$OPENCODE_CLI_VERSION if the TUI misbehaves." >&2
+  echo "         against @opencode/plugin@$OPENCODE_CLI_VERSION if the TUI misbehaves." >&2
 fi
 
 # OpenCode's own updater runs a bare `npm install --global`, which targets npm's
@@ -127,7 +143,7 @@ NPM_BIN=$(command -v npm || true)
 if [[ -n "$NPM_BIN" ]]; then
   NPM_PREFIX=$("$NPM_BIN" prefix -g 2>/dev/null || true)
   if [[ -n "$NPM_PREFIX" && "$NPM_PREFIX" != "$HOME/.local" ]]; then
-    SHADOW_CLI_VERSION=$(read_package_version "$NPM_PREFIX/lib/node_modules/@opencode-ai/cli/package.json")
+    SHADOW_CLI_VERSION=$(read_package_version "$NPM_PREFIX/lib/node_modules/$OPENCODE_CLI_NAME/package.json")
     if [[ -n "$SHADOW_CLI_VERSION" && "$SHADOW_CLI_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
       echo "warning: a second OpenCode CLI $SHADOW_CLI_VERSION lives at $NPM_PREFIX" >&2
       echo "         npm's global prefix is not $HOME/.local, so auto-update writes there" >&2
@@ -373,6 +389,13 @@ if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   # Seed CLI defaults once; the TUI owns theme and other user preferences.
   if [[ ! -e "$CONFIG_DIR/cli.json" && ! -L "$CONFIG_DIR/cli.json" ]]; then
     install -m 0644 "$ROOT/config/cli.json" "$CONFIG_DIR/cli.json"
+  fi
+  # The stable runtime uses a new TUI state namespace. Preserve custom panels,
+  # recent models and favorites; an existing stable file always wins.
+  TUI_STATE_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/opencode"
+  if compgen -G "$TUI_STATE_ROOT/beta/tui/plugin.custom.*.json" > /dev/null; then
+    install -d "$TUI_STATE_ROOT/latest/tui"
+    cp -an "$TUI_STATE_ROOT/beta/tui/"plugin.custom.*.json "$TUI_STATE_ROOT/latest/tui/"
   fi
   install -m 0644 "$ROOT/config/events.js" "$CONFIG_DIR/events.js"
   install -m 0644 "$ROOT/config/prompts/"* "$CONFIG_DIR/prompts/"

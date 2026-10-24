@@ -8,7 +8,7 @@
  * signal here is equality-checked: an unchanged poll result must not rebuild
  * the prompt footer.
  */
-import { Plugin } from "@opencode-ai/plugin/tui"
+import { Plugin } from "@opencode/plugin/tui"
 import { createSignal } from "solid-js"
 import { INACTIVE_RATE_LIMIT, sameRateLimit, watchRateLimit } from "./lib/limits-helper.js"
 
@@ -165,7 +165,7 @@ export default Plugin.define({
           ? variantEffort(model, saved)
           : null
         const label = explicit ?? savedVariant ?? configuredEffort(model) ?? "default"
-        return <text fg={context.theme.text.subdued}>Effort: {label}</text>
+        return <text fg={context.theme.text.muted}>Effort: {label}</text>
       },
     })
 

@@ -31,13 +31,13 @@ if ! opencode2_runs "${OPENCODE2_BIN:-}"; then
   candidates=()
   if [[ -n "${OPENCODE2_BIN:-}" ]]; then
     cli_dir=$(dirname "$(dirname "$OPENCODE2_BIN")")
-    candidates+=("$cli_dir"/node_modules/@opencode-ai/cli-"$platform"-"$arch"*/bin/opencode2)
+    candidates+=("$cli_dir"/node_modules/@opencode/cli-"$platform"-"$arch"*/bin/opencode)
   fi
   global_root=$(npm root -g 2>/dev/null || true)
   if [[ -n "$global_root" ]]; then
     # ponytail: the glob covers baseline/musl variants; --version rejects a wrong ABI.
-    candidates+=("$global_root"/@opencode-ai/cli/node_modules/@opencode-ai/cli-"$platform"-"$arch"*/bin/opencode2)
-    candidates+=("$global_root"/@opencode-ai/cli-"$platform"-"$arch"*/bin/opencode2)
+    candidates+=("$global_root"/@opencode/cli/node_modules/@opencode/cli-"$platform"-"$arch"*/bin/opencode)
+    candidates+=("$global_root"/@opencode/cli-"$platform"-"$arch"*/bin/opencode)
   fi
   resolved=""
   for candidate in "${candidates[@]}"; do
@@ -161,11 +161,11 @@ while time.time() < deadline:
                 os.write(master, b'\x1b')
                 settle(.15)
                 os.write(master, b'\x1b')
-                wait_for_events([{'sessionID':'ses_keyboard_probe','continue':False}])
+                wait_for_events([{'sessionID':'ses_keyboard_probe','resume':False}])
                 os.write(master, b'\x1bOS')  # F4 opens a real native dialog.
                 settle(.5)
                 os.write(master, b'\x1b')
-                wait_for_events([{'sessionID':'ses_keyboard_probe','continue':False}, 'dialog-closed'])
+                wait_for_events([{'sessionID':'ses_keyboard_probe','resume':False}, 'dialog-closed'])
                 def wait_for_select(name, timeout=8):
                     deadline = time.monotonic() + timeout
                     while time.monotonic() < deadline:
