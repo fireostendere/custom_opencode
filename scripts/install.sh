@@ -370,7 +370,10 @@ if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   if [[ -f "$CONFIG_DIR/AGENTS.md" ]] && cmp -s "$CONFIG_DIR/AGENTS.md" "$ROOT/config/prompts/engineering.md"; then
     rm -f "$CONFIG_DIR/AGENTS.md"
   fi
-  install -m 0644 "$ROOT/config/cli.json" "$CONFIG_DIR/cli.json"
+  # Seed CLI defaults once; the TUI owns theme and other user preferences.
+  if [[ ! -e "$CONFIG_DIR/cli.json" && ! -L "$CONFIG_DIR/cli.json" ]]; then
+    install -m 0644 "$ROOT/config/cli.json" "$CONFIG_DIR/cli.json"
+  fi
   install -m 0644 "$ROOT/config/events.js" "$CONFIG_DIR/events.js"
   install -m 0644 "$ROOT/config/prompts/"* "$CONFIG_DIR/prompts/"
   install -m 0644 "$ROOT"/config/plugins/*.js "$CONFIG_DIR/plugins/"
