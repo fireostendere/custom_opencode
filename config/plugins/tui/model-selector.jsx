@@ -26,6 +26,8 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { createEffect } from "solid-js"
 import { getNightPromoStatus, isNightDiscountModel } from "./lib/limits-helper.js"
+import { installPanelSubmitRouter } from "./lib/panel-submit-router.js"
+import { clearPromptEditor, isOpenCodePrompt, promptText } from "./lib/webserver-control.js"
 import {
   DND_AGENT,
   LEGACY_AGENT_ALIASES,
@@ -299,6 +301,91 @@ export default Plugin.define({
     }
     const migrated = new Set()
     let agentSwitching = false
+    let effortChanging = false
+
+    async function changeEffort(input, cycle = false) {
+      if (effortChanging) return
+      effortChanging = true
+      try {
+        const route = context.ui.router.current()
+        if (route.type !== "session" && route.type !== "home") return
+        const sessionID = route.type === "session" ? route.sessionID : null
+        const session = sessionID ? context.data.session.get(sessionID) : null
+        const location = session?.location ?? context.data.location.default()
+        const [response, preferences] = await Promise.all([
+          context.client.model.list({ location }),
+          loadPreferredVariants(),
+        ])
+        const models = response?.data ?? []
+        let ref = session?.model
+        if (!sessionID) {
+          const last = recent.models.find((entry) => models.some(
+            (model) => model.enabled && model.providerID === entry.providerID && model.id === entry.modelID,
+          ))
+          ref = last
+            ? { providerID: last.providerID, id: last.modelID }
+            : (await context.client.model.default({ location }))?.data
+        }
+        const model = models.find((item) => item.providerID === ref?.providerID && item.id === ref?.id)
+        const variants = modelVariants(model).map((variant) => variant.id)
+        if (!variants.length) {
+          context.ui.toast.show({ message: "У этой модели нет доступных уровней effort", variant: "warning" })
+          return
+        }
+        const current = ref.variant ?? preferredVariant(model, preferences)
+          ?? model.settings?.effort ?? model.settings?.reasoningEffort
+        let variant = input?.trim()
+        if (cycle) variant = variants[(variants.indexOf(current) + 1) % variants.length]
+        else if (!variant) {
+          variant = await context.ui.dialog.select({
+            title: "Reasoning Effort",
+            options: variants.map((id) => ({ title: id, value: id })),
+            current,
+          })
+          if (variant === undefined) return
+        }
+        if (!variants.includes(variant)) {
+          context.ui.toast.show({ message: `Доступные effort: ${variants.join(", ")}`, variant: "warning" })
+          return
+        }
+        // A dialog can outlive its session/model. Never apply its choice to a
+        // different model, or create a home session after navigating away.
+        const active = context.ui.router.current()
+        const latest = sessionID ? context.data.session.get(sessionID)?.model : null
+        if (active.type !== route.type || (sessionID && (
+          active.sessionID !== sessionID || latest?.providerID !== ref.providerID || latest?.id !== ref.id
+        ))) return
+        const selected = { providerID: ref.providerID, id: ref.id, variant }
+        if (sessionID) {
+          await context.client.session.switchModel({ sessionID, model: selected })
+        } else {
+          // The pinned CLI has no public home draft-model setter, as in /models.
+          const agent = agentForModelChoice(selected)
+          const created = await context.client.session.create({
+            model: selected,
+            ...(agent === DND_AGENT ? { agent } : {}),
+            location,
+          })
+          if (!created?.id) throw new Error("Session was not created")
+          context.ui.router.navigate({ type: "session", sessionID: created.id })
+        }
+        context.ui.toast.show({ message: `Effort: ${variant}`, variant: "success", duration: 1500 })
+      } catch {
+        context.ui.toast.show({ message: "Не удалось изменить effort", variant: "error" })
+      } finally {
+        effortChanging = false
+      }
+    }
+
+    const effortSubmit = installPanelSubmitRouter(context, () => {
+      const editor = context.renderer?.currentFocusedEditor ?? context.renderer?.currentFocusedRenderable
+      if (!isOpenCodePrompt(editor)) return false
+      const match = /^\/effort(?:\s+([\s\S]*))?$/i.exec(promptText(editor).trim())
+      if (!match) return false
+      clearPromptEditor(editor)
+      void changeEffort(match[1])
+      return true
+    })
 
     async function agentsFor(session) {
       const location = session?.location?.directory ? session.location : context.data.location.default()
@@ -786,6 +873,22 @@ export default Plugin.define({
               palette: true,
               run: () => chooseAgent(),
             },
+            {
+              id: "variant.cycle",
+              title: "Cycle reasoning effort",
+              description: "Next supported effort; saved in the session",
+              group: "Model",
+              run: () => changeEffort(undefined, true),
+            },
+            {
+              id: "variant.list",
+              title: "Select reasoning effort",
+              description: "Choose a supported effort, or /effort high",
+              group: "Model",
+              slash: { name: "effort", arguments: true },
+              palette: true,
+              run: (input) => changeEffort(input),
+            },
           ],
         }))
 
@@ -830,6 +933,9 @@ export default Plugin.define({
       },
     })
 
-    return () => unslot()
+    return () => {
+      effortSubmit.dispose()
+      unslot()
+    }
   },
 })
