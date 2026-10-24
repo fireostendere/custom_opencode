@@ -12,6 +12,19 @@ export default Plugin.define({
       append: "app",
       render: () => {
         createEffect(recovery.cancelStale)
+        context.keymap.layer(() => ({
+          mode: "global",
+          priority: 120,
+          enabled: !!state(),
+          commands: [{
+            id: "session.move",
+            title: "Move session",
+            group: "Session",
+            palette: true,
+            slash: { name: "move" },
+            run: recovery.chooseDirectory,
+          }],
+        }))
         return null
       },
     })
@@ -22,14 +35,16 @@ export default Plugin.define({
           {value => (
             <box id="custom.location-recovery" border={["left"]} borderColor={context.theme.text.feedback.warning.base}
               paddingLeft={2} paddingY={1} gap={1} flexShrink={0}>
-              <text fg={context.theme.text.base}>△ Session location unavailable</text>
-              <text fg={context.theme.text.muted} wrapMode="word">{value().directory}</text>
-              <text fg={context.theme.text.base}>
-                {value().checking ? "Проверяю доступность…" : "Повторная проверка через 15 секунд"}
-                {` (${value().attempt}/5)`}
-              </text>
+              <Show when={!value().exhausted}>
+                <text fg={context.theme.text.base}>△ Session location unavailable</text>
+                <text fg={context.theme.text.muted} wrapMode="word">{value().directory}</text>
+                <text fg={context.theme.text.base}>
+                  {value().checking ? "Проверяю доступность…" : "Повторная проверка через 15 секунд"}
+                  {` (${value().attempt}/5)`}
+                </text>
+              </Show>
               <text fg={context.theme.text.action.secondary.base}
-                onMouseUp={() => context.keymap.dispatch("session.move")}>
+                id="custom.location-recovery.move" onMouseUp={recovery.chooseDirectory}>
                 Choose directory (/move)
               </text>
             </box>

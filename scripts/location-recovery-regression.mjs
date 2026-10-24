@@ -10,10 +10,15 @@ function fixture(failures = 1) {
   const ref = { directory: '/project', workspaceID: 'w1' }
   let route = { type: 'session', sessionID: 's1' }
   let state, nativeError, attempts = 0, hold
-  const requests = [], invalidated = []
+  const requests = [], invalidated = [], moves = [], prompts = [], toasts = []
   const error = new Error('Location unavailable')
   const context = {
-    ui: { router: { current: () => route } },
+    ui: {
+      router: { current: () => route },
+      dialog: { prompt: async options => { prompts.push(options); return '/recovered' } },
+      toast: { show: value => toasts.push(value) },
+    },
+    client: { session: { move: async input => { moves.push(input) } } },
     data: {
       session: { get: () => ({ location: ref }) },
       location: {
@@ -32,7 +37,7 @@ function fixture(failures = 1) {
   const original = context.data.location.sync
   const recovery = installLocationRecovery(context, value => { state = value })
   return {
-    context, ref, requests, invalidated, recovery, original, error,
+    context, ref, requests, invalidated, moves, prompts, toasts, recovery, original, error,
     get state() { return state },
     get nativeError() { return nativeError },
     hold(value) { hold = value },
@@ -73,6 +78,59 @@ try {
   assert.equal(recovered.requests.length, 3, 'Success stops all further retries')
   recovered.recovery.dispose()
 
+  const manual = fixture(Infinity)
+  const manualSync = manual.start()
+  await flush()
+  await manual.recovery.chooseDirectory()
+  assert.equal(manual.prompts[0].value, '/project')
+  assert.deepEqual(manual.moves, [{ sessionID: 's1', directory: '/recovered' }],
+    'Move must work while location sync is failing, without looking up source worktrees')
+  manual.ref.directory = '/recovered'
+  manual.recovery.cancelStale()
+  await manualSync
+  await tick(90_000)
+  assert.equal(manual.requests.length, 1, 'Moving cancels retries for the old location')
+  manual.recovery.dispose()
+
+  for (const answer of [undefined, '', '   ']) {
+    const cancelled = fixture(Infinity)
+    cancelled.context.ui.dialog.prompt = async () => answer
+    await cancelled.recovery.chooseDirectory()
+    assert.equal(cancelled.moves.length, 0, 'Cancelled or empty paths cannot move the session')
+    cancelled.recovery.dispose()
+  }
+
+  for (const change of [
+    f => f.navigate({ type: 'session', sessionID: 's2' }),
+    f => { f.ref.directory = '/elsewhere' },
+    f => { f.ref.workspaceID = 'w2' },
+    f => f.recovery.dispose(),
+  ]) {
+    const changed = fixture(Infinity)
+    let answer
+    changed.context.ui.dialog.prompt = () => new Promise(resolve => { answer = resolve })
+    const moving = changed.recovery.chooseDirectory()
+    change(changed)
+    answer('/recovered')
+    await moving
+    assert.equal(changed.moves.length, 0, 'An open dialog cannot move a stale or disposed session')
+    changed.recovery.dispose()
+  }
+
+  const refused = fixture(Infinity)
+  const refusedSync = refused.start()
+  await flush()
+  refused.context.client.session.move = async () => { throw new Error('Directory does not exist') }
+  await refused.recovery.chooseDirectory()
+  assert.equal(refused.toasts[0].message, 'Directory does not exist')
+  assert.equal(refused.state.attempt, 1, 'A failed manual move must leave automatic recovery running')
+  refused.context.client.session.move = async input => { refused.moves.push(input) }
+  refused.context.ui.dialog.prompt = async () => '  /valid directory  '
+  await refused.recovery.chooseDirectory()
+  assert.equal(refused.moves[0].directory, '/valid directory', 'Trim only surrounding whitespace')
+  refused.recovery.dispose()
+  await refusedSync
+
   const exhausted = fixture(Infinity)
   const failed = exhausted.start()
   await flush()
@@ -82,11 +140,24 @@ try {
   }
   await failed
   assert.equal(exhausted.requests.length, 6, 'Initial request plus exactly five rechecks')
-  assert.equal(exhausted.state, undefined, 'The native recovery card takes over after exhaustion')
+  assert.equal(exhausted.state.exhausted, true, 'Keep the manual move available alongside the native recovery card')
   assert.equal(exhausted.nativeError, exhausted.error)
   await tick(90_000)
   assert.equal(exhausted.requests.length, 6)
+  await exhausted.recovery.chooseDirectory()
+  assert.equal(exhausted.moves[0].directory, '/recovered', 'Manual move remains available after all retries')
+  exhausted.navigate({ type: 'home' })
+  assert.equal(exhausted.state, undefined, 'Leaving a failed session clears the final recovery action')
   exhausted.recovery.dispose()
+
+  const reconnected = fixture(6)
+  const beforeReconnect = reconnected.start()
+  await flush()
+  for (let attempt = 1; attempt <= 5; attempt++) await tick(15_000)
+  await beforeReconnect
+  assert.equal(await reconnected.start(), 'ready', 'A fresh sync can recover after exhaustion')
+  assert.equal(reconnected.state, undefined)
+  reconnected.recovery.dispose()
 
   const slow = fixture(1)
   const first = slow.context.data.location.sync()
@@ -160,4 +231,4 @@ try {
 } finally {
   mock.timers.reset()
 }
-console.log('Location recovery: 15s × 5, success, exhaustion, coalescing, slow requests, navigation, workspace change and cleanup passed')
+console.log('Location recovery: 15s × 5, manual move, cancellation, stale dialogs, server errors, success, exhaustion, coalescing, slow requests, navigation, workspace change and cleanup passed')

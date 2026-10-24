@@ -204,6 +204,29 @@ while time.time() < deadline:
                 assert recovery and recovery['recovery'] and not recovery['nativeWarning'], events
                 assert recovery['elapsed'] >= 15000, recovery
                 print('Native location recovery: warning shown, real 15s retry, warning cleared', flush=True)
+                def wait_for_move(stage, timeout=12):
+                    deadline = time.monotonic() + timeout
+                    while time.monotonic() < deadline:
+                        settle(.05)
+                        events = probe_events()
+                        failure = next((item for item in events if isinstance(item, dict) and item.get('move') == 'failed'), None)
+                        assert failure is None, failure
+                        event = next((item for item in events if isinstance(item, dict) and item.get('move') == stage), None)
+                        if event is not None:
+                            return event
+                    raise AssertionError(f'Manual move timed out: {stage}; got {probe_events()!r}')
+                os.write(master, b'\x1b[19~')  # F8 deletes a fixture directory, then dispatches /move.
+                wait_for_move('command-open')
+                os.write(master, b'\x1b')
+                link = wait_for_move('button-ready')
+                x, y = int(link['x']) + 1, int(link['y']) + 1
+                os.write(master, f'\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m'.encode())
+                wait_for_move('button-open')
+                settle(.1)
+                os.write(master, b'\x01\x0b' + project.encode() + b'\r')
+                moved = wait_for_move('complete')
+                assert moved['directory'] == project, moved
+                print('Native missing-directory move: command, real mouse click, path input and server move passed', flush=True)
             if geometry == '80x24':
                 os.write(master, b'/panel right limits\r')
                 command_deadline = time.time() + 2.0
@@ -259,4 +282,4 @@ PY
   fi
 done
 
-echo "Packaged TUI smoke passed: native PTY at 80x24/120x30/160x40; Escape, dialogs, select overflow and automatic location recovery; model selection is gated by model-selector-smoke.mjs"
+echo "Packaged TUI smoke passed: native PTY at 80x24/120x30/160x40; Escape, dialogs, select overflow, automatic location recovery and missing-directory move; model selection is gated by model-selector-smoke.mjs"

@@ -30,13 +30,30 @@ export function installLocationRecovery(context, onChange) {
     const target = current() // Read reactively even before the first failure.
     if (active && !matches(active.target, target)) cancel()
   }
+  async function chooseDirectory() {
+    const target = current()
+    if (disposed || !target) return
+    const directory = await context.ui.dialog.prompt({
+      title: "Choose directory",
+      description: "Введите путь к существующей папке, чтобы продолжить эту сессию.",
+      placeholder: "Directory path",
+      value: target.directory,
+    })
+    if (!directory?.trim() || disposed || !matches(target, current())) return
+    try {
+      // The native worktree picker queries the unavailable source directory.
+      await context.client.session.move({ sessionID: target.sessionID, directory: directory.trim() })
+    } catch (error) {
+      context.ui.toast.show({ title: "Failed to move session", message: error.message ?? String(error), variant: "error" })
+    }
+  }
   function sync(ref) {
     const target = current()
     const resolved = ref ?? location.default()
     if (disposed || !target || !matches(target, { ...resolved, sessionID: target.sessionID })) {
       return original.call(location, ref)
     }
-    if (active && matches(active.target, target)) return active.promise
+    if (active && !active.exhausted && matches(active.target, target)) return active.promise
     cancel()
     const run = { target }
     active = run
@@ -61,9 +78,13 @@ export function installLocationRecovery(context, onChange) {
             return await original.call(location, ref)
           } catch (error) { cause = error }
         }
+        if (live()) {
+          run.exhausted = true
+          onChange({ ...target, attempt: 5, checking: false, exhausted: true })
+        }
         throw cause
       } finally {
-        if (active === run) {
+        if (active === run && !run.exhausted) {
           active = undefined
           onChange(undefined)
         }
@@ -74,6 +95,7 @@ export function installLocationRecovery(context, onChange) {
   location.sync = sync
   return {
     cancelStale,
+    chooseDirectory,
     dispose() {
       disposed = true
       cancel()
