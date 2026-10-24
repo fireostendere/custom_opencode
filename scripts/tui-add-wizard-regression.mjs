@@ -433,7 +433,7 @@ assert.equal(applied.skills.review.name, 'Review')
 assert.equal(applied.skills.review.description, 'Review changes')
 assert.equal(applied.skills.review.content, 'Review the current changes.\nVerify the result.')
 assert.equal(applied.skills.review.autoinvoke, false)
-assert.match(applied.skills.review.location, /managed-skills[\\/]review[\\/]SKILL\.md$/)
+assert.match(applied.skills.review.path, /managed-skills[\\/]review[\\/]SKILL\.md$/)
 const orchestrationEvent = { model: { providerID: 'acme-ui', id: 'coder-orchestrated' }, system: [] }
 await hooks.get('context')(orchestrationEvent)
 assert.equal(orchestrationEvent.system.length, 0, 'config-manager leaves system injection to context-lanes')

@@ -281,7 +281,7 @@ function skillDefinition(input) {
       id,
       name: String(input.name || id).slice(0, 120),
       description: String(input.description || "Managed skill").slice(0, 1000),
-      location: join(CONFIG_DIR, "managed-skills", id, "SKILL.md"),
+      path: join(CONFIG_DIR, "managed-skills", id, "SKILL.md"),
       content,
       autoinvoke: input.autoinvoke === true,
     },
@@ -578,8 +578,10 @@ export default {
     })
 
     await ctx.skill.transform((draft) => {
-      for (const definition of Object.values(registry.skills))
-        draft.add(structuredClone(definition))
+      for (const definition of Object.values(registry.skills)) {
+        const { location, ...skill } = structuredClone(definition)
+        draft.add({ ...skill, path: skill.path ?? location })
+      }
     })
 
     // mcp_discover only helps when this request deferred tool schemas; it is

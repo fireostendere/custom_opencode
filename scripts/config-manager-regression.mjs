@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { register } from 'node:module'
 import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { dirname, isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 register('./opencode-plugin-stub-hooks.mjs', import.meta.url)
@@ -138,7 +138,11 @@ const snapshot = () => {
       },
   })
   mcpTransform({ set: (name, config) => mcp.set(name, config) })
-  skillTransform({ add: (definition) => skills.push(definition.id) })
+  skillTransform({ add: (definition) => {
+    assert.ok(isAbsolute(definition.path), 'native skill metadata needs an absolute path')
+    assert.ok(!Object.hasOwn(definition, 'location'), 'legacy skill locations must be migrated')
+    skills.push(definition.id)
+  } })
   return { providers, models, mcp, skills }
 }
 
@@ -353,6 +357,7 @@ assert.equal(policyModule.managedOrchestration(event).prompt, 'Verify before com
 const legacyRegistry = structuredClone(store.get(STORAGE_KEY))
 legacyRegistry.providers.legacy = { name: 'Legacy', package: '@opencode-ai/ai/providers/openai-compatible' }
 legacyRegistry.providers.custom = { name: 'Custom', package: '@example/custom-provider' }
+legacyRegistry.skills.legacy = { id: 'legacy', name: 'Legacy', location: '/legacy/SKILL.md', content: 'Keep this skill.' }
 store.set(STORAGE_KEY, legacyRegistry)
 await exec('refreshmodels')
 for (const existing of [false, true]) {
@@ -365,5 +370,10 @@ for (const existing of [false, true]) {
   assert.equal(definitions.get('legacy').package, '@opencode/ai/providers/openai-compatible')
   assert.equal(definitions.get('custom').package, '@example/custom-provider')
 }
+const migratedSkills = []
+skillTransform({ add: skill => migratedSkills.push(skill) })
+assert.equal(migratedSkills.find(skill => skill.id === 'legacy').path, '/legacy/SKILL.md')
+assert.equal(migratedSkills.find(skill => skill.id === 'legacy').content, 'Keep this skill.')
+assert.equal(legacyRegistry.skills.legacy.location, '/legacy/SKILL.md', 'migration must not mutate saved state')
 
 console.log('config-manager regression OK: self-check, happy path, secret rejection, rollback, serialization, managed context metadata')
