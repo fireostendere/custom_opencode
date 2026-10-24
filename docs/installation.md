@@ -39,7 +39,7 @@ curl -fsSLo /tmp/custom-opencode-bootstrap.sh \
   https://raw.githubusercontent.com/fireostendere/custom_opencode/main/scripts/bootstrap.sh
 bash /tmp/custom-opencode-bootstrap.sh \
   --ref main \
-  --opencode-package @opencode-ai/cli@0.0.0-beta-19271
+  --opencode-package @opencode/cli@2.1.4
 ```
 
 Для полностью воспроизводимой установки вместо `main` передайте полный commit

@@ -1,4 +1,4 @@
-import { Plugin } from "@opencode-ai/plugin/tui"
+import { Plugin } from "@opencode/plugin/tui"
 import { installPanelSubmitRouter } from "./lib/panel-submit-router.js"
 import { SERVER_COMMAND, parseServerCommand } from "./lib/server-command.js"
 import {

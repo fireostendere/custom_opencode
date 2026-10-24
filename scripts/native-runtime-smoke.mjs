@@ -43,7 +43,7 @@ const created = []
 const statePath = join(home, '.config/opencode/.ponytail-active')
 const originalMode = (await readFile(statePath, 'utf8')).trim()
 async function command(name, value = '') {
-  await request('POST', `/api/session/${id}/command`, { command: name, text: typeof value === 'string' ? value : JSON.stringify(value) })
+  await request('POST', `/api/session/${id}/command`, { name, text: typeof value === 'string' ? value : JSON.stringify(value) })
 }
 async function registry() {
   const requestID = randomUUID()

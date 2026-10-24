@@ -166,7 +166,7 @@ export default {
               await save(sessionID, goal)
             }
             if (!valid()) return
-            await ctx.session.interrupt({ sessionID, continue: false })
+            await ctx.session.interrupt({ sessionID, resume: false })
             if (valid()) return receipt(sessionID, current(sessionID) || goal)
             return
           }

@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import { Plugin } from "@opencode-ai/plugin/tui"
+import { Plugin } from "@opencode/plugin/tui"
 import { PANEL_SIDES, PANEL_VIEWS, parsePanelCommand, panelCommandID } from "./lib/panel-command.js"
 import { installPanelSubmitRouter } from "./lib/panel-submit-router.js"
 

@@ -451,7 +451,7 @@ if "instructions" in config:
 if "model" in config:
     bad.append("config-level model must stay absent: it outranks the TUI's recent models (default lives in config-manager's catalog)")
 manager_js = (root / "config/plugins/config-manager.js").read_text(encoding="utf-8")
-if 'serviceSetting("OPENCODE_DEFAULT_MODEL") || "openai/gpt-6-luna-direct"' not in manager_js or "catalog.model.default?.set?.(" not in manager_js:
+if 'serviceSetting("OPENCODE_DEFAULT_MODEL") || "openai/gpt-6-luna-direct"' not in manager_js or "models.default?.set?.(" not in manager_js:
     bad.append("config-manager must provide the server-side default model through the catalog")
 
 mcp = config.get("mcp", {})

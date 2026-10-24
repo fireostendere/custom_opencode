@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { register } from 'node:module'
 import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { dirname, isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 register('./opencode-plugin-stub-hooks.mjs', import.meta.url)
@@ -35,7 +35,8 @@ const synthetics = []
 const hooks = {}
 const registeredTools = new Map()
 const commands = new Map()
-let catalogTransform = null
+let providerTransform = null
+let modelTransform = null
 let mcpTransform = null
 let skillTransform = null
 let mcpListCalls = 0
@@ -69,17 +70,16 @@ const ctx = {
       store.set(key, structuredClone(value))
     },
   },
-  catalog: {
+  provider: {
     reload: async () => {
       if (reloadFailures > 0) {
         reloadFailures -= 1
         throw new Error('simulated catalog reload failure')
       }
     },
-    transform: async (callback) => { catalogTransform = callback },
-    provider: { update: () => {} },
-    model: { get: () => undefined, update: () => {} },
+    transform: async (callback) => { providerTransform = callback },
   },
+  model: { transform: async (callback) => { modelTransform = callback } },
   mcp: {
     list: async () => { mcpListCalls += 1 },
     reload: async () => {},
@@ -120,9 +120,15 @@ const snapshot = () => {
   const mcp = new Map()
   const skills = []
   catalogDrafts.clear()
-  catalogTransform({
-    provider: { update: (id, updater) => { const draft = {}; updater(draft); providers.push(id) } },
-    model: {
+  providerTransform({
+    get: () => undefined,
+    add: ({ info, models }) => {
+      assert.equal(info.activation, 'enabled')
+      assert.deepEqual(models, [])
+      providers.push(info.id)
+    },
+  })
+  modelTransform({
       get: (providerID, id) => catalogDrafts.get(`${providerID}/${id}`),
       update: (providerID, id, updater) => {
         const draft = { ...catalogDrafts.get(`${providerID}/${id}`) }
@@ -130,10 +136,13 @@ const snapshot = () => {
         catalogDrafts.set(`${providerID}/${id}`, draft)
         models.push(`${providerID}/${id}`)
       },
-    },
   })
   mcpTransform({ set: (name, config) => mcp.set(name, config) })
-  skillTransform({ add: (definition) => skills.push(definition.id) })
+  skillTransform({ add: (definition) => {
+    assert.ok(isAbsolute(definition.path), 'native skill metadata needs an absolute path')
+    assert.ok(!Object.hasOwn(definition, 'location'), 'legacy skill locations must be migrated')
+    skills.push(definition.id)
+  } })
   return { providers, models, mcp, skills }
 }
 
@@ -322,10 +331,10 @@ assert.deepEqual(receiptEvent.messages.map((message) => typeof message.content =
     { id: 'opencode-go', models: [{ id: 'go-paid', cost: { input: 1, output: 1 } }, { id: 'go-free', cost: { input: 0, output: 0 } }] },
     { provider: { id: 'openai' }, models: { luna: { id: 'luna', cost: [{ input: 1, output: 1 }] } } },
   ]
-  const result = removePaidModels({ provider: { list: () => entries }, model: { remove: (providerID, id) => removed.push(`${providerID}/${id}`) } }, new Set(['opencode', 'opencode-go']))
+  const result = removePaidModels({ provider: { list: () => entries }, remove: (providerID, id) => removed.push(`${providerID}/${id}`) }, new Set(['opencode', 'opencode-go']))
   assert.deepEqual(removed.sort(), ['opencode-go/go-paid', 'opencode/paid'])
   assert.deepEqual(result.sort(), removed)
-  assert.deepEqual(removePaidModels({ provider: { list: () => entries }, model: { remove: () => { throw new Error('must not remove') } } }, new Set()), [])
+  assert.deepEqual(removePaidModels({ provider: { list: () => entries }, remove: () => { throw new Error('must not remove') } }, new Set()), [])
   // A service respawned by an older client lacks new service env; the
   // persisted service config is the fallback, and the process env wins.
   const { serviceSetting } = await import('../config/plugins/config-manager.js')
@@ -343,5 +352,28 @@ assert.deepEqual(receiptEvent.messages.map((message) => typeof message.content =
 const policyModule = await import('../config/plugins/tui/lib/context-policy.js')
 assert.equal(policyModule.resolveContextClass({ sessionID: 'managed', model: event.model }), 'bare')
 assert.equal(policyModule.managedOrchestration(event).prompt, 'Verify before completion.')
+
+// Saved beta provider adapters must resolve through the renamed builtin package.
+const legacyRegistry = structuredClone(store.get(STORAGE_KEY))
+legacyRegistry.providers.legacy = { name: 'Legacy', package: '@opencode-ai/ai/providers/openai-compatible' }
+legacyRegistry.providers.custom = { name: 'Custom', package: '@example/custom-provider' }
+legacyRegistry.skills.legacy = { id: 'legacy', name: 'Legacy', location: '/legacy/SKILL.md', content: 'Keep this skill.' }
+store.set(STORAGE_KEY, legacyRegistry)
+await exec('refreshmodels')
+for (const existing of [false, true]) {
+  const definitions = new Map()
+  providerTransform({
+    get: () => existing ? {} : undefined,
+    add: ({ info }) => definitions.set(info.id, info),
+    update: (id, update) => { const draft = {}; update(draft); definitions.set(id, draft) },
+  })
+  assert.equal(definitions.get('legacy').package, '@opencode/ai/providers/openai-compatible')
+  assert.equal(definitions.get('custom').package, '@example/custom-provider')
+}
+const migratedSkills = []
+skillTransform({ add: skill => migratedSkills.push(skill) })
+assert.equal(migratedSkills.find(skill => skill.id === 'legacy').path, '/legacy/SKILL.md')
+assert.equal(migratedSkills.find(skill => skill.id === 'legacy').content, 'Keep this skill.')
+assert.equal(legacyRegistry.skills.legacy.location, '/legacy/SKILL.md', 'migration must not mutate saved state')
 
 console.log('config-manager regression OK: self-check, happy path, secret rejection, rollback, serialization, managed context metadata')

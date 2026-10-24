@@ -14,7 +14,8 @@ const commands = new Map(), hooks = new Map(), receipts = []
 let mcpTransform, reloads = 0
 const ctx = {
   storage: { get: async (k) => structuredClone(store.get(k)), set: async (k, v) => store.set(k, structuredClone(v)) },
-  catalog: { transform: async () => {}, reload: async () => {} },
+  provider: { transform: async () => {}, reload: async () => {} },
+  model: { transform: async () => {} },
   skill: { transform: async () => {}, reload: async () => {} },
   mcp: { transform: async (f) => { mcpTransform = f }, reload: async () => { reloads++ } },
   command: { transform: async (f) => f({ add: (c) => commands.set(c.name, c) }) },

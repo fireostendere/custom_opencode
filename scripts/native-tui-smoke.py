@@ -118,7 +118,8 @@ def main() -> int:
         ("/webserver", "Web"),
         ("/models", "Select Model"),
         ("/panel right session", "Сессия"),
-        ("/panel right activity", "RIGHT Activity"),
+        # Differential rendering may retain RIGHT from the previous panel.
+        ("/panel right activity", "[Act]"),
         ("/panel right plan", "Плана пока нет."),
         ("/panel right orchestration", "Оркестрация пока пустая."),
         ("/panel right history", "История"),

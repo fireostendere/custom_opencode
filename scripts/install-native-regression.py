@@ -80,6 +80,7 @@ def main() -> int:
             "OPENCODE_SERVER_PASSWORD": secrets.token_urlsafe(24),
             "OPENCODE_WEB_HOST": "127.0.0.1",
             "OPENCODE_WEB_PORT": str(port),
+            "OPENCODE_SERVICE_PORT": str(backend_port),
             "OPENCODE_POLICY_PORT": str(
                 port + 1 if port < 65535 and port + 1 != backend_port else port - 1
             ),

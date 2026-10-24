@@ -1,4 +1,4 @@
-import { Plugin } from "@opencode-ai/plugin/tui"
+import { Plugin } from "@opencode/plugin/tui"
 import effortIndicator from "./effort-indicator.jsx"
 import dndWatchPanel from "./dnd-watch-panel.jsx"
 import addWizard from "./add-wizard.js"

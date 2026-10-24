@@ -38,13 +38,21 @@ cat >"$FAKE_BIN/npm" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'npm %s\n' "$*" >>"${CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG:?}"
-if [[ "$*" != "install --global --prefix $HOME/.local @opencode-ai/cli@0.0.0-beta-19271" ]]; then
+if [[ "$*" == "uninstall --global --prefix $HOME/.local @opencode-ai/cli" ]]; then
+  rm -rf "$HOME/.local/lib/node_modules/@opencode-ai/cli"
+  rm -f "$HOME/.local/bin/opencode2"
+  exit 0
+fi
+if [[ "$*" != "install --global --prefix $HOME/.local @opencode/cli@2.1.4" ]]; then
   echo "unexpected npm invocation: $*" >&2
   exit 2
 fi
+[[ ! -e "$HOME/.local/lib/node_modules/@opencode-ai/cli/package.json" ]] || {
+  echo 'legacy npm package still owns opencode2' >&2; exit 1;
+}
 mkdir -p "$HOME/.local/bin"
-mkdir -p "$HOME/.local/lib/node_modules/@opencode-ai/cli"
-: >"$HOME/.local/lib/node_modules/@opencode-ai/cli/postinstall.mjs"
+mkdir -p "$HOME/.local/lib/node_modules/@opencode/cli"
+: >"$HOME/.local/lib/node_modules/@opencode/cli/postinstall.mjs"
 cat >"$HOME/.local/bin/opencode2" <<'INNER'
 #!/usr/bin/env bash
 echo 'postinstall script was not run' >&2
@@ -57,12 +65,12 @@ chmod +x "$FAKE_BIN/npm"
 cat >"$FAKE_BIN/node" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$1" == "$HOME/.local/lib/node_modules/@opencode-ai/cli/postinstall.mjs" ]] || exit 2
+[[ "$1" == "$HOME/.local/lib/node_modules/@opencode/cli/postinstall.mjs" ]] || exit 2
 printf 'node %s\n' "$*" >>"${CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG:?}"
 cat >"$HOME/.local/bin/opencode2" <<'INNER'
 #!/usr/bin/env bash
 printf 'opencode2 %s\n' "$*" >>"${CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG:?}"
-if [[ "${1:-}" == "--version" ]]; then printf 'opencode2 v0.0.0-beta-19271\n'; fi
+if [[ "${1:-}" == "--version" ]]; then printf 'opencode v2.1.4\n'; fi
 exit 0
 INNER
 chmod +x "$HOME/.local/bin/opencode2"
@@ -81,8 +89,8 @@ chmod +x "$FAKE_BIN/opencode"
 env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:/usr/bin:/bin" \
   bash "$COPY/scripts/install.sh" >"$TMP/install.out"
 
-grep -Fxq "npm install --global --prefix $HOME_DIR/.local @opencode-ai/cli@0.0.0-beta-19271" "$LOG"
-grep -Fxq "node $HOME_DIR/.local/lib/node_modules/@opencode-ai/cli/postinstall.mjs" "$LOG"
+grep -Fxq "npm install --global --prefix $HOME_DIR/.local @opencode/cli@2.1.4" "$LOG"
+grep -Fxq "node $HOME_DIR/.local/lib/node_modules/@opencode/cli/postinstall.mjs" "$LOG"
 [[ -x "$HOME_DIR/.local/bin/opencode2" ]] || {
   echo "clean install did not bootstrap opencode2" >&2
   exit 1
@@ -103,4 +111,14 @@ if grep -Fq 'exec opencode ' "$WRAPPER"; then
   exit 1
 fi
 
-echo "OpenCode V2 bootstrap regression passed: clean install provisions and runs opencode2 only"
+# Namespace upgrade: npm must release the old package's executable before install.
+mkdir -p "$HOME_DIR/.local/lib/node_modules/@opencode-ai/cli"
+printf '%s\n' '{"version":"0.0.0-beta-19271"}' >"$HOME_DIR/.local/lib/node_modules/@opencode-ai/cli/package.json"
+printf '#!/usr/bin/env bash\necho "opencode v0.0.0-beta-19271"\n' >"$HOME_DIR/.local/bin/opencode2"
+env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:/usr/bin:/bin" \
+  bash "$COPY/scripts/install.sh" >"$TMP/upgrade.out"
+grep -Fxq "npm uninstall --global --prefix $HOME_DIR/.local @opencode-ai/cli" "$LOG"
+[[ ! -e "$HOME_DIR/.local/lib/node_modules/@opencode-ai/cli/package.json" ]]
+[[ $(CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" "$HOME_DIR/.local/bin/opencode2" --version) == 'opencode v2.1.4' ]]
+
+echo "OpenCode V2 bootstrap regression passed: clean install + legacy namespace upgrade + postinstall repair"

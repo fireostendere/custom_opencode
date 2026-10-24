@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make the native beta TUI start from the custom selector's last model."""
+"""Make the native TUI start from the custom selector's last model."""
 
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def main() -> int:
     if not tui_launch(sys.argv[1:]):
         return 0
     root = state_home() / "opencode"
-    custom = root / "beta/tui/plugin.custom.tui-bundle.model-selector.recent.json"
+    custom = root / "latest/tui/plugin.custom.tui-bundle.model-selector.recent.json"
     native = root / "model.json"
     selected = None
     try:

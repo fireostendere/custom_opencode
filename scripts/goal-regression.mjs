@@ -106,7 +106,7 @@ try {
   await advance(750)
   assert.equal(h.wakes().length, 3)
   assert.equal(h.goal().status, "paused")
-  assert.deepEqual(h.interruptions.at(-1), { sessionID, continue: false })
+  assert.deepEqual(h.interruptions.at(-1), { sessionID, resume: false })
   await h.run("resume")
   await advance(0)
   assert.equal(h.wakes().length, 4)
