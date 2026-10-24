@@ -130,6 +130,28 @@ the project's read-only `dnd_knowledge_*` tools. Campaign continuity comes from
 ODM state, not the general `kb_knowledge_*` engineering corpus, which DnD agents
 cannot use. The DnD corpus must be connected in the game project for lookup.
 
+### Генерация недостающего арта
+
+`config/plugins/dnd-art.js` даёт D&D-нарраторам инструмент `dnd_art`:
+`ensure` ставит портрет NPC (`npc_portrait`) или вид локации (`location_art`) в
+фоновую очередь, `status` показывает результат. Нужны успешный ODM connect/read,
+точный `entityId` и `publicPrompt` с публичным визуальным описанием.
+
+На машине OpenCode должны работать `codex login status` (вход ChatGPT) и
+`gh auth status` с правом записи в `fireostendere/pack_dungeon_art`. Codex App
+Server вызывается через stdio, использует собственный imagegen и лимиты Codex.
+Обработчик публикует PNG и индекс одним Git-коммитом, загружает байты через
+одноразовый grant ODM и назначает primary с `metadata.onlyIfMissing:true`.
+Этот флаг требует ODM с поддержкой fill-only primary assets; он сохраняет арт,
+поставленный оператором во время генерации. Операторский MCP credential остаётся
+в конфигурации хоста; модель получает только узкий инструмент заказа арта.
+
+Результаты и состояние сохраняются вне репозитория под
+`~/.local/state/opencode/dnd-art` и в plugin storage. Повтор `ensure` после сбоя
+публикации использует сохранённые байты. После прерывания самой генерации статус
+остаётся неоднозначным: новую генерацию автоматически не запускаем. Приватный
+лор, Ask, скрытые детали и персональные данные в публичную библиотеку не передаются.
+
 Ожидание игроков (`config/plugins/dnd-watch.js`). **Автоожидание** включено по
 умолчанию (`DND_AUTO_WATCH=0` выключает): после каждого хода `dnd-*`-ведущего
 плагин сам ждёт новых входов в кампании, которую ведущий дочитал, начиная с
