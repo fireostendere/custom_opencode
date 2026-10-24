@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { register } from "node:module"
+import { gzipSync, zstdCompressSync } from "node:zlib"
 
 register("./opencode-plugin-stub-hooks.mjs", import.meta.url)
 process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN = "test-token"
@@ -157,6 +158,48 @@ try {
   const untouchedResponse = { request: untouched.request, response: new Response("data: [DONE]\n\n") }
   await hooks["session:http.response"](untouchedResponse)
   assert.equal(await untouchedResponse.response.text(), "data: [DONE]\n\n")
+
+  // Native ChatGPT compaction sends zstd, not a plain JSON body. Keep an
+  // unchanged wire request byte-exact; rewritten generation bodies are JSON.
+  for (const [encoding, compress] of [["zstd", zstdCompressSync], ["gzip", gzipSync]]) {
+    for (const compact of [true, false]) {
+      const sessionID = `ses_encoded_${encoding}_${compact}`
+      const body = compact
+        ? { model: "gpt-6", input: [], instructions: "Summarize." }
+        : { input: [], max_output_tokens: 4096 }
+      const bytes = compress(Buffer.from(JSON.stringify(body)))
+      const original = new Request(compact
+        ? "https://chatgpt.com/backend-api/codex/responses/compact"
+        : "https://api.openai.com/v1/responses", {
+        method: "POST", body: bytes,
+        headers: { "content-type": "application/json", "content-encoding": encoding,
+          "content-length": String(bytes.length), "x-request-id": sessionID },
+      })
+      const event = request(sessionID, { request: original, kind: compact ? "compaction" : "primary" })
+      await hooks["session:http.request"](event)
+      assert.equal(event.request.headers.get("x-request-id"), sessionID)
+      if (compact) {
+        assert.equal(event.request, original, "unchanged compaction keeps its compressed Request")
+        assert.equal(event.request.headers.get("content-encoding"), encoding)
+        assert.deepEqual(Buffer.from(await event.request.clone().arrayBuffer()), bytes)
+      } else {
+        assert.equal(event.request.headers.get("content-encoding"), null, "plain JSON must not be labelled compressed")
+        assert.equal(event.request.headers.get("content-length"), null, "rewrites must remove the stale wire length")
+        assert.deepEqual(await event.request.clone().json(), { ...body, max_output_tokens: 1024 })
+      }
+      assert.deepEqual(Buffer.from(await original.clone().arrayBuffer()), bytes, "decoding never consumes the original")
+      const response = { sessionID, request: event.request, response: json({ usage: { output_tokens: 3 } }) }
+      await hooks["session:http.response"](response)
+      await response.response.text()
+      await new Promise(resolve => setTimeout(resolve, 0))
+      const usage = calls.filter(entry => entry.url.endsWith("/internal/runtime/request-after") && entry.payload.sessionID === sessionID)
+      assert.equal(usage.length, 1, "encoded requests retain their budget accounting")
+      assert.equal(usage[0].payload.usage.output, 3)
+    }
+  }
+  const unsupportedEncoding = request("ses_unsupported_encoding")
+  unsupportedEncoding.request.headers.set("content-encoding", "snappy")
+  await assert.rejects(hooks["session:http.request"](unsupportedEncoding), /Unsupported provider request encoding: snappy/)
 
   for (const id of ['msg_turn_1', 'msg_turn_2']) {
     await hooks['session:context']({
