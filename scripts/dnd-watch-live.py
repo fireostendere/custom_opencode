@@ -94,7 +94,7 @@ def main():
         project.mkdir()
         config = home / ".config/opencode"
         (config / "plugins").mkdir(parents=True)
-        for name in ["dnd-watch.js", "dnd-state-cache.js", "orchestrated-qwen.js"]:
+        for name in ["dnd-watch.js", "dnd-state-cache.js", "orchestrated-qwen.js", "dnd-art.js"]:
             shutil.copy2(ROOT / "config/plugins" / name, config / "plugins" / name)
         shutil.copy2(ROOT / "config/events.js", config / "events.js")
         state = home / "odm.json"
@@ -110,7 +110,7 @@ def main():
                 "models": {"fixture": {"name": "Fixture", "capabilities": {"tools": True, "input": ["text"], "output": ["text"]}, "limit": {"context": 262144, "output": 2048}}},
             }}, "agents": {"dnd-narrator": {"mode": "primary", "permissions": [
                 {"action": "*", "resource": "*", "effect": "deny"},
-                *[{"action": action, "resource": "*", "effect": "allow"} for action in ["dnd_watch", "odm_narrator_odm_narrator"]],
+                *[{"action": action, "resource": "*", "effect": "allow"} for action in ["dnd_watch", "dnd_art", "odm_narrator_odm_narrator"]],
             ]}, "dnd-denied": {"mode": "primary", "permissions": [
                 {"action": "*", "resource": "*", "effect": "deny"}, {"action": "dnd_watch", "resource": "*", "effect": "allow"},
             ]}}, "mcp": {"servers": {"odm_narrator": {"type": "local", "codemode": False, "command": [sys.executable, str(Path(__file__).resolve()), "--mcp", str(state)]}}},
@@ -151,6 +151,10 @@ def main():
             state.write_text(json.dumps({"campaignId": CAMPAIGN, "currentSeq": 11, "nextCursor": 11, "hasMore": False, "messages": [{"seq": 11, "authorType": "player", "content": "PRIVATE INTENT"}], "events": [], "asks": []}))
             until(lambda: len(requests) == 3)
             until(lambda: "WOKEN" in json.dumps(api("GET", f"/api/session/{sid}/context")))
+            assert any(tool['function']['name'] == 'dnd_art' for tool in requests[-1].get('tools', [])), "connected narrator cannot see the art tool"
+            if "--art-smoke" in sys.argv:
+                print("Native DnD art tool visible with project permissions and context filter. Paid calls: 0")
+                return
             assert "PRIVATE INTENT" not in json.dumps(requests), "wake leaked player text"
             time.sleep(4)
             assert len(requests) == 3, "one event woke the model twice"
