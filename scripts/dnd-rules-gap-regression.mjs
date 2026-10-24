@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { filterDndTools } from '../config/plugins/orchestrated-qwen.js'
 
-const root = await mkdtemp('/tmp/opencode/dnd-gaps-')
+const root = await mkdtemp(join(tmpdir(), 'opencode-dnd-gaps-'))
 const home = process.env.HOME
 process.env.HOME = root
 const { default: plugin, recordGap, DEBT_FILE } = await import('../config/plugins/dnd-rules-gap.js')
