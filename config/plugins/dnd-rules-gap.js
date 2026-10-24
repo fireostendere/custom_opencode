@@ -15,7 +15,7 @@ export async function recordGap(file, campaignId, input) {
   const id = createHash('sha256').update(JSON.stringify([campaignId, ...['edition', 'feature', 'missing'].map(key => gap[key].toLowerCase())])).digest('hex').slice(0, 24)
   let text = ''
   try { text = await readFile(file, 'utf8') } catch (error) { if (error.code !== 'ENOENT') throw error }
-  // ponytail: append-only local journal; builders group concurrent duplicates by id.
+  // ponytail: O(n) local journal scan; index if it grows large. Builders group concurrent duplicates by id.
   if (text.split('\n').some(line => line && JSON.parse(line).id === id)) return { id, file, existing: true }
   await mkdir(dirname(file), { recursive: true, mode: 0o700 })
   await appendFile(file, JSON.stringify({ id, status: 'open', createdAt: new Date().toISOString(), campaignId, ...gap }) + '\n', { mode: 0o600 })
@@ -44,7 +44,7 @@ export default {
             if (bound.size >= 128) bound.delete(bound.keys().next().value)
             bound.set(context.sessionID, input.campaignId)
           }
-          if (input.operation === 'invoke' && input.name === 'use_spell_slot' && input.args?.manualResolution && !value?.error && bound.get(context.sessionID) === input.campaignId) {
+          if (input.operation === 'invoke' && input.name === 'use_spell_slot' && input.args?.manualResolution && value?.ok === true && bound.get(context.sessionID) === input.campaignId) {
             try { await record(input.campaignId, input.args.manualResolution) }
             catch {
               // Keep the receipt byte-for-byte parseable by the state cache.

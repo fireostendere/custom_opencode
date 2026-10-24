@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { filterDndTools } from '../config/plugins/orchestrated-qwen.js'
@@ -19,16 +19,28 @@ try {
   assert.equal((await readFile(file, 'utf8')).trim().split('\n').length, 2)
   await assert.rejects(recordGap(file, 'campaign', { ...gap, expected: '' }))
   await assert.rejects(recordGap(file, 'campaign', { ...gap, path: '/etc/passwd' }))
-  const tools = new Map([['odm_narrator', { execute: async () => ({ content: '{"currentSeq":1}' }) }]])
+  let refused = false
+  const tools = new Map([['odm_narrator', { execute: async input => ({ content: input.operation === 'invoke' ? refused ? '{"error":"refused"}' : '{"result":{"ok":true}}' : '{"currentSeq":1}' }) }]])
   await plugin.setup({ location: { directory: root }, permission: { assert: async () => {} }, tool: { transform: async fn => fn({ get: n => tools.get(n), update: (n, fn) => fn(tools.get(n)), add: t => tools.set(t.name, t) }) } })
   const context = { sessionID: 'session' }
   await assert.rejects(tools.get('dnd_rules_gap').execute(gap, context), /Connect/)
   await tools.get('odm_narrator').execute({ operation: 'read', campaignId: '00000000-0000-0000-0000-000000000001' }, context)
   const result = JSON.parse((await tools.get('dnd_rules_gap').execute(gap, context)).content)
   assert(result.id)
-  const receipt = await tools.get('odm_narrator').execute({ operation: 'invoke', campaignId: '00000000-0000-0000-0000-000000000001', name: 'use_spell_slot', args: { manualResolution: gap } }, context)
-  assert.equal(receipt.content, '{"currentSeq":1}', 'logging leaves the authoritative receipt intact')
-  assert.equal((await readFile(DEBT_FILE, 'utf8')).trim().split('\n').length, 1, 'automatic and explicit reports deduplicate')
+  const call = { operation: 'invoke', campaignId: '00000000-0000-0000-0000-000000000001', name: 'use_spell_slot', args: { manualResolution: { ...gap, missing: 'No question limit tracker' } } }
+  const receipt = await tools.get('odm_narrator').execute(call, context)
+  assert.equal(receipt.content, '{"result":{"ok":true}}', 'logging leaves the authoritative receipt intact')
+  assert.equal((await readFile(DEBT_FILE, 'utf8')).trim().split('\n').length, 2, 'a successful manual cast is logged automatically')
+  await tools.get('odm_narrator').execute(call, context)
+  assert.equal((await readFile(DEBT_FILE, 'utf8')).trim().split('\n').length, 2, 'recovered receipts deduplicate')
+  refused = true
+  await tools.get('odm_narrator').execute({ ...call, args: { manualResolution: { ...gap, missing: 'Rejected cast' } } }, context)
+  assert.equal((await readFile(DEBT_FILE, 'utf8')).trim().split('\n').length, 2, 'refusals are not recorded as successful workarounds')
+  refused = false
+  await rm(DEBT_FILE); await mkdir(DEBT_FILE)
+  const brokenJournal = await tools.get('odm_narrator').execute(call, context)
+  assert.equal(brokenJournal.content, receipt.content, 'a journal failure cannot corrupt a successful game receipt')
+  assert(brokenJournal.metadata.rulesGapWarning)
   assert.deepEqual(filterDndTools(['shell', 'edit', 'dnd_rules_gap', 'dnd_knowledge_search']), ['dnd_rules_gap', 'dnd_knowledge_search'])
 } finally { await rm(root, { recursive: true, force: true }) }
 console.log('D&D rules gaps: durable deduplication, edition separation, validation, bound campaign and tool isolation passed')
