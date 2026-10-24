@@ -127,6 +127,39 @@ def main() -> int:
     try:
         initial = read(5)
         rows.append({"command": "startup", "ok": "Build" in initial and "Alibaba Cloud" in initial})
+        # Use the real prompt submit path and Ctrl+T, then read persisted state.
+        # No prompt/model invocation is needed to change reasoning effort.
+        os.write(master, b"/effort low")
+        read(0.2)
+        os.write(master, b"\r")
+        read(2)
+        low = request("GET", f"/api/session/{sid}")
+        rows.append({
+            "command": "/effort low persists",
+            "ok": low["model"] == {"providerID": "bailian-cli", "id": "qwen3.8-max", "variant": "low"}
+            and low["agent"] == session["agent"],
+        })
+        os.write(master, b"\x14")  # Ctrl+T: low -> medium in the fixture catalog.
+        read(2)
+        medium = request("GET", f"/api/session/{sid}")
+        rows.append({
+            "command": "Ctrl+T persists effort",
+            "ok": medium["model"] == {**low["model"], "variant": "medium"},
+        })
+        os.write(master, b"/effort")
+        read(0.2)
+        os.write(master, b"\r")
+        effort_dialog = read(2)
+        rows.append({"command": "/effort opens picker", "ok": "Reasoning Effort" in effort_dialog})
+        os.write(master, b"\x1b[B")
+        read(0.2)
+        os.write(master, b"\r")
+        read(1)
+        high = request("GET", f"/api/session/{sid}")
+        rows.append({
+            "command": "effort picker persists selection",
+            "ok": high["model"] == {**low["model"], "variant": "high"},
+        })
         for command, expected in cases:
             os.write(master, command.encode())
             text = read(0.2)
