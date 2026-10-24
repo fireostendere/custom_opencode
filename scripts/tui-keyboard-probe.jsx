@@ -2,6 +2,7 @@
 // Loaded only by the isolated PTY smoke. No model request or real interruption.
 import production from './production-tui.js'
 import { sessionInterruptCommand } from './lib/session-interrupt.js'
+import { mkdir, rm } from 'node:fs/promises'
 
 export default {
   id: 'custom.tui-keyboard-probe',
@@ -126,6 +127,43 @@ export default {
         throw new Error(`Location recovery timed out (seen=${seen}, recovered=${!!recoveredAt})`)
       } catch (error) { await record({ recovery: false, error: String(error) }) }
     }
+    async function manualMoveProbe() {
+      try {
+        const directory = `${process.cwd()}/removed-location`
+        await mkdir(directory)
+        const session = await context.client.session.create({
+          title: 'Missing directory move acceptance', location: { directory },
+        })
+        await context.data.session.sync(session.id)
+        await rm(directory, { recursive: true })
+        context.data.location.invalidate({ directory })
+        context.ui.router.navigate({ type: 'session', sessionID: session.id })
+        async function waitFor(check) {
+          const deadline = Date.now() + 8_000
+          while (Date.now() < deadline) {
+            const result = check()
+            if (result) return result
+            await new Promise(resolve => setTimeout(resolve, 50))
+          }
+          throw new Error('Manual move probe timed out')
+        }
+        const button = () => [...renderTree()].find(node => node.id === 'custom.location-recovery.move')
+        const prompt = () => [...renderTree()].find(node => node.placeholder === 'Directory path')
+        await waitFor(button)
+        context.keymap.dispatch('session.move')
+        await waitFor(prompt)
+        await record({ move: 'command-open' })
+        await waitFor(() => !prompt())
+        const link = await waitFor(button)
+        await record({ move: 'button-ready', x: link.x + 1, y: link.y })
+        await waitFor(prompt)
+        await record({ move: 'button-open' })
+        await waitFor(() => context.data.session.get(session.id)?.location.directory === process.cwd())
+        await waitFor(() => !hasNode('custom.location-recovery'))
+        await record({ move: 'complete', sessionID: session.id,
+          directory: context.data.session.get(session.id).location.directory })
+      } catch (error) { await record({ move: 'failed', error: String(error) }) }
+    }
     const stop = sessionInterruptCommand({
       ...context,
       data: { session: { status: () => 'running' } },
@@ -152,6 +190,8 @@ export default {
         run: () => selectProbe('long', Array.from({ length: 80 }, (_, index) => ({
           title: `Option ${index + 1}`, value: `long-${index + 1}`,
         }))),
+      }, {
+        bind:'f8', title:'Missing directory move probe', run: manualMoveProbe,
       }] }))
       return null
     } })
