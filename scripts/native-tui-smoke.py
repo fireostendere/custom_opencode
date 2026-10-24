@@ -137,7 +137,7 @@ def main() -> int:
         rows.append({
             "command": "/effort low persists",
             "ok": low["model"] == {"providerID": "bailian-cli", "id": "qwen3.8-max", "variant": "low"}
-            and low["agent"] == session["agent"],
+            and low.get("agent") == session.get("agent"),
         })
         os.write(master, b"\x14")  # Ctrl+T: low -> medium in the fixture catalog.
         read(2)
