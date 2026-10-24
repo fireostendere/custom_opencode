@@ -18,7 +18,7 @@ export async function recordGap(file, campaignId, input) {
   // ponytail: O(n) local journal scan; index if it grows large. Builders group concurrent duplicates by id.
   if (text.split('\n').some(line => line && JSON.parse(line).id === id)) return { id, file, existing: true }
   await mkdir(dirname(file), { recursive: true, mode: 0o700 })
-  await appendFile(file, JSON.stringify({ id, status: 'open', createdAt: new Date().toISOString(), campaignId, ...gap }) + '\n', { mode: 0o600 })
+  await appendFile(file, JSON.stringify({ id, status: 'open', createdAt: new Date().toISOString(), campaignId, ...gap }) + '\n', { mode: 0o600, flush: true })
   return { id, file, existing: false }
 }
 
