@@ -128,6 +128,7 @@ ENGINEERING_PROMPT="$HOME_DIR/.config/opencode/prompts/engineering.md"
 ENGINEERING_LITE_PROMPT="$HOME_DIR/.config/opencode/prompts/engineering-lite.md"
 TUI_DIR="$HOME_DIR/.config/opencode/plugins/tui"
 [[ -f "$CONFIG" ]] || { echo "fresh install did not render config" >&2; exit 1; }
+cmp -s "$COPY/config/cli.json" "$CLI_CONFIG" || { echo "fresh install did not seed TUI defaults" >&2; exit 1; }
 grep -Fq '"app.exit": "ctrl+shift+q"' "$CLI_CONFIG"
 [[ -f "$SERVICE" ]] || { echo "fresh install did not render systemd unit" >&2; exit 1; }
 [[ -x "$WRAPPER" ]] || { echo "fresh install did not create executable wrapper" >&2; exit 1; }
@@ -206,13 +207,29 @@ chmod 0600 "$AUTH"
 cp "$AUTH" "$TMP/auth-before-update.json"
 printf '%s\n' '# user-owned AGENTS policy' >"$HOME_DIR/.config/opencode/AGENTS.md"
 cp "$HOME_DIR/.config/opencode/AGENTS.md" "$TMP/user-agents-before-update.md"
+# TUI settings belong to the user after first install. Updating must not reset
+# the selected theme, mode, shortcuts or plugin list, or trigger a config reload.
+cat >"$CLI_CONFIG" <<'EOF'
+{
+  "$schema": "https://opencode.ai/v2/cli.json",
+  "theme": {"name": "synthwave84", "mode": "dark"},
+  "animations": false,
+  "keybinds": {"app.exit": "ctrl+q"},
+  "plugins": ["./plugins/my-status"]
+}
+EOF
+touch -d '2020-01-01 UTC' "$CLI_CONFIG"
+cp -p "$CLI_CONFIG" "$TMP/cli-before-update.json"
 run_with_auth_backups 4102444800000 "$TMP/preserve-auth.out"
 cmp -s "$TMP/auth-before-update.json" "$AUTH" || { echo "installer overwrote live provider credentials" >&2; exit 1; }
 cmp -s "$TMP/user-agents-before-update.md" "$HOME_DIR/.config/opencode/AGENTS.md" || { echo "installer overwrote user-owned AGENTS.md" >&2; exit 1; }
+cmp -s "$TMP/cli-before-update.json" "$CLI_CONFIG" || { echo "installer reset user TUI settings" >&2; exit 1; }
+[[ $(stat -c %Y "$CLI_CONFIG") == $(stat -c %Y "$TMP/cli-before-update.json") ]] || { echo "installer rewrote user TUI settings" >&2; exit 1; }
 
 # Missing API credentials may be restored, but an expired OAuth backup may not.
 printf '%s\n' '{"unmanaged":{"type":"api","key":"keep-me"}}' >"$AUTH"
 run_with_auth_backups 1 "$TMP/restore-auth.out"
+cmp -s "$TMP/cli-before-update.json" "$CLI_CONFIG" || { echo "repeated install reset user TUI settings" >&2; exit 1; }
 python3 - "$AUTH" <<'PY'
 import json, sys
 auth = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -470,6 +487,7 @@ grep -Fq 'systemctl --user restart opencode-web-client.service' "$LOG"
 grep -Fq 'systemctl --user disable opencode-web-client.service' "$LOG"
 grep -Fq 'systemctl --user stop opencode-web-client.service' "$LOG"
 grep -Fq 'Updated from origin/main' "$TMP/update.out"
+cmp -s "$TMP/cli-before-update.json" "$CLI_CONFIG" || { echo "updater reset user TUI settings" >&2; exit 1; }
 
 # The update must preserve the V3 render and exact TUI installation path.
 python3 - "$CONFIG" <<'PY'
