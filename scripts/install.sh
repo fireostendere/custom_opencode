@@ -79,16 +79,26 @@ if [[ "$CURRENT_OPENCODE_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
     exit 1
   fi
   echo "==> Installing OpenCode V2 ($OPENCODE_CLI_PACKAGE)"
+  CLI_PREFIX="$HOME/.local"
+  if [[ "$OPENCODE_CLI_NAME" == @opencode/cli && ( -e "$BIN_DIR/opencode" || -L "$BIN_DIR/opencode" ) && ! "$BIN_DIR/opencode" -ef "$HOME/.local/lib/node_modules/@opencode/cli/bin/opencode.exe" ]]; then
+    # The stable package also exports opencode. Keep unrelated V1/clipboard
+    # wrappers by installing its aliases in a private prefix instead.
+    CLI_PREFIX="$HOME/.local/share/custom-opencode/cli"
+  fi
   # The renamed package owns the same opencode/opencode2 executables. npm
   # refuses to replace the legacy package's links unless it is removed first.
   if [[ "$OPENCODE_CLI_NAME" == @opencode/cli && -f "$HOME/.local/lib/node_modules/@opencode-ai/cli/package.json" ]]; then
     "$NPM" uninstall --global --prefix "$HOME/.local" @opencode-ai/cli
   fi
-  "$NPM" install --global --prefix "$HOME/.local" "$OPENCODE_CLI_PACKAGE"
+  "$NPM" install --global --prefix "$CLI_PREFIX" "$OPENCODE_CLI_PACKAGE"
+  if [[ "$CLI_PREFIX" != "$HOME/.local" ]]; then
+    install -d "$BIN_DIR"
+    ln -sfn "$CLI_PREFIX/bin/opencode2" "$BIN_DIR/opencode2"
+  fi
   hash -r
   # npm 12 may block lifecycle scripts, leaving the package's placeholder binary.
   if [[ $(opencode2 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//' || true) != "$OPENCODE_CLI_VERSION" ]]; then
-    node "$HOME/.local/lib/node_modules/$OPENCODE_CLI_NAME/postinstall.mjs"
+    node "$CLI_PREFIX/lib/node_modules/$OPENCODE_CLI_NAME/postinstall.mjs"
   fi
 fi
 if ! command -v opencode2 >/dev/null 2>&1; then
