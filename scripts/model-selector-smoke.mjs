@@ -9,7 +9,7 @@ let source = await readFile(sourceUrl, 'utf8')
 // OpenCode installation. Replace only the external Plugin import with its
 // minimal define contract; all context APIs below are explicit fakes.
 source = source.replace(
-  'import { Plugin } from "@opencode-ai/plugin/tui"',
+  'import { Plugin } from "@opencode/plugin/tui"',
   'const Plugin = { define(value) { return value } }',
 )
 source = source.replace(
@@ -27,7 +27,7 @@ source = source.replace(
   'const createEffect = (fn) => { (globalThis.__effects ||= []).push(fn); fn() }',
 )
 source = source.replace(/<span[^>]*>\{([^}]+)\}<\/span>/g, '$1')
-assert.ok(!source.includes('@opencode-ai/plugin/tui'), 'plugin import replacement failed')
+assert.ok(!source.includes('@opencode/plugin/tui'), 'plugin import replacement failed')
 for (const modelID of ['gpt-6-astra', 'gpt-6-astra-orchestrated', 'gpt-6-sol-orchestrated', 'gpt-6-dnd-edition', 'gpt-6-sol-direct', 'gpt-6-luna-direct']) {
   assert.ok(source.includes(`openai/${modelID}`), `SOL orchestration model missing from TUI grouping: ${modelID}`)
 }

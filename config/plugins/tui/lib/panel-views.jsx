@@ -209,9 +209,9 @@ export function createPanelViews(context) {
   }
 
   function usageColor(used) {
-    if (Number(used ?? 0) >= 90) return theme.text.feedback.error.default
-    if (Number(used ?? 0) >= 70) return theme.text.feedback.warning.default
-    return theme.text.feedback.success.default
+    if (Number(used ?? 0) >= 90) return theme.text.feedback.error.base
+    if (Number(used ?? 0) >= 70) return theme.text.feedback.warning.base
+    return theme.text.feedback.success.base
   }
   function useSessionMessageSync(props) {
     createEffect(() => {
@@ -230,13 +230,13 @@ export function createPanelViews(context) {
     return (
       <Show when={win() && typeof win().usedPercent === "number"}>
         <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
-          <text fg={theme.text.subdued} wrapMode="word"><span>{props.label}</span></text>
+          <text fg={theme.text.muted} wrapMode="word"><span>{props.label}</span></text>
           <box flexDirection="row" gap={1} width="100%" minWidth={0} flexShrink={1}>
             <text fg={usageColor(win().usedPercent)}><span>{bar(win().usedPercent)}</span></text>
-            <text fg={theme.text.default} flexShrink={0}><span>{Math.round(win().usedPercent)}%</span></text>
+            <text fg={theme.text.base} flexShrink={0}><span>{Math.round(win().usedPercent)}%</span></text>
           </box>
-          <Show when={win().resetsAt}><text fg={theme.text.subdued} wrapMode="word"><span>сброс {fmtReset(win().resetsAt, now())}</span></text></Show>
-          <Show when={win().limit != null && win().usedCredits != null}><text fg={theme.text.subdued} wrapMode="word"><span>{fmtK(win().usedCredits)} / {fmtK(win().limit)} исп.</span></text></Show>
+          <Show when={win().resetsAt}><text fg={theme.text.muted} wrapMode="word"><span>сброс {fmtReset(win().resetsAt, now())}</span></text></Show>
+          <Show when={win().limit != null && win().usedCredits != null}><text fg={theme.text.muted} wrapMode="word"><span>{fmtK(win().usedCredits)} / {fmtK(win().limit)} исп.</span></text></Show>
         </box>
       </Show>
     )
@@ -265,7 +265,7 @@ export function createPanelViews(context) {
     }
     return (
       <box flexDirection="column" width="100%" minWidth={0} gap={1} flexShrink={0}>
-        <Show when={codex().available} fallback={<text fg={theme.text.subdued}><span>ChatGPT: нет данных</span></text>}>
+        <Show when={codex().available} fallback={<text fg={theme.text.muted}><span>ChatGPT: нет данных</span></text>}>
           <WindowRows label={codex().primary?.windowDurationMins ? `ChatGPT · ${fmtWindow(codex().primary.windowDurationMins)}` : "ChatGPT"} win={codex().primary} />
           <WindowRows label={codex().secondary?.windowDurationMins ? `ChatGPT · ${fmtWindow(codex().secondary.windowDurationMins)}` : "ChatGPT · доп."} win={codex().secondary} />
         </Show>
@@ -273,23 +273,23 @@ export function createPanelViews(context) {
           when={qwen().available && qwen().state === "ok"}
           fallback={
             qwen().reason === "disabled" ? (
-              <text fg={theme.text.subdued}><span>Alibaba: не используется</span></text>
+              <text fg={theme.text.muted}><span>Alibaba: не используется</span></text>
             ) : qwen().state === "expired" || qwen().reason === "session-expired" ? (
               <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
-                <text fg={theme.text.feedback.warning.default} wrapMode="word"><span>Alibaba: сессия истекла</span></text>
-                <text fg={theme.text.subdued} wrapMode="word"><span>bl auth login --console</span></text>
+                <text fg={theme.text.feedback.warning.base} wrapMode="word"><span>Alibaba: сессия истекла</span></text>
+                <text fg={theme.text.muted} wrapMode="word"><span>bl auth login --console</span></text>
               </box>
             ) : (
-              <text fg={theme.text.subdued}><span>Alibaba: нет данных</span></text>
+              <text fg={theme.text.muted}><span>Alibaba: нет данных</span></text>
             )
           }
         >
           <WindowRows label="Alibaba · 5ч" win={qwen().fiveHour} />
           <WindowRows label="Alibaba · 7д" win={qwen().sevenDay} />
         </Show>
-        <Show when={gemini().available} fallback={<text fg={theme.text.subdued}><span>Gemini: не настроен</span></text>}>
+        <Show when={gemini().available} fallback={<text fg={theme.text.muted}><span>Gemini: не настроен</span></text>}>
           <Show when={gemini().rateLimited}>
-            <text fg={theme.text.feedback.warning.default}><span>Лимит Gemini (429): повтор через {geminiSeconds()}с…</span></text>
+            <text fg={theme.text.feedback.warning.base}><span>Лимит Gemini (429): повтор через {geminiSeconds()}с…</span></text>
           </Show>
           <WindowRows label="Gemini · 1м (TPM)" win={gemini().minuteTokens} />
           <WindowRows label="Gemini · 1м (RPM)" win={gemini().minuteRequests} />
@@ -297,7 +297,7 @@ export function createPanelViews(context) {
         </Show>
         {(() => {
           const promo = getNightPromoStatus(now())
-          return <text fg={promo.active ? theme.text.feedback.success.default : theme.text.feedback.warning.default}><span>{promo.active ? `🌙 −50% · ещё ${fmtDur(promo.minutesToToggle)}` : `☀ −50% · через ${fmtDur(promo.minutesToToggle)}`}</span></text>
+          return <text fg={promo.active ? theme.text.feedback.success.base : theme.text.feedback.warning.base}><span>{promo.active ? `🌙 −50% · ещё ${fmtDur(promo.minutesToToggle)}` : `☀ −50% · через ${fmtDur(promo.minutesToToggle)}`}</span></text>
         })()}
       </box>
     )
@@ -308,8 +308,8 @@ export function createPanelViews(context) {
       const active = todo.status === "in_progress"
       return (
         <box flexDirection="row" gap={1} width="100%" flexShrink={0}>
-          <text width={1} flexShrink={0} fg={active ? theme.text.status.running : done ? theme.text.feedback.success.default : theme.text.subdued}><span>{done ? "✓" : active ? "●" : "○"}</span></text>
-          <text fg={done ? theme.text.subdued : theme.text.default} flexGrow={1} minWidth={0} wrapMode="word"><span>{todo.content}</span></text>
+          <text width={1} flexShrink={0} fg={active ? theme.text.formfield.selected : done ? theme.text.feedback.success.base : theme.text.muted}><span>{done ? "✓" : active ? "●" : "○"}</span></text>
+          <text fg={done ? theme.text.muted : theme.text.base} flexGrow={1} minWidth={0} wrapMode="word"><span>{todo.content}</span></text>
         </box>
       )
     }}</For>
@@ -368,7 +368,7 @@ export function createPanelViews(context) {
     }
     return (
       <box flexDirection="column" gap={1} flexShrink={0}>
-        <Show when={plan().todos.length > 0} fallback={<text fg={theme.text.subdued}><span>Плана пока нет.</span></text>}>
+        <Show when={plan().todos.length > 0} fallback={<text fg={theme.text.muted}><span>Плана пока нет.</span></text>}>
           {(() => {
             const current = plan()
             const completed = current.todos.filter((todo) => todo.status === "completed").length
@@ -376,13 +376,13 @@ export function createPanelViews(context) {
             const percent = current.todos.length ? Math.round((completed / current.todos.length) * 100) : 0
             return <>
               <box flexDirection="row" gap={1} flexShrink={0}>
-                <text fg={completed === current.todos.length ? theme.text.feedback.success.default : running ? theme.text.status.running : theme.text.default}><span>{bar(percent)}</span></text>
-                <text fg={theme.text.default}><span>{completed}/{current.todos.length}</span></text>
-                <text fg={theme.text.subdued}><span>· {percent}%</span></text>
+                <text fg={completed === current.todos.length ? theme.text.feedback.success.base : running ? theme.text.formfield.selected : theme.text.base}><span>{bar(percent)}</span></text>
+                <text fg={theme.text.base}><span>{completed}/{current.todos.length}</span></text>
+                <text fg={theme.text.muted}><span>· {percent}%</span></text>
               </box>
               <TodoRows todos={current.todos} />
               <Show when={current.title || current.source || current.updated}>
-                <text fg={theme.text.subdued} wrapMode="word"><span>{current.title || current.source || "Plan"}{current.updated ? ` · ${fmtWhen(current.updated)}` : ""}</span></text>
+                <text fg={theme.text.muted} wrapMode="word"><span>{current.title || current.source || "Plan"}{current.updated ? ` · ${fmtWhen(current.updated)}` : ""}</span></text>
               </Show>
             </>
           })()}
@@ -398,14 +398,14 @@ export function createPanelViews(context) {
     }
     return (
       <box flexDirection="column" gap={1} flexShrink={0}>
-        <Show when={props.sessionID && rows().length > 0} fallback={<text fg={theme.text.subdued}><span>Событий сессии пока нет.</span></text>}>
+        <Show when={props.sessionID && rows().length > 0} fallback={<text fg={theme.text.muted}><span>Событий сессии пока нет.</span></text>}>
           <For each={rows()}>{(row) => (
             <box flexDirection="column" width="100%" flexShrink={0}>
               <box flexDirection="row" gap={1}>
-                <text fg={row.role === "assistant" ? theme.text.default : theme.text.subdued}><span>{row.role}</span></text>
-                <Show when={row.created}><text fg={theme.text.subdued}><span>{fmtWhen(row.created)}</span></text></Show>
+                <text fg={row.role === "assistant" ? theme.text.base : theme.text.muted}><span>{row.role}</span></text>
+                <Show when={row.created}><text fg={theme.text.muted}><span>{fmtWhen(row.created)}</span></text></Show>
               </box>
-              <text fg={theme.text.default} wrapMode="word"><span>{row.summary}</span></text>
+              <text fg={theme.text.base} wrapMode="word"><span>{row.summary}</span></text>
             </box>
           )}</For>
         </Show>
@@ -424,11 +424,11 @@ export function createPanelViews(context) {
     }
     return (
       <box flexDirection="column" gap={1} flexShrink={0}>
-        <Show when={props.sessionID && rows().length > 0} fallback={<text fg={theme.text.subdued}><span>История пока пустая.</span></text>}>
+        <Show when={props.sessionID && rows().length > 0} fallback={<text fg={theme.text.muted}><span>История пока пустая.</span></text>}>
           <For each={rows()}>{(row, index) => (
             <box flexDirection="column" flexShrink={0}>
-              <text fg={theme.text.subdued}><span>{index() + 1}. {fmtWhen(row.created)}</span></text>
-              <text fg={theme.text.default} wrapMode="word"><span>{truncate(row.text)}</span></text>
+              <text fg={theme.text.muted}><span>{index() + 1}. {fmtWhen(row.created)}</span></text>
+              <text fg={theme.text.base} wrapMode="word"><span>{truncate(row.text)}</span></text>
             </box>
           )}</For>
         </Show>
@@ -491,16 +491,16 @@ export function createPanelViews(context) {
     }
     return (
       <box flexDirection="column" gap={1} flexShrink={0}>
-        <Show when={props.sessionID && rows().length > 0} fallback={<text fg={theme.text.subdued}><span>Оркестрация пока пустая.</span></text>}>
+        <Show when={props.sessionID && rows().length > 0} fallback={<text fg={theme.text.muted}><span>Оркестрация пока пустая.</span></text>}>
           <For each={rows()}>{(row) => (
             <box flexDirection="column" flexShrink={0}>
               <box flexDirection="row" gap={1}>
-                <text fg={row.status === "running" || row.status === "in_progress" ? theme.text.status.running : theme.text.default}><span>{row.name}</span></text>
-                <Show when={row.session !== "root"}><text fg={theme.text.subdued}><span>{row.session}</span></text></Show>
-                <Show when={row.status}><text fg={row.status === "completed" ? theme.text.feedback.success.default : row.status === "error" ? theme.text.feedback.error.default : theme.text.subdued}><span>{row.status}</span></text></Show>
-                <Show when={row.created}><text fg={theme.text.subdued}><span>{fmtWhen(row.created)}</span></text></Show>
+                <text fg={row.status === "running" || row.status === "in_progress" ? theme.text.formfield.selected : theme.text.base}><span>{row.name}</span></text>
+                <Show when={row.session !== "root"}><text fg={theme.text.muted}><span>{row.session}</span></text></Show>
+                <Show when={row.status}><text fg={row.status === "completed" ? theme.text.feedback.success.base : row.status === "error" ? theme.text.feedback.error.base : theme.text.muted}><span>{row.status}</span></text></Show>
+                <Show when={row.created}><text fg={theme.text.muted}><span>{fmtWhen(row.created)}</span></text></Show>
               </box>
-              <Show when={row.detail}><text fg={theme.text.subdued} wrapMode="word"><span>{row.detail}</span></text></Show>
+              <Show when={row.detail}><text fg={theme.text.muted} wrapMode="word"><span>{row.detail}</span></text></Show>
             </box>
           )}</For>
         </Show>
@@ -523,12 +523,12 @@ export function createPanelViews(context) {
     }
     return (
       <box flexDirection="column" gap={1} flexShrink={0}>
-        <Show when={props.sessionID} fallback={<text fg={theme.text.subdued}><span>Нет активной сессии.</span></text>}>
-          <text fg={theme.text.default} wrapMode="word"><b>{snapshot().info?.title || "Сессия"}</b></text>
-          <text fg={theme.text.subdued} wrapMode="word"><span>{props.sessionID}</span></text>
-          <Show when={snapshot().info?.time?.updated}><text fg={theme.text.subdued}><span>Обновлено: {fmtWhen(snapshot().info.time.updated)}</span></text></Show>
-          <text fg={theme.text.default}><span>Сообщений: {snapshot().messages}</span></text>
-          <text fg={theme.text.subdued}><span>Пользователь: {snapshot().users} · Ассистент: {snapshot().assistants}</span></text>
+        <Show when={props.sessionID} fallback={<text fg={theme.text.muted}><span>Нет активной сессии.</span></text>}>
+          <text fg={theme.text.base} wrapMode="word"><b>{snapshot().info?.title || "Сессия"}</b></text>
+          <text fg={theme.text.muted} wrapMode="word"><span>{props.sessionID}</span></text>
+          <Show when={snapshot().info?.time?.updated}><text fg={theme.text.muted}><span>Обновлено: {fmtWhen(snapshot().info.time.updated)}</span></text></Show>
+          <text fg={theme.text.base}><span>Сообщений: {snapshot().messages}</span></text>
+          <text fg={theme.text.muted}><span>Пользователь: {snapshot().users} · Ассистент: {snapshot().assistants}</span></text>
         </Show>
       </box>
     )

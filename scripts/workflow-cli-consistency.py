@@ -189,8 +189,8 @@ def check_block_policies(where: str, block: str) -> None:
     for line in block.splitlines():
         if re.search(r"\b(?:python3?|node|bash)\s+scripts/", line) and re.search(r"\|\|\s*(true|:)", line):
             fail(f"{where}: harness invocation is masked by `|| true`: {line.strip()}")
-    if "@opencode-ai/cli" in block and "npm install" in block and "--version" not in block:
-        fail(f"{where}: pinned @opencode-ai/cli install without post-install validation (opencode2 --version)")
+    if re.search(r"@opencode(?:-ai)?/cli", block) and "npm install" in block and "--version" not in block:
+        fail(f"{where}: pinned OpenCode CLI install without post-install validation (opencode2 --version)")
 
 
 def check_triggers(name: str, text: str) -> None:

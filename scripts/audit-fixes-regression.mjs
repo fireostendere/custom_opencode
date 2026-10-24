@@ -63,7 +63,8 @@ const ctx = {
     get: async (k) => (k === "registry-v2" ? structuredClone(registry) : undefined),
     set: noop,
   },
-  catalog: { transform: noop, reload: noop },
+  provider: { transform: noop, reload: noop },
+  model: { transform: noop },
   skill: { transform: noop, reload: noop },
   mcp: {
     transform: async (f) => {

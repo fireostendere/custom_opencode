@@ -6,6 +6,10 @@ import { sessionInterruptCommand } from './lib/session-interrupt.js'
 export default {
   id: 'custom.tui-keyboard-probe',
   setup(context) {
+    for (const color of [context.theme.text.formfield.selected, context.theme.text.muted,
+      context.theme.background.raised.base, context.theme.border.base, context.theme.scrollbar.base]) {
+      if (!color) throw new Error('Native theme tokens did not resolve')
+    }
     const nativeSync = context.data.location.sync
     let probeSession, failedAt, recoveredAt
     context.data.location.sync = async function (ref) {

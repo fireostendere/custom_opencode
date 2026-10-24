@@ -26,7 +26,7 @@ def dump(path: Path, value: object) -> None:
 with tempfile.TemporaryDirectory() as temporary:
     state = Path(temporary) / "xdg-state"
     root = state / "opencode"
-    custom = root / "beta/tui/plugin.custom.tui-bundle.model-selector.recent.json"
+    custom = root / "latest/tui/plugin.custom.tui-bundle.model-selector.recent.json"
     native = root / "model.json"
     workspace = Path(temporary) / "workspace with spaces"
     workspace.mkdir()
@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     home = Path(temporary) / "empty-xdg-home"
     fallback = home / ".local/state/opencode"
-    dump(fallback / "beta/tui/plugin.custom.tui-bundle.model-selector.recent.json", {"models": [{"providerID": "openai", "modelID": "astra"}]})
+    dump(fallback / "latest/tui/plugin.custom.tui-bundle.model-selector.recent.json", {"models": [{"providerID": "openai", "modelID": "astra"}]})
     dump(fallback / "model.json", {"recent": [{"providerID": "openai", "modelID": "luna"}]})
     subprocess.run(
         [sys.executable, str(HELPER)],

@@ -52,16 +52,16 @@ export function isFreeModel(model) {
   return tiers.length > 0 && tiers.every((tier) => Number(tier?.input || 0) === 0 && Number(tier?.output || 0) === 0)
 }
 
-export function removePaidModels(catalog, providers = FREE_ONLY_PROVIDERS) {
-  if (!providers.size || typeof catalog?.provider?.list !== "function") return []
+export function removePaidModels(models, providers = FREE_ONLY_PROVIDERS) {
+  if (!providers.size || typeof models?.provider?.list !== "function") return []
   const removed = []
-  for (const entry of catalog.provider.list() || []) {
+  for (const entry of models.provider.list() || []) {
     const providerID = entry?.provider?.id ?? entry?.id
     if (!providers.has(providerID)) continue
     for (const model of catalogEntryModels(entry)) {
       const id = model?.id
       if (typeof id !== "string" || isFreeModel(model)) continue
-      catalog.model.remove(providerID, id)
+      models.remove(providerID, id)
       removed.push(`${providerID}/${id}`)
     }
   }
@@ -163,11 +163,15 @@ function extractJson(prompt) {
   return value
 }
 
+function providerPackage(value) {
+  return String(value || "@opencode/ai/providers/openai-compatible").slice(0, 240).replace(/^@opencode-ai\/ai\//, "@opencode/ai/")
+}
+
 function providerDefinition(input) {
   const id = assertID(input.id, "provider id")
   const definition = {
     name: String(input.name || id).slice(0, 120),
-    package: String(input.package || "@opencode-ai/ai/providers/openai-compatible").slice(0, 240),
+    package: providerPackage(input.package),
   }
   if (Array.isArray(input.env))
     definition.env = input.env
@@ -455,7 +459,7 @@ export default {
       discovery.clear()
       mcpObserved.clear()
       const settled = await Promise.allSettled([
-        ctx.catalog.reload(),
+        ctx.provider.reload(),
         ctx.mcp.reload(),
         ctx.skill.reload(),
       ])
@@ -492,31 +496,36 @@ export default {
       )
     }
 
-    await ctx.catalog.transform((catalog) => {
+    await ctx.provider.transform((providers) => {
+      for (const [providerID, definition] of Object.entries(registry.providers)) {
+        const migrated = { ...structuredClone(definition), package: providerPackage(definition.package) }
+        if (providers.get(providerID)) {
+          providers.update(providerID, (draft) => Object.assign(draft, migrated))
+        } else {
+          providers.add({ info: { id: providerID, activation: "enabled", ...migrated }, models: [] })
+        }
+      }
+    })
+    await ctx.model.transform((models) => {
       const slash = DEFAULT_MODEL.indexOf("/")
       // An explicit config "model" (set before this transform) still wins.
-      if (slash > 0 && !catalog.model.default?.get?.())
-        catalog.model.default?.set?.(DEFAULT_MODEL.slice(0, slash), DEFAULT_MODEL.slice(slash + 1).split("#")[0])
-      removePaidModels(catalog)
-      for (const [providerID, definition] of Object.entries(registry.providers)) {
-        catalog.provider.update(providerID, (draft) =>
-          Object.assign(draft, structuredClone(definition)),
-        )
-      }
+      if (slash > 0 && !models.default?.get?.())
+        models.default?.set?.(DEFAULT_MODEL.slice(0, slash), DEFAULT_MODEL.slice(slash + 1).split("#")[0])
+      removePaidModels(models)
       for (const [key, definition] of Object.entries(registry.models)) {
         const slash = key.indexOf("/")
         if (slash <= 0) continue
         const providerID = key.slice(0, slash)
         const id = key.slice(slash + 1)
-        catalog.model.update(providerID, id, (draft) =>
+        models.update(providerID, id, (draft) =>
           Object.assign(draft, structuredClone(definition)),
         )
       }
       for (const definition of Object.values(registry.orchestrations)) {
         const item = asObject(definition)
         if (!item.providerID || !item.id || !item.baseModelID) continue
-        const base = catalog.model.get(item.providerID, item.baseModelID)
-        catalog.model.update(item.providerID, item.id, (draft) => {
+        const base = models.get(item.providerID, item.baseModelID)
+        models.update(item.providerID, item.id, (draft) => {
           if (base) Object.assign(draft, structuredClone(base))
           draft.id = item.id
           // baseModelID is a catalog ID; the wire needs the base's upstream model.
@@ -693,7 +702,7 @@ export default {
         },
         usage(
           "addprovider",
-          '/addprovider {"id":"acme","name":"Acme","package":"@opencode-ai/ai/providers/openai-compatible","env":["ACME_API_KEY"],"settings":{"baseURL":"https://llm.example/v1","apiKey":"{env:ACME_API_KEY}"}}',
+          '/addprovider {"id":"acme","name":"Acme","package":"@opencode/ai/providers/openai-compatible","env":["ACME_API_KEY"],"settings":{"baseURL":"https://llm.example/v1","apiKey":"{env:ACME_API_KEY}"}}',
         ),
       )
 
@@ -830,7 +839,7 @@ export default {
           enqueueMutation(async () => {
             registry = normalizeRegistry(await ctx.storage.get(STORAGE_KEY))
             syncManagedOrchestrations(registry.orchestrations)
-            await ctx.catalog.reload()
+            await ctx.provider.reload()
           }),
       })
 

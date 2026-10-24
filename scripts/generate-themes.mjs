@@ -151,48 +151,42 @@ const THEMES = {
 
 const DARK = {
   text: {
-    default: "$hue.neutral.100",
-    subdued: "$hue.neutral.400",
+    base: "$hue.neutral.100",
+    muted: "$hue.neutral.400",
     action: {
-      primary: { default: "$hue.neutral.100", $disabled: "$hue.neutral.500" },
-      secondary: { default: "$text.subdued", $hovered: "$text.default" },
-      destructive: { default: "$hue.red.200", $disabled: "$hue.neutral.500" },
+      primary: { base: "$hue.neutral.100", $disabled: "$hue.neutral.500" },
+      secondary: { base: "$text.muted", $hovered: "$text.base" },
+      destructive: { base: "$hue.red.200", $disabled: "$hue.neutral.500" },
     },
     formfield: {
-      default: "$hue.neutral.100",
-      $focused: "$text.action.primary.default",
+      base: "$hue.neutral.100",
+      $focused: "$text.action.primary.base",
       $pressed: "$hue.neutral.200",
       $disabled: "$hue.neutral.500",
       $selected: "$hue.interactive.400",
     },
-    status: {
-      running: "$hue.interactive.200",
-      question: "$text.feedback.info.default",
-      permission: "$text.feedback.warning.default",
-      unread: "$hue.accent.200",
-    },
     feedback: {
-      error: { default: "$hue.red.300", subdued: "$hue.red.400" },
-      warning: { default: "$hue.yellow.200", subdued: "$hue.yellow.300" },
-      success: { default: "$hue.green.300", subdued: "$hue.green.400" },
-      info: { default: "$hue.blue.300", subdued: "$hue.blue.400" },
+      error: { base: "$hue.red.300", muted: "$hue.red.400" },
+      warning: { base: "$hue.yellow.200", muted: "$hue.yellow.300" },
+      success: { base: "$hue.green.300", muted: "$hue.green.400" },
+      info: { base: "$hue.blue.300", muted: "$hue.blue.400" },
     },
   },
   background: {
-    default: "$hue.neutral.900",
-    surface: { offset: "$hue.neutral.800", overlay: "$hue.neutral.700" },
+    base: "$hue.neutral.900",
+    raised: { base: "$hue.neutral.800", high: "$hue.neutral.700", max: "$hue.neutral.600" },
     action: {
       primary: {
-        default: "$hue.interactive.500",
+        base: "$hue.interactive.500",
         $hovered: "$hue.interactive.600",
         $focused: "$hue.interactive.600",
         $pressed: "$hue.interactive.700",
         $selected: "$hue.interactive.600",
         $disabled: "$hue.neutral.800",
       },
-      secondary: { default: "transparent" },
+      secondary: { base: "transparent" },
       destructive: {
-        default: "$hue.red.600",
+        base: "$hue.red.600",
         $hovered: "$hue.red.700",
         $focused: "$hue.red.700",
         $pressed: "$hue.red.800",
@@ -201,22 +195,22 @@ const DARK = {
       },
     },
     formfield: {
-      default: "$background.default",
-      $hovered: "$background.surface.offset",
-      $focused: "$background.action.primary.default",
+      base: "$background.base",
+      $hovered: "$background.raised.base",
+      $focused: "$background.action.primary.base",
       $pressed: "$hue.interactive.700",
-      $disabled: "$background.default",
-      $selected: "$background.formfield.default",
+      $disabled: "$background.base",
+      $selected: "$background.formfield.base",
     },
     feedback: {
-      error: { default: "$background.default" },
-      warning: { default: "$background.default" },
-      success: { default: "$background.default" },
-      info: { default: "$background.default" },
+      error: { base: "$background.base" },
+      warning: { base: "$background.base" },
+      success: { base: "$background.base" },
+      info: { base: "$background.base" },
     },
   },
-  border: { default: "$hue.neutral.600" },
-  scrollbar: { default: "$hue.neutral.500" },
+  border: { base: "$hue.neutral.600" },
+  scrollbar: { base: "$hue.neutral.500" },
   diff: {
     text: {
       added: "$hue.green.300",
@@ -258,66 +252,53 @@ const DARK = {
     imageText: "$hue.blue.300",
     codeBlock: "$hue.neutral.100",
   },
-  "@context:elevated": {
-    text: { action: { primary: { default: "$hue.neutral.100" } } },
+  "@dialog": {
+    text: { action: { primary: { base: "$hue.neutral.100" } } },
     background: {
-      default: "$hue.neutral.800",
-      action: { primary: { default: "$hue.interactive.500", $hovered: "$hue.neutral.700" } },
-    },
-  },
-  "@context:overlay": {
-    text: { action: { primary: { default: "$hue.neutral.100" } } },
-    background: {
-      default: "$hue.neutral.700",
-      action: { primary: { default: "$hue.interactive.500" } },
+      base: "$hue.neutral.800",
+      action: { primary: { base: "$hue.interactive.500", $hovered: "$hue.neutral.700" } },
     },
   },
 }
 
 const LIGHT = {
   text: {
-    default: "$hue.neutral.900",
-    subdued: "$hue.neutral.500",
+    base: "$hue.neutral.900",
+    muted: "$hue.neutral.500",
     action: {
-      primary: { default: "$hue.neutral.100", $disabled: "$hue.neutral.400" },
-      secondary: { default: "$text.subdued", $hovered: "$text.default" },
-      destructive: { default: "$hue.red.600", $disabled: "$hue.neutral.500" },
+      primary: { base: "$hue.neutral.100", $disabled: "$hue.neutral.400" },
+      secondary: { base: "$text.muted", $hovered: "$text.base" },
+      destructive: { base: "$hue.red.600", $disabled: "$hue.neutral.500" },
     },
     formfield: {
-      default: "$hue.neutral.900",
-      $focused: "$text.action.primary.default",
+      base: "$hue.neutral.900",
+      $focused: "$text.action.primary.base",
       $pressed: "$hue.neutral.200",
       $disabled: "$hue.neutral.500",
       $selected: "$hue.interactive.700",
     },
-    status: {
-      running: "$hue.interactive.800",
-      question: "$text.feedback.info.default",
-      permission: "$text.feedback.warning.default",
-      unread: "$hue.accent.800",
-    },
     feedback: {
-      error: { default: "$hue.red.700", subdued: "$hue.red.600" },
-      warning: { default: "$hue.yellow.800", subdued: "$hue.yellow.700" },
-      success: { default: "$hue.green.700", subdued: "$hue.green.600" },
-      info: { default: "$hue.blue.700", subdued: "$hue.blue.600" },
+      error: { base: "$hue.red.700", muted: "$hue.red.600" },
+      warning: { base: "$hue.yellow.800", muted: "$hue.yellow.700" },
+      success: { base: "$hue.green.700", muted: "$hue.green.600" },
+      info: { base: "$hue.blue.700", muted: "$hue.blue.600" },
     },
   },
   background: {
-    default: "$hue.neutral.100",
-    surface: { offset: "$hue.neutral.200", overlay: "$hue.neutral.300" },
+    base: "$hue.neutral.100",
+    raised: { base: "$hue.neutral.200", high: "$hue.neutral.300", max: "$hue.neutral.400" },
     action: {
       primary: {
-        default: "$hue.interactive.600",
+        base: "$hue.interactive.600",
         $hovered: "$hue.interactive.700",
         $focused: "$hue.interactive.700",
         $pressed: "$hue.interactive.800",
         $selected: "$hue.interactive.700",
         $disabled: "$hue.neutral.300",
       },
-      secondary: { default: "transparent" },
+      secondary: { base: "transparent" },
       destructive: {
-        default: "$hue.red.600",
+        base: "$hue.red.600",
         $hovered: "$hue.red.700",
         $focused: "$hue.red.700",
         $pressed: "$hue.red.800",
@@ -326,22 +307,22 @@ const LIGHT = {
       },
     },
     formfield: {
-      default: "$background.default",
-      $hovered: "$background.surface.offset",
-      $focused: "$background.action.primary.default",
+      base: "$background.base",
+      $hovered: "$background.raised.base",
+      $focused: "$background.action.primary.base",
       $pressed: "$hue.interactive.800",
-      $disabled: "$background.default",
-      $selected: "$background.formfield.default",
+      $disabled: "$background.base",
+      $selected: "$background.formfield.base",
     },
     feedback: {
-      error: { default: "$background.default" },
-      warning: { default: "$background.default" },
-      success: { default: "$background.default" },
-      info: { default: "$background.default" },
+      error: { base: "$background.base" },
+      warning: { base: "$background.base" },
+      success: { base: "$background.base" },
+      info: { base: "$background.base" },
     },
   },
-  border: { default: "$hue.neutral.300" },
-  scrollbar: { default: "$hue.neutral.400" },
+  border: { base: "$hue.neutral.300" },
+  scrollbar: { base: "$hue.neutral.400" },
   diff: {
     text: {
       added: "$hue.green.700",
@@ -383,18 +364,11 @@ const LIGHT = {
     imageText: "$hue.blue.600",
     codeBlock: "$hue.neutral.900",
   },
-  "@context:elevated": {
-    text: { action: { primary: { default: "$hue.neutral.100" } } },
+  "@dialog": {
+    text: { action: { primary: { base: "$hue.neutral.100" } } },
     background: {
-      default: "$background.surface.offset",
-      action: { primary: { default: "$hue.interactive.500", $hovered: "$background.surface.overlay" } },
-    },
-  },
-  "@context:overlay": {
-    text: { action: { primary: { default: "$hue.neutral.100" } } },
-    background: {
-      default: "$background.surface.overlay",
-      action: { primary: { default: "$hue.interactive.500" } },
+      base: "$background.raised.base",
+      action: { primary: { base: "$hue.interactive.500", $hovered: "$background.raised.high" } },
     },
   },
 }
@@ -403,7 +377,7 @@ const LIGHT = {
 // Assembly
 // ---------------------------------------------------------------------------
 
-function variant(roleMap, theme) {
+function variant(theme, roleMap = {}) {
   return {
     hue: {
       gray: GRAY,
@@ -418,7 +392,6 @@ function variant(roleMap, theme) {
       interactive: "$hue.orange",
       neutral: "$hue.gray",
     },
-    categorical: ["blue", "purple", "green", "orange", "red", "cyan"],
     ...roleMap,
   }
 }
@@ -426,9 +399,9 @@ function variant(roleMap, theme) {
 mkdirSync(OUT, { recursive: true })
 for (const [name, theme] of Object.entries(THEMES)) {
   const doc = {
-    version: 2,
-    dark: variant(DARK, theme),
-    light: variant(LIGHT, theme),
+    base: { categorical: ["blue", "purple", "green", "orange", "red", "cyan"], ...DARK },
+    dark: variant(theme),
+    light: variant(theme, LIGHT),
   }
   const file = join(OUT, `${name}.json`)
   writeFileSync(file, JSON.stringify(doc, null, 2) + "\n")

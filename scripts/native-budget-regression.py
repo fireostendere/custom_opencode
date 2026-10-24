@@ -451,8 +451,8 @@ for line in sys.stdin:
             if TAIL not in text:
                 raise AssertionError("Native agent did not reach the expected final response")
             assert 2 <= len(requests) <= 8, len(requests)
-            assert all(body.get("max_tokens") == 2048 for body in requests), [
-                body.get("max_tokens") for body in requests
+            assert all(body.get("max_completion_tokens") == 2048 for body in requests), [
+                body.get("max_completion_tokens") for body in requests
             ]
 
             # This pinned CLI serializes string parts as JSON strings on its wire.
@@ -557,7 +557,7 @@ for line in sys.stdin:
                 ],
             )
             assert len(requests) == previous_count + 1, "unexpected repeated work on second turn"
-            assert requests[-1].get("max_tokens") == 2048
+            assert requests[-1].get("max_completion_tokens") == 2048
             with sqlite3.connect(dbpath) as db:
                 roots = db.execute(
                     "SELECT id,calls FROM execution_roots ORDER BY started_at"

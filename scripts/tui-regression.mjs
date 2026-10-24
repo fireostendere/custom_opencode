@@ -82,7 +82,7 @@ const stopping = stopCommand.run()
 await stopCommand.run()
 assert.deepEqual(
   interrupted,
-  [{ sessionID: "ses_stop", continue: false }],
+  [{ sessionID: "ses_stop", resume: false }],
   "One Escape must stop without resuming; repeated Escape must not duplicate in-flight requests",
 )
 finishInterrupt()
@@ -345,9 +345,13 @@ async function runtimeSources(directory) {
 
 const rootPath = fileURLToPath(root)
 const tuiSourceRoot = join(rootPath, "config", "plugins", "tui")
+const themePaths = new Set(["background.raised.max"])
 for (const path of await runtimeSources(tuiSourceRoot)) {
   const source = await readFile(path, "utf8")
   const file = relative(rootPath, path)
+  for (const [token] of source.matchAll(/\btheme\.(?:text|background|border|scrollbar)(?:\.\$?\w+)+/g)) {
+    themePaths.add(token.slice("theme.".length))
+  }
   for (const [name, pattern] of [
     ["direct theme.hue access", /(?:\bcontext\.)?theme\.hue\b/],
     ["hex color literal", /#[0-9a-f]{3,8}\b/i],
@@ -362,20 +366,19 @@ function themePathValue(theme, path) {
   return path.split(".").reduce((value, segment) => value?.[segment], theme)
 }
 
-const themePaths = [
-  "text.formfield.$selected",
-  "text.status.running",
-  "text.action.secondary.default",
-]
 const themesRoot = join(rootPath, "config", "themes")
 for (const entry of await readdir(themesRoot, { withFileTypes: true })) {
   if (!entry.isFile() || !entry.name.endsWith(".json")) continue
   const path = join(themesRoot, entry.name)
   const theme = JSON.parse(await readFile(path, "utf8"))
+  assert.ok(theme.base?.categorical?.length, `${entry.name}: V2 themes need a complete base`)
   for (const mode of ["dark", "light"]) {
+    assert.ok(theme[mode]?.hue, `${entry.name}: ${mode} needs a hue palette`)
     for (const themePath of themePaths) {
+      // Documents prefix state names with $, the resolved runtime API does not.
+      const documentPath = themePath.replace(/\.(selected|hovered|focused|pressed|disabled)$/, ".$$$1")
       assert.equal(
-        typeof themePathValue(theme[mode], themePath),
+        typeof (themePathValue(theme[mode], documentPath) ?? themePathValue(theme.base, documentPath)),
         "string",
         `${relative(rootPath, path)}: ${mode}.${themePath} must be a string`,
       )
@@ -425,7 +428,7 @@ assert.ok(
     },
   })
   let bundleSource = tuiEntry.replace(
-    'import { Plugin } from "@opencode-ai/plugin/tui"',
+    'import { Plugin } from "@opencode/plugin/tui"',
     "const Plugin = { define(value) { return value } }",
   )
   bundleSource = bundleSource.replace(/^import (\w+) from "\.\/([^"]+)"$/gm, (_, name, file) => {
@@ -617,14 +620,14 @@ for (const marker of [
   "target.paddingRight",
   "target.paddingTop",
   "target.paddingBottom",
-  "theme.text.formfield.$selected",
-  "theme.text.action.secondary.default",
-  "theme.border.default",
-  "theme.scrollbar.default",
-  "theme.background.surface.offset",
+  "theme.text.formfield.selected",
+  "theme.text.action.secondary.base",
+  "theme.border.base",
+  "theme.scrollbar.base",
+  "theme.background.raised.base",
   'const PIN_ICON = "📌"',
-  "theme.background.action.primary.default",
-  "theme.text.action.primary.default",
+  "theme.background.action.primary.base",
+  "theme.text.action.primary.base",
   "jumpToEnd",
   "cursorUnderOverlay",
   "addPostProcessFn",
@@ -682,7 +685,7 @@ assert.ok(
 )
 assert.ok(
   !workspacePanel.includes(
-    "<box onMouseDown={() => setCollapsed(props.side, true)}><text fg={theme.text.subdued}><span>{COLLAPSE_ICON[props.side]}</span></text></box>",
+    "<box onMouseDown={() => setCollapsed(props.side, true)}><text fg={theme.text.muted}><span>{COLLAPSE_ICON[props.side]}</span></text></box>",
   ),
   "Collapse must not remain in the header",
 )
@@ -739,17 +742,17 @@ assert.ok(
 assert.ok(!panelViews.includes("function accent("), "Panel views must not retain the accent helper")
 assert.match(
   workspacePanel,
-  /fg=\{active\(\) \? theme\.text\.formfield\.\$selected : theme\.text\.subdued\}/,
+  /fg=\{active\(\) \? theme\.text\.formfield\.selected : theme\.text\.muted\}/,
   "Active tabs must use the selected form-field token",
 )
 assert.match(
   workspacePanel,
-  /<text fg=\{theme\.text\.action\.secondary\.default\}><span>↓ конец<\/span><\/text>/,
+  /<text fg=\{theme\.text\.action\.secondary\.base\}><span>↓ конец<\/span><\/text>/,
   "Jump-to-end must use the secondary action token",
 )
 assert.doesNotMatch(
   workspacePanel,
-  /setPinned\(props\.side, !item\(\)\.pinned\)[\s\S]{0,250}theme\.text\.feedback\.error\.default/,
+  /setPinned\(props\.side, !item\(\)\.pinned\)[\s\S]{0,250}theme\.text\.feedback\.error\.base/,
   "Pin control must not use an error color",
 )
 assert.match(
@@ -799,14 +802,14 @@ assert.match(
   "Limits view must fit narrow panels",
 )
 assert.equal(
-  (panelViews.match(/theme\.text\.status\.running/g) ?? []).length,
+  (panelViews.match(/theme\.text\.formfield\.selected/g) ?? []).length,
   3,
-  "Panel views must use the running status token only for active work",
+  "Panel views must use the selected accent token only for active work",
 )
 assert.match(
   panelViews,
-  /active \? theme\.text\.status\.running : done \? theme\.text\.feedback\.success\.default/,
-  "Active todo markers must use the running status token",
+  /active \? theme\.text\.formfield\.selected : done \? theme\.text\.feedback\.success\.base/,
+  "Active todo markers must use the selected accent token",
 )
 assert.match(
   panelViews,
@@ -815,18 +818,18 @@ assert.match(
 )
 assert.match(
   panelViews,
-  /completed === current\.todos\.length \? theme\.text\.feedback\.success\.default : running \? theme\.text\.status\.running : theme\.text\.default/,
+  /completed === current\.todos\.length \? theme\.text\.feedback\.success\.base : running \? theme\.text\.formfield\.selected : theme\.text\.base/,
   "Plan progress must distinguish completed, running, and pending states",
 )
 assert.match(
   panelViews,
-  /row\.role === "assistant" \? theme\.text\.default : theme\.text\.subdued/,
+  /row\.role === "assistant" \? theme\.text\.base : theme\.text\.muted/,
   "Assistant activity roles must use the default text token",
 )
 assert.match(
   panelViews,
-  /row\.status === "running" \|\| row\.status === "in_progress" \? theme\.text\.status\.running : theme\.text\.default/,
-  "Only active orchestration statuses must use the running status token",
+  /row\.status === "running" \|\| row\.status === "in_progress" \? theme\.text\.formfield\.selected : theme\.text\.base/,
+  "Only active orchestration statuses must use the selected accent token",
 )
 assert.ok(
   !panelViews.includes("taskLike:"),

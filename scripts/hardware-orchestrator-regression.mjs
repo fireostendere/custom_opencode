@@ -58,12 +58,12 @@ async function harness(t, options = {}) {
     Object.assign(process.env, env)
   })
   const ctx = {
-    catalog: {
-      model: { list: async () => rows },
-      transform: async fn => fn({ model: {
+    model: {
+      list: async () => rows,
+      transform: async fn => fn({
         get: (provider, id) => rows.find(row => row.providerID === provider && row.id === id),
         update: (provider, id, update) => { const value = {}; update(value); aliases.set(id, value) },
-      } }),
+      }),
     },
     session: {
       hook: async (name, fn) => { hooks.set(name, fn) },

@@ -8,7 +8,7 @@
 // (useRenderer / reconciler createElement) at render time.
 //
 // This class of bug is invisible to logic-only headless tests because they
-// normally stub `@opencode-ai/plugin/tui`. The production model selector is
+// normally stub `@opencode/plugin/tui`. The production model selector is
 // intentionally JSX-free now; if JSX is ever reintroduced, this scan will
 // require the renderer pragma again.
 import assert from 'node:assert/strict'

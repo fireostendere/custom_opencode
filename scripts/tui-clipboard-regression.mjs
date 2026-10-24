@@ -47,9 +47,9 @@ process.env.WSL_DISTRO_NAME ||= "regression"
 const { readFile } = await import("node:fs/promises")
 let pluginSource = await readFile(new URL("../config/plugins/tui/wsl-clipboard.jsx", import.meta.url), "utf8")
 pluginSource = pluginSource
-  .replace('import { Plugin } from "@opencode-ai/plugin/tui"', "const Plugin = { define(value) { return value } }")
+  .replace('import { Plugin } from "@opencode/plugin/tui"', "const Plugin = { define(value) { return value } }")
   .replace('"./lib/wsl-clipboard.js"', JSON.stringify(new URL("../config/plugins/tui/lib/wsl-clipboard.js", import.meta.url).href))
-assert.ok(!pluginSource.includes("@opencode-ai/plugin/tui"))
+assert.ok(!pluginSource.includes("@opencode/plugin/tui"))
 const plugin = (await import(`data:text/javascript;base64,${Buffer.from(pluginSource).toString("base64")}`)).default
 const editor = { traits: { owner: "opencode", role: "prompt", status: "NORMAL" } }
 let pasteListener

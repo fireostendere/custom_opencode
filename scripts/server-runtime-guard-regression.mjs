@@ -106,13 +106,11 @@ try {
         hooks[`session:${name}`] = callback
       },
     },
-    catalog: {
-      model: {
+    model: {
         list: async () => {
           catalogCalls += 1
           throw new Error('catalog unavailable')
         },
-      },
     },
     tool: {
       hook: async (name, callback) => {
