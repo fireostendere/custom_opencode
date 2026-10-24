@@ -20,6 +20,9 @@ source = source.replace(
   './lib/agent-sync.js',
   new URL('config/plugins/tui/lib/agent-sync.js', root).href,
 )
+for (const helper of ['panel-submit-router', 'webserver-control']) {
+  source = source.replace(`./lib/${helper}.js`, new URL(`config/plugins/tui/lib/${helper}.js`, root).href)
+}
 // Solid's reactive scheduler is outside this smoke; effects run eagerly and
 // are re-run explicitly through rerunEffects().
 source = source.replace(
@@ -69,6 +72,14 @@ let sessionStatus = 'idle'
 let sessionParent
 let sessionModel = null
 let agentChoice = 'plan'
+let effortChoice = 'high'
+let submitListener
+let submitRemoved = false
+const editor = {
+  plainText: '',
+  traits: { owner: 'opencode', role: 'prompt', status: 'NORMAL' },
+  clear() { this.plainText = '' },
+}
 const agentList = [
   { id: 'build', mode: 'primary' },
   { id: 'general', mode: 'subagent' },
@@ -91,7 +102,7 @@ const dialogHistory = []
 
 const models = [
   { providerID: 'bailian-cli', id: 'qwen3.8-max', name: 'Qwen Max', enabled: true, status: 'active', cost: [{ input: 0.1 }] },
-  { providerID: 'bailian-cli', id: 'qwen-flash', name: 'Qwen Flash', enabled: true, status: 'active', cost: [{ input: 0.01 }], variants: [{ id: 'low' }, { id: 'medium' }] },
+  { providerID: 'bailian-cli', id: 'qwen-flash', name: 'Qwen Flash', enabled: true, status: 'active', cost: [{ input: 0.01 }], variants: [{ id: 'low' }, { id: 'medium' }, { id: 'high' }] },
   { providerID: 'bailian-cli', id: 'qwen3.7-plus', name: 'Qwen Plus', enabled: true, status: 'active', cost: [{ input: 0.04 }] },
   { providerID: 'openai', id: 'gpt-test', name: 'GPT Test', enabled: true, status: 'active', cost: [{ input: 0.2 }] },
   { providerID: 'openai', id: 'gpt-6-astra', name: 'GPT-6 Astra', enabled: true, status: 'active', cost: [{ input: 1 }] },
@@ -114,6 +125,13 @@ const providers = [
 ]
 
 const context = {
+  renderer: {
+    currentFocusedEditor: editor,
+    keyInput: {
+      prependListener(_name, listener) { submitListener = listener },
+      off(_name, listener) { assert.equal(listener, submitListener); submitRemoved = true },
+    },
+  },
   storage: {
     store(name) {
       const state = name === 'model-selector.favorites' ? favoriteState : recentState
@@ -141,6 +159,7 @@ const context = {
           return { ...toggleFavoriteChoice }
         }
         if (value.title === 'Select Agent') return agentChoice
+        if (value.title === 'Reasoning Effort') return effortChoice
         if (simulateFavorite && selectCalls === 1) {
           const favoriteToggle = commands.find((item) => item.id === 'model-selector.favorite-toggle')
           assert.ok(favoriteToggle, 'favorite-toggle command was not registered')
@@ -625,8 +644,109 @@ await poll(() => switched !== null)
 assert.deepEqual(agentChanges, ['plan'], 'a hidden plan alias must become the visible plan agent')
 modelChoice = { providerID: 'bailian-cli', modelID: 'qwen-flash' }
 
+// Effort controls persist a catalog variant without changing the model or agent.
+const effort = commands.find((item) => item.id === 'variant.list')
+const effortCycle = commands.find((item) => item.id === 'variant.cycle')
+assert.ok(effort && effortCycle, 'effort commands must override native variant selection')
+assert.deepEqual(effort.slash, { name: 'effort', arguments: true })
+route = { type: 'session', sessionID: 'ses_effort' }
+currentAgent = 'plan'
+sessionModel = { providerID: 'bailian-cli', id: 'qwen-flash', variant: 'medium' }
+switched = null
+await effort.run()
+assert.deepEqual(dialogOptions.map((item) => item.value), ['low', 'medium', 'high'])
+assert.equal(dialogCurrents.at(-1), 'medium')
+assert.deepEqual(switched, { sessionID: 'ses_effort', model: { providerID: 'bailian-cli', id: 'qwen-flash', variant: 'high' } })
+assert.equal(currentAgent, 'plan')
+await effortCycle.run()
+assert.equal(switched.model.variant, 'low', 'cycling must wrap through supported variants')
+await effortCycle.run()
+assert.equal(switched.model.variant, 'medium')
+sessionStatus = 'running'
+await effort.run(' high ')
+assert.equal(switched.model.variant, 'high', 'a running session can choose effort for its next model request')
+sessionStatus = 'idle'
+
+// Cancellation, invalid levels and unsupported models must not write anything.
+switched = null
+effortChoice = undefined
+await effort.run()
+assert.equal(switched, null)
+toasts.length = 0
+await effort.run('unavailable')
+assert.equal(switched, null)
+assert.match(toasts.at(-1).message, /low.*medium.*high/)
+sessionModel = { providerID: 'other', id: 'z-model' }
+await effortCycle.run()
+assert.equal(switched, null)
+assert.equal(toasts.at(-1).variant, 'warning')
+
+// Object-form variants and saved preferences use the same catalog path.
+const flash = models.find((item) => item.id === 'qwen-flash')
+flash.variants = { low: {}, medium: {}, high: {} }
+sessionModel = { providerID: 'bailian-cli', id: 'qwen-flash' }
+await effortCycle.run()
+assert.equal(switched.model.variant, 'high', 'cycle starts from the saved medium preference')
+flash.variants = [{ id: 'low' }, { id: 'medium' }, { id: 'high' }]
+failSwitch = true
+switched = null
+await effort.run('low')
+assert.equal(switched, null)
+assert.equal(toasts.at(-1).variant, 'error', 'a failed switch must be reported without a success toast')
+failSwitch = false
+
+// Never apply a dialog result after switching to a different model or session.
+const selectEffort = context.ui.dialog.select
+context.ui.dialog.select = async () => {
+  sessionModel = { providerID: 'openai', id: 'gpt-test' }
+  return 'high'
+}
+await effort.run()
+assert.equal(switched, null)
+context.ui.dialog.select = async () => {
+  route = { type: 'session', sessionID: 'ses_elsewhere' }
+  return 'high'
+}
+sessionModel = { providerID: 'bailian-cli', id: 'qwen-flash' }
+await effort.run()
+assert.equal(switched, null)
+context.ui.dialog.select = selectEffort
+
+// Rapid repeats share one pending selection; the home screen persists by
+// creating a session, just like the existing custom model picker.
+route = { type: 'home' }
+recentState.models = [{ providerID: 'bailian-cli', modelID: 'qwen-flash' }]
+created = null
+const selecting = effort.run('low')
+await effort.run('high')
+await selecting
+assert.equal(created.model.variant, 'low')
+assert.equal(created.model.id, 'qwen-flash')
+assert.deepEqual(navigated, { type: 'session', sessionID: 'ses_home' })
+
+// Manually typed /effort is consumed locally before native prompt submission.
+route = { type: 'session', sessionID: 'ses_effort' }
+sessionModel = { providerID: 'bailian-cli', id: 'qwen-flash', variant: 'medium' }
+switched = null
+editor.plainText = '/effort low'
+const enter = { name: 'return', preventDefault() { this.prevented = true }, stopPropagation() {} }
+submitListener(enter)
+assert.equal(enter.prevented, true)
+assert.equal(editor.plainText, '')
+await poll(() => switched !== null)
+assert.equal(switched.model.variant, 'low')
+editor.plainText = '/effortless'
+const pass = { ...enter, prevented: false }
+submitListener(pass)
+assert.equal(pass.prevented, false)
+editor.plainText = '/effort high'
+editor.traits.status = 'SHELL'
+submitListener(pass)
+assert.equal(pass.prevented, false, 'shell input must not be intercepted')
+
 cleanup()
-console.log('TUI model selector smoke passed: native dialog + favorites mirror + fresh recent persistence + failed selection rejection + persisted agent switches')
+assert.equal(submitRemoved, true)
+console.log('TUI model selector smoke passed: model/agent selection + persisted effort hotkey, dialog and local slash command')
 
 async function poll(check) {
   for (let i = 0; i < 200 && !check(); i++) {
