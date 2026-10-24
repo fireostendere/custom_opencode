@@ -6,7 +6,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 bash -euc 'set -a; source "$1"; [[ "$OPENCODE_SECRET_PREFIXES" == *";OPENAI_;"* ]]' -- "$ROOT/.env.example"
 # The fixture intentionally tests removal of stale credentials. Ambient CI or
 # developer credentials must not silently repopulate the rendered service env.
-unset GEMINI_API_KEY GOOGLE_API_KEY OPENCODE_OPENAI_ACCESS OPENCODE_OPENAI_REFRESH \
+unset GEMINI_API_KEY GOOGLE_API_KEY OPENAI_DECISIONS_API_KEY OPENCODE_OPENAI_ACCESS OPENCODE_OPENAI_REFRESH \
   OPENCODE_OPENAI_EXPIRES OPENCODE_OPENAI_ACCOUNT_ID OPENCODE_ZEN_KEY OPENCODE_GO_KEY
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -114,7 +114,7 @@ printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/lib/clipboard.js"
 # placeholders, while unrelated service settings stay intact.
 mkdir -p "$HOME_DIR/.config/opencode"
 cat >"$HOME_DIR/.config/opencode/service.json" <<'EOF'
-{"env":{"GEMINI_API_KEY":"stale-secret","GOOGLE_API_KEY":"CHANGE_ME","MCP_RAG_ROOT":"stale-root","MCP_RAG_BIN":"stale-bin","UNMANAGED_SETTING":"preserve-me"}}
+{"env":{"GEMINI_API_KEY":"stale-secret","GOOGLE_API_KEY":"CHANGE_ME","OPENAI_DECISIONS_API_KEY":"stale-decisions","MCP_RAG_ROOT":"stale-root","MCP_RAG_BIN":"stale-bin","UNMANAGED_SETTING":"preserve-me"}}
 EOF
 # Simulate the exact managed AGENTS.md written by older custom_opencode releases.
 # The new installer must migrate this to model-aware context lanes.
@@ -150,6 +150,7 @@ grep -Fq '"app.exit": "ctrl+shift+q"' "$CLI_CONFIG"
 [[ -f "$RUNTIME_GUARD" ]] || { echo "fresh install did not install runtime guard plugin" >&2; exit 1; }
 [[ -f "$VISIBLE_PLAN" ]] || { echo "fresh install did not install visible plan plugin" >&2; exit 1; }
 [[ -f "$HOME_DIR/.config/opencode/plugins/goal.js" ]] || { echo "fresh install did not install goal plugin" >&2; exit 1; }
+[[ -f "$HOME_DIR/.config/opencode/plugins/decisions.js" ]] || { echo "fresh install did not install Decisions plugin" >&2; exit 1; }
 [[ -f "$CONTEXT_LANES" && -f "$CONTEXT_POLICY" ]] || { echo "fresh install did not install context lane plugins" >&2; exit 1; }
 [[ -f "$ENGINEERING_PROMPT" && -f "$ENGINEERING_LITE_PROMPT" ]] || { echo "fresh install did not install context lane prompts" >&2; exit 1; }
 [[ ! -e "$HOME_DIR/.config/opencode/AGENTS.md" ]] || { echo "legacy managed AGENTS.md was not migrated away" >&2; exit 1; }
@@ -206,7 +207,7 @@ run_with_auth_backups() {
     CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
     OPENCODE_OPENAI_ACCESS=backup-access OPENCODE_OPENAI_REFRESH=backup-refresh \
     OPENCODE_OPENAI_EXPIRES="$expires" OPENCODE_OPENAI_ACCOUNT_ID=backup-account \
-    OPENCODE_ZEN_KEY=backup-zen OPENCODE_GO_KEY=backup-go GEMINI_API_KEY=backup-google \
+    OPENCODE_ZEN_KEY=backup-zen OPENCODE_GO_KEY=backup-go GEMINI_API_KEY=backup-google OPENAI_DECISIONS_API_KEY=fixture-decisions \
     bash "$COPY/scripts/install.sh" >"$output"
 }
 
@@ -234,6 +235,12 @@ EOF
 touch -d '2020-01-01 UTC' "$CLI_CONFIG"
 cp -p "$CLI_CONFIG" "$TMP/cli-before-update.json"
 run_with_auth_backups 4102444800000 "$TMP/preserve-auth.out"
+python3 - "$SERVICE_CONFIG" <<'PY'
+import json, sys
+env = json.load(open(sys.argv[1]))['env']
+assert env['OPENAI_DECISIONS_API_KEY'] == 'fixture-decisions'
+assert 'OPENAI_API_KEY' not in env, 'Decisions must not switch the primary provider to API billing'
+PY
 cmp -s "$TMP/auth-before-update.json" "$AUTH" || { echo "installer overwrote live provider credentials" >&2; exit 1; }
 cmp -s "$TMP/user-agents-before-update.md" "$HOME_DIR/.config/opencode/AGENTS.md" || { echo "installer overwrote user-owned AGENTS.md" >&2; exit 1; }
 cmp -s "$TMP/cli-before-update.json" "$CLI_CONFIG" || { echo "installer reset user TUI settings" >&2; exit 1; }
@@ -402,7 +409,7 @@ assert env['OPENCODE_LOCAL_ROUTER_URL'] == 'http://127.0.0.1:11434'
 assert env['OPENCODE_LOCAL_ROUTER_START'] == '/tmp/ollama-start.sh'
 assert env['OPENCODE_LOCAL_ROUTER_LOG'] == '/tmp/ollama.log'
 assert env['UNMANAGED_SETTING'] == 'preserve-me'
-for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY'):
+for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY', 'OPENAI_DECISIONS_API_KEY'):
     assert name not in env, (name, env)
 PY
 grep -Fq 'DipTrace MCP: intentionally disabled (DIPTRACE_MCP_ENABLED=0)' "$TMP/install.out"

@@ -268,6 +268,41 @@ D&D: изолированные роли ODM `narrator-ask` (`odm_ask_answer_v1`
 
 Проверка: `node scripts/typed-output-regression.mjs` (без токенов).
 
+## OpenAI Decisions API
+
+Плагин `config/plugins/decisions.js` добавляет нативный инструмент `decisions` для
+быстрой классификации и оценок через `POST https://api.openai.com/v1/decisions`,
+модель `gpt-6-luna`. Он работает с текстом и JSON, переданным как строка, и
+принимает 1–400 независимых вопросов в одном запросе:
+
+| `type` | Параметры | Результат |
+|---|---|---|
+| `predicate` | `name`, `instructions` | `probability` от 0 до 1 |
+| `choice` | плюс 2–255 уникальных `choices: [{value, description?}]` | `choice`, `confidence`, распределение вероятностей |
+| `score` | плюс 2–10 `levels: [{label, description}]` по возрастанию | `score` (индексы с нуля), `confidence`, распределение |
+
+В локальном `.env` задайте `OPENAI_DECISIONS_API_KEY`, затем запустите
+`bash scripts/install.sh`. Подписка ChatGPT и OAuth не оплачивают этот API:
+нужен ключ OpenAI Platform с отдельным биллингом. Установщик передаёт выделенный
+ключ в приватный `service.json`; авторизация основного провайдера не меняется.
+Ключ не задаётся аргументом инструмента и не попадает в его ответы.
+
+Пример вызова инструмента агентом:
+
+```json
+{"input":"Экспорт работает в Chrome, но падает в Safari.","questions":[{"type":"choice","name":"queue","instructions":"Выбери очередь для этой ошибки.","choices":[{"value":"frontend","description":"Ошибки браузера и интерфейса"},{"value":"other","description":"Прочее"}]}]}
+```
+
+Это отдельный инструмент для обычных агентов; существующие маршрутизаторы и
+ограниченный набор инструментов D&D/Hardware Edition он автоматически не меняет.
+Ответы остаются рекомендациями; отказ (`type: "refusal"`) передаётся явно.
+Плагин проверяет форму и допустимые значения, ограничивает запрос и ответ 1 МиБ,
+ждёт не более 15 секунд, учитывает вызов и токены в существующем runtime ledger
+и не повторяет запросы автоматически. Права проверяются нативным permission API.
+
+Схема и биллинг: [официальная документация Decisions](https://developers.openai.com/api/docs/guides/decisions).
+Проверка без API-ключа и платных вызовов: `node scripts/decisions-regression.mjs`.
+
 ## Reasoning effort
 
 Canonical levels:

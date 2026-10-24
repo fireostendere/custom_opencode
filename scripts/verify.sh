@@ -123,6 +123,7 @@ done
 "$NODE" "$ROOT/scripts/dnd-state-cache-regression.mjs"
 "$NODE" "$ROOT/scripts/dnd-art-regression.mjs"
 "$NODE" "$ROOT/scripts/typed-output-regression.mjs"
+"$NODE" "$ROOT/scripts/decisions-regression.mjs"
 DND_FAST_TIER_SELF_CHECK=1 "$NODE" "$ROOT/config/plugins/dnd-fast-tier.js"
 "$NODE" "$ROOT/scripts/visible-plan-regression.mjs"
 "$NODE" "$ROOT/scripts/ponytail-v2-regression.mjs"
