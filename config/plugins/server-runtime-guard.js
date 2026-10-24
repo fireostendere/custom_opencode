@@ -4,6 +4,7 @@ import { linkProviderRequest } from "./tui/lib/pending-provider-requests.js"
 import { resolveContextPolicy } from "./tui/lib/context-policy.js"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
+import { gunzipSync, zstdDecompressSync } from "node:zlib"
 const execFileAsync = promisify(execFile)
 
 const WEB_HOST = process.env.OPENCODE_RUNTIME_PLUGIN_HOST || "127.0.0.1"
@@ -478,7 +479,15 @@ export default {
         }
       }
       const original = event.request
-      const body = await original.clone().json()
+      const encoding = original.headers.get("content-encoding")?.trim().toLowerCase()
+      let body
+      // Native HTTP hooks run after ChatGPT request compression.
+      if (!encoding || encoding === "identity") body = await original.clone().json()
+      else {
+        const decompress = encoding === "gzip" ? gunzipSync : encoding === "zstd" ? zstdDecompressSync : null
+        if (!decompress) throw new Error(`Unsupported provider request encoding: ${encoding}`)
+        body = JSON.parse(decompress(new Uint8Array(await original.clone().arrayBuffer())).toString("utf8"))
+      }
       const capped = capRequestBody(
         body,
         allocation.maxOutputTokens,
@@ -496,6 +505,7 @@ export default {
       if (!bodyChanged(body, capped)) return
       const headers = new Headers(original.headers)
       headers.delete("content-length")
+      headers.delete("content-encoding")
       const request = linkProviderRequest(original, new Request(original, { headers, body: JSON.stringify(capped) }))
       requests.set(request, tracking)
       event.request = request
