@@ -3,6 +3,11 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createArtWorker, decode, imageInfo, libraryEntry, publishArt, generateImage } from '../config/plugins/dnd-art.js'
+import { filterDndTools } from '../config/plugins/orchestrated-qwen.js'
+
+assert.deepEqual(filterDndTools(['shell', 'dnd_art', 'odm_assets']), ['dnd_art'])
+const template = JSON.parse((await readFile(new URL('../config/opencode.json.template', import.meta.url), 'utf8')).replace(/:\s*__[A-Z_]+__/g, ': false'))
+assert(template.agents['dnd-narrator'].permissions.some(rule => rule.action === 'dnd_art' && rule.effect === 'allow'))
 
 // A real, tiny PNG: exercise bytes, not a generator-shaped string.
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=', 'base64')

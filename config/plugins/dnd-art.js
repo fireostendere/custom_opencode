@@ -223,11 +223,6 @@ export default {
     // ponytail: serialize publication per plugin instance; Git ref CAS merges other instances.
     let queue = Promise.resolve()
     const worker = createArtWorker({ storage: ctx.storage, directory: ctx.location.directory, signal: controller.signal, assets: createAssetClient(ctx.location.directory) })
-    const agentRegistration = await ctx.agent.transform(editor => {
-      for (const agent of editor.list()) if (/^dnd-(?:narrator(?:-|$)|luna-reserve$)/.test(agent.id)) editor.update(agent.id, draft => {
-        draft.permissions.push({ action: 'dnd_art', resource: '*', effect: 'allow' })
-      })
-    })
     const registration = await ctx.tool.transform(editor => {
       for (const name of ['odm_narrator', 'odm_narrator_odm_narrator']) if (editor.get(name)) editor.update(name, tool => {
         const execute = tool.execute
@@ -270,6 +265,6 @@ export default {
         },
       })
     })
-    return async () => { controller.abort(); await registration.dispose(); await agentRegistration.dispose() }
+    return async () => { controller.abort(); await registration.dispose() }
   },
 }

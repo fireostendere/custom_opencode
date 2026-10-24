@@ -136,6 +136,8 @@ cannot use. The DnD corpus must be connected in the game project for lookup.
 `ensure` ставит портрет NPC (`npc_portrait`) или вид локации (`location_art`) в
 фоновую очередь, `status` показывает результат. Нужны успешный ODM connect/read,
 точный `entityId` и `publicPrompt` с публичным визуальным описанием.
+Проектный deny-by-default конфиг нарратора должен разрешать действие `dnd_art`
+для ресурса `*` (как публичный шаблон); плагины не переопределяют его permissions.
 
 На машине OpenCode должны работать `codex login status` (вход ChatGPT) и
 `gh auth status` с правом записи в `fireostendere/pack_dungeon_art`. Codex App

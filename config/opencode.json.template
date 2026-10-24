@@ -1658,6 +1658,11 @@
           "effect": "allow"
         },
         {
+          "action": "dnd_art",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
           "action": "dnd_knowledge_search",
           "resource": "*",
           "effect": "allow"
