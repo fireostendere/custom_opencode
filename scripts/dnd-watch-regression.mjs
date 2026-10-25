@@ -78,6 +78,18 @@ reply = state({ currentSeq: 12, nextCursor: 12, events: [{ seq: 12, type: "autop
 await watcher.tick()
 assert.equal(wakes.at(-1).result.reason, "autopilot_action_requested")
 
+watcher.start(input, context, { auto: true })
+reply = state({ currentSeq: 15, nextCursor: 15, events: [{ seq: 14, type: "roll_result" }, { seq: 15, type: "boss_turn_completed", payload: { enemyName: "PRIVATE MANUAL BOSS" } }] })
+await watcher.tick()
+assert.equal(wakes.at(-1).result.reason, "boss_turn_completed", "a completed manual turn takes priority over its earlier dice")
+assert.ok(!JSON.stringify(wakes).includes("PRIVATE MANUAL BOSS"))
+const manualWakes = wakes.length
+watcher.start(input, context, { auto: true })
+reply = state({ currentSeq: 15, nextCursor: 15, events: [{ seq: 15, type: "boss_turn_completed" }] })
+await watcher.tick()
+assert.equal(wakes.length, manualWakes, "re-arming cannot describe the same completed turn twice")
+watcher.stop(context.sessionID)
+
 watcher.start(input, context)
 reply = state({
   currentSeq: 13, nextCursor: 13,
@@ -860,6 +872,9 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.equal(backgroundReads, live + 1, "a player's message is read right away, without polling")
     const wake = table.notices.find(notice => notice.resume === true)
     assert.ok(wake, "the doorbell woke the narrator session")
+    assert.match(wake.text, /If the read contains boss_turn_completed, automatically publish a vivid description/)
+    assert.match(wake.text, /never repeat its rolls, attacks, damage or turn completion/)
+    assert.match(wake.text, /Do not retell an already narrated receipt or pass\/end the next hero's turn/)
     assert.ok(!JSON.stringify(table.notices).includes("SECRET MOVE"))
     await wait(300)
     const saved = readFileSync(stateFileFor(location), "utf8")

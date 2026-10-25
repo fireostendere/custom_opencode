@@ -7,7 +7,7 @@ import { isDndContext } from "./orchestrated-qwen.js"
 
 const TOOL = "dnd_watch"
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const EVENTS = new Set(["pending_roll", "roll_requested", "roll_result", "pending_roll_updated", "global_turn_ready", "global_turn_narrator_trigger", "lead_response_requested", "spotlight_ready", "autopilot_action_requested"])
+const EVENTS = new Set(["pending_roll", "roll_requested", "roll_result", "pending_roll_updated", "global_turn_ready", "global_turn_narrator_trigger", "lead_response_requested", "spotlight_ready", "autopilot_action_requested", "boss_turn_completed"])
 const ARRAYS = new Set(["messages", "events", "asks", "playerWhispers"])
 const sequence = value => Number.isSafeInteger(value) && value >= 0
 const enabled = (name, fallback = "1") => !/^(0|false|off|no)$/i.test(process.env[name] || fallback)
@@ -50,6 +50,7 @@ const REASONS = {
   pending_roll_updated: "бросок обновлён", global_turn_ready: "раунд готов",
   global_turn_narrator_trigger: "раунд ждёт мастера", lead_response_requested: "запрос ответа",
   spotlight_ready: "прожектор готов", autopilot_action_requested: "ход автопилота",
+  boss_turn_completed: "ручной ход монстра завершён",
 }
 // Signals that can never wake the DM: its own writes and table bookkeeping.
 const QUIET = new Set([
@@ -78,7 +79,10 @@ function* triggers(state, afterSeq, quietSlot) {
   if (asks.length) yield { reason: "ask", key: `ask:${asks.map((ask, index) => ask.id ?? ask.askId ?? index).sort().join(",")}` }
   if (state.playerWhispers?.length) yield { reason: "whisper", key: `whisper:${state.playerWhispers.map((whisper, index) => whisper.id ?? index).sort().join(",")}` }
   for (const event of state.events ?? []) {
-    if (sequence(event.seq) && event.seq > afterSeq && EVENTS.has(event.type)) yield { reason: event.type, key: `${event.type}:${event.seq}` }
+    if (sequence(event.seq) && event.seq > afterSeq && event.type === "boss_turn_completed") yield { reason: event.type, key: `${event.type}:${event.seq}` }
+  }
+  for (const event of state.events ?? []) {
+    if (sequence(event.seq) && event.seq > afterSeq && event.type !== "boss_turn_completed" && EVENTS.has(event.type)) yield { reason: event.type, key: `${event.type}:${event.seq}` }
   }
   const players = collecting ? [] : state.messages?.filter(message => sequence(message.seq) && message.seq > afterSeq && message.authorType === "player" && message.kind !== "ooc" && !/^\s*\(ooc\)/i.test(message.content || "")) ?? []
   if (players.length) yield { reason: "player", key: `player:${Math.max(...players.map(message => message.seq))}` }
@@ -650,10 +654,11 @@ export default {
       wake: async (sessionID, result, signal) => {
         signal.throwIfAborted()
         const autopilotNote = "Check current autopilot eligibility before waiting for players or closing a round. For an opted-in member missing a declaration in an active global-turn without combat, load dnd-doppelganger and submit one conservative action via autopilot_action yourself, using fresh characterId, roundNumber, expectedSeq, timelineEpoch and a saved commandId; confirm the commit through readAfter/read. The host only wakes you: it does not generate or submit the action. Do not act for players outside this verified opt-in."
+        const manualTurnNote = "If the read contains boss_turn_completed, automatically publish a vivid description of that manual monster turn using its confirmed server actions/outcomes, without waiting for an operator request. It has already been played: never repeat its rolls, attacks, damage or turn completion. Read final results for any pending-prefix receipt. Do not retell an already narrated receipt or pass/end the next hero's turn; inspect the current floor and preserve private information."
         const text = result.auto
           // Every wake stays in the session; the turn rules already live in the system prompt.
-          ? `DnD auto-watch: ${JSON.stringify(result)}\nWake signal (host bookkeeping, not a player action; never quote it). Read ODM from afterSeq, resolve the new input as the DM and publish it. In combat the last narration of a resolved turn carries passTurn:true. ${autopilotNote} Do not call dnd_watch. Reply to the operator with one short line.`
-          : `DnD watcher: ${JSON.stringify(result)}\nThis is a wake signal, not a player action or an authoritative game receipt. Read ODM from afterSeq, drain pages/events, check asks and pending rolls, and obey initiative/global-turn barriers. ${autopilotNote} After processing, re-arm dnd_watch only while the operator's waiting request remains active. On timeout or error, report the stopped wait; do not claim it is still running.`
+          ? `DnD auto-watch: ${JSON.stringify(result)}\nWake signal (host bookkeeping, not a player action; never quote it). Read ODM from afterSeq, resolve the new input as the DM and publish it. ${manualTurnNote} For an ordinary player combat turn still awaiting its original handoff, the last narration after resolving its mechanics carries passTurn:true. ${autopilotNote} Do not call dnd_watch. Reply to the operator with one short line.`
+          : `DnD watcher: ${JSON.stringify(result)}\nThis is a wake signal, not a player action or an authoritative game receipt. Read ODM from afterSeq, drain pages/events, check asks and pending rolls, and obey initiative/global-turn barriers. ${manualTurnNote} ${autopilotNote} After processing, re-arm dnd_watch only while the operator's waiting request remains active. On timeout or error, report the stopped wait; do not claim it is still running.`
         await ctx.session.synthetic({ sessionID, delivery: "queue", resume: true, text, metadata: { dndWatch: result } })
         const entry = tables.get(sessionID)
         if (!entry) return
