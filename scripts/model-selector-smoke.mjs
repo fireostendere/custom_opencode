@@ -734,6 +734,19 @@ await effort.run()
 assert.equal(switched, null)
 context.ui.dialog.select = selectEffort
 
+// A completed server write must not change the draft of a newly opened chat.
+const switchEffort = context.client.session.switchModel
+context.client.session.switchModel = async (input) => {
+  await switchEffort(input)
+  route = { type: 'session', sessionID: 'ses_other_draft' }
+}
+route = { type: 'session', sessionID: 'ses_effort' }
+sessionModel = { providerID: 'bailian-cli', id: 'qwen-flash', variant: 'medium' }
+const draftsBeforeNavigation = effortDrafts.length
+await effort.run('low')
+assert.equal(effortDrafts.length, draftsBeforeNavigation)
+context.client.session.switchModel = switchEffort
+
 // Rapid repeats share one pending selection; the home screen persists by
 // creating a session, just like the existing custom model picker.
 route = { type: 'home' }
