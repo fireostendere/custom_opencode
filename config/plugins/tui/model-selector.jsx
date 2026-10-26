@@ -37,6 +37,7 @@ import {
   nextAgent,
   primaryAgents,
   visibleAgent,
+  handoffAgentSelection,
 } from "./lib/agent-sync.js"
 
 const RECENT_LIMIT = 10
@@ -422,6 +423,7 @@ export default Plugin.define({
     async function switchSessionAgent(sessionID, target, agents) {
       const session = context.data.session.get(sessionID)
       if (!session || !target || target.id === session.agent) return
+      if (await handoffAgentSelection(target.id, { sessionID })) return
       const from = visibleAgent(agents, session.agent)
       const remembered = agentModels.peek(sessionID)
       let model = modelForAgentSwitch({
