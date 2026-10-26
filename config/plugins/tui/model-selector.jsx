@@ -359,6 +359,9 @@ export default Plugin.define({
         const selected = { providerID: ref.providerID, id: ref.id, variant }
         if (sessionID) {
           await context.client.session.switchModel({ sessionID, model: selected })
+          // The composer can retain a local agent/model draft after a failed turn.
+          // A server update alone does not replace that draft's effort.
+          context.ui.model?.variant.set(variant)
         } else {
           // The pinned CLI has no public home draft-model setter, as in /models.
           const agent = agentForModelChoice(selected)
