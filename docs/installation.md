@@ -102,9 +102,16 @@ Installer:
 12. перезапускает web/OpenCode V2 services;
 13. выполняет post-install zero-LLM-token self-test.
 
-`cli.json` со стартовыми настройками терминала создаётся только при отсутствии
-файла. Последующие install/update сохраняют выбранную тему, режим, горячие
-клавиши и остальные пользовательские настройки TUI без перезаписи.
+`cli.json` со стартовыми настройками терминала создаётся при отсутствии файла.
+В CLI по умолчанию видны доступный от провайдера reasoning (`session.thinking: show`)
+и отдельные вызовы инструментов с деталями (`session.grouping: none`, `session.verbosity: high`).
+В `/settings` это пункты Thinking, Tool grouping и Verbosity.
+
+Install/update сохраняет тему, режим, горячие клавиши и остальные настройки TUI.
+Если блок `session` точно совпадает со старыми стартовыми настройками
+(`sidebar: auto`, `scrollbar: true`, `thinking: hide`, `grouping: auto`),
+он переносится на новые; исходный файл сохраняется в `cli.json.before-activity`.
+Изменённый блок `session` сохраняется без перезаписи.
 
 Успешная установка заканчивается `Self-test PASS`.
 

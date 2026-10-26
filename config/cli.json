@@ -9,8 +9,9 @@
   "session": {
     "sidebar": "auto",
     "scrollbar": true,
-    "thinking": "hide",
-    "grouping": "auto"
+    "thinking": "show",
+    "grouping": "none",
+    "verbosity": "high"
   },
   "keybinds": {
     "prompt.history.previous": "up",

@@ -389,6 +389,35 @@ if [[ ${INSTALL_OPENCODE_CONFIG:-1} == 1 ]]; then
   # Seed CLI defaults once; the TUI owns theme and other user preferences.
   if [[ ! -e "$CONFIG_DIR/cli.json" && ! -L "$CONFIG_DIR/cli.json" ]]; then
     install -m 0644 "$ROOT/config/cli.json" "$CONFIG_DIR/cli.json"
+  elif [[ -f "$CONFIG_DIR/cli.json" && ! -L "$CONFIG_DIR/cli.json" ]]; then
+    # Migrate only the old shipped session defaults; keep all other preferences.
+    "$PYTHON3" - "$CONFIG_DIR/cli.json" "$ROOT/config/cli.json" <<'PY'
+import json, os, shutil, sys
+from pathlib import Path
+
+target, source = map(Path, sys.argv[1:])
+try:
+    config = json.loads(target.read_text(encoding="utf-8"))
+except (ValueError, UnicodeError):
+    raise SystemExit(0)
+legacy = {"sidebar": "auto", "scrollbar": True, "thinking": "hide", "grouping": "auto"}
+if not isinstance(config, dict) or config.get("session") != legacy:
+    raise SystemExit(0)
+config["session"] = json.loads(source.read_text(encoding="utf-8"))["session"]
+temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+try:
+    with temporary.open("x", encoding="utf-8") as handle:
+        json.dump(config, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    os.chmod(temporary, target.stat().st_mode & 0o777)
+    backup = target.with_name("cli.json.before-activity")
+    temporary_backup = backup.with_name(f".{backup.name}.{os.getpid()}.tmp")
+    shutil.copy2(target, temporary_backup)
+    os.replace(temporary_backup, backup)
+    os.replace(temporary, target)
+finally:
+    temporary.unlink(missing_ok=True)
+PY
   fi
   # The stable runtime uses a new TUI state namespace. Preserve custom panels,
   # recent models and favorites; an existing stable file always wins.
