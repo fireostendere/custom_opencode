@@ -794,6 +794,9 @@ export default {
       if (input.operation !== "read") return
       let cursor
       try { cursor = drainedCursor(decodeResult(result)) } catch { return }
+      // Trusted host bookkeeping may have processed less than this read saw.
+      // Honor its watermark here, independent of executor-wrapper order.
+      if (cursor !== undefined && sequence(context.odmProcessedCursor)) cursor = Math.min(cursor, context.odmProcessedCursor)
       if (cursor !== undefined) entry.cursor = cursor
     }
     // DM activity for the players' web UI: "thinking" when a table turn starts,
