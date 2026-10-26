@@ -430,6 +430,8 @@ try {
       await new Promise(resolve => setTimeout(resolve, 100))
     const wake = notices.find(item => item.metadata?.dndWatch?.reason === "autopilot_action_requested")
     assert.ok(wake, "autopilot request reaches the narrator session")
+    assert.match(wake.text, /For each confirmed Ask reply, show the operator the player's original question and the delivered answer here in CLI only/, "Ask monitoring includes the question, not just the answer")
+    assert.match(readFileSync(new URL("../config/prompts/dnd-edition.md", import.meta.url), "utf8"), /Вопрос игрока.*дословный исходный вопрос[\s\S]*Ответ мастера.*подтверждённый ответ[\s\S]*только в операторском CLI/, "the narrator prompt keeps the full question/answer pair out of the table")
     assert.match(wake.text, /dnd-doppelganger.*autopilot_action/, "wake tells narrator how to submit the opted-in action")
     assert.ok(!wake.text.includes("Do not act for a player or"), "wake must not prohibit authorized autopilot")
     assert.match(readFileSync(new URL("../config/prompts/dnd-edition.md", import.meta.url), "utf8"), /dnd-doppelganger.*autopilot_action/, "system prompt includes the same autopilot exception")
