@@ -389,12 +389,13 @@ for (const entry of await readdir(themesRoot, { withFileTypes: true })) {
 assert.equal(cliConfig.keybinds["prompt.history.previous"], "up")
 assert.equal(cliConfig.keybinds["prompt.history.next"], "down")
 assert.equal(cliConfig.keybinds["app.exit"], "ctrl+shift+q")
-assert.equal(cliConfig.session.thinking, "hide", "TUI reasoning must stay out of the conversation")
+assert.equal(cliConfig.session.thinking, "show", "TUI must show provider reasoning while the model works")
 assert.equal(
   cliConfig.session.grouping,
-  "auto",
-  "TUI tool calls must stay grouped as one compact execution status",
+  "none",
+  "TUI must show each tool call so the current action is visible",
 )
+assert.equal(cliConfig.session.verbosity, "high", "TUI must expose tool activity details by default")
 assert.equal(cliConfig.mouse, true, "TUI mouse support must stay enabled for clickable controls")
 assert.equal(
   tuiPackage.exports["./tui"],

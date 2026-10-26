@@ -15,6 +15,71 @@ HOME_DIR="$TMP/home"
 FAKE_BIN="$TMP/bin"
 LOG="$TMP/commands.log"
 mkdir -p "$COPY" "$HOME_DIR" "$FAKE_BIN" "$TMP/projects"
+
+# Exercise the real CLI seeding/migration block without services or inference.
+python3 - "$ROOT" "$TMP/cli-migration" <<'PY'
+import json, os, subprocess, sys
+from pathlib import Path
+
+root, config_dir = map(Path, sys.argv[1:])
+config_dir.mkdir()
+installer = (root / "scripts/install.sh").read_text()
+start = installer.index("  # Seed CLI defaults once;")
+block = installer[start:installer.index("  # The stable runtime uses", start)]
+env = os.environ | {"ROOT": str(root), "CONFIG_DIR": str(config_dir), "PYTHON3": sys.executable}
+def install():
+    subprocess.run(["bash", "-euc", block], env=env, check=True)
+
+target = config_dir / "cli.json"
+backup = config_dir / "cli.json.before-activity"
+install()
+defaults = json.loads(target.read_text())
+assert defaults == json.loads((root / "config/cli.json").read_text())
+legacy = defaults | {
+    "theme": {"name": "synthwave84", "mode": "dark"},
+    "plugins": ["./plugins/my-status"],
+    "keybinds": {"app.exit": "ctrl+q"},
+    "session": {"sidebar": "auto", "scrollbar": True, "thinking": "hide", "grouping": "auto"},
+}
+before = json.dumps(legacy) + "\n"
+target.write_text(before)
+target.chmod(0o600)
+# A backup path must never cause writes through a symlink.
+outside = config_dir / "outside.json"
+outside.write_text("keep")
+backup.symlink_to(outside)
+install()
+assert json.loads(target.read_text()) == legacy | {"session": defaults["session"]}
+assert backup.read_text() == before and not backup.is_symlink()
+assert outside.read_text() == "keep"
+assert target.stat().st_mode & 0o777 == 0o600
+assert backup.stat().st_mode & 0o777 == 0o600
+os.utime(target, (1000, 1000))
+install()
+assert target.stat().st_mtime == 1000, "repeat install must not rewrite migrated settings"
+assert backup.read_text() == before, "repeat install must preserve the original backup"
+
+for value in [
+    legacy | {"session": legacy["session"] | {"verbosity": "low"}},
+    legacy | {"session": legacy["session"] | {"sidebar": "hide"}},
+    {"theme": {"name": "synthwave84"}}, None, [],
+]:
+    text = json.dumps(value) + "\n"
+    target.write_text(text)
+    os.utime(target, (1000, 1000))
+    install()
+    assert target.read_text() == text and target.stat().st_mtime == 1000
+target.write_text('{ // user JSONC\n "session": {}\n}\n')
+before = target.read_text()
+install()
+assert target.read_text() == before, "non-JSON preferences must be left untouched"
+target.unlink()
+target.symlink_to(outside)
+install()
+assert target.is_symlink() and outside.read_text() == "keep"
+print("CLI visibility: fresh defaults, legacy migration, backup, preferences and repeat install passed")
+PY
+
 cp -a "$ROOT/." "$COPY/"
 rm -f "$COPY/.env"
 
