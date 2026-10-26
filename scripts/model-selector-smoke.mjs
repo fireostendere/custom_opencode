@@ -672,11 +672,14 @@ route = { type: 'session', sessionID: 'ses_effort' }
 currentAgent = 'plan'
 sessionModel = { providerID: 'bailian-cli', id: 'qwen-flash', variant: 'medium' }
 switched = null
+const effortDrafts = []
+context.ui.model = { variant: { set: (value) => { effortDrafts.push(value); return true } } }
 await effort.run()
 assert.deepEqual(dialogOptions.map((item) => item.value), ['low', 'medium', 'high'])
 assert.equal(dialogCurrents.at(-1), 'medium')
 assert.deepEqual(switched, { sessionID: 'ses_effort', model: { providerID: 'bailian-cli', id: 'qwen-flash', variant: 'high' } })
 assert.equal(currentAgent, 'plan')
+assert.deepEqual(effortDrafts, ['high'], 'effort must update the native composer draft as well as the server')
 await effortCycle.run()
 assert.equal(switched.model.variant, 'low', 'cycling must wrap through supported variants')
 await effortCycle.run()
@@ -730,6 +733,19 @@ sessionModel = { providerID: 'bailian-cli', id: 'qwen-flash' }
 await effort.run()
 assert.equal(switched, null)
 context.ui.dialog.select = selectEffort
+
+// A completed server write must not change the draft of a newly opened chat.
+const switchEffort = context.client.session.switchModel
+context.client.session.switchModel = async (input) => {
+  await switchEffort(input)
+  route = { type: 'session', sessionID: 'ses_other_draft' }
+}
+route = { type: 'session', sessionID: 'ses_effort' }
+sessionModel = { providerID: 'bailian-cli', id: 'qwen-flash', variant: 'medium' }
+const draftsBeforeNavigation = effortDrafts.length
+await effort.run('low')
+assert.equal(effortDrafts.length, draftsBeforeNavigation)
+context.client.session.switchModel = switchEffort
 
 // Rapid repeats share one pending selection; the home screen persists by
 // creating a session, just like the existing custom model picker.
