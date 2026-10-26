@@ -15,6 +15,21 @@ export const LEGACY_AGENT_ALIASES = Object.freeze({
 
 export const DND_AGENT = "dnd-narrator"
 
+// Entry plugins may require a fresh session rather than exporting the current
+// history under a different model. Share registrations across TUI module graphs.
+const handoffs = globalThis[Symbol.for("custom-opencode.agent-handoffs")] ??= new Map()
+export function registerAgentHandoff(agentID, handler) {
+  if (typeof agentID !== "string" || !agentID || typeof handler !== "function") throw new Error("Invalid agent handoff")
+  handoffs.set(agentID, handler)
+  return () => { if (handoffs.get(agentID) === handler) handoffs.delete(agentID) }
+}
+export async function handoffAgentSelection(agentID, input) {
+  const handler = handoffs.get(agentID)
+  if (!handler) return false
+  await handler(input)
+  return true
+}
+
 export function modelRef(value) {
   if (!value || typeof value !== "object") return null
   const providerID = value.providerID

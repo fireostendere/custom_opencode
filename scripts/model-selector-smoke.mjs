@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { registerAgentHandoff } from '../config/plugins/tui/lib/agent-sync.js'
 
 const root = new URL('../', import.meta.url)
 const sourceUrl = new URL('config/plugins/tui/model-selector.jsx', root)
@@ -631,6 +632,24 @@ await settle()
 assert.deepEqual(dialogOptions.map((item) => item.value), ['build', 'plan', 'dnd-narrator'])
 assert.deepEqual(agentChanges, ['plan'])
 assert.equal(switched, null)
+
+// Private agent entrypoints may open a clean seat instead of relabeling history.
+currentAgent = 'build'
+agentChoice = 'plan'
+agentChanges.length = 0
+switched = null
+let handoff
+const releaseHandoff = registerAgentHandoff('plan', async input => { handoff = input })
+agentListCommand.run()
+await poll(() => handoff !== undefined)
+await settle()
+assert.deepEqual(handoff, { sessionID: 'ses_cycle' })
+assert.deepEqual(agentChanges, [], 'handoff must run before any source agent/model mutation')
+assert.equal(switched, null)
+releaseHandoff()
+agentListCommand.run()
+await poll(() => agentChanges.length === 1)
+assert.deepEqual(agentChanges, ['plan'], 'unregister restores the normal picker')
 
 // ── Scenario 15: choosing a model in a legacy session migrates its agent ──
 sessionModel = null
