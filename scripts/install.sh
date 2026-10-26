@@ -458,12 +458,33 @@ PY
       install -m 0644 "$file" "$CONFIG_DIR/$rel"
       USER_CONFIG_FILES[$rel]=1
     done
+    # Native auto-discovery needs the package directory and both export files,
+    # not an absolute source path in the rendered config. Only flat packages.
+    for package in "$USER_CONFIG"/plugins/*; do
+      [[ -d "$package" ]] || continue
+      [[ ! -L "$USER_CONFIG/plugins" && ! -L "$package" ]] || { echo "refusing symlinked user-config package: $package" >&2; exit 1; }
+      [[ -f "$package/package.json" ]] || continue
+      name=${package##*/}
+      [[ "$name" =~ ^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$ ]] || { echo "invalid user-config package name: $name" >&2; exit 1; }
+      [[ ! -L "$CONFIG_DIR/plugins" && ! -L "$CONFIG_DIR/plugins/$name" ]] || { echo "refusing symlinked user-config package target: $name" >&2; exit 1; }
+      install -d "$CONFIG_DIR/plugins/$name"
+      for file in "$package"/*; do
+        [[ ! -L "$file" ]] || { echo "refusing symlinked user-config package file: $file" >&2; exit 1; }
+        [[ -f "$file" && "${file##*/}" =~ ^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$ ]] || { echo "user-config package must contain flat regular files: $file" >&2; exit 1; }
+        rel=plugins/$name/${file##*/}
+        [[ ! -L "$CONFIG_DIR/$rel" ]] || { echo "refusing symlinked user-config package target: $rel" >&2; exit 1; }
+        install -m 0644 "$file" "$CONFIG_DIR/$rel"
+        USER_CONFIG_FILES[$rel]=1
+      done
+    done
   fi
   if [[ -f "$USER_CONFIG_MANIFEST" && ! -L "$USER_CONFIG_MANIFEST" ]]; then
     while IFS= read -r rel; do
-      [[ "$rel" =~ ^(prompts/[^/]+|plugins/[^/]+\.js|themes/[^/]+\.json)$ ]] || continue
+      [[ "$rel" =~ ^(prompts/[^/]+|plugins/[^/]+\.js|themes/[^/]+\.json|plugins/[a-zA-Z0-9_-][a-zA-Z0-9_.-]*/[a-zA-Z0-9_-][a-zA-Z0-9_.-]*)$ ]] || continue
       [[ -z "${USER_CONFIG_FILES[$rel]:-}" && ! -e "$ROOT/config/$rel" ]] || continue
+      [[ ! -L "$CONFIG_DIR/${rel%/*}" ]] || { echo "refusing symlinked user-config cleanup target: $rel" >&2; exit 1; }
       rm -f "$CONFIG_DIR/$rel"
+      if [[ "$rel" == plugins/*/* ]]; then rmdir "$CONFIG_DIR/${rel%/*}" 2>/dev/null || true; fi
     done <"$USER_CONFIG_MANIFEST"
   fi
   if (( ${#USER_CONFIG_FILES[@]} )); then

@@ -600,7 +600,12 @@ USER_CONFIG_DIR=$(cd "$TMP/opencode_config" && pwd -P)
 FABRIC_CONFIG="$HOME_DIR/.config/custom-opencode/tool-fabric/tool-fabric.json"
 USER_PROMPT="$HOME_DIR/.config/opencode/prompts/private.md"
 USER_PLUGIN="$HOME_DIR/.config/opencode/plugins/private-plugin.js"
+USER_PACKAGE="$HOME_DIR/.config/opencode/plugins/private-tui"
 mkdir -p "$USER_CONFIG_DIR/prompts" "$USER_CONFIG_DIR/plugins" "$USER_CONFIG_DIR/tool-fabric/layers"
+mkdir -p "$USER_CONFIG_DIR/plugins/private-tui"
+printf '%s\n' '{"type":"module","exports":{".":"./index.js","./tui":"./tui.js"}}' >"$USER_CONFIG_DIR/plugins/private-tui/package.json"
+printf '%s\n' 'export default {id:"fixture.private-tui",setup(){}}' >"$USER_CONFIG_DIR/plugins/private-tui/index.js"
+printf '%s\n' 'export default {id:"fixture.private-tui",setup(){}}' >"$USER_CONFIG_DIR/plugins/private-tui/tui.js"
 cat >"$USER_CONFIG_DIR/settings.env" <<'EOF'
 OPENCODE_DND_NARRATOR_MODEL=openai/private-narrator
 OPENCODE_WEB_PORT=4999
@@ -646,6 +651,9 @@ assert service["OPENCODE_WEB_PORT"] == "4098", "the local .env must win over set
 PY
 cmp -s "$USER_CONFIG_DIR/prompts/engineering.md" "$ENGINEERING_PROMPT" || { echo "private prompt did not replace the public one" >&2; exit 1; }
 [[ -f "$USER_PROMPT" && -f "$USER_PLUGIN" ]] || { echo "private prompt/plugin was not installed" >&2; exit 1; }
+for file in package.json index.js tui.js; do
+  cmp -s "$USER_CONFIG_DIR/plugins/private-tui/$file" "$USER_PACKAGE/$file" || { echo "private TUI package export was not installed: $file" >&2; exit 1; }
+done
 FABRIC_LAYER="$(dirname "$FABRIC_CONFIG")/layers/private.json"
 cmp -s "$USER_CONFIG_DIR/tool-fabric/layers/private.json" "$FABRIC_LAYER" && [[ $(stat -c %a "$FABRIC_LAYER") == 600 ]] || {
   echo "private Tool Fabric policy was not deployed outside the checkout" >&2
@@ -662,9 +670,42 @@ env -i HOME="$HOME_DIR" PATH="$PATH" bash -euc 'source "$1/scripts/user-config.s
   -- "$COPY" "$USER_CONFIG_DIR"
 
 # Rolling the private repository back must roll the install back too.
+mv "$USER_CONFIG_DIR/plugins/private-tui" "$USER_CONFIG_DIR/private-tui-real"
+ln -s ../private-tui-real "$USER_CONFIG_DIR/plugins/private-tui"
+if run_install "$TMP/user-package-symlink.out"; then
+  echo "installer accepted a symlinked private package" >&2
+  exit 1
+fi
+grep -Fq 'refusing symlinked user-config package' "$TMP/user-package-symlink.out"
+rm "$USER_CONFIG_DIR/plugins/private-tui"
+mv "$USER_CONFIG_DIR/private-tui-real" "$USER_CONFIG_DIR/plugins/private-tui"
+mv "$USER_CONFIG_DIR/plugins/private-tui/tui.js" "$USER_CONFIG_DIR/private-tui-real.js"
+ln -s ../../private-tui-real.js "$USER_CONFIG_DIR/plugins/private-tui/tui.js"
+if run_install "$TMP/user-package-file-symlink.out"; then
+  echo "installer accepted a symlinked private package file" >&2
+  exit 1
+fi
+grep -Fq 'refusing symlinked user-config package file' "$TMP/user-package-file-symlink.out"
+rm "$USER_CONFIG_DIR/plugins/private-tui/tui.js"
+mv "$USER_CONFIG_DIR/private-tui-real.js" "$USER_CONFIG_DIR/plugins/private-tui/tui.js"
+mv "$USER_PACKAGE/tui.js" "$TMP/outside-package.js"
+ln -s "$TMP/outside-package.js" "$USER_PACKAGE/tui.js"
+if run_install "$TMP/user-package-target-symlink.out"; then
+  echo "installer accepted a symlinked private package target" >&2
+  exit 1
+fi
+grep -Fq 'refusing symlinked user-config package target' "$TMP/user-package-target-symlink.out"
+cmp -s "$USER_CONFIG_DIR/plugins/private-tui/tui.js" "$TMP/outside-package.js"
+rm "$USER_PACKAGE/tui.js"
+mv "$TMP/outside-package.js" "$USER_PACKAGE/tui.js"
+printf '%s\n' 'operator-owned file' >"$USER_PACKAGE/keep.txt"
+rm "$USER_CONFIG_DIR/plugins/private-tui/package.json" "$USER_CONFIG_DIR/plugins/private-tui/index.js" "$USER_CONFIG_DIR/plugins/private-tui/tui.js"
+rmdir "$USER_CONFIG_DIR/plugins/private-tui"
 rm "$USER_CONFIG_DIR/plugins/private-plugin.js" "$USER_CONFIG_DIR/prompts/engineering.md"
 run_install "$TMP/user-config-rollback.out"
 [[ ! -e "$USER_PLUGIN" ]] || { echo "dropped private plugin stayed installed" >&2; exit 1; }
+[[ ! -e "$USER_PACKAGE/package.json" && ! -e "$USER_PACKAGE/index.js" && ! -e "$USER_PACKAGE/tui.js" ]] || { echo "dropped private TUI package stayed installed" >&2; exit 1; }
+[[ -f "$USER_PACKAGE/keep.txt" ]] || { echo "package cleanup removed an unmanaged file" >&2; exit 1; }
 cmp -s "$COPY/config/prompts/engineering.md" "$ENGINEERING_PROMPT" || { echo "public prompt was not restored" >&2; exit 1; }
 [[ -f "$USER_PROMPT" ]] || { echo "a still-present private prompt was removed" >&2; exit 1; }
 
