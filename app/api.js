@@ -26,20 +26,15 @@ export async function listProjects() {
   return Array.isArray(value) ? value : []
 }
 
-export async function listSessions() {
-  const first = await request('/api/session?limit=100&order=desc')
-  if (Array.isArray(first)) return first
-  const sessions = [...(first?.data || [])]
-  let cursor = first?.cursor?.next
-  let pages = 0
-  const seenCursors = new Set()
-  while (cursor && !seenCursors.has(cursor) && pages++ < 200) {
-    seenCursors.add(cursor)
-    const page = await request(`/api/session?limit=100&cursor=${encodeURIComponent(cursor)}`)
-    sessions.push(...(page?.data || []))
-    cursor = page?.cursor?.next
-  }
-  return sessions
+export async function listSessions({ cursor = '', search = '' } = {}) {
+  const query = new URLSearchParams({ limit: '50' })
+  if (cursor) query.set('cursor', cursor)
+  else query.set('order', 'desc')
+  if (search) query.set('search', search)
+  const page = await request(`/api/session?${query}`)
+  if (Array.isArray(page)) return { sessions: page, nextCursor: null }
+  if (!Array.isArray(page?.data)) throw new Error('Некорректная страница сессий')
+  return { sessions: page.data, nextCursor: page.cursor?.next || null }
 }
 
 export async function getSession(sessionID) {

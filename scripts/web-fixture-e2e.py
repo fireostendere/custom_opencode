@@ -198,7 +198,7 @@ class Backend(BaseHTTPRequestHandler):
                 {"id": "proj_canary", "name": "custom-opencode-model-canary", "canonical": "/tmp/custom-opencode-model-canary"},
             ]})
         elif path == "/api/session":
-            if "limit=100" in parsed.query:
+            if "limit" in parse_qs(parsed.query):
                 with FixtureState.lock:
                     FixtureState.session_reads += 1
             older = {**session, "id":"ses_older", "title":"Older root", "time":{"created":1_999_999_999_000,"updated":1_999_999_999_100}}

@@ -14,6 +14,7 @@ globalThis.localStorage = {
 }
 const events = []
 globalThis.window = { addEventListener() {}, dispatchEvent(event) { events.push(event) } }
+globalThis.requestAnimationFrame = () => 0
 function makeElement() {
   return {
     value: '', innerHTML: '', textContent: '', hidden: false, disabled: false, title: '', selectionStart: 0, selectionEnd: 0, scrollHeight: 42,
@@ -65,7 +66,7 @@ assert.ok(!source.includes("from './refresh-coalescer.js'"), 'refresh-coalescer 
 const bootIndex = source.lastIndexOf('initialize().catch')
 assert.ok(bootIndex > 0, 'app.js boot call not found')
 source = source.slice(0, bootIndex)
-  + 'globalThis.__smoke.exports = { primaryAgentFor, transferSessionToProject, forkWithFallback, sessionWithControls, handoffText, messagePlainText, changeAgent, changeModel, loadSessionsNow, selectSession, createAt, selectProjectTarget, resetPromptHistory, navigatePromptHistory, syncRunStatuses, renderSessionShortcuts, state, seedDraft: (id, value) => { drafts[id] = value }, draftOf: (id) => drafts[id] }\n'
+  + 'globalThis.__smoke.exports = { primaryAgentFor, transferSessionToProject, forkWithFallback, sessionWithControls, handoffText, messagePlainText, changeAgent, changeModel, loadSessionsNow, loadMoreSessions, maybeLoadMoreSessions, newSessionList, searchSessions, selectSession, createAt, selectProjectTarget, resetPromptHistory, navigatePromptHistory, syncRunStatuses, renderSessionShortcuts, state, seedDraft: (id, value) => { drafts[id] = value }, draftOf: (id) => drafts[id] }\n'
 
 await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
 const app = globalThis.__smoke.exports
@@ -87,6 +88,8 @@ function reset() {
   state.selected = null
   state.context = []
   state.projects = []
+  state.sessionList = app.newSessionList('')
+  document.getElementById('search').value = ''
   state.running.clear()
   state.mirrorHistory.clear()
   state.contextCache.clear()
@@ -101,7 +104,7 @@ function reset() {
   handlers.switchAgent = async (id, agent) => { calls.switchAgent.push({ id, agent }) }
   handlers.switchModel = async (id, model) => { calls.switchModel.push({ id, model }) }
   handlers.listProjects = async () => []
-  handlers.listSessions = async () => []
+  handlers.listSessions = async () => ({sessions:[],nextCursor:null})
   handlers.sessionStatuses = async () => ({})
   handlers.isPromptPending = () => false
   handlers.hasConversation = async () => null
@@ -325,7 +328,7 @@ const staleList = deferred()
 handlers.listSessions = async () => staleList.promise
 const refresh = app.loadSessionsNow({ background: true })
 await app.changeModel({ id: 'new', providerID: 'np', variant: 'high' })
-staleList.resolve([{ id: 'ses_list', agent: 'build', model: { id: 'old', providerID: 'p' } }])
+staleList.resolve({sessions:[{ id: 'ses_list', agent: 'build', model: { id: 'old', providerID: 'p' } }],nextCursor:null})
 await refresh
 assert.deepEqual(state.selected.model, { id: 'new', providerID: 'np', variant: 'high' }, 'stale list response must preserve the switched selected model')
 assert.deepEqual(state.sessions[0].model, { id: 'new', providerID: 'np', variant: 'high' }, 'stale list response must preserve the switched list model')
@@ -350,10 +353,10 @@ const consistentSession = { id: 'ses_consistent', agent: 'build', model: { id: '
 state.sessions = [consistentSession]
 state.selected = consistentSession
 await app.changeModel({ id: 'new', providerID: 'np', variant: 'high' })
-handlers.listSessions = async () => [{ id: 'ses_consistent', agent: 'build', model: { id: 'old', providerID: 'p' } }]
+handlers.listSessions = async () => ({sessions:[{ id: 'ses_consistent', agent: 'build', model: { id: 'old', providerID: 'p' } }],nextCursor:null})
 await app.loadSessionsNow({ background: true })
 assert.deepEqual(state.sessions[0].model, { id: 'new', providerID: 'np', variant: 'high' }, 'a stale refresh started after switch must keep the local override')
-handlers.listSessions = async () => [{ id: 'ses_consistent', agent: 'build', model: { id: 'new', providerID: 'np', variant: 'high' } }]
+handlers.listSessions = async () => ({sessions:[{ id: 'ses_consistent', agent: 'build', model: { id: 'new', providerID: 'np', variant: 'high' } }],nextCursor:null})
 await app.loadSessionsNow({ background: true })
 assert.deepEqual(state.sessions[0].model, { id: 'new', providerID: 'np', variant: 'high' }, 'the matching backend model must confirm the override')
 
@@ -378,7 +381,7 @@ const preMutationDetail = deferred()
 handlers.getSession = async () => preMutationDetail.promise
 const pendingSelection = app.selectSession('ses_confirmed', { push: false })
 await app.changeModel({ id: 'new', providerID: 'np', variant: 'high' })
-handlers.listSessions = async () => [{ id: 'ses_confirmed', agent: 'build', model: { id: 'new', providerID: 'np', variant: 'high' } }]
+handlers.listSessions = async () => ({sessions:[{ id: 'ses_confirmed', agent: 'build', model: { id: 'new', providerID: 'np', variant: 'high' } }],nextCursor:null})
 await app.loadSessionsNow({ background: true })
 preMutationDetail.resolve({ model: { id: 'old', providerID: 'p' } })
 await pendingSelection
@@ -538,7 +541,7 @@ handlers.createSession = async () => ({id:'fresh_create',title:'New chat',locati
 document.getElementById('search').value='filter that hides a new chat'
 localStorage.setItem('opencode:web:project-collapse-v1',JSON.stringify(['proj_chosen','unrelated']))
 await app.createAt('/chosen','New chat')
-oldList.resolve([{id:'before_create'}])
+oldList.resolve({sessions:[{id:'before_create'}],nextCursor:null})
 await oldRefresh
 assert.equal(state.selected.id,'fresh_create')
 assert.ok(state.sessions.some(session=>session.id==='fresh_create'),'stale list erased the created session')
@@ -562,4 +565,70 @@ assert.equal(document.getElementById('projectSelectionStatus').dataset.state,'er
 assert.match(document.getElementById('projectSelectionStatus').textContent,/directory unavailable/)
 assert.equal(state.selected,null)
 
-console.log('Session transfer smoke passed: handoff safety + history/draft isolation + model guards + full active snapshots + root-only conversation mirrors')
+// The first usable page must not wait for slow metadata or activity requests.
+reset()
+const slowProjects=deferred(),slowStatuses=deferred(),sessionReads=[]
+handlers.listProjects=()=>slowProjects.promise
+handlers.sessionStatuses=()=>slowStatuses.promise
+handlers.listSessions=async options=>{sessionReads.push(options);return{sessions:[{id:'recent',title:'Recent'}],nextCursor:'older'}}
+await app.loadSessionsNow()
+assert.equal(state.loading,false)
+assert.equal(sessionReads.length,1)
+assert.match(document.getElementById('sessions').innerHTML,/data-session="recent"/)
+assert.equal(state.sessionList.nextCursor,'older')
+slowProjects.resolve([]);slowStatuses.resolve({})
+
+// Scroll requests are single-flight; overlapping rows and cursors are deduped.
+const olderPage=deferred()
+handlers.listSessions=options=>{sessionReads.push(options);return olderPage.promise}
+const olderLoading=app.loadMoreSessions()
+await app.loadMoreSessions()
+assert.equal(sessionReads.length,2)
+assert.equal(sessionReads.at(-1).cursor,'older')
+assert.match(document.getElementById('sessions').innerHTML,/Recent/,'Existing rows stay visible while loading more')
+olderPage.resolve({sessions:[{id:'recent',title:'Updated'},{id:'old',title:'Old'}],nextCursor:'oldest'})
+await olderLoading
+assert.equal(state.sessions.length,2)
+assert.equal(state.sessions.find(row=>row.id==='recent').title,'Updated')
+
+// A background head refresh preserves the scroll cursor and older context.
+state.contextCache.set('old',{messages:[]})
+handlers.listSessions=async()=>({sessions:[{id:'recent'}],nextCursor:'older'})
+await app.loadSessionsNow({background:true})
+assert.equal(state.sessionList.nextCursor,'oldest')
+assert.ok(state.sessions.some(row=>row.id==='old'))
+assert.ok(state.contextCache.has('old'))
+
+// A failure keeps the same cursor and offers a deliberate retry, not a loop.
+handlers.listSessions=async()=>{throw new Error('offline')}
+await app.loadMoreSessions()
+assert.equal(state.sessionList.error,true)
+assert.equal(state.sessionList.nextCursor,'oldest')
+assert.match(document.getElementById('sessions').innerHTML,/повторить/)
+handlers.listSessions=async()=>({sessions:[],nextCursor:'older'})
+await app.loadMoreSessions()
+assert.equal(state.sessionList.nextCursor,null,'A cursor cycle must terminate even across empty filtered pages')
+
+// Server search finds unloaded chats and late pages cannot contaminate a new query.
+reset()
+state.sessions=[{id:'known',title:'Known'}]
+state.sessionList={...app.newSessionList(''),loaded:true,nextCursor:'slow'}
+const stalePage=deferred()
+handlers.listSessions=()=>stalePage.promise
+const staleLoading=app.loadMoreSessions()
+document.getElementById('search').value='needle'
+handlers.listSessions=async options=>{assert.equal(options.search,'needle');return{sessions:[{id:'unloaded',title:'needle'}],nextCursor:null}}
+await app.loadSessionsNow({background:true})
+stalePage.resolve({sessions:[{id:'stale',title:'Wrong page'}],nextCursor:'again'})
+await staleLoading
+assert.ok(state.sessions.some(row=>row.id==='unloaded'))
+assert.ok(state.sessions.some(row=>row.id==='known'),'Search does not evict unrelated chat state')
+assert.ok(!state.sessions.some(row=>row.id==='stale'))
+
+// A deep link must resolve a chat not yet present in the first page.
+reset()
+handlers.getSession=async id=>({id,title:'Deep link'})
+await app.selectSession('unloaded-deep-link',{push:false,waitForDetails:false})
+assert.equal(state.selected.id,'unloaded-deep-link')
+
+console.log('Session transfer smoke passed: handoff + model guards + mirrors + incremental sidebar/search/deep links')

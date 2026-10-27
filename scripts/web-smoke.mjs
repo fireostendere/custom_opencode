@@ -99,13 +99,24 @@ for (const status of [400, 422]) {
   if (calls.length !== 1) throw new Error("Rejected prompt must not be retried with another shape")
 }
 
-let sessionPages = 0
-globalThis.fetch = async () => {
-  sessionPages++
-  return response(200, { data:[{ id:String(sessionPages) }], cursor:{ next:'loop' } })
+calls = []
+globalThis.fetch = async (path) => {
+  calls.push(path)
+  return response(200, { data:[{ id:'recent' }], cursor:{ next:'older & /' } })
 }
-await api.listSessions()
-if (sessionPages !== 2) throw new Error("Session pagination must stop on a repeated cursor")
+const firstSessions = await api.listSessions()
+if (calls.length !== 1 || firstSessions.sessions?.[0]?.id !== 'recent' || firstSessions.nextCursor !== 'older & /')
+  throw new Error('Sidebar must return the first page without downloading the rest')
+await api.listSessions({cursor:firstSessions.nextCursor,search:'old & chat'})
+const sessionQuery = new URL(calls.at(-1),'https://fixture').searchParams
+if(sessionQuery.get('cursor')!=='older & /'||sessionQuery.get('search')!=='old & chat'||sessionQuery.has('order'))
+  throw new Error('Session cursor/search must be encoded without overriding cursor order')
+globalThis.fetch = async () => response(200,[{id:'legacy'}])
+const legacySessions=await api.listSessions()
+if(legacySessions.sessions[0].id!=='legacy'||legacySessions.nextCursor!==null)
+  throw new Error('An unpaginated backend must remain supported')
+globalThis.fetch = async () => response(200,{data:{}})
+await api.listSessions().then(()=>{throw new Error('Malformed session page accepted')},()=>{})
 
 const pending = []
 globalThis.fetch = () => new Promise((resolve) => pending.push(resolve))
