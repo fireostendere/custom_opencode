@@ -40,6 +40,7 @@ window.__resolvedPermissions = permissionSuppression.resolved
 const state = {
   clientConfig: null,
   sessions: [], projects: [], selected: null, context: [],
+  sessionList: newSessionList(''),
   contextCache: new Map(),
   mirrorHistory: new Map(),
   agents: [], models: [], providers: [], defaultModel: null,
@@ -69,6 +70,7 @@ let historyPaginationIntentTimer = 0
 let historyPaginationTouch = null
 let statusSyncGeneration = 0
 let sessionSyncGeneration = 0
+let sessionSearchTimer = null
 let rateLimitSyncGeneration = 0
 let messageRenderFrame = null
 let showHiddenModels = false
@@ -388,44 +390,103 @@ function syncRunStatuses(statuses) {
 }
 
 const loadSessionsCoalesced=createRefreshCoalescer()
+function newSessionList(query) { return { query, loaded:false, refreshing:false, loadingMore:false, nextCursor:null, seenCursors:new Set(), error:false } }
+function searchSessions() {
+  clearTimeout(sessionSearchTimer)
+  sessionSyncGeneration += 1
+  state.sessionList = newSessionList($('search').value.trim().toLowerCase())
+  state.loading = false
+  $('sessions').scrollTop = 0
+  renderSessions()
+  sessionSearchTimer = setTimeout(() => loadSessions({background:true,force:true}), 200)
+}
+function mergeSessionPage(sessions, modelVersionsAtStart, replace = false) {
+  const current = new Map(state.sessions.map(session => [session.id, session]))
+  const unique = replace ? new Map() : new Map(current)
+  for (const session of sessions) {
+    const local = current.get(session.id) || (state.selected?.id === session.id && state.selected)
+    const model = sessionModelFromRead(session.id, session.model, modelVersionsAtStart.get(session.id), local?.model)
+    unique.set(session.id, model !== session.model ? {...session, model} : session)
+  }
+  // Only a complete, unfiltered snapshot proves a cached session disappeared.
+  if (replace) {
+    for(const id of new Set([...sessionModelVersions.keys(),...sessionModelOverrides.keys()]))if(!unique.has(id)&&state.selected?.id!==id){sessionModelVersions.delete(id);sessionModelOverrides.delete(id)}
+    for(const id of state.contextCache.keys())if(!unique.has(id)&&state.selected?.id!==id)discardContextCache(id)
+    for(const id of state.mirrorHistory.keys())if(!unique.has(id)&&state.selected?.id!==id)state.mirrorHistory.delete(id)
+  }
+  state.sessions = [...unique.values()].sort(compareSessions)
+  if (state.selected) state.selected = unique.get(state.selected.id) || state.selected
+}
 function loadSessions(options = {}) {
-  const force = options.selectHash || !options.background
+  const force = options.force || options.selectHash || !options.background
   return loadSessionsCoalesced(() => loadSessionsNow(options), force)
 }
 async function loadSessionsNow({ selectHash = false, background = false } = {}) {
+  const query = $('search').value.trim().toLowerCase()
+  if (state.sessionList.query !== query) state.sessionList = newSessionList(query)
+  const list = state.sessionList
+  list.refreshing = true
   if (!background && !state.sessions.length) { state.loading = true; renderSessions() }
   const sessionGeneration = ++sessionSyncGeneration
   const statusGeneration = ++statusSyncGeneration
   const modelVersionsAtStart = new Map(sessionModelVersions)
-  try {
-    const [projects, sessions, statuses] = await Promise.all([api.listProjects(), api.listSessions(), api.sessionStatuses()])
+  // Project metadata and activity must not hold the first usable rows hostage.
+  void api.listProjects().then(projects => {
     if (sessionGeneration !== sessionSyncGeneration) return
-    state.projects = projects
-    const unique = new Map(sessions.map((s)=>[s.id,s]))
-    for (const [id,session] of unique) {
-      const local=state.sessions.find((item)=>item.id===id)||state.selected?.id===id&&state.selected
-      const model=sessionModelFromRead(id,session.model,modelVersionsAtStart.get(id),local?.model)
-      if(model!==session.model)unique.set(id,{...session,model})
-    }
-    for(const id of new Set([...sessionModelVersions.keys(),...sessionModelOverrides.keys()]))if(!unique.has(id)&&state.selected?.id!==id){sessionModelVersions.delete(id);sessionModelOverrides.delete(id)}
-    for(const id of state.contextCache.keys())if(!unique.has(id)&&state.selected?.id!==id)discardContextCache(id)
-    for(const id of state.mirrorHistory.keys())if(!unique.has(id)&&state.selected?.id!==id)state.mirrorHistory.delete(id)
-    state.sessions = [...unique.values()].sort(compareSessions)
-    if (statusGeneration === statusSyncGeneration) syncRunStatuses(statuses)
-    if (state.selected) state.selected = state.sessions.find((s)=>s.id===state.selected.id) || state.selected
+    state.projects = projects; renderSessions(); renderHeader()
+  }).catch(() => {})
+  const statuses = api.sessionStatuses().catch(() => null)
+  try {
+    const page = await api.listSessions({search:query})
+    if (sessionGeneration !== sessionSyncGeneration) return
+    mergeSessionPage(page.sessions, modelVersionsAtStart, !query && !page.nextCursor)
+    if (!list.loaded) { list.nextCursor = page.nextCursor; list.loaded = true }
+    if (!page.nextCursor) list.nextCursor = null
     state.loading = false; renderSessions(); renderHeader(); if(state.selected&&state.models.length)renderControls(); else if(!state.selected)renderMessages(); updateBadge()
     if (selectHash && !state.selected) {
       const id = sessionIdFromHash()
-      if (id && state.sessions.some((s)=>s.id===id)) await selectSession(id,{ push:false })
+      if (id) await selectSession(id,{ push:false })
     }
   } catch (error) {
     if (sessionGeneration !== sessionSyncGeneration) return
     state.loading = false
     if (!state.sessions.length) {
+      $('sessions')._lastHtml = ''
       $('sessions').innerHTML = `<div class="empty">Не удалось загрузить сессии.<br>${escapeHtml(error.message)}</div>`
     }
     toast('Ошибка загрузки сессий')
+  } finally {
+    list.refreshing = false
+    if (sessionGeneration === sessionSyncGeneration) requestAnimationFrame(maybeLoadMoreSessions)
   }
+  void statuses.then(value => {
+    if (statusGeneration !== statusSyncGeneration || sessionGeneration !== sessionSyncGeneration) return
+    if (syncRunStatuses(value)) { renderSessions(); renderHeader(); updateBadge() }
+  }).catch(() => {})
+}
+async function loadMoreSessions() {
+  const list = state.sessionList, cursor = list.nextCursor
+  if (!list.loaded || list.refreshing || list.loadingMore || !cursor) return
+  const generation = sessionSyncGeneration, versions = new Map(sessionModelVersions)
+  list.loadingMore = true; list.error = false; renderSessions()
+  try {
+    const page = await api.listSessions({cursor,search:list.query})
+    if (generation !== sessionSyncGeneration || list !== state.sessionList) return
+    mergeSessionPage(page.sessions, versions)
+    list.seenCursors.add(cursor)
+    list.nextCursor = list.seenCursors.has(page.nextCursor) ? null : page.nextCursor
+  } catch {
+    if (generation === sessionSyncGeneration && list === state.sessionList) list.error = true
+  } finally {
+    list.loadingMore = false
+    if (list === state.sessionList) renderSessions()
+  }
+}
+function maybeLoadMoreSessions() {
+  const container = $('sessions'), list = state.sessionList
+  if (!container || !container.clientHeight || list.error || list.query !== $('search').value.trim().toLowerCase()) return
+  if (window.matchMedia('(max-width: 760px)').matches && !$('sidebar').classList.contains('open')) return
+  if (container.scrollHeight - container.scrollTop - container.clientHeight < 240) void loadMoreSessions()
 }
 
 function sessionMatches(session,query) {
@@ -526,18 +587,32 @@ function renderSessions() {
   const orderedGroups=[...groups.values()].sort((a,b)=>orderIndex(savedProjectOrder,a.info.key)-orderIndex(savedProjectOrder,b.info.key)||sessionTime(b.items[0])-sessionTime(a.items[0])||a.info.label.localeCompare(b.info.label,'ru',{sensitivity:'base',numeric:true}))
   const collapsedProjects=new Set(loadJson(PROJECT_COLLAPSE_KEY, [])),expanded=sessionTreeExpanded()
   const projectsHtml=orderedGroups.map(({info,items})=>`<details class="project-group" data-project="${escapeHtml(info.key)}"${collapsedProjects.has(info.key)?'':' open'}><summary class="project" draggable="true" title="${escapeHtml(info.directory)}"><span>${escapeHtml(info.label)}</span><span class="count">${items.length}</span></summary><div class="project-sessions">${items.map((session)=>renderSessionNode(session,tree.children,expanded,query)).join('')}</div></details>`).join('')
-  const html=renderSessionShortcuts(collapsedProjects)+(projectsHtml||'<div class="empty">Сессий не найдено.</div>')
+  const list=state.sessionList
+  const more=list.loadingMore?'<div class="loading" role="status">Загрузка ещё…</div>':list.nextCursor?`<button type="button" class="session-load-more" data-session-load-more>${list.error?'Не удалось загрузить — повторить':'Показать ещё'}</button>`:''
+  const html=renderSessionShortcuts(collapsedProjects)+(projectsHtml||`<div class="empty">${list.loaded?'Сессий не найдено.':'Загрузка сессий…'}</div>`)+more
   if (container._lastHtml === html) return
+  const top=container.getBoundingClientRect?.().top
+  const anchor=[...container.querySelectorAll('[data-session-node]')].find(node=>node.getBoundingClientRect().bottom>top)
+  const anchorOffset=anchor?.getBoundingClientRect().top
   container._lastHtml = html
   container.innerHTML=html
+  const nextAnchor=anchor&&[...container.querySelectorAll('[data-session-node]')].find(node=>node.dataset.sessionNode===anchor.dataset.sessionNode)
+  if(nextAnchor)container.scrollTop+=nextAnchor.getBoundingClientRect().top-anchorOffset
   document.querySelectorAll('[data-project],[data-session-mirror]').forEach((group)=>group.addEventListener('toggle',()=>{const values=new Set(loadJson(PROJECT_COLLAPSE_KEY, [])),id=group.dataset.project||`mirror:${group.dataset.sessionMirror}`;group.open?values.delete(id):values.add(id);saveJson(PROJECT_COLLAPSE_KEY,[...values])}))
   document.querySelectorAll('[data-agent-folder]').forEach((folder)=>folder.addEventListener('toggle',()=>{const values=sessionTreeExpanded(),id=folder.dataset.agentFolder;folder.open?values.add(id):values.delete(id);saveJson(SESSION_TREE_KEY,[...values])}))
   document.querySelectorAll('[data-session]').forEach((button)=>button.addEventListener('click',()=>selectSession(button.dataset.session)))
   document.querySelectorAll('[data-session-more]').forEach((button)=>button.addEventListener('click',(event)=>{event.stopPropagation();openSessionActions(button.dataset.sessionMore)}))
+  requestAnimationFrame(maybeLoadMoreSessions)
 }
 
 async function selectSession(id,{push=true,saveDraft=true,waitForDetails=true}={}) {followDetachedFor=null;delete $('messages')?.dataset.followDetached;
-  const session=state.sessions.find((s)=>s.id===id); if(!session)return
+  let session=state.sessions.find((s)=>s.id===id)
+  if(!session){
+    const selected=state.selected,generation=sessionSyncGeneration
+    try{session=await api.getSession(id)}catch{toast('Сессия недоступна');return}
+    if(session?.id!==id||state.selected!==selected||generation!==sessionSyncGeneration)return
+    state.sessions.push(session)
+  }
   if(saveDraft)saveDraftNow()
   const cachedContext=state.contextCache.get(id)
   clearAttachments()
@@ -1208,6 +1283,7 @@ async function createAt(dir,title){
   sessionSyncGeneration += 1
   state.sessions=[session,...state.sessions.filter((s)=>s.id!==session.id)]
   $('search').value = ''
+  if(state.sessionList.query)searchSessions()
   const projectKey = projectInfo(session).key
   saveJson(PROJECT_COLLAPSE_KEY, loadJson(PROJECT_COLLAPSE_KEY, []).filter((key) => key !== projectKey))
   await selectSession(session.id, {waitForDetails:false})
@@ -1539,9 +1615,12 @@ function setupPullRefresh(){
 function autosizeInput(){const el=$('input');el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}
 
 function bindEvents(){
+  $('menu').addEventListener('click',()=>requestAnimationFrame(maybeLoadMoreSessions))
+  $('sessions').addEventListener('scroll',maybeLoadMoreSessions,{passive:true})
+  $('sessions').addEventListener('click',event=>{if(event.target.closest('[data-session-load-more]'))void loadMoreSessions()})
   $('sessions').addEventListener('click',event=>{const button=event.target.closest('[data-session-shortcut]');if(button)selectSession(button.dataset.sessionShortcut)})
    $('newSession').addEventListener('click',()=>openProjectDialog('create'))
-  $('chooseProject').addEventListener('click',()=>openProjectDialog('create'));$('refresh').addEventListener('click',()=>{loadSessions();if(state.selected)loadContext({force:true})});$('search').addEventListener('input',renderSessions)
+  $('chooseProject').addEventListener('click',()=>openProjectDialog('create'));$('refresh').addEventListener('click',()=>{loadSessions();if(state.selected)loadContext({force:true})});$('search').addEventListener('input',searchSessions)
   $('menu').addEventListener('click',()=> $('sidebar').classList.toggle('open'));$('sessionActions').addEventListener('click',()=>openSessionActions());$('modelButton').addEventListener('click',()=>{renderModelChoices();$('modelDialog').showModal();if(!window.matchMedia('(max-width: 760px)').matches)$('modelSearch').focus()});$('modelSearch').addEventListener('input',renderModelChoices);$('modelAddButton').addEventListener('click',()=>{$('modelAddForm').reset();$('modelAddDialog').showModal();$('modelAddProvider').focus()});$('modelHiddenButton').addEventListener('click',()=>{showHiddenModels=!showHiddenModels;renderModelChoices()});$('modelAddForm').addEventListener('submit',(event)=>{event.preventDefault();try{const model=addCustomModel($('modelAddProvider').value,$('modelAddID').value,$('modelAddName').value);$('modelAddDialog').close();showHiddenModels=false;renderModelChoices();toast(`Модель ${model.name||model.id} добавлена`)}catch(error){toast(error.message||String(error),4200)}});$('modelChoices').addEventListener('click',(event)=>{const fav=event.target.closest?.('[data-fav]');if(fav){event.preventDefault();event.stopPropagation();const key=fav.dataset.fav;favorites.has(key)?favorites.delete(key):favorites.add(key);saveJson(FAV_KEY,[...favorites]);renderModelChoices();return}const remove=event.target.closest?.('[data-model-remove]');if(remove){event.preventDefault();event.stopPropagation();const key=remove.dataset.modelRemove;if(modelKey(activeModelRef())===key){toast('Сначала выберите другую модель.');return}if(hiddenModelKeys().has(key))setModelHidden(key,false);else removeModelFromPicker(key);renderModelChoices();return}const button=event.target.closest?.('[data-model][data-provider]');if(!button)return;$('modelDialog').close();changeModel({id:button.dataset.model,providerID:button.dataset.provider})})
   $('variantSelect').addEventListener('change',(e)=>{const ref=activeModelRef();if(!ref)return;const model={id:ref.id,providerID:ref.providerID};if(e.target.value)model.variant=e.target.value;changeModel(model)})
   $('agentSelect').addEventListener('change',(e)=>changeAgent(e.target.value))

@@ -67,7 +67,7 @@ function fixture(){
   }
   const api={
     getContextPage(id,options){const item={id,options,...deferred()};historyRequests.push(item);return item.promise},
-    async deleteSession(){},async listProjects(){return[]},async listSessions(){return[]},async sessionStatuses(){return{}},
+    async deleteSession(){},async listProjects(){return[]},async listSessions(){return{sessions:[],nextCursor:null}},async sessionStatuses(){return{}},
     async hasConversation(){return null},isPromptPending(){return false},async sendPrompt(session,value){promptCalls.push({session,value})},
   }
   const fetch=async(path,options={})=>{requests.push({path,options});return Response.json(path==='/client-send.json'?{ok:true}:{data:[]})}
@@ -321,7 +321,7 @@ await test('a session list started before deletion cannot put the removed sessio
   f.session('list-delete')
   const listing=deferred(),original=f.api.listSessions;f.api.listSessions=()=>listing.promise
   const loading=app.loadSessionsNow();await app.removeSession(app.state.selected)
-  listing.resolve([{id:'list-delete'}]);await loading;f.api.listSessions=original
+  listing.resolve({sessions:[{id:'list-delete'}],nextCursor:null});await loading;f.api.listSessions=original
   assert.equal(app.state.sessions.some(item=>item.id==='list-delete'),false)
 })
 
