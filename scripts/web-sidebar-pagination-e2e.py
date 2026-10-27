@@ -29,6 +29,7 @@ def check(browser, base_url, width, harness):
             route.fulfill(json={"data": [{**session(999), "title": "needle"}], "cursor": {"next": None}})
         elif "cursor" in query:
             pending.append(route)
+            page.evaluate("window.__sidebarPageRequests = (window.__sidebarPageRequests || 0) + 1")
         else:
             route.fulfill(json={"data": [session(i) for i in range(50)], "cursor": {"next": "older"}})
 
@@ -64,6 +65,8 @@ def check(browser, base_url, width, harness):
     sidebar = page.locator("#sessions")
     sidebar.evaluate("el => el.scrollTop = el.scrollHeight")
     page.wait_for_function("document.querySelector('#sessions').textContent.includes('Загрузка ещё')")
+    # The spinner is painted before fetch reaches the intercepted network route.
+    page.wait_for_function("window.__sidebarPageRequests === 1")
     assert len(pending) == 1, reads
     assert page.locator("[data-session-node]").count() == 50
     before = sidebar.evaluate("el => el.scrollTop")
@@ -73,6 +76,7 @@ def check(browser, base_url, width, harness):
     assert len(reads) == 2
     page.get_by_role("button", name="Не удалось загрузить — повторить").click()
     page.wait_for_function("document.querySelector('#sessions').textContent.includes('Загрузка ещё')")
+    page.wait_for_function("window.__sidebarPageRequests === 2")
     assert len(pending) == 1
     pending.pop().fulfill(json={"data": [session(i) for i in range(50, 100)], "cursor": {"next": None}})
     page.wait_for_function("document.querySelectorAll('[data-session-node]').length === 100")
