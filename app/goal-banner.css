@@ -1,0 +1,12 @@
+.goal-banner{flex:0 0 auto;max-height:28dvh;overflow-y:auto;margin:8px 16px;padding:10px 12px;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;background:var(--surface-strong);font-size:12px;overflow-wrap:anywhere}
+.goal-banner[hidden]{display:none}
+.goal-heading{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.goal-heading>span,.goal-hint{color:var(--muted);font-size:11px}
+.goal-heading button{margin-left:auto;min-height:32px;padding:4px 10px}
+.goal-objective{margin-top:6px;white-space:pre-wrap;font-weight:600}
+.goal-progress{margin-top:5px;white-space:pre-wrap}
+.goal-hint{margin-top:6px}
+.goal-tone-busy{color:var(--accent)}
+.goal-tone-ok{color:var(--success,#78c99f)}
+.goal-tone-warn{color:var(--warning,#d1a63b)}
+@media(max-width:760px){.goal-banner{margin:6px 8px;max-height:24dvh}}
