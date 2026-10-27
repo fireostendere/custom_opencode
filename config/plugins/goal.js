@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from "node:crypto"
 import { startEvents } from "../events.js"
 import { isDndLane } from "./tui/lib/context-policy.js"
+import { GoalRpc } from "./tui/lib/goal-view.js"
 
 const TOOL = "goal_update"
 const MARKER = "Custom active goal:"
@@ -71,11 +72,16 @@ export default {
     }
     // Serialize snapshots AND removal: an older async write must never restore
     // a deleted/stopped goal. In-flight reads cannot overwrite a newer snapshot.
+    let rpc
+    const notify = sessionID => rpc?.events.emit("updated", { sessionID }).catch(error => console.warn(`[goal UI] ${error?.message ?? error}`))
     const save = (sessionID, goal) => {
       const load = loads.get(sessionID)
       if (load) { load.cancelled = true; loads.delete(sessionID) }
       remember(sessionID, goal)
-      return queue(() => ctx.storage.set(key(sessionID), goal))
+      return queue(async () => {
+        await ctx.storage.set(key(sessionID), goal)
+        await notify(sessionID)
+      })
     }
     const receipt = (sessionID, goal) => ctx.session.synthetic({
       sessionID, resume: false,
@@ -144,6 +150,15 @@ export default {
       }
       after = page.next
     } while (after)
+
+    rpc = await ctx.rpc.register(GoalRpc, {
+      get: async ({ sessionID }) => {
+        const session = await ctx.session.get({ sessionID })
+        if (session.location?.directory !== directory) return { goal: null }
+        return { goal: await loadGoal(sessionID) || null }
+      },
+    })
+    registrations.push(rpc)
 
     registrations.push(await ctx.command.transform(commands => commands.add({
       name: "goal", description: "Работать до результата: /goal <задача> | status | stop | resume",
@@ -226,7 +241,7 @@ export default {
         goals.delete(sessionID)
         history.delete(sessionID)
         running.delete(sessionID)
-        return queue(() => ctx.storage.remove(key(sessionID)))
+        return queue(async () => { await ctx.storage.remove(key(sessionID)); await notify(sessionID) })
       }
       const ended = ["session.idle", "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].includes(event.type)
         && running.delete(sessionID)
