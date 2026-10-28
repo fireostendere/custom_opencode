@@ -40,6 +40,7 @@ let modelTransform = null
 let mcpTransform = null
 let skillTransform = null
 let mcpListCalls = 0
+let mcpReloads = 0
 const deferred = () => {
   let resolve
   const promise = new Promise((complete) => { resolve = complete })
@@ -82,7 +83,7 @@ const ctx = {
   model: { transform: async (callback) => { modelTransform = callback } },
   mcp: {
     list: async () => { mcpListCalls += 1 },
-    reload: async () => {},
+    reload: async () => { mcpReloads += 1 },
     transform: async (callback) => { mcpTransform = callback },
   },
   skill: {
@@ -108,7 +109,12 @@ const ctx = {
   },
 }
 
+// Capture the /mcp toggle sync timer instead of waiting for it.
+const intervals = []
+const realSetInterval = globalThis.setInterval
+globalThis.setInterval = (callback, ms) => { intervals.push({ callback, ms }); return { unref() {} } }
 await plugin.setup(ctx)
+globalThis.setInterval = realSetInterval
 for (const name of ['addprovider', 'addmodel', 'addmcp', 'addskill', 'addorchestration', 'managed', 'remove-managed']) {
   assert.ok(commands.has(name), `command ${name} must be registered`)
 }
@@ -415,6 +421,28 @@ assert.equal(legacyRegistry.skills.legacy.location, '/legacy/SKILL.md', 'migrati
     await new Promise((resolve) => setTimeout(resolve, 5))
   assert.ok(!store.get(STORAGE_KEY).mcpSettings.sessions['stale-session'], 'deleted session profile is forgotten')
   assert.deepEqual(store.get(STORAGE_KEY).mcpToggles['/work/c'], { kb: true }, 'session cleanup keeps toggles saved by another location')
+}
+
+// 11. A toggle saved by another location reaches this loaded one on the next
+// sync tick; unchanged or unrelated toggles never reload its MCP servers.
+{
+  const sync = intervals.find((item) => item.ms === 60_000)?.callback
+  assert.ok(sync, '/mcp toggle sync must be scheduled')
+  ctx.location = { directory: '/work/b' }
+  mcpTransform({ get: () => undefined, list: () => [], set: () => {} })
+  const before = mcpReloads
+  const tick = async () => { sync(); await exec('refreshmodels') }
+  await tick()
+  assert.equal(mcpReloads, before, 'unchanged toggles never reload MCP')
+  const external = structuredClone(store.get(STORAGE_KEY))
+  external.mcpToggles['/work/c'] = { fs: false }
+  store.set(STORAGE_KEY, external)
+  await tick()
+  assert.equal(mcpReloads, before, "another folder's toggle never reloads this one")
+  external.mcpToggles['*'] = { ...external.mcpToggles['*'], fs: false }
+  store.set(STORAGE_KEY, structuredClone(external))
+  await tick()
+  assert.equal(mcpReloads, before + 1, 'a global toggle saved elsewhere reloads this folder')
 }
 
 console.log('config-manager regression OK: self-check, happy path, secret rejection, rollback, serialization, managed context metadata, /mcp toggles')

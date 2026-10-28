@@ -15,6 +15,7 @@ import { filterDndTools, isDndContext } from "./orchestrated-qwen.js"
 import { startEvents } from "../events.js"
 
 const STORAGE_KEY = "registry-v2"
+const TOGGLES_SYNC_MS = 60_000
 const CONFIG_DIR = process.env.OPENCODE_CONFIG_DIR || join(homedir(), ".config", "opencode")
 // A client that was already running during install may respawn the service
 // with its cached (older) service env, so fall back to the persisted service
@@ -573,6 +574,16 @@ export default {
         }),
       )
 
+    const togglesHere = () =>
+      JSON.stringify([registry.mcpToggles["*"], registry.mcpToggles[ctx.location?.directory]])
+    let appliedToggles = togglesHere()
+    // /mcp choices saved from another folder reach this already-loaded one.
+    const togglesSync = setInterval(() => {
+      enqueueMutation(async () => {
+        if (togglesHere() !== appliedToggles) await ctx.mcp.reload()
+      }).catch(() => {})
+    }, TOGGLES_SYNC_MS)
+    togglesSync.unref?.()
     await ctx.mcp.transform((draft) => {
       const fabric = toolFabricConfig(ctx.location?.directory)
       if (fabric && !(draft.list?.() || []).some(([name]) => name === "fabric"))
@@ -582,6 +593,7 @@ export default {
         // default must not re-enable a server explicitly disabled by the project.
         if (!draft.get?.(name)) draft.set(name, structuredClone(config))
       // /mcp: a folder's choice beats the global one; both beat native config.
+      appliedToggles = togglesHere()
       const toggles = { ...registry.mcpToggles["*"], ...registry.mcpToggles[ctx.location?.directory] }
       for (const [name, enabled] of Object.entries(toggles)) {
         const config = draft.get?.(name)
@@ -955,7 +967,10 @@ export default {
           }),
       })
     })
-    return () => stopEvents()
+    return () => {
+      clearInterval(togglesSync)
+      stopEvents()
+    }
   },
 }
 
