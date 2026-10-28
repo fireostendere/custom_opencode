@@ -257,23 +257,30 @@ async function toggleMcp(context) {
     const { installed, registry, directory } = await managed(context)
     const toggles = registry.mcpToggles || {}
     const chosen = (id) => Object.values(toggles).some((scoped) => Object.hasOwn(scoped, id))
+    // The registry snapshot predates later plugin transforms (folder scopes);
+    // native status is what the sidebar shows and what actually runs.
+    const listed = await context.client.mcp
+      .list({ location: directory ? { directory } : context.location })
+      .catch(() => [])
+    const live = new Map(
+      (Array.isArray(listed) ? listed : listed?.data || []).map((server) => [server.name, server.status?.status]),
+    )
+    const running = (id) => (live.has(id) ? live.get(id) !== "disabled" : !installed[id]?.disabled)
     const name = await choose(
       context,
       `MCP · ${directory ? basename(directory) : "?"}`,
-      Object.keys(installed)
-        .sort()
-        .map((id) => ({
-          title: `[${installed[id].disabled ? " " : "x"}] ${id}`,
-          value: id,
-          description: Object.hasOwn(toggles[directory] || {}, id)
-            ? "выбрано для этой папки"
-            : Object.hasOwn(toggles["*"] || {}, id)
-              ? "выбрано для всех папок"
-              : installed[id].type,
-        })),
+      [...new Set([...Object.keys(installed), ...live.keys()])].sort().map((id) => ({
+        title: `[${running(id) ? "x" : " "}] ${id}`,
+        value: id,
+        description: Object.hasOwn(toggles[directory] || {}, id)
+          ? "выбрано для этой папки"
+          : Object.hasOwn(toggles["*"] || {}, id)
+            ? "выбрано для всех папок"
+            : live.get(id) || installed[id]?.type,
+      })),
     )
     if (name == null) return
-    const enabled = Boolean(installed[name].disabled)
+    const enabled = !running(name)
     const verb = enabled ? "Включить" : "Выключить"
     const scope = await choose(context, name, [
       { title: `${verb} в этой папке`, value: "folder", description: directory },
