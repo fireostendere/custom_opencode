@@ -233,7 +233,7 @@ slotRenders[0]()
 assert.equal(keymapLayers.length, 1)
 
 const rows = keymapLayers[0].commands
-assert.equal(rows.length, expectedKinds.length + 5)
+assert.equal(rows.length, expectedKinds.length + 6)
 for (const kind of expectedKinds) {
   assert.ok(rows.some((row) => row.id === `custom.add-wizard.${kind}`), `missing ${kind} button`)
 }
@@ -470,6 +470,23 @@ rows.find((row) => row.id === 'custom.add-wizard.mcp-profile').run('')
 await new Promise((resolve) => setImmediate(resolve))
 assert.equal(await readFile(registryPath, 'utf8'), beforeProfileCancel, 'Cancel in profile selector leaves registry unchanged')
 
+// /mcp: each pick sends one quiet mcp-toggle for the chosen scope; Esc exits.
+serverContext.location = { directory: '/work/wizard' }
+appliedSettings()
+const mcpRow = rows.find((row) => row.id === 'custom.add-wizard.mcp-toggle')
+assert.equal(mcpRow.slash.name, 'mcp')
+const togglesBefore = commandCalls.length
+const savedBefore = synthetic.filter((item) => item.includes(': saved\n')).length
+configureDialog([], ['docs', 'global', 'filesystem', 'folder', null])
+assert.equal(mcpRow.run(), true)
+await waitFor(() => commandCalls.length === togglesBefore + 2 && commandCalls.at(-1).completed && !dialogSelects.length, '/mcp toggles')
+assert.deepEqual(commandCalls.slice(togglesBefore).map((call) => [call.command, JSON.parse(call.arguments), call.error?.message]), [
+  ['mcp-toggle', { name: 'docs', scope: 'global', enabled: false }, undefined],
+  ['mcp-toggle', { name: 'filesystem', scope: 'folder', enabled: false }, undefined],
+])
+assert.deepEqual(JSON.parse(await readFile(registryPath, 'utf8')).mcpToggles, { '*': { docs: false }, '/work/wizard': { filesystem: false } })
+assert.equal(synthetic.filter((item) => item.includes(': saved\n')).length, savedBefore, '/mcp must not post saved summaries into the session')
+
 // Receipt reader cost: bounded polling with backoff, the full session context
 // only on a sparse schedule, and immediate wake-up from inbox events.
 {
@@ -553,7 +570,7 @@ const report = {
     skills: Object.keys(registry.skills).sort(),
     orchestrations: Object.keys(registry.orchestrations).sort(),
   },
-  checks: ['canonical /add routing', 'all five wizard buttons', 'currentFocusedRenderable submit interception', 'empty /addmcp opens wizard', 'applied provider/model settings', 'applied orchestration policy', 'applied remote and local MCP', 'applied mcp-rag WSL launcher and cwd', 'applied skill content', 'native JSON alias', 'cancel', 'secret validation', 'file-backed registry persistence', 'fresh setup reapplies persisted settings'],
+  checks: ['canonical /add routing', 'all five wizard buttons', 'currentFocusedRenderable submit interception', 'empty /addmcp opens wizard', 'applied provider/model settings', 'applied orchestration policy', 'applied remote and local MCP', 'applied mcp-rag WSL launcher and cwd', 'applied skill content', 'native JSON alias', 'cancel', 'secret validation', 'file-backed registry persistence', 'fresh setup reapplies persisted settings', '/mcp toggle'],
 }
 
 const reportArgument = process.argv.find((argument) => argument.startsWith('--report='))

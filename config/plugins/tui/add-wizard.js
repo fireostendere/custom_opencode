@@ -249,6 +249,48 @@ async function selectProfile(context) {
   toast(context, `MCP profile: ${mode} · ${scope}`, "success")
 }
 
+// /mcp: durable on/off per installed server, for this folder or everywhere.
+async function toggleMcp(context) {
+  const current = sessionID(context)
+  if (!current) return toast(context, "Open a session first.")
+  while (true) {
+    const { installed, registry, directory } = await managed(context)
+    const toggles = registry.mcpToggles || {}
+    const chosen = (id) => Object.values(toggles).some((scoped) => Object.hasOwn(scoped, id))
+    const name = await choose(
+      context,
+      `MCP · ${directory ? basename(directory) : "?"}`,
+      Object.keys(installed)
+        .sort()
+        .map((id) => ({
+          title: `[${installed[id].disabled ? " " : "x"}] ${id}`,
+          value: id,
+          description: Object.hasOwn(toggles[directory] || {}, id)
+            ? "выбрано для этой папки"
+            : Object.hasOwn(toggles["*"] || {}, id)
+              ? "выбрано для всех папок"
+              : installed[id].type,
+        })),
+    )
+    if (name == null) return
+    const enabled = Boolean(installed[name].disabled)
+    const verb = enabled ? "Включить" : "Выключить"
+    const scope = await choose(context, name, [
+      { title: `${verb} в этой папке`, value: "folder", description: directory },
+      { title: `${verb} везде`, value: "global", description: "Заменяет выбор отдельных папок" },
+      ...(chosen(name)
+        ? [{ title: "Как в конфиге", value: "reset", description: "Убрать выбор /mcp для этого MCP" }]
+        : []),
+    ])
+    if (scope == null) continue
+    await context.client.session.command({
+      sessionID: current,
+      name: "mcp-toggle",
+      text: JSON.stringify(scope === "reset" ? { name, enabled: null } : { name, scope, enabled }),
+    })
+  }
+}
+
 async function configure(context) {
   if (!sessionID(context)) return toast(context, "Open a session first.")
   const action = await choose(context, "Configuration", [
@@ -750,6 +792,18 @@ function commandRows(context, process) {
       },
     },
     {
+      id: "custom.add-wizard.mcp-toggle",
+      title: "MCP: включить / выключить",
+      description: "Для этой папки или везде; выключенный MCP не запускается",
+      group: "Configuration",
+      palette: true,
+      slash: { name: "mcp" },
+      run: () => {
+        void toggleMcp(context).catch((error) => toast(context, error.message))
+        return true
+      },
+    },
+    {
       id: "custom.add-wizard.profile",
       title: "MCP profile: select",
       group: "Configuration",
@@ -791,6 +845,11 @@ export default Plugin.define({
             context,
             "Используйте /accounts без аргументов; данные аккаунта вводятся в визарде.",
           )
+        return true
+      }
+      if (text.trim() === "/mcp") {
+        clearPromptEditor(editor)
+        void toggleMcp(context).catch((error) => toast(context, error.message))
         return true
       }
       if (text.trim() === "/mcp-profile") {
