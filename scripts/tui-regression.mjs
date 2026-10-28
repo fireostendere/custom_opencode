@@ -1498,6 +1498,38 @@ for (let attempt = 0; attempt < 40 && orphanAlive; attempt += 1) {
 }
 assert.equal(orphanAlive, false, "A timed-out CLI must be killed with its whole process group")
 
+// The footer effort explains what the prompt line does not already say.
+const { effortLabel } = await import(new URL("config/plugins/tui/lib/effort-label.js", root))
+const effortModel = {
+  providerID: "openai",
+  id: "gpt",
+  modelID: "gpt",
+  settings: { effort: "medium" },
+  variants: [{ id: "xhigh", settings: {} }, { id: "fast", settings: { effort: "low" } }],
+}
+const effortRef = (variant) => ({ providerID: "openai", id: "gpt", ...(variant ? { variant } : {}) })
+assert.equal(effortLabel(effortModel, effortRef("xhigh"), {}), null, "A variant the prompt already names is not repeated")
+assert.equal(effortLabel(effortModel, effortRef(), { "openai/gpt": "xhigh" }), null, "A saved variant is named too")
+assert.equal(effortLabel(effortModel, effortRef("fast"), {}), "low", "A variant whose effort differs is explained")
+assert.equal(effortLabel(effortModel, effortRef(), {}), "medium", "Without a variant the configured effort shows")
+assert.equal(effortLabel(undefined, effortRef(), {}), "default", "An unknown model shows the provider default")
+
+// Palette rows from custom plugins keep one language per row; Russian rows may name only technical terms.
+const TECHNICAL = /^(MCP|JSON|SKILL\.md|host|systemd|Gemini|OpenCode)$/
+for (const file of ["add-wizard.js", "workspace-panel.jsx", "server-wizard.js", "webserver-wizard.js", "goal-panel.jsx"]) {
+  const source = await readFile(new URL(`config/plugins/tui/${file}`, root), "utf8")
+  const texts = [...source.matchAll(/(?:title|description):\s*(?:"([^"]*)"|`([^`]*)`)/g)].map((match) => match[1] ?? match[2])
+  const titles = source.match(/const TITLES = \{([^}]*)\}/)?.[1]
+  if (titles) texts.push(...[...titles.matchAll(/:\s*"([^"]*)"/g)].map((match) => match[1]))
+  const mixed = texts.filter((text) => {
+    if (!/[А-Яа-яЁё]/.test(text)) return false
+    // Interpolations, /slash commands and key chords are names, not prose.
+    const prose = text.replace(/\$\{[^}]*\}|\/[\w-]+|\b(?:ctrl|alt|shift)\+\S+/g, "")
+    return (prose.match(/[A-Za-z][A-Za-z.]*/g) ?? []).some((word) => !TECHNICAL.test(word))
+  })
+  assert.deepEqual(mixed, [], `${file}: labels mix languages`)
+}
+
 await rm(temp, { recursive: true, force: true })
 console.log(
   "TUI regression passed: native local /panel + four-zone dock + unified Activity/scroll + copy/mouse + limits watchdog",

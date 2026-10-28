@@ -14,7 +14,9 @@ const HANDLE = 1
 const DEFAULT_SIDE_SIZE = 36
 const DEFAULT_TOP_SIZE = 10
 const DEFAULT_BOTTOM_SIZE = 12
-const SIDE_LABEL = { left: "LEFT", right: "RIGHT", top: "TOP", bottom: "BOTTOM" }
+const SIDE_LABEL = { left: "СЛЕВА", right: "СПРАВА", top: "СВЕРХУ", bottom: "СНИЗУ" }
+const SIDE_TITLE = { left: "Левая панель", right: "Правая панель", top: "Верхняя панель", bottom: "Нижняя панель" }
+const ACTION_TITLE = { show: "показать", disable: "выключить", pin: "закрепить", unpin: "открепить", collapse: "свернуть", expand: "развернуть", end: "перейти в конец" }
 const COLLAPSE_ICON = { left: "◂", right: "▸", top: "▴", bottom: "▾" }
 const EXPAND_ICON = { left: "▸", right: "◂", top: "▾", bottom: "▴" }
 const PIN_ICON = "📌"
@@ -504,7 +506,7 @@ export default Plugin.define({
           description: "Полностью скрыть панель",
         },
       ]
-      const chosen = await showSelectDialog(`${SIDE_LABEL[side]} панель`, "Что настроить в панели…", options)
+      const chosen = await showSelectDialog(SIDE_TITLE[side], "Что настроить в панели…", options)
       if (chosen != null) applyZoneAction(side, chosen)
     }
 
@@ -513,10 +515,10 @@ export default Plugin.define({
         ...PANEL_SIDES.map((side) => {
           const item = zone(side)
           return {
-            title: `${SIDE_LABEL[side]} панель`,
+            title: SIDE_TITLE[side],
             value: side,
             description: item.enabled
-              ? `${panelTitle(item.active)} · ${item.pinned ? "pinned" : "overlay"}${item.collapsed ? " · collapsed" : ""} · ${extent(side)}`
+              ? `${panelTitle(item.active)} · ${item.pinned ? "закреплена" : "поверх"}${item.collapsed ? " · свёрнута" : ""} · ${extent(side)}`
               : "выключена",
           }
         }),
@@ -526,7 +528,7 @@ export default Plugin.define({
           description: "Восстановить исходные настройки всех док-зон",
         },
       ]
-      const chosen = await showSelectDialog("Панели (Workspace Dock)", "Выбрать dock-зону…", options)
+      const chosen = await showSelectDialog("Панели", "Выбрать док-зону…", options)
       if (!chosen) return
       if (chosen === "reset") {
         resetZones()
@@ -551,7 +553,7 @@ export default Plugin.define({
         {
           id: "custom.panels.configure",
           title: "Настроить панели",
-          description: "Left / right / top / bottom dock zones",
+          description: "Левая, правая, верхняя и нижняя док-зоны",
           group: "Панели",
           slash: { name: "panel" },
           palette: true,
@@ -561,17 +563,17 @@ export default Plugin.define({
         { id: "custom.panels.reset", title: "Сбросить раскладку панелей", group: "Панели", palette: true, run: resetZones },
 
         // Compatibility with the universal right panel merged into main.
-        { id: "custom.panel.toggle", title: "Workspace panel: показать/скрыть", group: "Панели", bind: "ctrl+alt+u", palette: true, run: () => toggleZone("right") },
-        { id: "custom.panel.activity", title: "Workspace: Activity", group: "Панели", bind: "ctrl+alt+a", palette: true, run: () => setZoneView("right", "activity") },
-        { id: "custom.panel.plan", title: "Workspace: Plan", group: "Панели", bind: "ctrl+alt+t", palette: true, run: () => setZoneView("right", "plan") },
-        { id: "custom.panel.limits", title: "Workspace: Limits", group: "Панели", bind: "ctrl+alt+l", palette: true, run: () => setZoneView("right", "limits") },
-        { id: "custom.panel.end", title: "Workspace: перейти в конец", group: "Панели", bind: "ctrl+alt+end", palette: true, run: () => jumpToEnd("right") },
+        { id: "custom.panel.toggle", title: "Правая панель: показать/скрыть", group: "Панели", bind: "ctrl+alt+u", palette: true, run: () => toggleZone("right") },
+        { id: "custom.panel.activity", title: `Правая панель: ${panelTitle("activity")}`, group: "Панели", bind: "ctrl+alt+a", palette: true, run: () => setZoneView("right", "activity") },
+        { id: "custom.panel.plan", title: `Правая панель: ${panelTitle("plan")}`, group: "Панели", bind: "ctrl+alt+t", palette: true, run: () => setZoneView("right", "plan") },
+        { id: "custom.panel.limits", title: `Правая панель: ${panelTitle("limits")}`, group: "Панели", bind: "ctrl+alt+l", palette: true, run: () => setZoneView("right", "limits") },
+        { id: "custom.panel.end", title: "Правая панель: перейти в конец", group: "Панели", bind: "ctrl+alt+end", palette: true, run: () => jumpToEnd("right") },
 
         // Compatibility with the earlier panels branch commands.
         { id: "custom.panels.toggle", title: "Правая панель: показать/свернуть", group: "Панели", bind: "ctrl+alt+p", palette: false, run: () => toggleZone("right") },
-        { id: "custom.panels.pin", title: "Правая панель: pin/unpin", group: "Панели", palette: false, run: () => setPinned("right", !zone("right").pinned) },
-        { id: "custom.panels.previous", title: "Правая панель: предыдущий View", group: "Панели", palette: false, run: () => cycleZoneView("right", -1) },
-        { id: "custom.panels.next", title: "Правая панель: следующий View", group: "Панели", palette: false, run: () => cycleZoneView("right", 1) },
+        { id: "custom.panels.pin", title: "Правая панель: закрепить/открепить", group: "Панели", palette: false, run: () => setPinned("right", !zone("right").pinned) },
+        { id: "custom.panels.previous", title: "Правая панель: предыдущий вид", group: "Панели", palette: false, run: () => cycleZoneView("right", -1) },
+        { id: "custom.panels.next", title: "Правая панель: следующий вид", group: "Панели", palette: false, run: () => cycleZoneView("right", 1) },
       ]
       for (const view of PANEL_VIEWS) {
         rows.push({ id: `custom.panels.${view}`, title: `Правая панель: ${panelTitle(view)}`, group: "Панели", palette: false, run: () => setZoneView("right", view) })
@@ -580,7 +582,7 @@ export default Plugin.define({
         for (const action of ["show", "disable", "pin", "unpin", "collapse", "expand", "end"]) {
           rows.push({
             id: `custom.panels.${side}.${action}`,
-            title: `${SIDE_LABEL[side]}: ${action}`,
+            title: `${SIDE_TITLE[side]}: ${ACTION_TITLE[action]}`,
             group: "Панели",
             palette: action === "show",
             run: () => runZoneAction(side, action),
@@ -589,7 +591,7 @@ export default Plugin.define({
         for (const view of PANEL_VIEWS) {
           rows.push({
             id: `custom.panels.${side}.view.${view}`,
-            title: `${SIDE_LABEL[side]}: ${panelTitle(view)}`,
+            title: `${SIDE_TITLE[side]}: ${panelTitle(view)}`,
             group: "Панели",
             palette: false,
             run: () => runZoneAction(side, "view", view),

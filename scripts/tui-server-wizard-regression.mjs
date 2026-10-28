@@ -293,7 +293,7 @@ const wizardModule = await import(`${new URL("config/plugins/tui/server-wizard.j
     ["apply", "--running", "off", "--default", "on"],
     ["status"],
   ])
-  const menus = fake.selects.filter((input) => input.title.startsWith("Web server —"))
+  const menus = fake.selects.filter((input) => input.title.startsWith("Веб-сервер —"))
   assert.equal(menus.length, 2, "menu should reopen until Escape")
   assert.ok(menus.every((input) => input.options.every((option) => option.value !== "exit")), "Escape should be the only exit")
   await new Promise((resolve) => setTimeout(resolve, 10))

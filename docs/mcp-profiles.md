@@ -66,7 +66,7 @@ user can repair them deliberately. `auto` and `all` are reserved, case-insensiti
 - Select a checkbox row to toggle it; select **Done** to continue. Escape cancels.
 - Every wizard ends with a save confirmation. Cancelling writes no configuration.
 - `/configure` groups add/update, profile selection, exposure/status and removal.
-- `/mcp-profile` opens runtime selection. The palette also has **MCP profile: select**.
+- `/mcp-profile` opens runtime selection. The palette also has **Профиль MCP: выбрать**.
   Auto and All surround the dynamically registered profiles.
 - `/mcp` turns any installed MCP on or off for this folder or everywhere; a disabled
   server is not started at all, unlike a profile, which only hides its tools. A

@@ -19,7 +19,7 @@ function buildAddress(value) {
 }
 
 function statusToastPayload(value) {
-  if (!value?.deployed) return { message: "Web server ещё не развёрнут.", variant: "warning" }
+  if (!value?.deployed) return { message: "Веб-сервер ещё не развёрнут.", variant: "warning" }
   let message = statusText(value)
   const users = Array.isArray(value?.users) ? value.users : []
   message += ` · пользователей: ${users.length}`
@@ -56,15 +56,15 @@ async function doStatus(context, value) {
 }
 
 async function doToggle(context, current) {
-  const state = await chooseState(context, "Состояние web server сейчас", current.running)
+  const state = await chooseState(context, "Состояние веб-сервера сейчас", current.running)
   if (state == null) return
-  toast(context, "Применяю состояние web server…", "info")
+  toast(context, "Применяю состояние веб-сервера…", "info")
   const value = await runControl(context, ["apply", "--running", state ? "on" : "off", "--default", current.defaultEnabled ? "on" : "off"])
   toast(context, statusText(value), "success")
 }
 
 async function doAutostart(context, current) {
-  const state = await chooseState(context, "Запускать web server по умолчанию?", current.defaultEnabled)
+  const state = await chooseState(context, "Запускать веб-сервер по умолчанию?", current.defaultEnabled)
   if (state == null) return
   const value = await runControl(context, ["default", state ? "on" : "off"])
   toast(context, statusText(value), "success")
@@ -72,7 +72,7 @@ async function doAutostart(context, current) {
 
 async function doPort(context, current) {
   const portString = await ask(context, {
-    title: "Порт web server",
+    title: "Порт веб-сервера",
     placeholder: "1-65535",
     value: current.port ? String(current.port) : undefined,
     validate: (value) => {
@@ -84,7 +84,7 @@ async function doPort(context, current) {
   if (portString == null) return
   const port = Number.parseInt(portString, 10)
   const host = await ask(context, {
-    title: "Адрес (host) web server",
+    title: "Адрес (host) веб-сервера",
     value: current.host,
     validate: (value) => {
       if (!value || value.length > 253 || /\s/.test(value) || !value.replace(/\.$/, "").split(".").every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label))) return "Укажите IPv4-адрес или DNS-имя"
@@ -97,7 +97,7 @@ async function doPort(context, current) {
     message: `http://${host}:${port} — сервис будет перезапущен, если запущен.`,
   })
   if (!ok) return
-  toast(context, "Применяю адрес web server…", "info")
+  toast(context, "Применяю адрес веб-сервера…", "info")
   const value = await runControl(context, ["port", "--port", String(port), "--host", host])
   toast(context, `Адрес: ${buildAddress(value)}` + (value.restarted ? " · сервис перезапущен" : " · перезапуск при следующем старте"), "success")
 }
@@ -204,9 +204,9 @@ async function doRemoveUser(context) {
 
 async function deployFlow(context) {
   const deploy = await context.ui.dialog.select({
-    title: "Развернуть web server?",
+    title: "Развернуть веб-сервер?",
     options: [
-      { title: "Развернуть", value: "deploy", description: "Установить user systemd service через штатный installer." },
+      { title: "Развернуть", value: "deploy", description: "Установить пользовательский сервис systemd штатным установщиком." },
       { title: "Отмена", value: "cancel" },
     ],
   }).then((result) => {
@@ -215,11 +215,11 @@ async function deployFlow(context) {
     return typeof value === "string" ? value : null
   })
   if (deploy !== "deploy") return false
-  const running = await chooseState(context, "Запустить web server сейчас?", true)
+  const running = await chooseState(context, "Запустить веб-сервер сейчас?", true)
   if (running == null) return false
-  const defaultEnabled = await chooseState(context, "Запускать web server по умолчанию?", true)
+  const defaultEnabled = await chooseState(context, "Запускать веб-сервер по умолчанию?", true)
   if (defaultEnabled == null) return false
-  toast(context, "Разворачиваю web server…")
+  toast(context, "Разворачиваю веб-сервер…")
   const value = await runControl(context, ["deploy", "--running", running ? "on" : "off", "--default", defaultEnabled ? "on" : "off"])
   toast(context, statusText(value), "success")
   return true
@@ -229,7 +229,7 @@ async function menuLoop(context, initial) {
   let current = initial
   while (true) {
     const choice = await context.ui.dialog.select({
-      title: `Web server — ${buildAddress(current) || "адрес неизвестен"}`,
+      title: `Веб-сервер — ${buildAddress(current) || "адрес неизвестен"}`,
       options: [
         { title: "Статус", value: "status", description: `${buildAddress(current)} · ${current.running ? "запущен" : "остановлен"} · ${current.defaultEnabled ? "автозапуск вкл" : "автозапуск выкл"}` },
         { title: "Запустить или остановить", value: "toggle" },
@@ -248,14 +248,14 @@ async function menuLoop(context, initial) {
       else if (choice === "add-user") await doAddUser(context)
       else if (choice === "remove-user") await doRemoveUser(context)
     } catch (error) {
-      toast(context, `Server: ${error.message}`)
+      toast(context, `Веб-сервер: ${error.message}`)
     }
     try {
       current = await refreshStatus(context)
     } catch (error) {
       // A restart after "Порт и адрес" may time out one status call; keep the
       // menu open with the previous status instead of closing the wizard.
-      toast(context, `Server: ${error.message}`)
+      toast(context, `Веб-сервер: ${error.message}`)
     }
   }
 }
@@ -270,7 +270,7 @@ function busyMessage(prefix) {
 let wizardOpen = false
 async function openWizard(context) {
   if (wizardOpen) {
-    toast(context, busyMessage("Server"), "info")
+    toast(context, busyMessage("Веб-сервер"), "info")
     return
   }
   wizardOpen = true
@@ -283,7 +283,7 @@ async function openWizard(context) {
     }
     await menuLoop(context, current)
   } catch (error) {
-    toast(context, `Server: ${error.message}`)
+    toast(context, `Веб-сервер: ${error.message}`)
   } finally {
     wizardOpen = false
   }
@@ -295,7 +295,7 @@ async function processCommandStatus(context) {
     const payload = statusToastPayload(value)
     toast(context, payload.message, payload.variant)
   } catch (error) {
-    toast(context, `Server: ${error.message}`)
+    toast(context, `Веб-сервер: ${error.message}`)
   }
 }
 
@@ -332,8 +332,8 @@ export default Plugin.define({
           priority: 961,
           commands: [{
             id: "custom.server-wizard.open",
-            title: "Server: manage web server",
-            description: "Status, start/stop, autostart, port/address, users",
+            title: "Веб-сервер: управление",
+            description: "Статус, запуск и остановка, автозапуск, порт и адрес, пользователи",
             group: "Services",
             palette: true,
             suggested: true,
@@ -345,7 +345,7 @@ export default Plugin.define({
       },
     })
 
-    if (submitRouter.transport === "none") toast(context, "Server: local submit interception is unavailable.")
+    if (submitRouter.transport === "none") toast(context, "Веб-сервер: перехват локальной отправки недоступен.")
     return () => {
       submitRouter.dispose?.()
       unslot?.()

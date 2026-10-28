@@ -114,12 +114,12 @@ def main() -> int:
         ("/addorchestration", "Provider ID"),
         ("/addmcpprofile", "Profile ID"),
         ("/configure", "Configuration"),
-        ("/server", "web server"),
-        ("/webserver", "Web"),
+        ("/server", "еб-сервер"),
+        ("/webserver", "еб-сервер"),
         ("/models", "Select Model"),
         ("/panel right session", "Сессия"),
-        # Differential rendering may retain RIGHT from the previous panel.
-        ("/panel right activity", "[Act]"),
+        # Differential rendering may retain СПРАВА from the previous panel.
+        ("/panel right activity", "[Акт]"),
         ("/panel right plan", "Плана пока нет."),
         ("/panel right orchestration", "Оркестрация пока пустая."),
         ("/panel right history", "История"),

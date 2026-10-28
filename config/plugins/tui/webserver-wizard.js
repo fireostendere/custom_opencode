@@ -15,9 +15,9 @@ import {
 async function showStatus(context) {
   try {
     const value = await runControl(context, ["status"])
-    toast(context, value.deployed ? statusText(value) : "Web server ещё не развёрнут.", value.deployed ? "success" : "warning")
+    toast(context, value.deployed ? statusText(value) : "Веб-сервер ещё не развёрнут.", value.deployed ? "success" : "warning")
   } catch (error) {
-    toast(context, `Web server: ${error.message}`)
+    toast(context, `Веб-сервер: ${error.message}`)
   }
 }
 
@@ -25,7 +25,7 @@ let wizardOpen = false
 async function openWizard(context) {
   if (wizardOpen) {
     const command = activeControl()
-    toast(context, command ? `Web server: команда «${command}» ещё выполняется, подождите…` : "Web server: мастер уже открыт", "info")
+    toast(context, command ? `Веб-сервер: команда «${command}» ещё выполняется, подождите…` : "Веб-сервер: мастер уже открыт", "info")
     return
   }
   wizardOpen = true
@@ -33,32 +33,32 @@ async function openWizard(context) {
     const current = await runControl(context, ["status"])
     if (!current.deployed) {
       const deploy = await context.ui.dialog.select({
-        title: "Развернуть web server?",
+        title: "Развернуть веб-сервер?",
         options: [
-          { title: "Развернуть", value: "deploy", description: "Установить user systemd service через штатный installer." },
+          { title: "Развернуть", value: "deploy", description: "Установить пользовательский сервис systemd штатным установщиком." },
           { title: "Отмена", value: "cancel" },
         ],
       }).then((result) => result?.value ?? result ?? null)
       if (deploy !== "deploy") return
-      const running = await chooseState(context, "Запустить web server сейчас?", true)
+      const running = await chooseState(context, "Запустить веб-сервер сейчас?", true)
       if (running == null) return
-      const defaultEnabled = await chooseState(context, "Запускать web server по умолчанию?", true)
+      const defaultEnabled = await chooseState(context, "Запускать веб-сервер по умолчанию?", true)
       if (defaultEnabled == null) return
-      toast(context, "Разворачиваю web server…")
+      toast(context, "Разворачиваю веб-сервер…")
       const value = await runControl(context, ["deploy", "--running", running ? "on" : "off", "--default", defaultEnabled ? "on" : "off"])
       toast(context, statusText(value), "success")
       return
     }
 
-    const running = await chooseState(context, "Состояние web server сейчас", current.running)
+    const running = await chooseState(context, "Состояние веб-сервера сейчас", current.running)
     if (running == null) return
-    const defaultEnabled = await chooseState(context, "Состояние web server по умолчанию", current.defaultEnabled)
+    const defaultEnabled = await chooseState(context, "Состояние веб-сервера по умолчанию", current.defaultEnabled)
     if (defaultEnabled == null) return
-    toast(context, "Применяю состояние web server…", "info")
+    toast(context, "Применяю состояние веб-сервера…", "info")
     const value = await runControl(context, ["apply", "--running", running ? "on" : "off", "--default", defaultEnabled ? "on" : "off"])
     toast(context, statusText(value), "success")
   } catch (error) {
-    toast(context, `Web server wizard: ${error.message}`)
+    toast(context, `Мастер веб-сервера: ${error.message}`)
   } finally {
     wizardOpen = false
   }
@@ -97,8 +97,8 @@ export default Plugin.define({
           priority: 960,
           commands: [{
             id: "custom.webserver-wizard.open",
-            title: "Web server: deploy and configure",
-            description: "Deploy, start/stop and set the default startup state",
+            title: "Веб-сервер: развернуть и настроить",
+            description: "Развёртывание, запуск и остановка, состояние при старте",
             group: "Services",
             palette: true,
             suggested: true,
@@ -110,7 +110,7 @@ export default Plugin.define({
       },
     })
 
-    if (submitRouter.transport === "none") toast(context, "Web server: local submit interception is unavailable.")
+    if (submitRouter.transport === "none") toast(context, "Веб-сервер: перехват локальной отправки недоступен.")
     return () => {
       submitRouter.dispose?.()
       unslot?.()
