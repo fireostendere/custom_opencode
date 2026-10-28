@@ -473,7 +473,9 @@ assert.equal(await readFile(registryPath, 'utf8'), beforeProfileCancel, 'Cancel 
 confirmSave = true
 configureDialog([], [null])
 rows.find((row) => row.id === 'custom.add-wizard.mcp-profile').run('')
-await new Promise((resolve) => setImmediate(resolve))
+// Wait for the selector to take its answer: on a slow runner it opens later, and would
+// otherwise take the first answer queued for /mcp below.
+await waitFor(() => !dialogSelects.length, 'profile selector cancel')
 assert.equal(await readFile(registryPath, 'utf8'), beforeProfileCancel, 'Cancel in profile selector leaves registry unchanged')
 
 // /mcp: each pick sends one quiet mcp-toggle for the chosen scope; Esc exits.
