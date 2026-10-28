@@ -36,8 +36,8 @@ function credentialReference(value) {
 
 function validateOptionalPath(value) {
   if (!value) return ""
-  if (value.includes("\0")) return "Working directory must not contain NUL bytes."
-  if (value.length > PATH_MAX_LENGTH) return `Working directory must be at most ${PATH_MAX_LENGTH} characters.`
+  if (value.includes("\0")) return "Рабочая папка не должна содержать NUL-байты."
+  if (value.length > PATH_MAX_LENGTH) return `Рабочая папка: не длиннее ${PATH_MAX_LENGTH} символов.`
   return ""
 }
 
@@ -79,7 +79,7 @@ function toast(context, message, variant = "warning") {
 }
 
 async function alert(context, message) {
-  await context.ui.dialog.alert({ title: "Add configuration", message })
+  await context.ui.dialog.alert({ title: "Добавление конфигурации", message })
 }
 
 async function ask(context, title, placeholder, validate, optional = false, initial) {
@@ -121,8 +121,8 @@ async function managed(context) {
 async function multiple(context, title, options, initial = []) {
   const selected = new Set(initial)
   while (true) {
-    const choice = await choose(context, `${title} · ${selected.size} selected`, [
-      { title: "Done — continue", value: "__done" },
+    const choice = await choose(context, `${title} · выбрано: ${selected.size}`, [
+      { title: "Готово — продолжить", value: "__done" },
       ...options.map((option) => ({
         ...option,
         title: `[${selected.has(option.value) ? "x" : " "}] ${option.title}`,
@@ -139,8 +139,8 @@ async function profileInput(context) {
   const { registry, installed } = await managed(context)
   const profiles = registry.mcpProfiles
   const existing = Object.keys(profiles).length
-    ? await choose(context, "MCP profile", [
-        { title: "Create profile", value: "__new" },
+    ? await choose(context, "Профиль MCP", [
+        { title: "Создать профиль", value: "__new" },
         ...Object.values(profiles).map((p) => ({
           title: `${p.name} (${p.id})`,
           value: p.id,
@@ -154,46 +154,46 @@ async function profileInput(context) {
       ? existing
       : await ask(
           context,
-          "Profile ID",
+          "ID профиля",
           "core / frontend / custom",
           (value) =>
-            requiredID(value, "Profile ID") ||
-            (["auto", "all"].includes(value.toLowerCase()) ? "Auto and All are reserved." : ""),
+            requiredID(value, "ID профиля") ||
+            (["auto", "all"].includes(value.toLowerCase()) ? "Имена auto и all зарезервированы." : ""),
         )
   if (id == null) return null
   const previous = profiles[id] || profileTemplates[id] || {}
-  const name = await ask(context, "Profile display name", id, null, true, previous.name)
+  const name = await ask(context, "Отображаемое имя профиля", id, null, true, previous.name)
   if (name == null) return null
   const names = [...new Set([...Object.keys(installed), ...(previous.mcp || [])])].sort()
   const mcp = await multiple(
     context,
-    "MCP servers",
+    "MCP-серверы",
     names.map((id) => ({
       title: id,
       value: id,
       description: !installed[id]
-        ? "Missing — retained until unchecked"
+        ? "Не найден — останется, пока не снимете отметку"
         : installed[id].disabled
-          ? "Disabled"
+          ? "Отключён"
           : installed[id].type,
     })),
     previous.mcp,
   )
   if (mcp == null) return null
-  const risk = await choose(context, "Profile risk", [
+  const risk = await choose(context, "Уровень риска профиля", [
     {
-      title: `${previous.risk === "elevated" ? "Elevated" : "Normal"} (current)`,
+      title: `${previous.risk === "elevated" ? "Повышенный" : "Обычный"} (текущий)`,
       value: previous.risk || "normal",
     },
     {
-      title: previous.risk === "elevated" ? "Normal" : "Elevated — hardware / debugger",
+      title: previous.risk === "elevated" ? "Обычный" : "Повышенный — железо / отладчик",
       value: previous.risk === "elevated" ? "normal" : "elevated",
     },
   ])
   if (risk == null) return null
   const keywords = await ask(
     context,
-    "Auto: task keywords (comma separated)",
+    "Авто: ключевые слова задач (через запятую)",
     "frontend, css",
     null,
     true,
@@ -202,7 +202,7 @@ async function profileInput(context) {
   if (keywords == null) return null
   const agents = await ask(
     context,
-    "Auto: worker IDs (comma separated)",
+    "Авто: ID исполнителей (через запятую)",
     "frontend-builder",
     null,
     true,
@@ -219,25 +219,25 @@ async function profileInput(context) {
 
 async function selectProfile(context) {
   const state = await managed(context)
-  const mode = await choose(context, `MCP profile: ${state.mode}`, [
+  const mode = await choose(context, `Профиль MCP: ${state.mode}`, [
     {
-      title: "Auto",
+      title: "Авто",
       value: "auto",
-      description: "Worker assignment → task keywords → core fallback",
+      description: "Назначение исполнителя → ключевые слова → запасной core",
     },
     ...Object.values(state.registry.mcpProfiles).map((p) => ({
       title: `${p.name} (${p.id})`,
       value: p.id,
       description: `${p.mcp.join(", ") || "Empty"} · ${p.risk}`,
     })),
-    { title: "All", value: "all", description: "All enabled MCP tools" },
+    { title: "Все", value: "all", description: "Все включённые инструменты MCP" },
   ])
   if (mode == null) return
-  const scope = await choose(context, "Apply MCP profile", [
-    { title: "This session and its workers", value: "session" },
-    { title: "Default for new sessions", value: "default" },
+  const scope = await choose(context, "Применить профиль MCP", [
+    { title: "Эта сессия и её исполнители", value: "session" },
+    { title: "По умолчанию для новых сессий", value: "default" },
     ...(mode !== "auto" && state.registry.mcpProfiles[mode]?.risk !== "elevated"
-      ? [{ title: "Auto fallback for ambiguous tasks", value: "fallback" }]
+      ? [{ title: "Авто для неоднозначных задач", value: "fallback" }]
       : []),
   ])
   if (scope == null) return
@@ -246,13 +246,13 @@ async function selectProfile(context) {
     name: "mcp-profile",
     text: JSON.stringify({ mode, scope }),
   })
-  toast(context, `MCP profile: ${mode} · ${scope}`, "success")
+  toast(context, `Профиль MCP: ${mode} · ${scope}`, "success")
 }
 
 // /mcp: durable on/off per installed server, for this folder or everywhere.
 async function toggleMcp(context) {
   const current = sessionID(context)
-  if (!current) return toast(context, "Open a session first.")
+  if (!current) return toast(context, "Сначала откройте сессию.")
   while (true) {
     const { installed, registry, directory } = await managed(context)
     const toggles = registry.mcpToggles || {}
@@ -299,12 +299,12 @@ async function toggleMcp(context) {
 }
 
 async function configure(context) {
-  if (!sessionID(context)) return toast(context, "Open a session first.")
-  const action = await choose(context, "Configuration", [
-    { title: "Add / update configuration", value: "add" },
-    { title: "MCP profile: select", value: "profile" },
-    { title: "MCP tool exposure / status", value: "status" },
-    { title: "Remove managed item", value: "remove" },
+  if (!sessionID(context)) return toast(context, "Сначала откройте сессию.")
+  const action = await choose(context, "Конфигурация", [
+    { title: "Добавить или изменить конфигурацию", value: "add" },
+    { title: "Профиль MCP: выбрать", value: "profile" },
+    { title: "Видимость инструментов MCP и статус", value: "status" },
+    { title: "Удалить управляемый элемент", value: "remove" },
   ])
   if (action === "add") return openWizard(context)
   if (action === "profile") return selectProfile(context)
@@ -314,20 +314,20 @@ async function configure(context) {
     const listed = await context.client.mcp.list({ location: context.location })
     const connections = Array.isArray(listed) ? listed : Array.isArray(listed?.data) ? listed.data : []
     return context.ui.dialog.alert({
-      title: `MCP profile: ${state.mode}`,
+      title: `Профиль MCP: ${state.mode}`,
       message: [
-        `Installed MCP: ${Object.keys(state.installed).length}`,
+        `Установлено MCP: ${Object.keys(state.installed).length}`,
         ...(report
           ? [
-              `Last request: ${report.id} · ${report.agent}`,
-              `Active MCP: ${report.active.length} (${report.active.join(", ")})`,
-              `Exposed MCP tools: ${report.exposed.length}`,
-              `Inactive tools excluded: ${report.excluded.length}`,
+              `Последний запрос: ${report.id} · ${report.agent}`,
+              `Активные MCP: ${report.active.length} (${report.active.join(", ")})`,
+              `Видимых инструментов MCP: ${report.exposed.length}`,
+              `Исключено неактивных инструментов: ${report.excluded.length}`,
               ...report.warnings,
             ]
-          : ["No model request observed yet. Send a prompt to measure exposure."]),
+          : ["Запросов к модели ещё не было. Отправьте сообщение, чтобы измерить видимость."]),
         ...connections.map((server) => `${server.name}: ${server.status?.status ?? "unknown"}`),
-        "Profiles use native tool definitions; stored Code Mode resumes when no profiles exist.",
+        "Профили используют нативные описания инструментов; сохранённый режим кода вернётся, когда профилей не останется.",
       ].join("\n"),
     })
   }
@@ -346,27 +346,27 @@ async function configure(context) {
         value: JSON.stringify({ type, id }),
       })),
     )
-    const item = await choose(context, "Remove managed item", options)
+    const item = await choose(context, "Удалить управляемый элемент", options)
     if (
       item &&
-      (await context.ui.dialog.confirm({ title: "Remove configuration?", message: item }))
+      (await context.ui.dialog.confirm({ title: "Удалить конфигурацию?", message: item }))
     ) {
       await context.client.session.command({
         sessionID: sessionID(context),
         name: "remove-managed",
         text: item,
       })
-      toast(context, "Configuration removed", "success")
+      toast(context, "Конфигурация удалена", "success")
     }
   }
 }
 
 function requiredID(value, label) {
-  return ID_RE.test(value) ? "" : `${label} must start with a letter and be at most 64 characters.`
+  return ID_RE.test(value) ? "" : `${label}: начинается с буквы, не длиннее 64 символов.`
 }
 
 function requiredModelID(value, label) {
-  return MODEL_ID_RE.test(value) ? "" : `${label} must be 1-200 characters and must not contain #.`
+  return MODEL_ID_RE.test(value) ? "" : `${label}: от 1 до 200 символов, без #.`
 }
 
 function envNames(value) {
@@ -384,35 +384,35 @@ function envNames(value) {
 function validateEnvNames(value) {
   return envNames(value).every((item) => ENV_NAME_RE.test(item))
     ? ""
-    : "Use comma-separated uppercase environment variable names."
+    : "Укажите имена переменных окружения заглавными буквами через запятую."
 }
 
 async function providerInput(context) {
-  const id = await ask(context, "Provider ID", "acme", (value) => requiredID(value, "Provider ID"))
+  const id = await ask(context, "ID провайдера", "acme", (value) => requiredID(value, "ID провайдера"))
   if (id == null) return null
-  const name = await ask(context, "Provider name", id, null, true)
+  const name = await ask(context, "Название провайдера", id, null, true)
   if (name == null) return null
   const packageName = await ask(
     context,
-    "Provider package",
+    "Пакет провайдера",
     "@opencode/ai/providers/openai-compatible",
     null,
     true,
   )
   if (packageName == null) return null
-  const baseURL = await ask(context, "Base URL (optional)", "https://llm.example/v1", null, true)
+  const baseURL = await ask(context, "Базовый URL (необязательно)", "https://llm.example/v1", null, true)
   if (baseURL == null) return null
   const apiKeyName = await ask(
     context,
-    "API key environment variable (optional)",
+    "Переменная окружения с API-ключом (необязательно)",
     "ACME_API_KEY",
-    (value) => (ENV_NAME_RE.test(value) ? "" : "Use an uppercase environment variable name."),
+    (value) => (ENV_NAME_RE.test(value) ? "" : "Укажите имя переменной окружения заглавными буквами."),
     true,
   )
   if (apiKeyName == null) return null
   const extraEnv = await ask(
     context,
-    "Additional environment variables (optional)",
+    "Дополнительные переменные окружения (необязательно)",
     "REGION, TENANT_ID",
     validateEnvNames,
     true,
@@ -434,35 +434,35 @@ async function providerInput(context) {
 }
 
 async function modelInput(context) {
-  const providerID = await ask(context, "Provider ID", "acme", (value) =>
-    requiredID(value, "Provider ID"),
+  const providerID = await ask(context, "ID провайдера", "acme", (value) =>
+    requiredID(value, "ID провайдера"),
   )
   if (providerID == null) return null
-  const id = await ask(context, "Model alias", "coder", (value) =>
-    requiredModelID(value, "Model alias"),
+  const id = await ask(context, "Псевдоним модели", "coder", (value) =>
+    requiredModelID(value, "Псевдоним модели"),
   )
   if (id == null) return null
   const modelID = await ask(
     context,
-    "Upstream model ID",
+    "ID модели у провайдера",
     id,
-    (value) => requiredModelID(value, "Upstream model ID"),
+    (value) => requiredModelID(value, "ID модели у провайдера"),
     true,
   )
   if (modelID == null) return null
-  const name = await ask(context, "Model name", id, null, true)
+  const name = await ask(context, "Название модели", id, null, true)
   if (name == null) return null
   return { providerID, id, modelID: modelID || id, name: name || id }
 }
 
 async function mcpInput(context) {
-  const name = await ask(context, "MCP name", "docs", (value) => requiredID(value, "MCP name"))
+  const name = await ask(context, "Имя MCP", "docs", (value) => requiredID(value, "Имя MCP"))
   if (name == null) return null
   const state = await managed(context)
   const previous = state.registry.mcp[name] || {}
-  const type = await choose(context, "MCP transport", [
-    { title: "Remote URL", value: "remote", description: "Connect to an HTTP(S) MCP server." },
-    { title: "Local command", value: "local", description: "Run an MCP server command." },
+  const type = await choose(context, "Транспорт MCP", [
+    { title: "Удалённый URL", value: "remote", description: "Подключиться к MCP-серверу по HTTP или HTTPS." },
+    { title: "Локальная команда", value: "local", description: "Запустить команду MCP-сервера." },
   ])
   if (type == null) return null
 
@@ -470,22 +470,22 @@ async function mcpInput(context) {
   if (type === "remote") {
     const url = await ask(
       context,
-      "Remote MCP URL",
+      "URL удалённого MCP",
       "https://mcp.example.com",
       (value) => {
         let parsed
         try {
           parsed = new URL(value)
         } catch {
-          return "Remote MCP requires an http(s) URL."
+          return "Удалённому MCP нужен URL http(s)."
         }
         if (!["http:", "https:"].includes(parsed.protocol))
-          return "Remote MCP requires an http(s) URL."
+          return "Удалённому MCP нужен URL http(s)."
         if (parsed.username || parsed.password)
-          return "Remote MCP URL must not include credentials."
+          return "URL удалённого MCP не должен содержать учётные данные."
         for (const [key, item] of parsed.searchParams)
           if (isSensitiveName(key) && !credentialReference(item))
-            return `${key} must use {env:VAR}.`
+            return `${key}: используйте {env:VAR}.`
         return ""
       },
       false,
@@ -496,21 +496,21 @@ async function mcpInput(context) {
   } else {
     const command = await ask(
       context,
-      "Local command (JSON array)",
+      "Локальная команда (массив JSON)",
       '["npx", "-y", "example-mcp"]',
       (value) => {
         let parsed
         try {
           parsed = JSON.parse(value)
         } catch {
-          return "Local command must be a JSON array of strings."
+          return "Локальная команда должна быть массивом строк JSON."
         }
         if (
           !Array.isArray(parsed) ||
           !parsed.length ||
           parsed.some((item) => typeof item !== "string" || !item.trim())
         )
-          return "Local command must be a non-empty JSON array of strings."
+          return "Локальная команда должна быть непустым массивом строк JSON."
         for (let index = 0; index < parsed.length; index += 1) {
           const argument = parsed[index]
           const flag = /^--([^=]+)(?:=(.*))?$/i.exec(argument)
@@ -533,7 +533,7 @@ async function mcpInput(context) {
                   ? [header[1], header[2]]
                   : null
           if (sensitive && isSensitiveName(sensitive[0]) && !credentialReference(sensitive[1]))
-            return `${sensitive[0]} must use {env:VAR}.`
+            return `${sensitive[0]}: используйте {env:VAR}.`
         }
         return ""
       },
@@ -542,26 +542,26 @@ async function mcpInput(context) {
     )
     if (command == null) return null
     config.command = JSON.parse(command)
-    const cwd = await ask(context, "Local working directory (optional)", ".", validateOptionalPath, true, previous.cwd)
+    const cwd = await ask(context, "Рабочая папка (необязательно)", ".", validateOptionalPath, true, previous.cwd)
     if (cwd == null) return null
     if (cwd) config.cwd = cwd
     else delete config.cwd
   }
-  const codemode = await choose(context, "Enable MCP code mode?", [
-    { title: "No", value: false },
-    { title: "Yes", value: true },
+  const codemode = await choose(context, "Включить режим кода для MCP?", [
+    { title: "Нет", value: false },
+    { title: "Да", value: true },
   ])
   if (codemode == null) return null
-  const disabled = await choose(context, "Disable this MCP server?", [
-    { title: "No", value: false },
-    { title: "Yes", value: true },
+  const disabled = await choose(context, "Отключить этот MCP-сервер?", [
+    { title: "Нет", value: false },
+    { title: "Да", value: true },
   ])
   if (disabled == null) return null
   const profiles = Object.values(state.registry.mcpProfiles)
   const selected = profiles.length
     ? await multiple(
         context,
-        "Profiles",
+        "Профили",
         profiles.map((p) => ({ title: `${p.name} (${p.id})`, value: p.id })),
         profiles.filter((p) => p.mcp.includes(name)).map((p) => p.id),
       )
@@ -571,13 +571,13 @@ async function mcpInput(context) {
 }
 
 async function skillInput(context) {
-  const source = await choose(context, "Skill source", [
+  const source = await choose(context, "Источник навыка", [
     {
-      title: "Import local SKILL.md",
+      title: "Импортировать локальный SKILL.md",
       value: "import",
-      description: "Reuse an existing skill file or directory.",
+      description: "Использовать готовый файл или папку навыка.",
     },
-    { title: "Enter instructions manually", value: "manual" },
+    { title: "Ввести инструкции вручную", value: "manual" },
   ])
   if (source == null) return null
   let content = ""
@@ -588,9 +588,9 @@ async function skillInput(context) {
     while (true) {
       const inputPath = await ask(
         context,
-        "Skill path",
-        "/path/to/skill or /path/to/SKILL.md",
-        (value) => (value ? "" : "Skill path is required."),
+        "Путь к навыку",
+        "/путь/к/навыку или /путь/к/SKILL.md",
+        (value) => (value ? "" : "Нужен путь к навыку."),
       )
       if (inputPath == null) return null
       const expanded =
@@ -610,7 +610,7 @@ async function skillInput(context) {
         defaultID = defaultName
         break
       } catch (error) {
-        await alert(context, `Cannot read skill: ${error.message}`)
+        await alert(context, `Не удалось прочитать навык: ${error.message}`)
       }
     }
   }
@@ -618,41 +618,41 @@ async function skillInput(context) {
   let name = defaultName
   let description = defaultDescription
   if (source === "manual") {
-    id = await ask(context, "Skill ID", "review", (value) => requiredID(value, "Skill ID"))
+    id = await ask(context, "ID навыка", "review", (value) => requiredID(value, "ID навыка"))
     if (id == null) return null
-    name = await ask(context, "Skill name", id, null, true)
+    name = await ask(context, "Название навыка", id, null, true)
     if (name == null) return null
-    description = await ask(context, "Skill description", "Review current changes")
+    description = await ask(context, "Описание навыка", "Проверить текущие изменения")
     if (description == null) return null
-    content = await ask(context, "Skill content", "Paste the skill instructions", (value) =>
-      value ? "" : "Skill content is required.",
+    content = await ask(context, "Содержимое навыка", "Вставьте инструкции навыка", (value) =>
+      value ? "" : "Нужно содержимое навыка.",
     )
     if (content == null) return null
   }
-  const autoinvoke = await choose(context, "Enable autoinvoke?", [
-    { title: "No", value: false },
-    { title: "Yes", value: true },
+  const autoinvoke = await choose(context, "Включить автовызов?", [
+    { title: "Нет", value: false },
+    { title: "Да", value: true },
   ])
   if (autoinvoke == null) return null
   return { id, name: name || id, description, content, autoinvoke }
 }
 
 async function orchestrationInput(context) {
-  const providerID = await ask(context, "Provider ID", "acme", (value) =>
-    requiredID(value, "Provider ID"),
+  const providerID = await ask(context, "ID провайдера", "acme", (value) =>
+    requiredID(value, "ID провайдера"),
   )
   if (providerID == null) return null
-  const id = await ask(context, "Orchestration alias", "coder-orchestrated", (value) =>
-    requiredModelID(value, "Orchestration alias"),
+  const id = await ask(context, "Псевдоним оркестрации", "coder-orchestrated", (value) =>
+    requiredModelID(value, "Псевдоним оркестрации"),
   )
   if (id == null) return null
-  const baseModelID = await ask(context, "Base model ID", "coder", (value) =>
-    requiredModelID(value, "Base model ID"),
+  const baseModelID = await ask(context, "ID базовой модели", "coder", (value) =>
+    requiredModelID(value, "ID базовой модели"),
   )
   if (baseModelID == null) return null
-  const name = await ask(context, "Orchestration name", `${id} · Orchestrated`, null, true)
+  const name = await ask(context, "Название оркестрации", `${id} · Orchestrated`, null, true)
   if (name == null) return null
-  const prompt = await ask(context, "Managed system policy", "Verify before completion.")
+  const prompt = await ask(context, "Управляемая системная политика", "Проверяй перед завершением.")
   if (prompt == null) return null
   return { providerID, id, baseModelID, name: name || `${id} · Orchestrated`, prompt }
 }
@@ -670,7 +670,7 @@ async function inputFor(context, kind) {
 async function saveNative(context, parsed) {
   const current = sessionID(context)
   if (!current) {
-    toast(context, "Select an active session before adding configuration.")
+    toast(context, "Выберите активную сессию, прежде чем добавлять конфигурацию.")
     return
   }
   try {
@@ -688,14 +688,14 @@ async function saveNative(context, parsed) {
 async function openWizard(context, kind) {
   const current = sessionID(context)
   if (!current) {
-    toast(context, "Select an active session before adding configuration.")
+    toast(context, "Выберите активную сессию, прежде чем добавлять конфигурацию.")
     return
   }
   try {
     if (!kind)
       kind = await choose(
         context,
-        "Add / update configuration",
+        "Добавить или изменить конфигурацию",
         ADD_KINDS.map((value) => ({ title: TITLES[value], value })),
       )
     if (!kind) return
@@ -703,7 +703,7 @@ async function openWizard(context, kind) {
     if (
       input &&
       (await context.ui.dialog.confirm({
-        title: "Save configuration?",
+        title: "Сохранить конфигурацию?",
         message: JSON.stringify(input, null, 2),
       }))
     )
@@ -713,7 +713,7 @@ async function openWizard(context, kind) {
         arguments: JSON.stringify(input),
       })
   } catch (error) {
-    toast(context, `Wizard failed: ${error.message}`)
+    toast(context, `Ошибка мастера: ${error.message}`)
   }
 }
 
@@ -751,7 +751,7 @@ function commandRows(context, process) {
       id: "custom.models.refresh",
       title: "Обновить список моделей",
       description: "Перечитать сохранённые модели и оркестрации",
-      group: "Configuration",
+      group: "Конфигурация",
       palette: true,
       slash: { name: "refreshmodels" },
       run: () => saveNative(context, { kind: "catalog", command: "refreshmodels", arguments: "" }),
@@ -760,7 +760,7 @@ function commandRows(context, process) {
       id: "custom.add-wizard.accounts",
       title: "Аккаунты провайдеров",
       description: "Добавить аккаунт, переименовать или переключить активный",
-      group: "Configuration",
+      group: "Конфигурация",
       palette: true,
       suggested: true,
       slash: { name: "accounts" },
@@ -770,7 +770,7 @@ function commandRows(context, process) {
       id: "custom.add-wizard.add",
       title: "Добавить конфигурацию",
       description: "Провайдеры, модели, MCP, профили, навыки и оркестрация",
-      group: "Configuration",
+      group: "Конфигурация",
       palette: true,
       suggested: true,
       slash: { name: "add", arguments: true },
@@ -782,7 +782,7 @@ function commandRows(context, process) {
         id: `custom.add-wizard.${kind}`,
         title: TITLES[kind],
         description: "Мастер или команда JSON",
-        group: "Configuration",
+        group: "Конфигурация",
         palette: true,
         run: (input) => process(parseAddCommand(slashInput(command, input))),
       }
@@ -790,7 +790,7 @@ function commandRows(context, process) {
     {
       id: "custom.add-wizard.configure",
       title: "Конфигурация: управление",
-      group: "Configuration",
+      group: "Конфигурация",
       palette: true,
       slash: { name: "configure" },
       run: () => {
@@ -802,7 +802,7 @@ function commandRows(context, process) {
       id: "custom.add-wizard.mcp-toggle",
       title: "MCP: включить / выключить",
       description: "Для этой папки или везде; выключенный MCP не запускается",
-      group: "Configuration",
+      group: "Конфигурация",
       palette: true,
       slash: { name: "mcp" },
       run: () => {
@@ -813,7 +813,7 @@ function commandRows(context, process) {
     {
       id: "custom.add-wizard.profile",
       title: "Профиль MCP: выбрать",
-      group: "Configuration",
+      group: "Конфигурация",
       palette: true,
       run: () => {
         void selectProfile(context).catch((error) => toast(context, error.message))
@@ -883,7 +883,7 @@ export default Plugin.define({
     })
 
     if (submitRouter.transport === "none")
-      toast(context, "Add wizard: local submit interception is unavailable.")
+      toast(context, "Мастер добавления: перехват локальной отправки недоступен.")
     return () => {
       submitRouter.dispose?.()
       unslot?.()

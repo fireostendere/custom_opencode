@@ -107,21 +107,20 @@ def main() -> int:
         return ansi.sub("", output.decode("utf8", "replace"))
 
     cases = [
-        ("/addprovider", "Provider ID"),
-        ("/addmodel", "Provider ID"),
-        ("/addmcp", "MCP name"),
-        ("/addskill", "Skill source"),
-        ("/addorchestration", "Provider ID"),
-        ("/addmcpprofile", "Profile ID"),
-        ("/configure", "Configuration"),
+        ("/addprovider", "ID провайдера"),
+        ("/addmodel", "ID провайдера"),
+        ("/addmcp", "Имя MCP"),
+        ("/addskill", "Источник навыка"),
+        ("/addorchestration", "ID провайдера"),
+        ("/addmcpprofile", "ID профиля"),
+        ("/configure", "Конфигурация"),
         ("/server", "еб-сервер"),
         ("/webserver", "еб-сервер"),
         ("/models", "Select Model"),
         ("/panel right session", "Сессия"),
-        # Differential rendering may retain СПРАВА from the previous panel.
-        ("/panel right activity", "[Акт]"),
+        ("/panel right activity", "Активность"),
         ("/panel right plan", "Плана пока нет."),
-        ("/panel right orchestration", "Оркестрация пока пустая."),
+        ("/panel right orchestration", "Подагентов в этой сессии не было."),
         ("/panel right history", "История"),
         ("/panel right limits", "Лимиты"),
     ]

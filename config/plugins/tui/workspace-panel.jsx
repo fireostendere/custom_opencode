@@ -14,12 +14,12 @@ const HANDLE = 1
 const DEFAULT_SIDE_SIZE = 36
 const DEFAULT_TOP_SIZE = 10
 const DEFAULT_BOTTOM_SIZE = 12
-const SIDE_LABEL = { left: "СЛЕВА", right: "СПРАВА", top: "СВЕРХУ", bottom: "СНИЗУ" }
 const SIDE_TITLE = { left: "Левая панель", right: "Правая панель", top: "Верхняя панель", bottom: "Нижняя панель" }
 const ACTION_TITLE = { show: "показать", disable: "выключить", pin: "закрепить", unpin: "открепить", collapse: "свернуть", expand: "развернуть", end: "перейти в конец" }
 const COLLAPSE_ICON = { left: "◂", right: "▸", top: "▴", bottom: "▾" }
 const EXPAND_ICON = { left: "▸", right: "◂", top: "▾", bottom: "▴" }
-const PIN_ICON = "📌"
+// Text glyphs, not emoji: emoji widths differ between terminals and shift the header.
+const PIN_ICON = { pinned: "◆", floating: "◇" }
 // Scroll positions are keyed by side/session/view; keep the most recent ones.
 const SCROLL_POSITION_LIMIT = 100
 
@@ -288,8 +288,8 @@ export default Plugin.define({
     function Tab(props) {
       const active = () => zone(props.side).active === props.view
       return (
-        <box paddingX={1} onMouseDown={(event) => { event?.stopPropagation?.(); setZoneView(props.side, props.view) }}>
-          <text fg={active() ? theme.text.formfield.selected : theme.text.muted}><span>{active() ? `[${props.label}]` : props.label}</span></text>
+        <box paddingRight={1} flexShrink={0} onMouseDown={(event) => { event?.stopPropagation?.(); setZoneView(props.side, props.view) }}>
+          <text fg={active() ? theme.text.formfield.selected : theme.text.muted}>{active() ? <u><b>{props.label}</b></u> : <span>{props.label}</span>}</text>
         </box>
       )
     }
@@ -370,16 +370,13 @@ export default Plugin.define({
             <Show when={!item().collapsed} fallback={<Handle side={props.side} />}>
               <box flexDirection="column" flexShrink={0} paddingX={1} paddingTop={1} gap={1}>
                 <box flexDirection="row" justifyContent="space-between" width="100%">
-                  <box flexDirection="row" gap={1}>
-                    <text fg={theme.text.muted}><span>{SIDE_LABEL[props.side]}</span></text>
-                    <text fg={theme.text.base}><b>{panelTitle(item().active)}</b></text>
-                  </box>
-                  <box flexDirection="row" gap={1}>
-                    <box backgroundColor={item().pinned ? theme.background.action.primary.base : undefined} onMouseDown={() => setPinned(props.side, !item().pinned)}><text fg={item().pinned ? theme.text.action.primary.base : theme.text.muted}><span>{PIN_ICON}</span></text></box>
+                  <text fg={theme.text.base}><b>{panelTitle(item().active)}</b></text>
+                  <box flexDirection="row" gap={1} flexShrink={0}>
+                    <box onMouseDown={() => setPinned(props.side, !item().pinned)}><text fg={item().pinned ? theme.text.action.primary.base : theme.text.muted}><span>{item().pinned ? PIN_ICON.pinned : PIN_ICON.floating}</span></text></box>
                     <box onMouseDown={() => disableZone(props.side)}><text fg={theme.text.muted}><span>×</span></text></box>
                   </box>
                 </box>
-                <box flexDirection="row" flexWrap="wrap" width="100%">
+                <box flexDirection="row" width="100%" minWidth={0} overflow="hidden">
                   <For each={PANEL_DEFS}>{(panel) => <Tab side={props.side} view={panel.id} label={panel.short} />}</For>
                 </box>
               </box>
@@ -393,10 +390,10 @@ export default Plugin.define({
                   stickyScroll={true}
                   stickyStart="bottom"
                   viewportOptions={{ paddingRight: 1 }}
+                  // No forced visibility: the bar appears only when the view overflows, in a quiet tone.
                   verticalScrollbarOptions={{
-                    visible: true,
                     paddingLeft: 1,
-                    trackOptions: { backgroundColor: theme.background.raised.base, foregroundColor: theme.scrollbar.base },
+                    trackOptions: { backgroundColor: theme.background.base, foregroundColor: theme.border.base },
                   }}
                 >
                   <box flexDirection="column" width="100%" minWidth={0} paddingX={1} paddingTop={1} paddingBottom={1} gap={1} flexShrink={0}>
@@ -408,7 +405,7 @@ export default Plugin.define({
                 </Show>
               </box>
               <box flexDirection="row" justifyContent="flex-end" paddingX={1} paddingRight={props.side === "left" ? HANDLE + 1 : 1} flexShrink={0}>
-                <box onMouseDown={() => jumpToEnd(props.side)}><text fg={theme.text.action.secondary.base}><span>↓ конец</span></text></box>
+                <box onMouseDown={() => jumpToEnd(props.side)}><text fg={theme.text.muted}><span>↓ конец</span></text></box>
               </box>
               <ExpandedHandle side={props.side} />
             </Show>
