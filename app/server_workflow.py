@@ -358,6 +358,23 @@ class Handler(rag.Handler, features.Handler):
         parsed = urlsplit(self.path)
         if self.internal_route_denied(parsed):
             return
+        if parsed.path == "/client-goal-view.js":
+            if not self.authenticated():
+                self.unauthorized()
+                return
+            try:
+                body = (rag.plus.ext.base.ROOT.parent / "config/plugins/tui/lib/goal-view.js").read_bytes()
+            except OSError:
+                self.json_response({"ok": False, "error": "not found"}, status=404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/javascript; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if parsed.path == "/client-integration.json":
             if not self.authenticated():
                 self.unauthorized()

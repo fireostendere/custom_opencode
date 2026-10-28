@@ -13,12 +13,18 @@ const sessionID = "ses_goal"
 const db = new Map()
 let disposed = 0
 async function harness() {
-  let command, tool, hook, events
+  let command, tool, hook, events, rpc
+  const updates = []
   const notices = [], interruptions = []
   const stream = new ReadableStream({ start: controller => { events = controller } })
   const registration = () => ({ dispose: () => { disposed++ } })
   const ctx = {
     location: { directory },
+    rpc: { register: async (definition, methods) => {
+      assert.equal(definition.id, 'custom.goal')
+      rpc = methods
+      return { ...registration(), events: { emit: async (name, value) => { updates.push({ name, ...value }) } } }
+    } },
     storage: {
       get: async key => structuredClone(db.get(key)),
       scan: async ({ prefix, after, limit }) => {
@@ -44,13 +50,15 @@ async function harness() {
   const goal = () => [...db.values()].find(value => value.objective)
   const wakes = () => notices.filter(value => value.resume)
   const context = (agent = "build", id = sessionID) => ({ sessionID: id, agent, system: [], tools: { goal_update: {}, read: {} } })
-  return { ctx, command, tool, hook, notices, interruptions, cleanup, emit, run, goal, wakes, context }
+  return { ctx, command, tool, hook, notices, interruptions, cleanup, emit, run, goal, wakes, context, rpc, updates }
 }
 
 let h = await harness()
 try {
   assert.equal(h.command.name, "goal")
   assert.equal(h.tool.options.pinned, true)
+  assert.ok(h.rpc?.get, 'the UI needs a read-only goal snapshot, not invisible synthetic messages')
+  assert.deepEqual(await h.rpc.get({ sessionID }), { goal: null })
   await h.run("")
   assert.equal(h.wakes().length, 0)
   assert.match(h.notices.at(-1).text, /нет цели/)
@@ -58,6 +66,12 @@ try {
   await assert.rejects(h.run("x".repeat(16001)), /16000/)
 
   await h.run("Исправь баг и проверь результат")
+  assert.equal((await h.rpc.get({ sessionID })).goal.objective, 'Исправь баг и проверь результат')
+  assert.equal(h.updates.at(-1).sessionID, sessionID, 'starting a goal notifies both clients immediately')
+  const getSession = h.ctx.session.get
+  h.ctx.session.get = async () => ({ location: { directory: '/another-project' } })
+  assert.deepEqual(await h.rpc.get({ sessionID }), { goal: null }, 'a location cannot expose another project’s goal')
+  h.ctx.session.get = getSession
   await advance(0)
   assert.equal(h.wakes().length, 1)
   assert.equal(h.wakes()[0].delivery, "queue")
@@ -88,6 +102,7 @@ try {
   await assert.rejects(update("paused", "bad"), /Invalid/)
   await update("active", "Баг исправлен, осталось проверить")
   assert.equal(h.goal().status, "active")
+  assert.equal((await h.rpc.get({ sessionID })).goal.summary, 'Баг исправлен, осталось проверить')
   await update("completed", "Тест пройден; вся цель выполнена")
   await h.emit("session.idle")
   await advance(300000)
@@ -106,6 +121,7 @@ try {
   await advance(750)
   assert.equal(h.wakes().length, 3)
   assert.equal(h.goal().status, "paused")
+  assert.equal((await h.rpc.get({ sessionID })).goal.status, 'paused')
   assert.deepEqual(h.interruptions.at(-1), { sessionID, resume: false })
   await h.run("resume")
   await advance(0)
@@ -127,6 +143,7 @@ try {
     assert.equal(h.wakes().length, beforeFailures + Math.min(attempt, 4))
   }
   assert.equal(h.goal().status, "blocked")
+  assert.equal((await h.rpc.get({ sessionID })).goal.status, 'blocked')
   await h.run("resume"); await advance(0)
   const beforeBudget = h.wakes().length
   await h.emit("session.execution.started")
@@ -175,6 +192,7 @@ try {
   assert.equal(h.goal().status, "blocked")
   await h.emit("session.deleted")
   assert.equal(db.size, 0)
+  assert.deepEqual(await h.rpc.get({ sessionID }), { goal: null }, 'deleted sessions disappear from the UI')
 
   await h.cleanup()
   const prefix = `goals:${createHash('sha256').update(directory).digest('hex')}:`
@@ -276,5 +294,5 @@ try {
   await h.cleanup()
   mock.timers.reset()
 }
-assert.equal(disposed, 12)
+assert.equal(disposed, 16)
 console.log("Goal regression passed: continued finals, completion, stop/resume, steering, bounded retries, budgets, restart, on-demand history, isolation, deletion/move/write races and cancellation")

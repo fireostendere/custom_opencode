@@ -477,6 +477,7 @@ assert.ok(
       "cleanup model-selector.jsx",
       "cleanup server-wizard.js",
       "cleanup webserver-wizard.js",
+      "cleanup goal-panel.jsx",
       "cleanup dnd-watch-panel.jsx",
       "cleanup effort-indicator.jsx",
       "cleanup location-recovery.jsx",
@@ -490,6 +491,7 @@ assert.ok(
 for (const source of [
   "add-wizard.js",
   "dnd-watch-panel.jsx",
+  "goal-panel.jsx",
   "effort-indicator.jsx",
   "location-recovery.jsx",
   "model-selector.jsx",

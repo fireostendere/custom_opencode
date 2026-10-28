@@ -1,6 +1,7 @@
 import { Plugin } from "@opencode/plugin/tui"
 import effortIndicator from "./effort-indicator.jsx"
 import dndWatchPanel from "./dnd-watch-panel.jsx"
+import goalPanel from "./goal-panel.jsx"
 import addWizard from "./add-wizard.js"
 import webserverWizard from "./webserver-wizard.js"
 import serverWizard from "./server-wizard.js"
@@ -17,6 +18,7 @@ const plugins = [
   locationRecovery,
   effortIndicator,
   dndWatchPanel,
+  goalPanel,
   addWizard,
   webserverWizard,
   serverWizard,

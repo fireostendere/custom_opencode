@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Exercise /goal on the pinned native engine with a local provider; no paid calls."""
 import base64
+import fcntl
 import json
 import os
+import pty
 from pathlib import Path
 import re
+import select
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
+import termios
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -71,6 +76,11 @@ def main():
         plugins = config / "plugins"
         plugins.mkdir(parents=True)
         (plugins / "goal.js").write_text(f'export {{ default }} from {json.dumps((ROOT / "config/plugins/goal.js").as_uri())};\n')
+        ui = plugins / "goal-ui"
+        ui.mkdir()
+        (ui / "package.json").write_text(json.dumps({"type": "module", "exports": {".": "./index.js", "./tui": "./tui.jsx"}}))
+        (ui / "index.js").write_text('export default { id: "fixture.goal-ui", setup() {} }\n')
+        (ui / "tui.jsx").write_text(f'export {{ default }} from {json.dumps((ROOT / "config/plugins/tui/goal-panel.jsx").as_uri())};\n')
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
@@ -97,7 +107,8 @@ def main():
             path += "?" + urlencode({"location[directory]": str(project)})
             with urlopen(Request(state["url"] + path, method=method, headers=headers, data=None if body is None else json.dumps(body).encode()), timeout=15) as response:
                 raw = response.read()
-                return json.loads(raw).get("data") if raw else None
+                value = json.loads(raw) if raw else None
+                return value.get("data", value) if isinstance(value, dict) else value
 
         def until(check):
             deadline = time.monotonic() + 25
@@ -118,13 +129,40 @@ def main():
             inbox = api("GET", f"/api/session/{sid}/inbox")
             return any(f"Goal: {expected}" in item.get("payload", {}).get("text", "") for item in inbox)
 
+        def snapshot(sid):
+            return api("POST", "/api/rpc/custom.goal/get", {"input": {"sessionID": sid}})["output"]["goal"]
+
+        def terminal_goal(sid):
+            master, slave = pty.openpty()
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
+            process = subprocess.Popen([binary, "--session", sid], env={**env, "TERM": "xterm-256color"}, cwd=project,
+                                       stdin=slave, stdout=slave, stderr=slave)
+            os.close(slave)
+            output = b""
+            try:
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    if select.select([master], [], [], .1)[0]:
+                        output += os.read(master, 65536)
+                    visible = output.decode(errors="replace")
+                    if all(text in visible for text in ("Достижение цели", "hold-goal: stop and recover", "/goal stop")):
+                        return
+                raise AssertionError("Native composer did not render the goal: " + output.decode(errors="replace")[-3000:])
+            finally:
+                process.terminate()
+                process.wait(timeout=10)
+                os.close(master)
+
         try:
             service("start")
             sid = session()
+            assert snapshot(sid) is None
             command(sid, "finite-goal: finish the fixture")
             until(lambda: "VERIFIED" in json.dumps(api("GET", f"/api/session/{sid}/context")))
             assert list(goal_calls.values()) == [2], goal_calls
             until(lambda: status(sid, "completed"))
+            assert snapshot(sid)["status"] == "completed"
+            assert snapshot(sid)["objective"] == "finite-goal: finish the fixture"
             before = len(requests)
             time.sleep(1.5)
             command(sid, "status")
@@ -133,6 +171,7 @@ def main():
             sid = session()
             command(sid, "blocked-goal: requires user input")
             until(lambda: status(sid, "blocked"))
+            assert snapshot(sid)["status"] == "blocked"
             until(lambda: api("GET", f"/api/session/{sid}").get("outcome") == "succeeded")
             before = len(requests)
             time.sleep(1.5)
@@ -141,14 +180,17 @@ def main():
             sid = session()
             command(sid, "hold-goal: stop and recover")
             until(lambda: len(goal_calls) == 3)
+            terminal_goal(sid)
             command(sid, "stop")
             hold.set()
             until(lambda: status(sid, "paused"))
+            assert snapshot(sid)["status"] == "paused"
             before = len(requests)
             time.sleep(1.5)
             assert len(requests) == before, "stop did not cancel continuation"
             command(sid, "resume")
             until(lambda: status(sid, "completed"))
+            assert snapshot(sid)["status"] == "completed"
 
             # Stop the service during a held turn: native plugin storage must restore
             # the active goal, while completed and blocked sessions stay parked.
@@ -163,7 +205,7 @@ def main():
             before = len(requests)
             time.sleep(1.5)
             assert len(requests) == before, "restart revived a completed or blocked goal"
-            print("Native goal passed: premature final resumes, verified completion stops, zero-call status/stop, user blocker, stop/resume and active restart recovery. Paid model calls: 0")
+            print("Native goal passed: visible TUI composer, read-only RPC snapshots, continued finals, completion/block/stop/resume and restart recovery. Paid model calls: 0")
         except Exception:
             print(f"Provider requests: {len(requests)}; goal calls: {goal_calls}", file=sys.stderr)
             try:

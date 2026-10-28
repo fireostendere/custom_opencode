@@ -67,6 +67,7 @@ async function memoryChecks() {
   baseline = await heap()
   const cleanup = await goalPlugin.setup({
     location: { directory: '/fixture/project' },
+    rpc: { register: async () => ({ ...registration, events: { emit: async () => {} } }) },
     storage: {
       async scan({ prefix, after, limit }) {
         pages++
