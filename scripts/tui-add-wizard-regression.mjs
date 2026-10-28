@@ -83,6 +83,7 @@ const serverContext = {
   mcp: {
     transform: async (callback) => { mcpTransform = callback },
     reload: async () => { reloads.push('mcp') },
+    list: async () => ({ data: liveMcp }),
   },
   skill: {
     transform: async (callback) => { skillTransform = callback },
@@ -130,7 +131,7 @@ function appliedSettings() {
         models[key] = draft
       },
   })
-  mcpTransform({ set: (name, config) => mcp.set(name, config) })
+  mcpTransform({ set: (name, config) => mcp.set(name, config), get: (name) => mcp.get(name) })
   skillTransform({ add: (definition) => { skills[definition.id] = definition } })
   return { providers, models, mcp, skills }
 }
@@ -139,6 +140,9 @@ const commandCalls = []
 const prompts = []
 const promptInputs = []
 const selects = []
+const selectOptions = []
+// Native MCP status as the sidebar shows it, after every plugin transform.
+let liveMcp = []
 const alerts = []
 const toasts = []
 const slotRenders = []
@@ -158,6 +162,7 @@ const dialog = {
   },
   async select(input) {
     selects.push(input.title)
+    selectOptions.push(input.options)
     if (!dialogSelects.length) throw new Error(`Unexpected select: ${input.title}`)
     return { value: dialogSelects.shift() }
   },
@@ -195,6 +200,7 @@ const context = {
     layer: (factory) => keymapLayers.push(factory()),
   },
   client: {
+    mcp: { list: async () => ({ data: liveMcp }) },
     session: {
       context: async () => [], // Native resume:false does not admit inbox messages.
       inbox: {
@@ -486,6 +492,26 @@ assert.deepEqual(commandCalls.slice(togglesBefore).map((call) => [call.command, 
 ])
 assert.deepEqual(JSON.parse(await readFile(registryPath, 'utf8')).mcpToggles, { '*': { docs: false }, '/work/wizard': { filesystem: false } })
 assert.equal(synthetic.filter((item) => item.includes(': saved\n')).length, savedBefore, '/mcp must not post saved summaries into the session')
+
+// /mcp shows what actually runs, not the registry's mid-pipeline snapshot: a
+// later plugin (a folder scope) may add a server the snapshot never saw.
+liveMcp = [
+  { name: 'docs', status: { status: 'disabled' } },
+  { name: 'filesystem', status: { status: 'disabled' } },
+  { name: 'jlcpcb', status: { status: 'connected' } },
+]
+const liveBefore = commandCalls.length
+const optionsBefore = selectOptions.length
+configureDialog([], ['jlcpcb', 'folder', null])
+assert.equal(mcpRow.run(), true)
+await waitFor(() => commandCalls.length === liveBefore + 1 && commandCalls.at(-1).completed && !dialogSelects.length, '/mcp live toggle')
+const [liveList, liveActions] = selectOptions.slice(optionsBefore)
+assert.deepEqual(liveList.map((option) => option.title).filter((title) => /docs$|filesystem$|jlcpcb$/.test(title) && !title.includes('-')), ['[ ] docs', '[ ] filesystem', '[x] jlcpcb'])
+assert.deepEqual(liveActions.slice(0, 2).map((option) => option.title), ['Выключить в этой папке', 'Выключить везде'])
+assert.deepEqual(JSON.parse(commandCalls.at(-1).arguments), { name: 'jlcpcb', scope: 'folder', enabled: false })
+assert.equal(commandCalls.at(-1).error, undefined, 'a server added by another plugin must stay toggleable')
+// A disabled placeholder tells the later plugin the user turned it off here.
+assert.deepEqual(appliedSettings().mcp.get('jlcpcb'), { type: 'local', command: ['true'], disabled: true })
 
 // Receipt reader cost: bounded polling with backoff, the full session context
 // only on a sparse schedule, and immediate wake-up from inbox events.

@@ -74,7 +74,9 @@ user can repair them deliberately. `auto` and `all` are reserved, case-insensiti
   folder choices for that server. Choices persist in `mcpToggles` and apply to other
   already-loaded folders when they reload (`experimental.location_idle_timeout`,
   15 minutes in the template, or a service restart). The native `/mcps` dialog only
-  connects/disconnects until restart.
+  connects/disconnects until restart. `/mcp` marks servers by their native status
+  (what the sidebar shows), including servers a later plugin adds for a folder;
+  turning such a server off leaves a disabled placeholder that the plugin keeps off.
 
 The server command is awaited using V2's `text` field. Read-only registry queries
 use correlated native synthetic receipts; these receipts are removed from outgoing

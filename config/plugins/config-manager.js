@@ -598,6 +598,10 @@ export default {
       for (const [name, enabled] of Object.entries(toggles)) {
         const config = draft.get?.(name)
         if (config) draft.set(name, { ...config, disabled: !enabled })
+        // A later plugin (a folder scope) may add this server after us. The
+        // disabled placeholder tells it the user turned the server off here.
+        // ponytail: global "off" also lists the placeholder in folders that never load it.
+        else if (!enabled) draft.set(name, { type: "local", command: ["true"], disabled: true })
       }
       installed = Object.fromEntries(draft.list?.() || Object.entries(registry.mcp))
       assertMcpNamespaces(installed)
@@ -843,7 +847,9 @@ export default {
         "Enable or disable an installed MCP server in this folder or everywhere",
         async (input) => {
           const name = assertID(input.name, "MCP name")
-          if (!Object.hasOwn(installed, name)) throw new Error(`MCP is not installed here: ${name}`)
+          // Servers added by later plugins exist only in the native (final) list.
+          const live = Object.hasOwn(installed, name) || ((await ctx.mcp.list?.())?.data || []).some((server) => server.name === name)
+          if (!live) throw new Error(`MCP is not installed here: ${name}`)
           if (input.enabled !== null && typeof input.enabled !== "boolean")
             throw new Error("enabled must be a boolean, or null to reset")
           const scope = input.enabled !== null && input.scope === "folder" ? ctx.location?.directory : "*"
