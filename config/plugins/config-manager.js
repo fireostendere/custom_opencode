@@ -82,6 +82,7 @@ function emptyRegistry() {
     orchestrations: {},
     mcpProfiles: {},
     mcpSettings: { mode: "auto", sessions: {} },
+    mcpToggles: {},
   }
 }
 
@@ -105,6 +106,8 @@ function normalizeRegistry(value) {
       ...asObject(raw.mcpSettings),
       sessions: asObject(raw.mcpSettings?.sessions),
     },
+    // /mcp choices: {"*": {name: enabled}, "<directory>": {name: enabled}}.
+    mcpToggles: asObject(raw.mcpToggles),
   }
 }
 
@@ -427,7 +430,8 @@ export default {
     const stopEvents = ctx.event?.subscribe
       ? startEvents(ctx, async (event) => {
           if (event?.type === "mcp.status.changed" || event?.type === "mcp.tools.changed") mcpObserved.clear()
-          if (event?.type === "session.deleted") await forgetSessionProfiles(event.data?.sessionID)
+          if (event?.type === "session.deleted")
+            await enqueueMutation(() => forgetSessionProfiles(event.data?.sessionID))
         })
       : () => {}
     const receipt = async (sessionID, input, data) => {
@@ -468,9 +472,19 @@ export default {
         .map((item) => item.reason?.message || String(item.reason))
       if (failures.length) throw new Error(`managed reload failed: ${failures.join("; ")}`)
     }
+    // Every location runs its own instance over one shared storage key, so a
+    // mutation starts from the latest saved registry, not this instance's copy.
+    const refresh = async () => {
+      const latest = await ctx.storage.get(STORAGE_KEY)
+      if (latest?.version > 2)
+        throw new Error("Managed registry is newer than this plugin; refusing to overwrite it")
+      registry = normalizeRegistry(latest)
+      syncManagedOrchestrations(registry.orchestrations)
+    }
     let mutationQueue = Promise.resolve()
     const enqueueMutation = (operation) => {
-      const result = mutationQueue.then(operation, operation)
+      const run = () => refresh().then(operation)
+      const result = mutationQueue.then(run, run)
       mutationQueue = result.catch(() => {})
       return result
     }
@@ -567,6 +581,12 @@ export default {
         // Native config already merges global and project settings. A managed
         // default must not re-enable a server explicitly disabled by the project.
         if (!draft.get?.(name)) draft.set(name, structuredClone(config))
+      // /mcp: a folder's choice beats the global one; both beat native config.
+      const toggles = { ...registry.mcpToggles["*"], ...registry.mcpToggles[ctx.location?.directory] }
+      for (const [name, enabled] of Object.entries(toggles)) {
+        const config = draft.get?.(name)
+        if (config) draft.set(name, { ...config, disabled: !enabled })
+      }
       installed = Object.fromEntries(draft.list?.() || Object.entries(registry.mcp))
       assertMcpNamespaces(installed)
       if (Object.keys(registry.mcpProfiles).length) {
@@ -660,7 +680,7 @@ export default {
       })
 
     await ctx.command.transform((commands) => {
-      const add = (name, description, handler, help) =>
+      const add = (name, description, handler, help, quiet = false) =>
         commands.add({
           name,
           description,
@@ -685,6 +705,7 @@ export default {
                 throw failure
               }
               await receipt(sessionID, input, { saved: true })
+              if (quiet) return
               try {
                 await synthetic(
                   ctx,
@@ -806,6 +827,34 @@ export default {
       )
 
       add(
+        "mcp-toggle",
+        "Enable or disable an installed MCP server in this folder or everywhere",
+        async (input) => {
+          const name = assertID(input.name, "MCP name")
+          if (!Object.hasOwn(installed, name)) throw new Error(`MCP is not installed here: ${name}`)
+          if (input.enabled !== null && typeof input.enabled !== "boolean")
+            throw new Error("enabled must be a boolean, or null to reset")
+          const scope = input.enabled !== null && input.scope === "folder" ? ctx.location?.directory : "*"
+          if (!scope) throw new Error("folder scope needs a session location")
+          let toggles = registry.mcpToggles
+          // Everywhere and reset drop per-folder choices, so /mcp shows what runs.
+          if (scope === "*")
+            toggles = Object.fromEntries(
+              Object.entries(toggles).map(([key, scoped]) => {
+                const rest = { ...scoped }
+                delete rest[name]
+                return [key, rest]
+              }),
+            )
+          if (input.enabled !== null)
+            toggles = { ...toggles, [scope]: { ...toggles[scope], [name]: input.enabled } }
+          registry = { ...registry, mcpToggles: toggles }
+        },
+        usage("mcp-toggle", '/mcp-toggle {"name":"diptrace","scope":"global","enabled":false}'),
+        true,
+      )
+
+      add(
         "addskill",
         "Add or update a durable managed skill",
         async (input) => {
@@ -838,11 +887,7 @@ export default {
         name: "refreshmodels",
         description: "Refresh models and managed aliases for this workspace",
         execute: () =>
-          enqueueMutation(async () => {
-            registry = normalizeRegistry(await ctx.storage.get(STORAGE_KEY))
-            syncManagedOrchestrations(registry.orchestrations)
-            await ctx.provider.reload()
-          }),
+          enqueueMutation(() => ctx.provider.reload()),
       })
 
       commands.add({
@@ -856,6 +901,7 @@ export default {
               return receipt(sessionID, input, {
                 registry,
                 installed,
+                directory: ctx.location?.directory,
                 mode: await modeFor(sessionID),
                 exposure: exposure.get(sessionID) || null,
               })

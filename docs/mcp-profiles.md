@@ -68,6 +68,13 @@ user can repair them deliberately. `auto` and `all` are reserved, case-insensiti
 - `/configure` groups add/update, profile selection, exposure/status and removal.
 - `/mcp-profile` opens runtime selection. The palette also has **MCP profile: select**.
   Auto and All surround the dynamically registered profiles.
+- `/mcp` turns any installed MCP on or off for this folder or everywhere; a disabled
+  server is not started at all, unlike a profile, which only hides its tools. A
+  folder's choice beats the global one; "everywhere" and **Как в конфиге** clear
+  folder choices for that server. Choices persist in `mcpToggles` and apply to other
+  already-loaded folders when they reload (`experimental.location_idle_timeout`,
+  15 minutes in the template, or a service restart). The native `/mcps` dialog only
+  connects/disconnects until restart.
 
 The server command is awaited using V2's `text` field. Read-only registry queries
 use correlated native synthetic receipts; these receipts are removed from outgoing

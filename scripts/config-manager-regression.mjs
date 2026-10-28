@@ -376,4 +376,45 @@ assert.equal(migratedSkills.find(skill => skill.id === 'legacy').path, '/legacy/
 assert.equal(migratedSkills.find(skill => skill.id === 'legacy').content, 'Keep this skill.')
 assert.equal(legacyRegistry.skills.legacy.location, '/legacy/SKILL.md', 'migration must not mutate saved state')
 
-console.log('config-manager regression OK: self-check, happy path, secret rejection, rollback, serialization, managed context metadata')
+// 10. /mcp toggles: a folder's choice beats the global one, "everywhere" and
+// reset clear folder choices, and toggling never enqueues model input.
+{
+  ctx.location = { directory: '/work/a' }
+  const applyMcp = () => {
+    const draft = new Map([['diptrace', { type: 'local', command: ['diptrace-mcp'] }], ['kb', { type: 'local', command: ['kb'], disabled: true }]])
+    mcpTransform({ get: name => draft.get(name), list: () => [...draft], set: (name, config) => draft.set(name, config) })
+    return draft
+  }
+  applyMcp()
+  const quiet = synthetics.length
+  await exec('mcp-toggle', { name: 'diptrace', scope: 'global', enabled: false })
+  await exec('mcp-toggle', { name: 'diptrace', scope: 'folder', enabled: true })
+  await exec('mcp-toggle', { name: 'kb', scope: 'folder', enabled: true })
+  assert.equal(synthetics.length, quiet, '/mcp toggles must not enqueue model input')
+  let draft = applyMcp()
+  assert.equal(draft.get('diptrace').disabled, false, 'folder choice beats the global one')
+  assert.equal(draft.get('kb').disabled, false, 'a toggle can enable a natively disabled server')
+  ctx.location = { directory: '/work/b' }
+  draft = applyMcp()
+  assert.equal(draft.get('diptrace').disabled, true, 'the global choice applies to other folders')
+  assert.equal(draft.get('kb').disabled, true, 'folder choices stay in their folder')
+  await exec('mcp-toggle', { name: 'kb', scope: 'global', enabled: false })
+  assert.deepEqual(store.get(STORAGE_KEY).mcpToggles, { '*': { diptrace: false, kb: false }, '/work/a': { diptrace: true } }, 'everywhere replaces folder choices')
+  await exec('mcp-toggle', { name: 'diptrace', scope: 'folder', enabled: null })
+  assert.deepEqual(store.get(STORAGE_KEY).mcpToggles, { '*': { kb: false }, '/work/a': {} }, 'reset clears every scope')
+  await assert.rejects(exec('mcp-toggle', { name: 'ghost', scope: 'global', enabled: false }), /not installed/)
+  await assert.rejects(exec('mcp-toggle', { name: 'kb', scope: 'global', enabled: 'no' }), /enabled must be/)
+  // Another location saved the shared registry meanwhile: mutations and
+  // session cleanup must start from storage, not this instance's stale copy.
+  await exec('mcp-profile', { mode: 'all' }, 'stale-session')
+  const external = structuredClone(store.get(STORAGE_KEY))
+  external.mcpToggles['/work/c'] = { kb: true }
+  store.set(STORAGE_KEY, external)
+  emitEvent({ type: 'session.deleted', data: { sessionID: 'stale-session' } })
+  for (let i = 0; i < 50 && store.get(STORAGE_KEY).mcpSettings.sessions['stale-session']; i++)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.ok(!store.get(STORAGE_KEY).mcpSettings.sessions['stale-session'], 'deleted session profile is forgotten')
+  assert.deepEqual(store.get(STORAGE_KEY).mcpToggles['/work/c'], { kb: true }, 'session cleanup keeps toggles saved by another location')
+}
+
+console.log('config-manager regression OK: self-check, happy path, secret rejection, rollback, serialization, managed context metadata, /mcp toggles')
