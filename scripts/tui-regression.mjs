@@ -624,12 +624,9 @@ for (const marker of [
   "target.paddingTop",
   "target.paddingBottom",
   "theme.text.formfield.selected",
-  "theme.text.action.secondary.base",
   "theme.border.base",
-  "theme.scrollbar.base",
-  "theme.background.raised.base",
-  'const PIN_ICON = "📌"',
-  "theme.background.action.primary.base",
+  "theme.background.base",
+  'const PIN_ICON = { pinned: "◆", floating: "◇" }',
   "theme.text.action.primary.base",
   "jumpToEnd",
   "cursorUnderOverlay",
@@ -748,10 +745,14 @@ assert.match(
   /fg=\{active\(\) \? theme\.text\.formfield\.selected : theme\.text\.muted\}/,
   "Active tabs must use the selected form-field token",
 )
+assert.ok(
+  !/verticalScrollbarOptions=\{\{[^}]*visible: true/.test(workspacePanel),
+  "Dock scrollbars must hide themselves when a view fits instead of painting a full-height thumb",
+)
 assert.match(
   workspacePanel,
-  /<text fg=\{theme\.text\.action\.secondary\.base\}><span>↓ конец<\/span><\/text>/,
-  "Jump-to-end must use the secondary action token",
+  /<text fg=\{theme\.text\.muted\}><span>↓ конец<\/span><\/text>/,
+  "Jump-to-end must stay a quiet affordance",
 )
 assert.doesNotMatch(
   workspacePanel,
@@ -806,8 +807,8 @@ assert.match(
 )
 assert.equal(
   (panelViews.match(/theme\.text\.formfield\.selected/g) ?? []).length,
-  3,
-  "Panel views must use the selected accent token only for active work",
+  5,
+  "Panel views must use the selected accent token only for active work: running tone, active todo, running plan, running session and subagent",
 )
 assert.match(
   panelViews,
@@ -821,18 +822,18 @@ assert.match(
 )
 assert.match(
   panelViews,
-  /completed === current\.todos\.length \? theme\.text\.feedback\.success\.base : running \? theme\.text\.formfield\.selected : theme\.text\.base/,
+  /complete \? theme\.text\.feedback\.success\.base : running \? theme\.text\.formfield\.selected : theme\.text\.base/,
   "Plan progress must distinguish completed, running, and pending states",
 )
-assert.match(
-  panelViews,
-  /row\.role === "assistant" \? theme\.text\.base : theme\.text\.muted/,
-  "Assistant activity roles must use the default text token",
+assert.ok(
+  panelViews.includes("activityRows(sessionMessages(context, props.sessionID))") &&
+    panelViews.includes("historyRows(sessionMessages(context, props.sessionID))"),
+  "Activity and History must read V2 messages through panel-model",
 )
 assert.match(
   panelViews,
-  /row\.status === "running" \|\| row\.status === "in_progress" \? theme\.text\.formfield\.selected : theme\.text\.base/,
-  "Only active orchestration statuses must use the selected accent token",
+  /row\.status === "running" \? theme\.text\.formfield\.selected : row\.status === "failed" \? theme\.text\.feedback\.error\.base : theme\.text\.muted/,
+  "Only running subagents must use the selected accent token",
 )
 assert.ok(
   !panelViews.includes("taskLike:"),
@@ -856,12 +857,8 @@ for (const marker of [
   "selectV2PlanCandidates(candidates, sessionID)",
   "const V2_PLAN_MAX_BYTES = 1_000_000",
   "if (details.size > V2_PLAN_MAX_BYTES) continue",
-  "message.updated",
-  "message.part.updated",
-  "session.message.content.updated",
-  "session.created",
-  "session.updated",
-  "session.deleted",
+  "for (const event of PANEL_EVENTS)",
+  "for (const event of SESSION_TREE_EVENTS)",
 ]) {
   assert.ok(panelViews.includes(marker), `Plan/session/family marker missing: ${marker}`)
 }
@@ -1391,7 +1388,7 @@ assert.deepEqual(
   [],
   "Disabled Qwen limits must never spawn bl",
 )
-assert.ok(panelViews.includes("Alibaba: не используется"), "Disabled Qwen limits must read as unused, not missing")
+assert.ok(panelViews.includes(`<Field label="Alibaba" value="не используется"`), "Disabled Qwen limits must read as unused, not missing")
 delete process.env.OPENCODE_LIMITS_QWEN
 
 // A missing CLI must not be searched for on every refresh.
@@ -1515,7 +1512,7 @@ assert.equal(effortLabel(effortModel, effortRef(), {}), "medium", "Without a var
 assert.equal(effortLabel(undefined, effortRef(), {}), "default", "An unknown model shows the provider default")
 
 // Palette rows from custom plugins keep one language per row; Russian rows may name only technical terms.
-const TECHNICAL = /^(MCP|JSON|SKILL\.md|host|systemd|Gemini|OpenCode)$/
+const TECHNICAL = /^(MCP|JSON|SKILL\.md|URL|HTTP|HTTPS|host|core|systemd|Gemini|OpenCode)$/
 for (const file of ["add-wizard.js", "workspace-panel.jsx", "server-wizard.js", "webserver-wizard.js", "goal-panel.jsx"]) {
   const source = await readFile(new URL(`config/plugins/tui/${file}`, root), "utf8")
   const texts = [...source.matchAll(/(?:title|description):\s*(?:"([^"]*)"|`([^`]*)`)/g)].map((match) => match[1] ?? match[2])
@@ -1525,9 +1522,82 @@ for (const file of ["add-wizard.js", "workspace-panel.jsx", "server-wizard.js", 
     if (!/[А-Яа-яЁё]/.test(text)) return false
     // Interpolations, /slash commands and key chords are names, not prose.
     const prose = text.replace(/\$\{[^}]*\}|\/[\w-]+|\b(?:ctrl|alt|shift)\+\S+/g, "")
-    return (prose.match(/[A-Za-z][A-Za-z.]*/g) ?? []).some((word) => !TECHNICAL.test(word))
+    return (prose.match(/[A-Za-z][A-Za-z.]*/g) ?? []).some((word) => !TECHNICAL.test(word.replace(/\.$/, "")))
   })
   assert.deepEqual(mixed, [], `${file}: labels mix languages`)
+}
+
+// Plugins subscribe through context.data.on, which only ever emits the pinned V2 event types:
+// a V1 name such as "message.updated" is accepted and then never fires, freezing the panel.
+{
+  const knownEvents = new Set(
+    (await readFile(new URL("scripts/fixtures/opencode-v2-events.txt", root), "utf8"))
+      .split("\n")
+      .filter((line) => line && !line.startsWith("#")),
+  )
+  const model = await import(new URL("config/plugins/tui/lib/panel-model.js", root))
+  const subscribed = [...model.PANEL_EVENTS, ...model.SESSION_TREE_EVENTS]
+  for (const file of await readdir(new URL("config/plugins/tui/", root), { recursive: true })) {
+    if (!/\.(js|jsx)$/.test(file) || file.includes("vendor")) continue
+    const source = await readFile(new URL(`config/plugins/tui/${file}`, root), "utf8")
+    for (const match of source.matchAll(/(?:data\.on\??\.?\(|\bsubscribe\()\s*"([^"]+)"/g)) subscribed.push(match[1])
+    // Also event-name arrays iterated into subscribe(event, ...), the shape the V1 names hid in.
+    for (const list of source.matchAll(/for \(const event of \[([^\]]*)\]\)/g))
+      for (const name of list[1].matchAll(/"([^"]+)"/g)) subscribed.push(name[1])
+  }
+  assert.deepEqual(subscribed.filter((event) => !knownEvents.has(event)), [], "Plugins must subscribe only to V2 event types")
+
+  // V2 message shapes: type + text for users, type + content parts for assistants.
+  const at = (minute) => new Date(2026, 9, 28, 22, minute).getTime()
+  const messages = [
+    { id: "a2", type: "assistant", time: { created: at(31), completed: at(32) }, content: [
+      { type: "tool", name: "patch", state: { status: "completed", input: { patchText: "*** Begin Patch\n*** Update File: src/alice_mcp/native/vqe_audit.c\n@@\n*** Add File: tests/test_vqe.py\n" } }, time: { created: at(31) } },
+      { type: "tool", name: "bash", state: { status: "error", input: { command: "cd /repo && CI=1 .venv/bin/python -m pytest -q" } }, time: { created: at(31) } },
+      { type: "text", text: "Нашёл причину." },
+    ] },
+    { id: "u1", type: "user", time: { created: at(30) }, text: "Почини   план" },
+    { id: "c1", type: "compaction", status: "completed", time: { created: at(33) } },
+    { id: "i1", type: "idle", outcome: "succeeded", time: { created: at(34) } },
+    { id: "a3", type: "assistant", time: { created: at(35) }, content: [
+      { type: "tool", name: "grep", state: { status: "running", input: { pattern: "TODO" } }, time: { created: at(35) } },
+    ] },
+  ]
+  assert.deepEqual(
+    model.activityRows(messages).map((row) => [row.icon, row.title, row.detail, row.tone]),
+    [
+      ["›", "вы", "Почини план", "accent"],
+      ["←", "", "src/alice_mcp/native/vqe_audit.c +1", "base"],
+      ["$", "", "pytest -q", "error"],
+      ["◆", "ответ", "Нашёл причину.", "base"],
+      ["⇣", "сжатие контекста", "", "muted"],
+      ["■", "готово", "", "success"],
+      ["✱", "", "TODO", "active"],
+    ],
+    "Activity must read V2 messages in time order with each tool's target",
+  )
+  assert.deepEqual(model.historyRows(messages).map((row) => row.text), ["Почини план"], "History must list V2 user messages")
+  assert.deepEqual(model.activityRows(messages, 2).map((row) => row.icon), ["■", "✱"], "Activity keeps the newest rows")
+  assert.deepEqual(
+    model.planProgress([{ status: "completed" }, { status: "in_progress", content: "b" }, { status: "pending" }]),
+    { done: 1, total: 3, percent: 33, current: { status: "in_progress", content: "b" } },
+  )
+  const card = model.sessionCard(
+    {
+      id: "ses_1", title: "LED", agent: "build", cost: 1.5, outcome: "succeeded",
+      model: { id: "gpt", providerID: "openai", variant: "xhigh" },
+      tokens: { input: 157_987, output: 1_000, reasoning: 500, cache: { read: 2_000_000, write: 0 } },
+      time: { created: 1, updated: 2 },
+    },
+    "running",
+  )
+  assert.deepEqual(
+    [card.running, card.model, model.formatTokens(card.input), model.formatTokens(card.output), model.formatTokens(card.cached)],
+    [true, "gpt · xhigh", "158.0K", "1.5K", "2.0M"],
+    "The session card must read V2 SessionInfo totals",
+  )
+  assert.equal(model.relativeTime(at(30), at(42)), "12 мин назад")
+  assert.equal(model.pathTail("src/alice_mcp/native/vqe_audit.c", 24), "…/native/vqe_audit.c")
+  assert.equal(model.shortCommand(".venv/bin/python -m pytest -q --tb=short"), "pytest -q --tb=short")
 }
 
 await rm(temp, { recursive: true, force: true })

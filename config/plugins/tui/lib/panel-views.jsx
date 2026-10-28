@@ -5,6 +5,17 @@ import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import { acquireLimits, getLimitsSync, getNightPromoStatus } from "./limits-helper.js"
 import { normalizeFamilyIDs, resolvePlanSources, resolveRootID, selectV2PlanCandidates, selectV2PlanEntries, syncFamilyMessages } from "./panel-data.js"
+import {
+  activityRows,
+  formatTokens,
+  historyRows,
+  PANEL_EVENTS,
+  planProgress,
+  relativeTime,
+  SESSION_TREE_EVENTS,
+  sessionCard,
+  truncate,
+} from "./panel-model.js"
 
 export const PANEL_DEFS = [
   { id: "session", title: "Сессия", short: "Сесс" },
@@ -16,7 +27,6 @@ export const PANEL_DEFS = [
 ]
 export const PANEL_IDS = PANEL_DEFS.map((item) => item.id)
 
-const BAR_WIDTH = 8
 const V2_PLAN_DIRECTORY = process.env.OPENCODE_PLAN_DIRECTORY ? resolve(process.env.OPENCODE_PLAN_DIRECTORY.replace(/^~(?=\/)/, homedir())) : join(homedir(), ".opencode", "plan")
 const V2_PLAN_MAX_BYTES = 1_000_000
 const MONTHS_RU = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
@@ -24,17 +34,16 @@ const MONTHS_RU = ["янв", "фев", "мар", "апр", "мая", "июн", "
 function clampPercent(value) {
   return Math.max(0, Math.min(100, Number(value ?? 0)))
 }
-function bar(value) {
-  const used = clampPercent(value)
-  const filled = Math.round((used / 100) * BAR_WIDTH)
-  return "▰".repeat(filled) + "▱".repeat(BAR_WIDTH - filled)
+function fmtClock(ts) {
+  const d = new Date(Number(ts))
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
 }
 function fmtWhen(ts) {
   if (!ts) return ""
   const d = new Date(Number(ts))
   const now = new Date()
-  if (d.toDateString() === now.toDateString()) return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
-  if (d.getFullYear() === now.getFullYear()) return `${d.getDate()} ${MONTHS_RU[d.getMonth()]}`
+  if (d.toDateString() === now.toDateString()) return fmtClock(ts)
+  if (d.getFullYear() === now.getFullYear()) return `${d.getDate()} ${MONTHS_RU[d.getMonth()]} ${fmtClock(ts)}`
   return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getFullYear()).slice(2)}`
 }
 function fmtReset(ts, nowMs = Date.now()) {
@@ -49,9 +58,9 @@ function fmtReset(ts, nowMs = Date.now()) {
 }
 function fmtWindow(mins) {
   if (!mins) return ""
-  if (mins < 60) return `${mins}м`
-  if (mins < 1440) return `${Math.round(mins / 60)}ч`
-  return `${Math.round(mins / 1440)}д`
+  if (mins < 60) return `${mins} мин`
+  if (mins < 1440) return `${Math.round(mins / 60)} ч`
+  return `${Math.round(mins / 1440)} д`
 }
 function fmtDur(mins) {
   if (mins < 60) return `${mins}м`
@@ -59,12 +68,10 @@ function fmtDur(mins) {
 }
 function fmtK(value) {
   if (value == null) return "?"
-  if (value >= 1000) return `${Math.round((value / 1000) * 10) / 10}K`
-  return String(value)
+  return formatTokens(value)
 }
-function truncate(text, max = 180) {
-  const value = String(text || "").replace(/\s+/g, " ").trim()
-  return value.length <= max ? value : `${value.slice(0, Math.max(0, max - 1))}…`
+function fmtMoney(value) {
+  return `$${Number(value ?? 0).toFixed(2)}`
 }
 
 function parsePlanDocument(text, fallbackTitle) {
@@ -123,17 +130,13 @@ function messageParts(context, message) {
   } catch {}
   return message?.parts ?? message?.content ?? []
 }
-function messageText(context, message) {
-  const parts = messageParts(context, message)
-  if (!Array.isArray(parts)) return String(message?.text ?? "").trim()
-  return parts.filter((part) => part?.type === "text" && !part.synthetic).map((part) => part.text ?? "").join("\n").trim()
-}
 function sessionMessages(context, sessionID) {
   if (!sessionID) return []
   try { return context.data.session.message.list(sessionID) ?? [] } catch {}
   try { return context.state.session.messages(sessionID) ?? [] } catch {}
   return []
 }
+// The native V2 todo tool; a session that uses it shows that list instead of the plan document.
 function latestTodos(context, messages) {
   let latest = null
   let latestTime = -1
@@ -153,32 +156,6 @@ function latestTodos(context, messages) {
   }
   return latest
 }
-function toolSummary(part) {
-  let input = part?.state?.input
-  if (typeof input === "string") {
-    try { input = JSON.parse(input) } catch { return truncate(input, 140) }
-  }
-  if (!input || typeof input !== "object") return ""
-  for (const key of ["description", "prompt", "task", "command", "path", "url", "query"]) {
-    if (typeof input[key] === "string" && input[key].trim()) return truncate(input[key], 140)
-  }
-  return ""
-}
-function activityRows(context, messages) {
-  const rows = []
-  for (const message of messages ?? []) {
-    const role = String(message?.role ?? message?.info?.role ?? "message")
-    const created = message?.time?.created ?? message?.info?.time?.created ?? 0
-    const parts = messageParts(context, message)
-    const tools = Array.isArray(parts)
-      ? parts.filter((part) => part?.type === "tool").map((part) => String(part.name ?? part.tool ?? "tool"))
-      : []
-    const summary = tools.length ? tools.slice(0, 4).join(", ") : truncate(messageText(context, message), 120)
-    if (!summary && role === "assistant") continue
-    rows.push({ role, summary: summary || role, created })
-  }
-  return rows.slice(-80)
-}
 
 export function createPanelViews(context) {
   const theme = context.theme
@@ -189,6 +166,8 @@ export function createPanelViews(context) {
   const [now, setNow] = createSignal(Date.now())
   const limitReleases = new Set()
 
+  // The plugin bundle has its own Solid copy, so the host's data store does not
+  // track reads here: every view re-reads when one of these V2 events arrives.
   const [version, setVersion] = createSignal(0)
   const [sessionTreeVersion, setSessionTreeVersion] = createSignal(0)
   const subscriptions = []
@@ -198,15 +177,23 @@ export function createPanelViews(context) {
       if (typeof unsubscribe === "function") subscriptions.push(unsubscribe)
     } catch {}
   }
-  for (const event of ["message.updated", "message.part.updated", "session.message.content.updated"]) {
-    subscribe(event, () => setVersion((current) => current + 1))
-  }
-  for (const event of ["session.created", "session.updated", "session.deleted"]) {
+  for (const event of PANEL_EVENTS) subscribe(event, () => setVersion((current) => current + 1))
+  for (const event of SESSION_TREE_EVENTS) {
     subscribe(event, () => {
       setVersion((current) => current + 1)
       setSessionTreeVersion((current) => current + 1)
     })
   }
+
+  const tone = (name) =>
+    ({
+      active: theme.text.formfield.selected,
+      accent: theme.text.action.primary.base,
+      error: theme.text.feedback.error.base,
+      success: theme.text.feedback.success.base,
+      warning: theme.text.feedback.warning.base,
+      muted: theme.text.muted,
+    })[name] ?? theme.text.base
 
   function usageColor(used) {
     if (Number(used ?? 0) >= 90) return theme.text.feedback.error.base
@@ -225,18 +212,59 @@ export function createPanelViews(context) {
       onCleanup(() => { current = false })
     })
   }
+  function sessionStatus(sessionID) {
+    try { return context.data.session.status(sessionID) } catch { return "idle" }
+  }
+  function sessionInfo(sessionID) {
+    try { return sessionID ? context.data.session.get(sessionID) : null } catch { return null }
+  }
+
+  /** A full-width rule: heavy for the share, light for the rest. */
+  function Meter(props) {
+    const [width, setWidth] = createSignal(0)
+    const filled = () => Math.round((clampPercent(props.percent) / 100) * width())
+    return (
+      <box height={1} width="100%" minWidth={0} flexShrink={0} onSizeChange={function () { setWidth(this.width) }}>
+        <text wrapMode="none">
+          <span style={{ fg: props.color }}>{"━".repeat(filled())}</span>
+          <span style={{ fg: theme.border.base }}>{"─".repeat(Math.max(0, width() - filled()))}</span>
+        </text>
+      </box>
+    )
+  }
+  /** label ··· value on one line. */
+  function Field(props) {
+    return (
+      <box flexDirection="row" justifyContent="space-between" width="100%" minWidth={0} flexShrink={0}>
+        <text fg={theme.text.muted} flexShrink={0}><span>{props.label}</span></text>
+        <text fg={props.color ?? theme.text.base} wrapMode="none" truncate flexShrink={1} minWidth={0}><span>{props.value}</span></text>
+      </box>
+    )
+  }
+  function Empty(props) {
+    return <text fg={theme.text.muted} wrapMode="word"><span>{props.children}</span></text>
+  }
+
   function WindowRows(props) {
     const win = () => props.win
     return (
       <Show when={win() && typeof win().usedPercent === "number"}>
         <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
-          <text fg={theme.text.muted} wrapMode="word"><span>{props.label}</span></text>
-          <box flexDirection="row" gap={1} width="100%" minWidth={0} flexShrink={1}>
-            <text fg={usageColor(win().usedPercent)}><span>{bar(win().usedPercent)}</span></text>
-            <text fg={theme.text.base} flexShrink={0}><span>{Math.round(win().usedPercent)}%</span></text>
+          <box flexDirection="row" justifyContent="space-between" width="100%" minWidth={0}>
+            <text fg={theme.text.base} wrapMode="none" truncate minWidth={0}><b>{props.label}</b></text>
+            <text fg={usageColor(win().usedPercent)} flexShrink={0}><span>{Math.round(win().usedPercent)}%</span></text>
           </box>
-          <Show when={win().resetsAt}><text fg={theme.text.muted} wrapMode="word"><span>сброс {fmtReset(win().resetsAt, now())}</span></text></Show>
-          <Show when={win().limit != null && win().usedCredits != null}><text fg={theme.text.muted} wrapMode="word"><span>{fmtK(win().usedCredits)} / {fmtK(win().limit)} исп.</span></text></Show>
+          <Meter percent={win().usedPercent} color={usageColor(win().usedPercent)} />
+          <Show when={win().resetsAt || (win().limit != null && win().usedCredits != null)}>
+            <text fg={theme.text.muted} wrapMode="none" truncate>
+              <span>
+                {[
+                  win().limit != null && win().usedCredits != null ? `${fmtK(win().usedCredits)} из ${fmtK(win().limit)}` : "",
+                  win().resetsAt ? `сброс через ${fmtReset(win().resetsAt, now())}` : "",
+                ].filter(Boolean).join(" · ")}
+              </span>
+            </text>
+          </Show>
         </box>
       </Show>
     )
@@ -265,39 +293,43 @@ export function createPanelViews(context) {
     }
     return (
       <box flexDirection="column" width="100%" minWidth={0} gap={1} flexShrink={0}>
-        <Show when={codex().available} fallback={<text fg={theme.text.muted}><span>ChatGPT: нет данных</span></text>}>
-          <WindowRows label={codex().primary?.windowDurationMins ? `ChatGPT · ${fmtWindow(codex().primary.windowDurationMins)}` : "ChatGPT"} win={codex().primary} />
-          <WindowRows label={codex().secondary?.windowDurationMins ? `ChatGPT · ${fmtWindow(codex().secondary.windowDurationMins)}` : "ChatGPT · доп."} win={codex().secondary} />
+        <Show when={codex().available} fallback={<Field label="ChatGPT" value="нет данных" color={theme.text.muted} />}>
+          <WindowRows label={`ChatGPT · ${fmtWindow(codex().primary?.windowDurationMins) || "окно"}`} win={codex().primary} />
+          <WindowRows label={`ChatGPT · ${fmtWindow(codex().secondary?.windowDurationMins) || "доп."}`} win={codex().secondary} />
         </Show>
         <Show
           when={qwen().available && qwen().state === "ok"}
           fallback={
             qwen().reason === "disabled" ? (
-              <text fg={theme.text.muted}><span>Alibaba: не используется</span></text>
+              <Field label="Alibaba" value="не используется" color={theme.text.muted} />
             ) : qwen().state === "expired" || qwen().reason === "session-expired" ? (
               <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
-                <text fg={theme.text.feedback.warning.base} wrapMode="word"><span>Alibaba: сессия истекла</span></text>
+                <Field label="Alibaba" value="сессия истекла" color={theme.text.feedback.warning.base} />
                 <text fg={theme.text.muted} wrapMode="word"><span>bl auth login --console</span></text>
               </box>
             ) : (
-              <text fg={theme.text.muted}><span>Alibaba: нет данных</span></text>
+              <Field label="Alibaba" value="нет данных" color={theme.text.muted} />
             )
           }
         >
-          <WindowRows label="Alibaba · 5ч" win={qwen().fiveHour} />
-          <WindowRows label="Alibaba · 7д" win={qwen().sevenDay} />
+          <WindowRows label="Alibaba · 5 ч" win={qwen().fiveHour} />
+          <WindowRows label="Alibaba · 7 д" win={qwen().sevenDay} />
         </Show>
-        <Show when={gemini().available} fallback={<text fg={theme.text.muted}><span>Gemini: не настроен</span></text>}>
+        <Show when={gemini().available} fallback={<Field label="Gemini" value="не настроен" color={theme.text.muted} />}>
           <Show when={gemini().rateLimited}>
-            <text fg={theme.text.feedback.warning.base}><span>Лимит Gemini (429): повтор через {geminiSeconds()}с…</span></text>
+            <text fg={theme.text.feedback.warning.base} wrapMode="word"><span>Лимит Gemini (429): повтор через {geminiSeconds()}с…</span></text>
           </Show>
-          <WindowRows label="Gemini · 1м (TPM)" win={gemini().minuteTokens} />
-          <WindowRows label="Gemini · 1м (RPM)" win={gemini().minuteRequests} />
-          <WindowRows label="Gemini · сутки (RPD)" win={gemini().dailyRequests} />
+          <WindowRows label="Gemini · токены/мин" win={gemini().minuteTokens} />
+          <WindowRows label="Gemini · запросы/мин" win={gemini().minuteRequests} />
+          <WindowRows label="Gemini · запросы/сутки" win={gemini().dailyRequests} />
         </Show>
         {(() => {
           const promo = getNightPromoStatus(now())
-          return <text fg={promo.active ? theme.text.feedback.success.base : theme.text.feedback.warning.base}><span>{promo.active ? `🌙 −50% · ещё ${fmtDur(promo.minutesToToggle)}` : `☀ −50% · через ${fmtDur(promo.minutesToToggle)}`}</span></text>
+          return (
+            <text fg={promo.active ? theme.text.feedback.success.base : theme.text.muted} wrapMode="word">
+              <span>{promo.active ? `☾ ночная скидка −50% · ещё ${fmtDur(promo.minutesToToggle)}` : `☼ ночная скидка −50% через ${fmtDur(promo.minutesToToggle)}`}</span>
+            </text>
+          )
         })()}
       </box>
     )
@@ -307,9 +339,9 @@ export function createPanelViews(context) {
       const done = todo.status === "completed"
       const active = todo.status === "in_progress"
       return (
-        <box flexDirection="row" gap={1} width="100%" flexShrink={0}>
+        <box flexDirection="row" gap={1} width="100%" minWidth={0} flexShrink={0}>
           <text width={1} flexShrink={0} fg={active ? theme.text.formfield.selected : done ? theme.text.feedback.success.base : theme.text.muted}><span>{done ? "✓" : active ? "●" : "○"}</span></text>
-          <text fg={done ? theme.text.muted : theme.text.base} flexGrow={1} minWidth={0} wrapMode="word"><span>{todo.content}</span></text>
+          <text fg={done ? theme.text.muted : theme.text.base} flexGrow={1} minWidth={0} wrapMode="word">{active ? <b>{todo.content}</b> : <span>{todo.content}</span>}</text>
         </box>
       )
     }}</For>
@@ -318,6 +350,7 @@ export function createPanelViews(context) {
     const [historicalTodos, setHistoricalTodos] = createSignal(null)
     const [nativePlan, setNativePlan] = createSignal({ sessionID: null, document: null })
     useSessionMessageSync(props)
+    // Re-read the plan document on every panel event: plan_update rewrites it in place.
     createEffect(() => {
       const sessionID = props.sessionID ?? null
       version()
@@ -356,34 +389,27 @@ export function createPanelViews(context) {
       const cached = latestTodos(context, sessionMessages(context, sessionID))
       const document = nativePlan().sessionID === (sessionID ?? null) ? nativePlan().document : null
       const sources = resolvePlanSources(cached, historicalTodos(), document)
-      const doc = sources.document
-      let info
-      try { info = sessionID ? context.data.session.get(sessionID) : null } catch { info = null }
-      return {
-        todos: sources.todos,
-        title: info?.title || doc?.title,
-        updated: info?.time?.updated || doc?.updated,
-        source: sources.source,
-      }
+      return { todos: sources.todos, title: sources.document?.title, updated: sources.document?.updated }
     }
     return (
-      <box flexDirection="column" gap={1} flexShrink={0}>
-        <Show when={plan().todos.length > 0} fallback={<text fg={theme.text.muted}><span>Плана пока нет.</span></text>}>
+      <box flexDirection="column" gap={1} width="100%" minWidth={0} flexShrink={0}>
+        <Show when={plan().todos.length > 0} fallback={<Empty>Плана пока нет. Агент публикует его через plan_update, когда у задачи есть несколько этапов.</Empty>}>
           {(() => {
             const current = plan()
-            const completed = current.todos.filter((todo) => todo.status === "completed").length
+            const progress = planProgress(current.todos)
+            const complete = progress.done === progress.total
             const running = current.todos.some((todo) => todo.status === "in_progress")
-            const percent = current.todos.length ? Math.round((completed / current.todos.length) * 100) : 0
+            const color = complete ? theme.text.feedback.success.base : running ? theme.text.formfield.selected : theme.text.base
             return <>
-              <box flexDirection="row" gap={1} flexShrink={0}>
-                <text fg={completed === current.todos.length ? theme.text.feedback.success.base : running ? theme.text.formfield.selected : theme.text.base}><span>{bar(percent)}</span></text>
-                <text fg={theme.text.base}><span>{completed}/{current.todos.length}</span></text>
-                <text fg={theme.text.muted}><span>· {percent}%</span></text>
+              <Show when={current.title}><text fg={theme.text.base} wrapMode="word"><b>{current.title}</b></text></Show>
+              <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
+                <Meter percent={progress.percent} color={color} />
+                <box flexDirection="row" justifyContent="space-between" width="100%" minWidth={0}>
+                  <text fg={color} flexShrink={0}><span>{progress.done} из {progress.total}{complete ? " · готово" : ""}</span></text>
+                  <Show when={current.updated}><text fg={theme.text.muted} wrapMode="none" truncate minWidth={0}><span>{relativeTime(current.updated)}</span></text></Show>
+                </box>
               </box>
               <TodoRows todos={current.todos} />
-              <Show when={current.title || current.source || current.updated}>
-                <text fg={theme.text.muted} wrapMode="word"><span>{current.title || current.source || "Plan"}{current.updated ? ` · ${fmtWhen(current.updated)}` : ""}</span></text>
-              </Show>
             </>
           })()}
         </Show>
@@ -394,20 +420,24 @@ export function createPanelViews(context) {
     useSessionMessageSync(props)
     const rows = () => {
       version()
-      return activityRows(context, sessionMessages(context, props.sessionID))
+      return activityRows(sessionMessages(context, props.sessionID))
     }
     return (
-      <box flexDirection="column" gap={1} flexShrink={0}>
-        <Show when={props.sessionID && rows().length > 0} fallback={<text fg={theme.text.muted}><span>Событий сессии пока нет.</span></text>}>
-          <For each={rows()}>{(row) => (
-            <box flexDirection="column" width="100%" flexShrink={0}>
-              <box flexDirection="row" gap={1}>
-                <text fg={row.role === "assistant" ? theme.text.base : theme.text.muted}><span>{row.role}</span></text>
-                <Show when={row.created}><text fg={theme.text.muted}><span>{fmtWhen(row.created)}</span></text></Show>
+      <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
+        <Show when={props.sessionID && rows().length > 0} fallback={<Empty>Событий сессии пока нет.</Empty>}>
+          <For each={rows()}>{(row, index) => {
+            // A time only where the minute changes keeps the column quiet.
+            const clock = () => (row.time ? fmtClock(row.time) : "")
+            const first = () => index() === 0 || clock() !== (rows()[index() - 1]?.time ? fmtClock(rows()[index() - 1].time) : "")
+            return (
+              <box flexDirection="row" gap={1} width="100%" minWidth={0} flexShrink={0}>
+                <text fg={theme.text.muted} width={5} flexShrink={0}><span>{first() ? clock() : ""}</span></text>
+                <text fg={tone(row.tone)} width={1} flexShrink={0}><span>{row.icon}</span></text>
+                <Show when={row.title}><text fg={row.tone === "base" ? theme.text.base : tone(row.tone)} flexShrink={0}><span>{row.title}</span></text></Show>
+                <text fg={row.title ? theme.text.muted : row.tone === "base" ? theme.text.base : tone(row.tone)} wrapMode="none" truncate flexGrow={1} minWidth={0}><span>{row.detail}</span></text>
               </box>
-              <text fg={theme.text.base} wrapMode="word"><span>{row.summary}</span></text>
-            </box>
-          )}</For>
+            )
+          }}</For>
         </Show>
       </box>
     )
@@ -416,19 +446,15 @@ export function createPanelViews(context) {
     useSessionMessageSync(props)
     const rows = () => {
       version()
-      return sessionMessages(context, props.sessionID)
-        .filter((message) => (message?.role ?? message?.info?.role) === "user" && message?.synthetic !== true && message?.summary !== true)
-        .map((message) => ({ text: messageText(context, message), created: message.time?.created ?? message.info?.time?.created }))
-        .filter((row) => row.text)
-        .reverse()
+      return historyRows(sessionMessages(context, props.sessionID))
     }
     return (
-      <box flexDirection="column" gap={1} flexShrink={0}>
-        <Show when={props.sessionID && rows().length > 0} fallback={<text fg={theme.text.muted}><span>История пока пустая.</span></text>}>
-          <For each={rows()}>{(row, index) => (
-            <box flexDirection="column" flexShrink={0}>
-              <text fg={theme.text.muted}><span>{index() + 1}. {fmtWhen(row.created)}</span></text>
-              <text fg={theme.text.base} wrapMode="word"><span>{truncate(row.text)}</span></text>
+      <box flexDirection="column" gap={1} width="100%" minWidth={0} flexShrink={0}>
+        <Show when={props.sessionID && rows().length > 0} fallback={<Empty>В загруженной части сессии нет ваших сообщений.</Empty>}>
+          <For each={rows()}>{(row) => (
+            <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
+              <text fg={theme.text.muted}><span>{fmtWhen(row.time)}</span></text>
+              <text fg={theme.text.base} wrapMode="word"><span>{truncate(row.text, 280)}</span></text>
             </box>
           )}</For>
         </Show>
@@ -468,39 +494,43 @@ export function createPanelViews(context) {
     })
     const rows = () => {
       version()
-      const result = []
       const rootID = rootSessionID()
-      for (const sessionID of sessionIDs()) {
-        let info
-        try { info = context.data.session.get(sessionID) } catch { info = null }
-        for (const message of sessionMessages(context, sessionID)) {
-          for (const part of messageParts(context, message)) {
-            if (part?.type !== "tool") continue
-            const name = String(part.name ?? part.tool ?? "tool")
-            result.push({
-              name,
-              status: String(part.state?.status ?? ""),
-              detail: toolSummary(part),
-              created: message.time?.created ?? message.info?.time?.created,
-              session: sessionID === rootID ? "root" : truncate(info?.title || sessionID, 36),
-            })
-          }
+      return sessionIDs().map((sessionID) => {
+        const info = sessionInfo(sessionID)
+        const status = sessionStatus(sessionID)
+        const last = activityRows(sessionMessages(context, sessionID), 1)[0]
+        return {
+          sessionID,
+          root: sessionID === rootID,
+          title: truncate(info?.title || sessionID, 60),
+          agent: info?.agent ?? "",
+          status: status === "running" ? "running" : info?.outcome ?? "idle",
+          updated: info?.time?.updated,
+          last,
         }
-      }
-      return result.slice(-80).reverse()
+      })
     }
+    const dot = (status) => (status === "running" ? "●" : status === "failed" ? "✗" : status === "interrupted" ? "‖" : "○")
     return (
-      <box flexDirection="column" gap={1} flexShrink={0}>
-        <Show when={props.sessionID && rows().length > 0} fallback={<text fg={theme.text.muted}><span>Оркестрация пока пустая.</span></text>}>
+      <box flexDirection="column" gap={1} width="100%" minWidth={0} flexShrink={0}>
+        <Show when={props.sessionID && rows().length > 1} fallback={<Empty>Подагентов в этой сессии не было.</Empty>}>
           <For each={rows()}>{(row) => (
-            <box flexDirection="column" flexShrink={0}>
-              <box flexDirection="row" gap={1}>
-                <text fg={row.status === "running" || row.status === "in_progress" ? theme.text.formfield.selected : theme.text.base}><span>{row.name}</span></text>
-                <Show when={row.session !== "root"}><text fg={theme.text.muted}><span>{row.session}</span></text></Show>
-                <Show when={row.status}><text fg={row.status === "completed" ? theme.text.feedback.success.base : row.status === "error" ? theme.text.feedback.error.base : theme.text.muted}><span>{row.status}</span></text></Show>
-                <Show when={row.created}><text fg={theme.text.muted}><span>{fmtWhen(row.created)}</span></text></Show>
+            <box flexDirection="column" width="100%" minWidth={0} flexShrink={0} paddingLeft={row.root ? 0 : 2}>
+              <box flexDirection="row" gap={1} width="100%" minWidth={0}>
+                <text width={1} flexShrink={0} fg={row.status === "running" ? theme.text.formfield.selected : row.status === "failed" ? theme.text.feedback.error.base : theme.text.muted}><span>{dot(row.status)}</span></text>
+                <text fg={theme.text.base} wrapMode="none" truncate flexGrow={1} minWidth={0}>{row.root ? <b>{row.title}</b> : <span>{row.title}</span>}</text>
               </box>
-              <Show when={row.detail}><text fg={theme.text.muted} wrapMode="word"><span>{row.detail}</span></text></Show>
+              <box flexDirection="row" gap={1} width="100%" minWidth={0} paddingLeft={2}>
+                <text fg={theme.text.muted} wrapMode="none" truncate minWidth={0}>
+                  <span>{[row.agent, row.status === "running" ? "работает" : relativeTime(row.updated)].filter(Boolean).join(" · ")}</span>
+                </text>
+              </box>
+              <Show when={row.last}>
+                <box flexDirection="row" gap={1} width="100%" minWidth={0} paddingLeft={2}>
+                  <text fg={tone(row.last.tone)} width={1} flexShrink={0}><span>{row.last.icon}</span></text>
+                  <text fg={theme.text.muted} wrapMode="none" truncate flexGrow={1} minWidth={0}><span>{[row.last.title, row.last.detail].filter(Boolean).join(" ")}</span></text>
+                </box>
+              </Show>
             </box>
           )}</For>
         </Show>
@@ -509,26 +539,36 @@ export function createPanelViews(context) {
   }
   function SessionView(props) {
     useSessionMessageSync(props)
-    const snapshot = () => {
+    const card = () => {
       version()
-      let info
-      try { info = props.sessionID ? context.data.session.get(props.sessionID) : null } catch { info = null }
-      const messages = sessionMessages(context, props.sessionID)
-      return {
-        info,
-        messages: messages.length,
-        users: messages.filter((m) => (m?.role ?? m?.info?.role) === "user").length,
-        assistants: messages.filter((m) => (m?.role ?? m?.info?.role) === "assistant").length,
-      }
+      return sessionCard(sessionInfo(props.sessionID), sessionStatus(props.sessionID))
+    }
+    const state = () => {
+      const value = card()
+      if (value.running) return ["● работает", theme.text.formfield.selected]
+      if (value.outcome === "failed") return ["✗ завершилась с ошибкой", theme.text.feedback.error.base]
+      if (value.outcome === "interrupted") return ["‖ прервана", theme.text.muted]
+      return ["○ ожидает", theme.text.muted]
     }
     return (
-      <box flexDirection="column" gap={1} flexShrink={0}>
-        <Show when={props.sessionID} fallback={<text fg={theme.text.muted}><span>Нет активной сессии.</span></text>}>
-          <text fg={theme.text.base} wrapMode="word"><b>{snapshot().info?.title || "Сессия"}</b></text>
-          <text fg={theme.text.muted} wrapMode="word"><span>{props.sessionID}</span></text>
-          <Show when={snapshot().info?.time?.updated}><text fg={theme.text.muted}><span>Обновлено: {fmtWhen(snapshot().info.time.updated)}</span></text></Show>
-          <text fg={theme.text.base}><span>Сообщений: {snapshot().messages}</span></text>
-          <text fg={theme.text.muted}><span>Пользователь: {snapshot().users} · Ассистент: {snapshot().assistants}</span></text>
+      <box flexDirection="column" gap={1} width="100%" minWidth={0} flexShrink={0}>
+        <Show when={props.sessionID && card()} fallback={<Empty>Нет активной сессии.</Empty>}>
+          <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
+            <text fg={theme.text.base} wrapMode="word"><b>{card().title}</b></text>
+            <text fg={state()[1]}><span>{state()[0]}{card().agent ? ` · ${card().agent}` : ""}</span></text>
+            <Show when={card().model}><text fg={theme.text.muted} wrapMode="none" truncate><span>{card().model}</span></text></Show>
+          </box>
+          <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
+            <Field label="Ввод" value={formatTokens(card().input)} />
+            <Field label="Вывод" value={formatTokens(card().output)} />
+            <Field label="Из кэша" value={formatTokens(card().cached)} />
+            <Field label="Стоимость" value={fmtMoney(card().cost)} />
+          </box>
+          <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
+            <Field label="Создана" value={fmtWhen(card().created)} />
+            <Field label="Активность" value={relativeTime(card().updated)} />
+            <text fg={theme.text.muted} wrapMode="none" truncate><span>{card().id}</span></text>
+          </box>
         </Show>
       </box>
     )

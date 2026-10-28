@@ -275,14 +275,14 @@ async function runButton(id, promptsToReturn, selectsToReturn = []) {
 
 const providerCase = fixture.buttons.find((item) => item.id === 'provider')
 await runButton('provider', providerCase.prompts, providerCase.selects)
-assert.ok(alerts.some((message) => message.includes('Provider ID must start with a letter')))
+assert.ok(alerts.some((message) => message.includes('ID провайдера: начинается с буквы')))
 
 const modelCase = fixture.buttons.find((item) => item.id === 'model')
 await runButton('model', modelCase.prompts, modelCase.selects)
 
 const remoteCase = fixture.buttons.find((item) => item.id === 'mcp-remote')
 await runButton('mcp', remoteCase.prompts, remoteCase.selects)
-assert.ok(alerts.some((message) => message.includes('api_key must use {env:VAR}')))
+assert.ok(alerts.some((message) => message.includes('api_key: используйте {env:VAR}')))
 
 const localCase = fixture.buttons.find((item) => item.id === 'mcp-local')
 await runButton('mcp', localCase.prompts, localCase.selects)
@@ -292,7 +292,7 @@ await runButton('mcp', ragCase.prompts, ragCase.selects)
 
 const skillCase = fixture.buttons.find((item) => item.id === 'skill')
 await runButton('skill', skillCase.prompts, skillCase.selects)
-assert.ok(alerts.some((message) => message.includes('Skill content is required')))
+assert.ok(alerts.some((message) => message.includes('Нужно содержимое навыка')))
 
 const importedSkillPath = join(configRoot, 'hardware-engineer')
 await mkdir(importedSkillPath)
@@ -381,7 +381,7 @@ assert.equal(registry.skills.review.content, 'Review the current changes.\nVerif
 assert.equal(registry.skills['hardware-engineer'].name, 'hardware-engineer')
 assert.equal(registry.skills['hardware-engineer'].description, 'Design hardware from verified evidence.')
 assert.equal(registry.skills['hardware-engineer'].content, '# Hardware engineer\n\nUse RAG evidence.')
-assert.equal(promptInputs.filter((input) => input.title === 'Skill ID').length, 1)
+assert.equal(promptInputs.filter((input) => input.title === 'ID навыка').length, 1)
 assert.ok(registry.orchestrations['acme-ui/coder-orchestrated'])
 assert.equal(registry.orchestrations['acme-ui/coder-orchestrated'].prompt, 'Verify before completion.')
 
@@ -473,7 +473,9 @@ assert.equal(await readFile(registryPath, 'utf8'), beforeProfileCancel, 'Cancel 
 confirmSave = true
 configureDialog([], [null])
 rows.find((row) => row.id === 'custom.add-wizard.mcp-profile').run('')
-await new Promise((resolve) => setImmediate(resolve))
+// Wait for the selector to take its answer: on a slow runner it opens later, and would
+// otherwise take the first answer queued for /mcp below.
+await waitFor(() => !dialogSelects.length, 'profile selector cancel')
 assert.equal(await readFile(registryPath, 'utf8'), beforeProfileCancel, 'Cancel in profile selector leaves registry unchanged')
 
 // /mcp: each pick sends one quiet mcp-toggle for the chosen scope; Esc exits.

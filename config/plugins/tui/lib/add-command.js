@@ -39,7 +39,7 @@ export function parseAddCommand(value) {
     if (!addArguments) return { type: "wizard", kind: null }
     const typeMatch = /^(\S+)(?:\s+([\s\S]*))?$/.exec(addArguments)
     const kind = ALIASES.get(typeMatch?.[1]?.toLowerCase())
-    if (!kind) return { type: "error", message: "Unknown add type: provider, model, mcp, mcp-profile, skill or orchestration" }
+    if (!kind) return { type: "error", message: "Неизвестный тип: provider, model, mcp, mcp-profile, skill или orchestration" }
     return parsed(kind, typeMatch[2] ?? "")
   }
 

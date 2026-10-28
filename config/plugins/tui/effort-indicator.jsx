@@ -93,7 +93,9 @@ export default Plugin.define({
       setRevision((value) => value + 1)
       reloadPreferences()
     })
-    subscribe("catalog.updated", scheduleModelReload)
+    // V2 publishes catalog changes as model/provider updates.
+    subscribe("model.updated", scheduleModelReload)
+    subscribe("provider.updated", scheduleModelReload)
 
     let lastNotifiedUntil = 0
     const stopRateLimit = watchRateLimit((next) => {
@@ -118,7 +120,7 @@ export default Plugin.define({
         if (rl.active && rl.seconds > 0) {
           return (
             <text fg={context.theme.warning || "yellow"}>
-              ⏳ Лимит Gemini: повтор через {rl.seconds}с
+              ◷ Лимит Gemini: повтор через {rl.seconds}с
             </text>
           )
         }
@@ -139,7 +141,7 @@ export default Plugin.define({
         }
         const label = effortLabel(model, ref, preferred())
         if (!label) return null
-        return <text fg={context.theme.text.muted}>Effort: {label}</text>
+        return <text fg={context.theme.text.muted}>Усилие: {label}</text>
       },
     })
 

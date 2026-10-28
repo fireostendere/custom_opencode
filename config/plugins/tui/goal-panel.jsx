@@ -1,9 +1,16 @@
 /** @jsxImportSource @opentui/solid */
 import { Plugin } from "@opencode/plugin/tui"
-import { createEffect, createSignal, Show } from "solid-js"
+import { createEffect, createSignal } from "solid-js"
 import { GoalRpc, describeGoal, watchGoal } from "./lib/goal-view.js"
 
-const excerpt = value => value.length > 240 ? value.slice(0, 240) + "…" : value
+// Two quiet lines above the prompt: state and the next command, then the objective itself.
+// The summary and the full text live in the details dialog (click or the palette command).
+const ICON = { busy: "◉", ok: "✓", warn: "◌" }
+const nextStep = (goal) =>
+  goal.unavailable ? "нет связи с сервером"
+    : goal.status === "active" ? "/goal stop"
+    : goal.status === "completed" ? "автопродолжение выключено"
+      : "/goal resume"
 
 export default Plugin.define({
   id: "custom.goal-panel",
@@ -46,10 +53,11 @@ export default Plugin.define({
         const color = view.tone === "busy" ? theme.text.formfield.selected : view.tone === "ok" ? theme.text.feedback.success.base : theme.text.feedback.warning.base
         return (
           <box flexDirection="column" flexShrink={0} paddingLeft={1} paddingRight={1} onMouseDown={showDetails}>
-            <text fg={color}><b>{view.headline}</b> · продолжений: {view.turns}</text>
-            <text fg={theme.text.base} wrapMode="word">{excerpt(view.objective)}</text>
-            <Show when={view.summary}><text fg={theme.text.muted} wrapMode="word">{excerpt(view.summary)}</text></Show>
-            <text fg={theme.text.muted} wrapMode="word">{view.hint} · клик — подробнее</text>
+            <box flexDirection="row" justifyContent="space-between" gap={2} width="100%" minWidth={0}>
+              <text fg={color} flexShrink={0}>{ICON[view.tone]} <b>{view.headline}</b> · продолжений: {view.turns}</text>
+              <text fg={theme.text.muted} wrapMode="none" truncate minWidth={0}>{nextStep(goal())} · клик — подробнее</text>
+            </box>
+            <text fg={theme.text.base} wrapMode="none" truncate>{view.objective.replace(/\s+/g, " ")}</text>
           </box>
         )
       },
