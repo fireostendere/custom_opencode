@@ -8,7 +8,7 @@ import { normalizeFamilyIDs, resolvePlanSources, resolveRootID, selectV2PlanCand
 
 export const PANEL_DEFS = [
   { id: "session", title: "Сессия", short: "Сесс" },
-  { id: "activity", title: "Activity", short: "Act" },
+  { id: "activity", title: "Активность", short: "Акт" },
   { id: "plan", title: "План", short: "План" },
   { id: "orchestration", title: "Оркестрация", short: "Орк" },
   { id: "history", title: "История", short: "Ист" },

@@ -1,8 +1,8 @@
 /** @jsxImportSource @opentui/solid */
 /**
- * Shows the effective TUI effort beside the native prompt footer status.
- * The native footer only renders an explicit variant; this also explains the
- * provider default and the saved per-model variant preference.
+ * Shows the effective TUI effort beside the native prompt footer status when
+ * the prompt line does not already name it: the provider default, a configured
+ * effort, or a variant whose effort differs from its name (lib/effort-label.js).
  *
  * The footer render re-runs whenever a signal it reads changes, so every
  * signal here is equality-checked: an unchanged poll result must not rebuild
@@ -10,19 +10,11 @@
  */
 import { Plugin } from "@opencode/plugin/tui"
 import { createSignal } from "solid-js"
+import { effortLabel } from "./lib/effort-label.js"
 import { INACTIVE_RATE_LIMIT, sameRateLimit, watchRateLimit } from "./lib/limits-helper.js"
 
 const MODEL_RELOAD_DEBOUNCE_MS = 500
 const MISSING_MODEL_RELOAD_MS = 30_000
-
-function modelKey(providerID, modelID) {
-  return `${providerID}/${modelID}`
-}
-
-function variantsOf(model) {
-  if (Array.isArray(model?.variants)) return model.variants
-  return Object.entries(model?.variants ?? {}).map(([id, value]) => ({ id, ...value }))
-}
 
 function samePreferences(a, b) {
   if (a === b) return true
@@ -50,18 +42,6 @@ async function loadPreferredVariants() {
   } catch {
     return {}
   }
-}
-
-function configuredEffort(model) {
-  const settings = model?.settings ?? {}
-  return settings.effort ?? settings.reasoningEffort ?? null
-}
-
-function variantEffort(model, id) {
-  if (!id || id === "default") return null
-  const variant = variantsOf(model).find((item) => item.id === id)
-  const settings = variant?.settings ?? {}
-  return settings.effort ?? settings.reasoningEffort ?? id
 }
 
 export default Plugin.define({
@@ -157,14 +137,8 @@ export default Plugin.define({
           lastMissingReload = Date.now()
           scheduleModelReload()
         }
-        const explicit = variantEffort(model, ref.variant)
-        const saved =
-          preferred()[modelKey(ref.providerID, ref.id)] ??
-          preferred()[modelKey(ref.providerID, model?.modelID)]
-        const savedVariant = variantsOf(model).some((variant) => variant.id === saved)
-          ? variantEffort(model, saved)
-          : null
-        const label = explicit ?? savedVariant ?? configuredEffort(model) ?? "default"
+        const label = effortLabel(model, ref, preferred())
+        if (!label) return null
         return <text fg={context.theme.text.muted}>Effort: {label}</text>
       },
     })

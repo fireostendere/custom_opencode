@@ -18,12 +18,12 @@ const PATH_MAX_LENGTH = 4096
 
 const TITLES = {
   catalog: "Каталог моделей",
-  provider: "Добавить provider",
-  model: "Добавить model",
+  provider: "Добавить провайдера",
+  model: "Добавить модель",
   mcp: "Добавить MCP",
-  "mcp-profile": "MCP profile: создать / изменить",
-  skill: "Добавить skill",
-  orchestration: "Добавить orchestration",
+  "mcp-profile": "Профиль MCP: создать / изменить",
+  skill: "Добавить навык",
+  orchestration: "Добавить оркестрацию",
 }
 
 function isSensitiveName(value) {
@@ -768,8 +768,8 @@ function commandRows(context, process) {
     },
     {
       id: "custom.add-wizard.add",
-      title: "Добавить configuration",
-      description: "Create or update providers, models, MCP, profiles, skills and orchestration",
+      title: "Добавить конфигурацию",
+      description: "Провайдеры, модели, MCP, профили, навыки и оркестрация",
       group: "Configuration",
       palette: true,
       suggested: true,
@@ -781,7 +781,7 @@ function commandRows(context, process) {
       return {
         id: `custom.add-wizard.${kind}`,
         title: TITLES[kind],
-        description: `Wizard or native JSON command for ${kind}`,
+        description: "Мастер или команда JSON",
         group: "Configuration",
         palette: true,
         run: (input) => process(parseAddCommand(slashInput(command, input))),
@@ -789,7 +789,7 @@ function commandRows(context, process) {
     }),
     {
       id: "custom.add-wizard.configure",
-      title: "Configuration: manage",
+      title: "Конфигурация: управление",
       group: "Configuration",
       palette: true,
       slash: { name: "configure" },
@@ -812,7 +812,7 @@ function commandRows(context, process) {
     },
     {
       id: "custom.add-wizard.profile",
-      title: "MCP profile: select",
+      title: "Профиль MCP: выбрать",
       group: "Configuration",
       palette: true,
       run: () => {
