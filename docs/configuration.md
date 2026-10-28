@@ -503,6 +503,17 @@ CUSTOM_OPENCODE_INSTALL_SELFTEST=1
 
 Для shared OpenCode V2 `OPENCODE_CONFIG_DIR` обычно остаётся пустым, чтобы использовать canonical global config. Меняйте `OPENCODE_CLI_PACKAGE` только вместе с прогоном полного regression suite.
 
+### Собственная сборка OpenCode
+
+`OPENCODE_CLI_BINARY` указывает на локально собранный форк OpenCode (например, `fireostendere/opencode`, ветка `custom/tui-rework`). Installer ставит его поверх npm-бинарника той же версии атомарным переименованием: запущенные TUI и сервис работают на старом файле до перезапуска. Сборка другой версии не ставится — installer предупреждает и оставляет npm-сборку, потому что клиент и сервис должны совпадать. Если убрать настройку, installer вернёт npm-бинарник через `postinstall` пакета.
+
+```text
+scripts/build-opencode-fork.sh ~/src/opencode   # печатает путь к бинарнику
+OPENCODE_CLI_BINARY=$HOME/.local/share/opencode-fork/cli-linux-x64/bin/opencode
+```
+
+Для сборки нужен bun версии из `packageManager` форка. При подъёме `OPENCODE_CLI_PACKAGE` форк нужно перебазировать на новый тег и пересобрать.
+
 ## Private user config
 
 Публичный репозиторий содержит механизм и примеры: агентов, оркестрацию, D&D narrator. Личная конфигурация может жить в отдельном приватном checkout, версионироваться и откатываться независимо. Подключается одной строкой в `.env`:

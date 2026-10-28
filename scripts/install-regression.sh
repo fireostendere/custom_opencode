@@ -80,6 +80,48 @@ assert target.is_symlink() and outside.read_text() == "keep"
 print("CLI visibility: fresh defaults, legacy migration, backup, preferences and repeat install passed")
 PY
 
+# A locally built OpenCode fork replaces the npm binary of the pinned version,
+# never one built for another version, and the npm build returns when unset.
+FORK_TMP="$TMP/cli-fork"
+mkdir -p "$FORK_TMP/cli/bin" "$FORK_TMP/path"
+fake_cli() {
+  printf '#!/usr/bin/env bash\n[[ "${1:-}" == --version ]] && { echo "opencode v%s"; exit 0; }\necho %s\n' "$1" "$2" >"$3"
+  chmod +x "$3"
+}
+fake_cli 2.1.4 npm "$FORK_TMP/npm-original"
+fake_cli 2.1.4 fork "$FORK_TMP/fork-2.1.4"
+fake_cli 2.2.0 fork-new "$FORK_TMP/fork-2.2.0"
+cp -p "$FORK_TMP/npm-original" "$FORK_TMP/cli/bin/opencode.exe"
+ln -s "$FORK_TMP/cli/bin/opencode.exe" "$FORK_TMP/path/opencode2"
+# The package postinstall links the npm platform binary back into place.
+printf '#!/usr/bin/env bash\n[[ "$1" == */cli/bin/../postinstall.mjs ]] && cp -p "%s" "%s"\n' \
+  "$FORK_TMP/npm-original" "$FORK_TMP/cli/bin/opencode.exe" >"$FORK_TMP/path/node"
+chmod +x "$FORK_TMP/path/node"
+FORK_BLOCK=$(sed -n '/^# A locally built OpenCode fork/,/^# Read a package.json/p' "$ROOT/scripts/install.sh")
+[[ -n "$FORK_BLOCK" ]] || { echo "installer has no OpenCode fork block" >&2; exit 1; }
+install_fork() {
+  env PATH="$FORK_TMP/path:$PATH" OPENCODE_CLI_VERSION=2.1.4 OPENCODE_CLI_BINARY="${1-}" \
+    bash -euc "$FORK_BLOCK" 2>"$FORK_TMP/stderr"
+}
+cli() { PATH="$FORK_TMP/path:$PATH" opencode2; }
+
+install_fork "$FORK_TMP/fork-2.2.0"
+[[ $(cli) == npm ]] || { echo "a fork of another version replaced the pinned CLI" >&2; exit 1; }
+grep -q 'keeping the npm build' "$FORK_TMP/stderr" || { echo "version mismatch was not reported" >&2; exit 1; }
+install_fork "$FORK_TMP/fork-2.1.4"
+[[ $(cli) == fork ]] || { echo "the fork build was not installed" >&2; exit 1; }
+touch -d @1000 "$FORK_TMP/cli/bin/opencode.exe"
+install_fork "$FORK_TMP/fork-2.1.4"
+[[ $(stat -c %Y "$FORK_TMP/cli/bin/opencode.exe") == 1000 ]] || { echo "repeat install rewrote the fork" >&2; exit 1; }
+install_fork ""
+[[ $(cli) == npm ]] || { echo "unsetting the fork did not restore the npm build" >&2; exit 1; }
+install_fork "" && [[ $(cli) == npm ]]
+if install_fork "$FORK_TMP/missing"; then
+  echo "a missing fork binary was accepted" >&2
+  exit 1
+fi
+echo "CLI fork: version guard, install, idempotence, restore and missing binary passed"
+
 cp -a "$ROOT/." "$COPY/"
 rm -f "$COPY/.env"
 

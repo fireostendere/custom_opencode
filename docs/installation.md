@@ -89,7 +89,7 @@ MCP_RAG_BIN=/absolute/path/to/mcp-rag/.venv/bin/knowledge-mcp
 Installer:
 
 1. загружает `.env`;
-2. если версия `opencode2` отличается от `OPENCODE_CLI_PACKAGE`, устанавливает закреплённую сборку в `~/.local`;
+2. если версия `opencode2` отличается от `OPENCODE_CLI_PACKAGE`, устанавливает закреплённую сборку в `~/.local`; при заданном `OPENCODE_CLI_BINARY` ставит поверх неё собственную сборку той же версии (см. `docs/configuration.md#собственная-сборка-opencode`);
 3. обнаруживает RAG;
 4. валидирует и provision-ит pinned Ponytail checkout, если он включён;
 5. при включённом self-test выполняет pre-install verifier до записи конфигов;

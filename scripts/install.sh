@@ -111,6 +111,34 @@ if [[ "$CURRENT_OPENCODE_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
   exit 1
 fi
 
+# A locally built OpenCode fork (OPENCODE_CLI_BINARY, see scripts/build-opencode-fork.sh)
+# replaces the npm binary of the pinned version. A fork of another version was built
+# for a different service, so it is skipped loudly and the npm build stays. Unsetting
+# the setting restores the npm binary through the package's own postinstall.
+CLI_EXE=$(readlink -f "$(command -v opencode2)")
+CLI_FORK_MARK="$CLI_EXE.fork"
+if [[ -n "${OPENCODE_CLI_BINARY:-}" ]]; then
+  if [[ ! -f "$OPENCODE_CLI_BINARY" || ! -x "$OPENCODE_CLI_BINARY" ]]; then
+    echo "OPENCODE_CLI_BINARY is not an executable file: $OPENCODE_CLI_BINARY" >&2
+    exit 1
+  fi
+  FORK_VERSION=$("$OPENCODE_CLI_BINARY" --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//' || true)
+  if [[ "$FORK_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
+    echo "warning: OPENCODE_CLI_BINARY is OpenCode ${FORK_VERSION:-unknown} but the pin is $OPENCODE_CLI_VERSION;" >&2
+    echo "         keeping the npm build. Rebase the fork onto v$OPENCODE_CLI_VERSION and rebuild it." >&2
+  elif ! cmp -s "$OPENCODE_CLI_BINARY" "$CLI_EXE"; then
+    echo "==> Installing OpenCode fork build ($OPENCODE_CLI_BINARY)"
+    # Rename into place: running TUIs and the service keep the old file until they restart.
+    install -m 0755 "$OPENCODE_CLI_BINARY" "$CLI_EXE.new"
+    mv -f "$CLI_EXE.new" "$CLI_EXE"
+    printf '%s\n' "$OPENCODE_CLI_BINARY" >"$CLI_FORK_MARK"
+  fi
+elif [[ -f "$CLI_FORK_MARK" ]]; then
+  echo "==> Restoring the npm OpenCode build"
+  node "$(dirname "$CLI_EXE")/../postinstall.mjs"
+  rm -f "$CLI_FORK_MARK"
+fi
+
 # Read a package.json "version" field. Must stay compatible with `set -euo pipefail`:
 # a missing file makes sed exit 2, and `head -1` closing the pipe early can make it
 # exit 141 — either one would propagate through pipefail into the assignment and kill
