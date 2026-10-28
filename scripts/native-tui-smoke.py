@@ -120,9 +120,9 @@ def main() -> int:
         ("/panel right session", "Сессия"),
         ("/panel right activity", "Активность"),
         ("/panel right plan", "Плана пока нет."),
-        # Differential rendering skips cells that already match the plan view underneath
-        # ("П" and the space after "Подагентов"), so match the run it always repaints.
-        ("/panel right orchestration", "этой сессии не было"),
+        # The message wraps, and differential rendering skips cells that already match the
+        # plan view underneath ("П", the space after "Подагентов"): match one repainted run.
+        ("/panel right orchestration", "этой сессии"),
         ("/panel right history", "История"),
         ("/panel right limits", "Лимиты"),
     ]
