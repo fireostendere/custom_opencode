@@ -18,6 +18,8 @@ const sequence = value => Number.isSafeInteger(value) && value >= 0
 const keyOf = input => JSON.stringify([input.campaignId, input.projection ?? 'live'])
 const CHARACTER_REF_ERROR = /Unknown (?:characterId|targetCharacterId|casterId)|needs [^\n]*\((?:characterId|targetCharacterId|casterId)\)/i
 const CATALOG_ENTRIES = 64
+const TRANSIENT = /HTTP 50[234]|ECONNREFUSED|ECONNRESET|ETIMEDOUT/
+const RETRY_MS = Number(process.env.DND_READ_RETRY_MS ?? 2000)
 const hash = value => createHash('sha256').update(value).digest('hex')
 const canonical = value => {
   if (Array.isArray(value)) return value.map(canonical)
@@ -71,8 +73,13 @@ export function createDndStateCache() {
       return page?.nextPage === input.pageCursor ? { ...page.query, operation: 'read', pageCursor: input.pageCursor } : input
     }
     const result = { projection: 'live', delta: true, paged: true, ...input, maxBytes: byteBudget(input.maxBytes) }
-    const known = sessions.get(id)?.get(keyOf(result))
+    const states = sessions.get(id), known = states?.get(keyOf(result))
     if (known?.restoreCharacters) return { ...result, delta: false, stateDelta: true, knownStateRevision: undefined, knownSeq: undefined, knownSections: undefined }
+    // Models drift into delta:false/stateDelta:false and copy it from their own history:
+    // ~130 KB of full state per wake. The server resyncs a lost baseline by itself, so a
+    // full read is honored only as the fallback right after a failed delta read.
+    if (result.stateDelta === false && !states?.fullFallback) Object.assign(result, { delta: true, stateDelta: true })
+    if (states) states.fullFallback = false
     if (result.stateDelta === false || Object.keys(result.knownSections ?? {}).length) return result
     result.stateDelta = true
     if (known?.revision) result.knownStateRevision ??= known.revision
@@ -184,11 +191,19 @@ export function createDndStateCache() {
         if (prepared.operation !== 'invoke' || !CHARACTER_REF_ERROR.test(String(error?.message ?? error)) || sessions.get(id) !== states) return
         for (const projection of ['live', 'full']) states.set(keyOf({ campaignId: input.campaignId, projection }), { restoreCharacters: true })
       }
+      // A failed delta read unlocks one full read (the playbook's documented fallback).
+      const deltaReadFailed = () => { if (prepared.operation === 'read' && prepared.stateDelta === true && sessions.get(id) === states) states.fullFallback = true }
       let result
       try { result = await execute(prepared, context) }
-      catch (error) { restoreCharacters(error); throw error }
+      catch (error) {
+        // A read is idempotent: ride out one proxy blip (prod restarts answer 502 for seconds).
+        if (prepared.operation !== 'read' || !TRANSIENT.test(String(error?.message ?? error)) || context.signal?.aborted) { restoreCharacters(error); deltaReadFailed(); throw error }
+        await new Promise(resolve => setTimeout(resolve, RETRY_MS))
+        try { result = await execute(prepared, context) }
+        catch (again) { deltaReadFailed(); throw again }
+      }
       if (sessions.get(id) !== states || context.signal?.aborted) return result
-      if (result?.isError) restoreCharacters(JSON.stringify(result.content))
+      if (result?.isError) { restoreCharacters(JSON.stringify(result.content)); deltaReadFailed() }
       try {
         // A preview/artifact is not an acknowledged baseline. The runtime's default
         // inline budget is 128 KiB; honor a smaller configured limit as well.
