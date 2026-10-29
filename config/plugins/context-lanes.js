@@ -193,7 +193,8 @@ export default {
       if (gameSkills && Date.now() < gameSkills.until) return gameSkills.items
       // A fresh project instance lists skills before its configured skill paths are
       // scanned. Without a short retry the first turn goes out without the policy and the
-      // model loads ~14 KB of skills into its history; a partial list never replaces a
+      // model loads the game skills (~105 KB since the 2026-10-29 split; rare
+      // mechanics live in on-demand dnd-narrator-* skills) into its history; a partial list never replaces a
       // complete one (that would also change the cached system prompt mid-session).
       for (let attempt = 0; ; attempt++) {
         const catalog = await ctx.skill.list()
