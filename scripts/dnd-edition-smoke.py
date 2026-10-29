@@ -77,4 +77,12 @@ for name in ("dnd-memory", "dnd-reader"):
 for name in expected_agents:
     assert all(not item["action"].startswith("kb_knowledge_") for item in agents[name]["permissions"])
 
-print("DnD Edition profile/config contract passed")
+prompt = (ROOT / 'config/prompts/dnd-edition.md').read_text(encoding='utf-8')
+assert 'Чикен Карри' in prompt and 'HarmonQuest' in prompt
+assert 'право на попытку, а не успех' in prompt
+assert '### Сначала разрешение, потом рассказ' in prompt
+assert "filters.source='yolo_reference'" in prompt
+assert 'успех — больше заявленного' not in prompt
+assert 'Пост без всратого эмодзи в заголовке — брак' not in prompt
+
+print("DnD Edition profile/config and YOLO prompt contracts passed")
