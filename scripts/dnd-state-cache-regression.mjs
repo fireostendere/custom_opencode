@@ -24,7 +24,7 @@ assert.equal(query.stateDelta, undefined, 'do not mutate model inputs')
 assert.equal(cache.prepare('two', query).knownStateRevision, undefined, 'sessions are isolated')
 assert.equal(cache.prepare('one', { ...query, campaignId: 'other' }).knownStateRevision, undefined)
 assert.equal(cache.prepare('one', { ...query, projection: 'full' }).knownStateRevision, undefined)
-assert.equal(cache.prepare('one', { ...query, stateDelta: false }).knownStateRevision, undefined)
+assert.equal(cache.prepare('one', { ...query, stateDelta: false, delta: false }).knownStateRevision, nextRevision, 'a model-chosen full read becomes the bounded delta')
 assert.equal(cache.prepare('one', query).maxBytes, 45056, 'pages fit the host tool_output cap')
 assert.equal(cache.prepare('one', { ...query, maxBytes: 131072 }).maxBytes, 45056, 'an oversized model request is clamped')
 assert.equal(cache.prepare('one', { ...query, maxBytes: 8192 }).maxBytes, 8192, 'a smaller model request is kept')
@@ -316,3 +316,38 @@ console.log('D&D state cache plugin wiring passed: compaction events reset the b
   await cleanup()
 }
 console.log('D&D state cache idle continuation passed: exact query, primary-only, deduplication and interruption')
+
+{
+  // Full reads only as the fallback right after a failed delta read; idempotent reads ride out one 502.
+  process.env.DND_READ_RETRY_MS = '0'
+  const { createDndStateCache: fresh } = await import('../config/plugins/dnd-state-cache.js?retry')
+  const c = fresh(), ctx = { sessionID: 'fb' }
+  let mode = 'ok', sent = []
+  const call = c.wrap(async input => {
+    sent.push(input)
+    if (mode === '502') { mode = 'ok'; throw new Error('Error POSTing to endpoint:  (HTTP 502)') }
+    if (mode === 'down') throw new Error('Error POSTing to endpoint:  (HTTP 502)')
+    if (mode === 'refused') return { isError: true, content: [{ type: 'text', text: 'MCP control action failed' }] }
+    return result(input.operation === 'read' ? baseline : { committedSeq: 11 })
+  })
+  await call(query, ctx)
+  mode = 'refused'
+  await call({ ...query, stateDelta: false }, ctx)
+  assert.equal(sent.at(-1).stateDelta, true, 'without a failure the model cannot force a full read')
+  mode = 'ok'
+  await call({ ...query, stateDelta: false }, ctx)
+  assert.equal(sent.at(-1).stateDelta, false, 'the read right after a failed delta read may be full')
+  await call({ ...query, stateDelta: false }, ctx)
+  assert.equal(sent.at(-1).stateDelta, true, 'the fallback is spent by one read')
+  sent = []; mode = '502'
+  await call(query, ctx)
+  assert.equal(sent.length, 2, 'a read retries once after a 502')
+  assert.deepEqual(sent[0], sent[1], 'the retry is the identical read')
+  sent = []; mode = 'down'
+  await assert.rejects(call(query, ctx), /HTTP 502/)
+  assert.equal(sent.length, 2, 'only one retry')
+  sent = []
+  await assert.rejects(call({ operation: 'invoke', campaignId, name: 'pc_attack', expectedSeq: 10, commandId: 'x' }, ctx), /HTTP 502/)
+  assert.equal(sent.length, 1, 'a write is never replayed by the host')
+}
+console.log('D&D state cache read policy passed: no model-forced full reads, one fallback, one 502 retry for reads only')
