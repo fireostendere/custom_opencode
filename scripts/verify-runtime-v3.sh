@@ -18,7 +18,8 @@ NODE=$(command -v node || true)
 "$NODE" --check "$ROOT/config/plugins/server-runtime-guard.js"
 "$NODE" --check "$ROOT/app/runtime-v3-dashboard.js"
 "$NODE" --check "$ROOT/app/control-plane.js"
-"$PYTHON3" "$ROOT/scripts/runtime-v3-smoke.py"
+# Exercise installation with the owner's host opt-in already in the environment.
+OPENCODE_ALLOW_FULL_MACHINE=1 "$PYTHON3" "$ROOT/scripts/runtime-v3-smoke.py"
 "$PYTHON3" "$ROOT/scripts/context-budget-regression.py"
 "$PYTHON3" "$ROOT/scripts/performance-hot-path-regression.py"
 "$PYTHON3" "$ROOT/scripts/runtime-v3-worktree-smoke.py"

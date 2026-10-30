@@ -134,12 +134,16 @@ with tempfile.TemporaryDirectory() as temp:
         pass
     else:
         raise AssertionError("safe sandbox accepted destructive shell")
-    try:
-        sandbox.wrap_shell("echo hi", str(project), "full-machine")
-    except PermissionError:
-        pass
-    else:
-        raise AssertionError("full-machine ran without explicit opt-in")
+    # The installer inherits the owner's opt-in; this refusal fixture must not.
+    with patch.dict(os.environ, {"OPENCODE_ALLOW_FULL_MACHINE": "0"}):
+        try:
+            sandbox.wrap_shell("echo hi", str(project), "full-machine")
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("full-machine ran without explicit opt-in")
+    with patch.dict(os.environ, {"OPENCODE_ALLOW_FULL_MACHINE": "1"}):
+        assert sandbox.wrap_shell("echo hi", str(project), "full-machine")["command"] == "echo hi"
     wrapped = sandbox.wrap_shell("printf ok", str(project), "repo-write")["command"]
     assert "--unshare-net" in wrapped and f"--tmpfs {Path.home().parent}" in wrapped
     assert "--unshare-pid" in wrapped and wrapped.index("--ro-bind / /") < wrapped.index(
