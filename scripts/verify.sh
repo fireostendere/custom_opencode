@@ -118,6 +118,8 @@ done
 "$NODE" "$ROOT/scripts/wizard-validation-smoke.mjs"
 "$NODE" "$ROOT/scripts/config-manager-regression.mjs"
 "$NODE" "$ROOT/scripts/context-lanes-regression.mjs"
+"$PYTHON3" "$ROOT/scripts/dnd-edition-smoke.py"
+"$NODE" "$ROOT/scripts/dnd-edition-ui-plugin-smoke.mjs"
 "$NODE" "$ROOT/scripts/dnd-watch-regression.mjs"
 "$PYTHON3" "$ROOT/scripts/dnd-watch-web-regression.py"
 "$NODE" "$ROOT/scripts/dnd-state-cache-regression.mjs"

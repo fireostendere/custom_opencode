@@ -84,5 +84,10 @@ assert '### Сначала разрешение, потом рассказ' in p
 assert "filters.source='yolo_reference'" in prompt
 assert 'успех — больше заявленного' not in prompt
 assert 'Пост без всратого эмодзи в заголовке — брак' not in prompt
+teamwork = prompt.split('## Совместные трюки и участие другого героя', 1)[1].split('\n## ', 1)[0]
+for phrase in ('владелец второго героя', 'Молчание не считается согласием', 'send_whisper',
+               'не расходует его ход', 'не обязательно два встречных броска',
+               'не автоматический отказ', 'Не спрашивай это перед каждой обычной атакой'):
+    assert phrase in teamwork, f'teamwork consent contract missing: {phrase}'
 
 print("DnD Edition profile/config and YOLO prompt contracts passed")
