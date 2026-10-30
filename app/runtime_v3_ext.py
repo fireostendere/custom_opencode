@@ -219,6 +219,10 @@ def handle_post(handler:Any,parsed:Any,runtime:Any,v3mod:Any,features:Any)->bool
             task_id=str(payload.get("taskID") or ""); task=runtime.STORE.get_task(task_id)
             if not task: raise KeyError(task_id)
             sandbox=v3.sandbox.normalize(str(payload.get("sandbox") or ""))
+            if sandbox in {"full-machine", "wsl"}:
+                if (getattr(handler,"owner_sandbox",lambda:None)() != "full-machine"
+                        or not runtime.owner_coding_task(features,str(task.get("session_id") or ""),str(task.get("profile") or ""),str(task.get("kind") or ""),mode=str((task.get("metadata") or {}).get("modeAtCreate") or "build"))):
+                    raise PermissionError("host sandbox requires an opted-in owner root coding task")
             # Inside WSL the `wsl` profile has no boundary to cross: it is the host shell.
             if (sandbox=="full-machine" or (sandbox=="wsl" and v3mod._inside_wsl())) and not v3mod._full_machine_allowed(): raise PermissionError(f"{sandbox} sandbox is disabled")
             task=runtime.STORE.update_task(task_id,metadata_patch={"sandbox":sandbox}); runtime.STORE.event(kind="sandbox.changed",task_id=task_id,session_id=task.get("session_id"),project_dir=task.get("project_dir"),data={"sandbox":sandbox}); result={"ok":True,"task":runtime._public(task)}

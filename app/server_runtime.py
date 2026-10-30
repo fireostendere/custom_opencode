@@ -342,7 +342,21 @@ def _last_assistant_text(features: Any, session_id: str) -> str:
     return ""
 
 
-def enqueue_prompt(features: Any, payload: dict[str, Any]) -> dict[str, Any]:
+def owner_coding_task(features: Any, session_id: str, profile: str, kind: str, *, mode: str = "build") -> bool:
+    """Root coding submissions only; authority is supplied separately by the handler."""
+    if mode != "build" or kind != "prompt" or profile not in {
+        "direct", "fast", "build", "architect", "sol-orchestrated", "critical", "long-horizon"
+    }:
+        return False
+    session = features._session_info(session_id)
+    binding = STORE.cache_get("native-context-binding", session_id) or {}
+    return not (session.get("parentID") or binding.get("parentID")
+                or _mode(session) == "plan" or session.get("mode") == "plan"
+                or session.get("agent") == "dnd-narrator"
+                or _profile_for_selected_model("direct", _model_ref(session)) == "dnd-edition")
+
+
+def enqueue_prompt(features: Any, payload: dict[str, Any], *, sandbox_override: str | None = None) -> dict[str, Any]:
     sid = str(payload.get("sessionID") or "")
     if not sid or len(sid) > 256:
         raise ValueError("invalid session id")
@@ -369,6 +383,10 @@ def enqueue_prompt(features: Any, payload: dict[str, Any]) -> dict[str, Any]:
         "sandbox": profile_data.get("sandbox", "repo-write"),
         "handoff": payload.get("handoff") if isinstance(payload.get("handoff"), dict) else None,
     }
+    if sandbox_override == "full-machine" and owner_coding_task(
+        features, sid, profile, str(payload.get("kind") or "prompt"), mode=metadata["modeAtCreate"]
+    ):
+        metadata["sandbox"] = sandbox_override
     if requested in CLIENT_PROFILES:
         # Queued prompts re-resolve at dispatch: the model may change meanwhile.
         metadata["profileRequest"] = requested
@@ -421,7 +439,7 @@ def reorder_queue(session_id: str, ids: list[str]) -> dict[str, Any]:
 def _switch_session(features: Any, task: dict[str, Any]) -> dict[str, Any]:
     session = features._session_info(task["session_id"])
     metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
-    mode = str(metadata.get("modeAtCreate") or _mode(session))
+    mode = "plan" if _mode(session) == "plan" or session.get("mode") == "plan" else str(metadata.get("modeAtCreate") or "build")
     selected = _model_ref(session)
     profiles = REGISTRY.profiles()
     requested = metadata.get("profileRequest")
@@ -438,10 +456,16 @@ def _switch_session(features: Any, task: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(profile, dict):
         raise ValueError(f"task profile is not configured: {profile_id}")
     dnd_lane = bool(profile.get("dndMinimalContext"))
+    if metadata.get("sandbox") == "full-machine" and not owner_coding_task(
+        features, task["session_id"], profile_id, str(task.get("kind") or ""), mode=mode
+    ):
+        STORE.update_task(task["id"], metadata_patch={"sandbox": profile.get("sandbox", "repo-write")})
     if dnd_lane:
         # A D&D task is a single live turn. Never reinterpret mode=plan as a
         # planner stage or let role-task machinery create a reviewer/researcher.
         mode = "build"
+        # Queued prompts may have switched from a coding model to gameplay.
+        STORE.update_task(task["id"], metadata_patch={"sandbox": profile.get("sandbox", "repo-write")})
     role_task = not dnd_lane and task.get("kind") in {"review", "research", "aggregate"}
     decision = SCHEDULER.decide(profile, selected_model=selected)
     model = decision.selected_model
@@ -512,7 +536,8 @@ def context_envelope(
 
 
 def dispatch_immediate(
-    features: Any, *, session_id: str, text: str, files: list[Any], profile: str = "direct"
+    features: Any, *, session_id: str, text: str, files: list[Any], profile: str = "direct",
+    sandbox_override: str | None = None,
 ) -> dict[str, Any]:
     created = enqueue_prompt(
         features,
@@ -524,6 +549,7 @@ def dispatch_immediate(
             "priority": 100,
             "kind": "prompt",
         },
+        sandbox_override=sandbox_override,
     )
     task = STORE.get_task(created["task"]["id"])
     if not task:
@@ -1499,7 +1525,7 @@ def _cleanup_new_worktree(root: str, worktree: str) -> None:
         raise RuntimeError(result.stderr.strip() or "failed to clean newly-created worktree")
 
 
-def create_task_request(features: Any, payload: dict[str, Any]) -> dict[str, Any]:
+def create_task_request(features: Any, payload: dict[str, Any], *, sandbox_override: str | None = None) -> dict[str, Any]:
     base = str(payload.get("sessionID") or "")
     directory = (
         features._session_directory(base)
@@ -1519,6 +1545,9 @@ def create_task_request(features: Any, payload: dict[str, Any]) -> dict[str, Any
         "modeAtCreate": str(payload.get("mode") or "build"),
         "sandbox": REGISTRY.profiles().get(profile, {}).get("sandbox", "repo-write"),
     }
+    owner_root = sandbox_override == "full-machine" and (not base or owner_coding_task(
+        features, base, profile, str(payload.get("kind") or "prompt"), mode=metadata["modeAtCreate"]
+    ))
     created_session = False
     if isolate:
         # Worktree paths are relative to the repository toplevel; a session
@@ -1552,6 +1581,8 @@ def create_task_request(features: Any, payload: dict[str, Any]) -> dict[str, Any
     try:
         if not sid:
             raise ValueError("sessionID is required unless isolate creates a session")
+        if owner_root and owner_coding_task(features, sid, profile, str(payload.get("kind") or "prompt"), mode=metadata["modeAtCreate"]):
+            metadata["sandbox"] = sandbox_override
         metadata["usageBaseline"] = _usage_totals(features, sid)
         task = STORE.create_task(
             session_id=sid,

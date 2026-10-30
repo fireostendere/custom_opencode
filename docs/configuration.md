@@ -477,6 +477,31 @@ OPENCODE_DOCKER_READONLY=0
 
 `full-machine` требует explicit opt-in. Normal writable work использует repo-scoped policy.
 
+### Доступ владельца с телефона / браузера к хосту
+
+По умолчанию `OPENCODE_OWNER_SANDBOX=repo-write`: обычные задачи ограничены проектом.
+Для PC-equivalent доступа добавьте **обе** строки в `settings.env` приватного
+`CUSTOM_OPENCODE_USER_CONFIG` (не в публичный шаблон):
+
+```text
+OPENCODE_OWNER_SANDBOX=full-machine
+OPENCODE_ALLOW_FULL_MACHINE=1
+```
+
+Затем примените конфигурацию через `./scripts/install.sh`. Это разрешает нативный shell,
+сеть, HOME и файлы вне проекта с правами пользователя сервиса: это не контейнер и не
+обход системных прав или подтверждений OpenCode. Включайте только на доверенном хосте.
+Автоматический выбор действует только для корневых coding-задач владельца
+`OPENCODE_SERVER_USERNAME` с действующей, не отозванной login-cookie: отправка,
+очередь и создание задачи Task Center. Basic auth, localhost и поля JSON не дают
+этих прав; другие пользователи сохраняют ограниченный режим. Дочерние сессии,
+review/research/autofix и D&D не наследуют host-доступ. Выбор `full-machine`/`wsl`
+через task sandbox API также требует opt-in владельца и корневую coding-задачу.
+Эффективный профиль виден в поле `sandbox` существующего runtime task summary.
+Отключение `OPENCODE_ALLOW_FULL_MACHINE` запрещает исполнение host-профиля даже
+для ранее созданной задачи; `OPENCODE_OWNER_SANDBOX=repo-write` отключает его
+автоматический выбор для новых отправок.
+
 ## Backend discovery
 
 ```text

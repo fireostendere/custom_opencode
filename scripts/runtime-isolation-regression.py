@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import os
 import sys
 import tempfile
 import threading
@@ -117,6 +118,25 @@ class RuntimeIsolationTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 self.gateway.shell({"sessionID": "session", "cwd": str(outside), "command": "pwd"})
             wrap.assert_not_called()
+
+    def test_full_machine_shell_preserves_cwd_outside_project(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        with patch.dict(os.environ, OPENCODE_ALLOW_FULL_MACHINE="1"):
+            wrapped = self.sandbox.wrap_shell(
+                "pwd", str(outside), "full-machine", project_root=str(self.project)
+            )
+        self.assertEqual(wrapped["cwd"], str(outside))
+
+    def test_gateway_reads_sandbox_downgrade_from_store(self):
+        stale = self.task(metadata={"sandbox": "full-machine"})
+        self.store.transition(stale["id"], "running")
+        self.store.update_task(stale["id"], metadata_patch={"sandbox": "repo-write"})
+        self.assertEqual(stale["metadata"]["sandbox"], "full-machine")
+        self.assertEqual(self.gateway._task("session", None)["metadata"]["sandbox"], "repo-write")
+        with patch.dict(os.environ, OPENCODE_ALLOW_FULL_MACHINE="1"):
+            with self.assertRaises(PermissionError):
+                self.gateway.shell({"sessionID": "session", "cwd": str(self.root), "command": "pwd"})
 
     def test_shell_cwd_symlink_escape_is_rejected(self):
         self.store.transition(self.task()["id"], "running")
