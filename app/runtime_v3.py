@@ -998,7 +998,7 @@ class SandboxManager:
         if profile == "full-machine":
             if not _full_machine_allowed():
                 raise PermissionError("full-machine sandbox requires explicit opt-in")
-            return {"command": command, "cwd": workdir, "shell": "/bin/sh"}
+            return {"command": command, "cwd": str(cwd_path), "shell": "/bin/sh"}
         if profile in {"safe", "repo-write"}:
             bwrap = shutil.which("bwrap")
             if not bwrap:

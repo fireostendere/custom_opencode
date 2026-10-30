@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import threading
 import time
@@ -273,6 +274,17 @@ class Handler(rag.Handler, features.Handler):
         token = self.cookie_token()
         return bool(token and not _token_revoked(token) and base.valid_session_token(token))
 
+    def owner_sandbox(self) -> str | None:
+        """Server-only authority: never infer ownership from body, Basic or peer IP."""
+        base = rag.plus.ext.base
+        token = self.cookie_token()
+        if (token and not _token_revoked(token)
+                and base.valid_session_token(token) == base.CLIENT_USER
+                and runtime_v3._full_machine_allowed()
+                and os.environ.get("OPENCODE_OWNER_SANDBOX", "repo-write") == "full-machine"):
+            return "full-machine"
+        return None
+
     def form_reply_requires_human(self, path: str) -> bool:
         parts = path.rstrip("/").split("/")
         if len(parts) != 7 or parts[:3] != ["", "api", "session"] or parts[4] != "form" or parts[6] != "reply":
@@ -415,6 +427,16 @@ class Handler(rag.Handler, features.Handler):
             return
         if control.handle_post(self, parsed):
             return
+        if parsed.path in {"/client-queue.json", "/client-task-create.json"}:
+            if not self.authenticated():
+                self.unauthorized()
+                return
+            try:
+                create = runtime.enqueue_prompt if parsed.path == "/client-queue.json" else runtime.create_task_request
+                self.json_response(create(features, self._feature_body(), sandbox_override=self.owner_sandbox()))
+            except Exception as exc:
+                self._feature_error(exc)
+            return
         if parsed.path == "/client-send.json":
             if not self.authenticated():
                 self.unauthorized()
@@ -434,6 +456,7 @@ class Handler(rag.Handler, features.Handler):
                     text=text,
                     files=files,
                     profile=str(payload.get("profile") or payload.get("modelProfile") or "direct"),
+                    sandbox_override=self.owner_sandbox(),
                 )
                 self.json_response({"ok": True, **result})
             except Exception as exc:

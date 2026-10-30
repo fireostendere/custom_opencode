@@ -165,6 +165,7 @@ DND_FAST_TIER_SELF_CHECK=1 "$NODE" "$ROOT/config/plugins/dnd-fast-tier.js"
 "$PYTHON3" "$ROOT/scripts/runtime-resume-smoke.py"
 "$PYTHON3" "$ROOT/scripts/security-boundary-smoke.py"
 "$PYTHON3" "$ROOT/scripts/runtime-isolation-regression.py"
+"$PYTHON3" "$ROOT/scripts/mobile-owner-access-regression.py"
 "$PYTHON3" "$ROOT/scripts/webserver-boundary-regression.py"
 for file in "$ROOT/scripts/"*.sh; do
   bash -n "$file"
