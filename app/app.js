@@ -77,6 +77,8 @@ let showHiddenModels = false
 const sessionModelVersions = new Map()
 const sessionModelOverrides = new Map()
 const sessionModelQueues = new Map()
+const titleGenerationRequested = new Set()
+const DEFAULT_SESSION_TITLE_RE = /^(?:New|Child) session - \d{4}-\d{2}-\d{2}T/
 
 function loadJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || '') || fallback } catch { return fallback }
@@ -164,7 +166,11 @@ function projectInfo(session) {
   const dir = directory(session)
   return { key:session?.projectID || dir || 'none', label:project ? projectLabel(project) : (dir.split(/[\\/]/).filter(Boolean).pop() || 'Без проекта'), directory:dir }
 }
-function sessionTitle(session) { return stripQuota(session?.title?.trim()) || 'Без названия' }
+function sessionTitle(session) {
+  const title = stripQuota(session?.title?.trim())
+  if (!title || DEFAULT_SESSION_TITLE_RE.test(title)) return 'Новая сессия'
+  return title
+}
 function sessionTime(session) { return session?.time?.updated || session?.time?.created || 0 }
 function timeText(value) { return value ? new Date(value).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '' }
 function projectOrder() { return loadJson(PROJECT_ORDER_KEY, []) }
@@ -712,6 +718,10 @@ async function loadContext({force=false,initial=false}={}) {
     if(state.selected?.id===id){
       state.context=cache.messages
       syncPromptHistory();renderMessages({bottom:initial||!wasLoaded});renderUsage()
+      if(!titleGenerationRequested.has(id)&&(state.selected.title==='Новая сессия'||DEFAULT_SESSION_TITLE_RE.test(state.selected.title||''))&&cache.messages.some((m)=>(m.type||m.role)==='user')){
+        titleGenerationRequested.add(id)
+        api.renameSession(id,'').catch(()=>{})
+      }
     }
   }catch(error){
     if(state.contextCache.get(id)===cache&&state.selected?.id===id){if(cache.messages.length)toast(`История: ${error.message}`);else $('messagesInner').innerHTML=`<div class="empty">Не удалось открыть сессию: ${escapeHtml(error.message)}</div>`}
@@ -1291,7 +1301,7 @@ async function createAt(dir,title){
 }
 async function createNewSession(){
   const dir=state.clientConfig?.scratchDirectory
-  try{await createAt(dir,'Новая сессия')}
+  try{await createAt(dir)}
   catch(error){toast(`Создание: ${error.message}`)}
 }
 async function sendMessage(event){
@@ -1362,7 +1372,7 @@ async function selectProjectTarget(project) {
   status.textContent='Создаётся сессия…'
   status.hidden=false
   try {
-    const session=await createAt(project.canonical,'Новая сессия')
+    const session=await createAt(project.canonical)
     dialog.close()
     $('input').focus()
     return session
@@ -1460,10 +1470,19 @@ function markFinished(sessionID,kind='готово'){if(!sessionID)return;invali
 function handleEvent(payload){
   window.dispatchEvent(new CustomEvent('custom-opencode:event',{detail:payload}))
   if(['session.created','session.deleted'].includes(payload.type))sessionPolling.wake()
-  const data=payload.data||payload.properties||{}, sid=data.sessionID||data.session?.id
+  const data=payload.data||payload.properties||{}, sid=data.sessionID||data.session?.id||data.info?.id
   if(payload.type==='session.deleted'){
     const deletedID=sid||data.info?.id||data.id
     if(deletedID){forgetSessionState(deletedID);if(state.selected?.id===deletedID)clearSelection({saveDraft:false});else renderSessions()}
+  }
+  if(payload.type==='session.renamed'||payload.type==='session.updated'){
+    const nextTitle=typeof data.title==='string'?data.title:(typeof data.info?.title==='string'?data.info.title:null)
+    const target=state.sessions.find((s)=>s.id===sid)
+    if(target&&nextTitle!==null&&target.title!==nextTitle){
+      target.title=nextTitle
+      if(state.selected?.id===sid){state.selected.title=nextTitle;renderHeader()}
+      renderSessions()
+    }
   }
   if(['session.execution.started','session.busy','session.status.running'].includes(payload.type))markStarted(sid,payload.type)
   if(payload.type==='session.status'){const type=data.status?.type||data.type;if(['busy','retry','running'].includes(type))markStarted(sid,type);if(type==='idle')markFinished(sid,'готово')}

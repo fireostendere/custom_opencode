@@ -50,11 +50,12 @@ export async function sessionStatuses() {
 
 export async function createSession({ directory, title, agent, model }) {
   const body = { location: { directory } }
-  if (title) body.title = title
+  const isDefaultPlaceholder = title === 'Новая сессия' || title === 'New session'
+  if (title && !isDefaultPlaceholder) body.title = title
   if (agent) body.agent = agent
   if (model) body.model = model
   let created = dataOf(await request('/api/session', { method: 'POST', body: JSON.stringify(body) }))
-  if (title && created?.id && created.title !== title) {
+  if (title && !isDefaultPlaceholder && created?.id && created.title !== title) {
     // Rename is a command: native V2 may return an acknowledgement, not a
     // Session. Never replace the created record (and its id/location) with it.
     try {
@@ -284,10 +285,10 @@ export async function abortSession(sessionID) {
 export async function renameSession(sessionID, title) {
   const id = encodeURIComponent(sessionID)
   try {
-    return dataOf(await request(`/api/session/${id}/rename`, { method: 'POST', body: JSON.stringify({ title }) }))
+    return dataOf(await request(`/api/session/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }))
   } catch (error) {
     if (![404, 405].includes(error.status)) throw error
-    return dataOf(await request(`/api/session/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }))
+    return dataOf(await request(`/api/session/${id}/rename`, { method: 'POST', body: JSON.stringify({ title }) }))
   }
 }
 
