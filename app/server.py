@@ -1672,11 +1672,18 @@ class Handler(BaseHTTPRequestHandler):
                 payload = json.loads(body.decode("utf-8"))
                 location = payload.get("location") if isinstance(payload, dict) else None
                 requested_directory = location.get("directory") if isinstance(location, dict) else None
+                changed = False
+                if isinstance(payload, dict) and payload.get("title") in ("Новая сессия", "New session"):
+                    payload = dict(payload)
+                    payload.pop("title", None)
+                    changed = True
                 if resolve_directory(requested_directory) == SCRATCH_ROOT:
                     allocated_scratch = allocate_scratch_directory()
                     payload = dict(payload)
                     payload["location"] = dict(location)
                     payload["location"]["directory"] = allocated_scratch
+                    changed = True
+                if changed:
                     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             except (UnicodeDecodeError, json.JSONDecodeError, RuntimeError) as exc:
                 if allocated_scratch:

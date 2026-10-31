@@ -111,6 +111,7 @@ for file in "$ROOT/app/"*.js "$ROOT/config/events.js" "$ROOT/config/plugins/"*.j
   "$NODE" --check "$file"
 done
 "$NODE" "$ROOT/scripts/web-smoke.mjs"
+"$NODE" "$ROOT/scripts/mobile-session-title-regression.mjs"
 "$NODE" --expose-gc "$ROOT/scripts/frontend-memory-regression.mjs"
 "$NODE" "$ROOT/scripts/web-agent-picker-regression.mjs"
 "$NODE" "$ROOT/scripts/project-settings-smoke.mjs"
