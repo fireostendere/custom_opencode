@@ -312,6 +312,23 @@ D&D: изолированные роли ODM `narrator-ask` (`odm_ask_answer_v1`
 Схема и биллинг: [официальная документация Decisions](https://developers.openai.com/api/docs/guides/decisions).
 Проверка без API-ключа и платных вызовов: `node scripts/decisions-regression.mjs`.
 
+### Bounded autonomous Decisions transport
+
+`node scripts/decisions-worker.mjs [--max-calls 1..256]` provides the same
+transport to a trusted preconfigured caller over JSONL, without an interactive
+session or tools. Each line has an SHA-256 `id`, `input` and `questions`; replies
+echo the ID and contain a typed `result` or sanitized `error`. It uses the same
+installed `OPENAI_DECISIONS_API_KEY`, endpoint and validation as the native tool.
+
+The default lifetime cap is 64 calls, complete requests are capped at 32 KiB,
+and the network timeout is 4 seconds. Duplicate IDs never dispatch. Provider,
+format or unknown-usage failure suspends the lane with no retry/replacement.
+Local process exit does not prove remote cancellation or zero charges. This
+standalone worker returns usage; it does not claim interactive-session ledger
+integration. No project-specific policy, configuration or prompt is included.
+
+Model-free checks: `node scripts/decisions-worker-regression.mjs`.
+
 ## Reasoning effort
 
 Canonical levels:
