@@ -788,6 +788,7 @@ chmod 0755 "$BIN_DIR/custom-opencode-webserver"
 # later custom-opencode client. Persist only variables needed by providers and
 # server-runtime plugins; arbitrary agent shells are scrubbed by the guard.
 SERVICE_ENV=(
+  COSSACKS_PROJECT_ROOT COSSACKS_PYTHON
   OPENCODE_CONFIG_DIR OPENAI_DECISIONS_API_KEY TOKEN_PLAN_API_KEY TOKEN_PLAN_ANTHROPIC_BASE_URL
   TOKEN_PLAN_OPENAI_BASE_URL TOKEN_PLAN_PROBE_MODEL OLLAMA_BASE_URL
   OPENCODE_LOCAL_AUTO_START OPENCODE_LOCAL_PROVIDER OPENCODE_LOCAL_ROUTER_URL

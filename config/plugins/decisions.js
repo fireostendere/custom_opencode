@@ -80,6 +80,27 @@ export function decisionResult(data, questions) {
   return { model: data.model, answers: data.answers, usage: data.usage }
 }
 
+// Shared by the native tool and the preconfigured autonomous game worker.
+export async function fetchDecision(input, { apiKey, signal, onStatus = () => {} }) {
+  const body = decisionBody(input)
+  signal.throwIfAborted()
+  let response
+  try {
+    response = await fetch(ENDPOINT, { method: 'POST', redirect: 'error',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal })
+  } catch {
+    throw Error(signal.aborted ? 'Decisions request cancelled or timed out' : 'Decisions network request failed')
+  }
+  onStatus(response.status)
+  if (!response.ok) {
+    await response.body?.cancel()
+    throw Error(`OpenAI Decisions HTTP ${response.status}; check API key, access, credits or rate limits. No automatic retry.`)
+  }
+  try { return JSON.parse(await boundedText(response, MAX_BYTES)) }
+  catch { throw Error('Invalid or oversized Decisions response') }
+}
+
 export default {
   id: 'custom.decisions',
   async setup(ctx) {
@@ -108,22 +129,7 @@ export default {
             tracking = { sessionID: context.sessionID, requestID }
           }
           signal.throwIfAborted()
-          let response
-          try {
-            response = await fetch(ENDPOINT, { method: 'POST', redirect: 'error',
-              headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify(body), signal })
-          } catch {
-            throw Error(signal.aborted ? 'Decisions request cancelled or timed out' : 'Decisions network request failed')
-          }
-          status = response.status
-          if (!response.ok) {
-            await response.body?.cancel()
-            throw Error(`OpenAI Decisions HTTP ${status}; check API key, access, credits or rate limits. No automatic retry.`)
-          }
-          let data
-          try { data = JSON.parse(await boundedText(response, MAX_BYTES)) }
-          catch { throw Error('Invalid or oversized Decisions response') }
+          const data = await fetchDecision(input, { apiKey, signal, onStatus: value => { status = value } })
           usage = normalizeUsage({ usage: data.usage })
           const result = decisionResult(data, body.questions)
           return { content: JSON.stringify(result), metadata: { model: result.model, usage: result.usage, elapsedMs: Date.now() - started } }

@@ -4,6 +4,9 @@
 
 ## С чего начать
 
+- [Cossacks script-advisor lab](cossacks.md) — read-only game research tools,
+  autonomous Decisions transport, local Laya and offline learning boundaries.
+
 - [Установка и обновление](installation.md) — новая установка, миграция, login/session settings, self-test, systemd и обновления.
 - [Конфигурация `.env`](configuration.md) — web auth, runtime/scheduler, секреты, пути и рекомендуемые значения.
 - [Web UI, авторизация и оформление](web-ui.md) — custom login, remembered session, mobile drawer, темы, accent colors и микроанимации.

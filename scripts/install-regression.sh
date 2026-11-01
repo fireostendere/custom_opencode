@@ -651,6 +651,8 @@ printf '%s\n' 'export default {id:"fixture.private-tui",setup(){}}' >"$USER_CONF
 cat >"$USER_CONFIG_DIR/settings.env" <<'EOF'
 OPENCODE_DND_NARRATOR_MODEL=openai/private-narrator
 OPENCODE_WEB_PORT=4999
+COSSACKS_PROJECT_ROOT=/owner/cossacks-fixture
+COSSACKS_PYTHON=/owner/laya/bin/python
 EOF
 cat >"$USER_CONFIG_DIR/opencode.overlay.json" <<'EOF'
 {
@@ -690,6 +692,8 @@ assert agents["private-agent"]["system"] == "root=" + sys.argv[3], agents["priva
 assert config["compaction"]["auto"] is True, "installer runtime invariants must win over the overlay"
 assert service["OPENCODE_DND_NARRATOR_MODEL"] == "openai/private-narrator", service
 assert service["OPENCODE_WEB_PORT"] == "4098", "the local .env must win over settings.env"
+assert service["COSSACKS_PROJECT_ROOT"] == "/owner/cossacks-fixture"
+assert service["COSSACKS_PYTHON"] == "/owner/laya/bin/python"
 PY
 cmp -s "$USER_CONFIG_DIR/prompts/engineering.md" "$ENGINEERING_PROMPT" || { echo "private prompt did not replace the public one" >&2; exit 1; }
 [[ -f "$USER_PROMPT" && -f "$USER_PLUGIN" ]] || { echo "private prompt/plugin was not installed" >&2; exit 1; }
