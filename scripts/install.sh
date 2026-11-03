@@ -68,7 +68,7 @@ export PATH="$BIN_DIR:$PATH"
 # Bare opencode2 calls below run before any config with "update": "disable"
 # exists; without this the CLI's own updater can reinstall @latest over the pin.
 export OPENCODE_DISABLE_AUTOUPDATE=1
-OPENCODE_CLI_PACKAGE=${CALLER_CLI_PACKAGE:-${OPENCODE_CLI_PACKAGE:-@opencode/cli@2.1.4}}
+OPENCODE_CLI_PACKAGE=${CALLER_CLI_PACKAGE:-${OPENCODE_CLI_PACKAGE:-@opencode/cli@2.2.5}}
 OPENCODE_CLI_NAME=${OPENCODE_CLI_PACKAGE%@*}
 OPENCODE_CLI_VERSION=${OPENCODE_CLI_PACKAGE##*@}
 CURRENT_OPENCODE_VERSION=$(opencode2 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//' || true)
