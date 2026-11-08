@@ -39,7 +39,7 @@ curl -fsSLo /tmp/custom-opencode-bootstrap.sh \
   https://raw.githubusercontent.com/fireostendere/custom_opencode/main/scripts/bootstrap.sh
 bash /tmp/custom-opencode-bootstrap.sh \
   --ref main \
-  --opencode-package @opencode/cli@2.1.4
+  --opencode-package @opencode/cli@2.2.5
 ```
 
 Для полностью воспроизводимой установки вместо `main` передайте полный commit
@@ -130,7 +130,7 @@ Install/update сохраняет тему, режим, горячие клав�
 
 ## Ponytail checkout
 
-Installer управляет отдельным checkout `DietrichGebert/ponytail` v4.13.0 на reviewed commit `08e952d7a8057a57ce561ff1330d093fd92eec67`. Путь по умолчанию — `$XDG_DATA_HOME/opencode/ponytail` или `~/.local/share/opencode/ponytail`. Native V2 bridge `plugins/ponytail-v2.js` управляет режимом/state, а `context-lanes.js` подмешивает reviewed instruction builder только для `normal/full`. В `lite/bare` Ponytail не попадает в model context. Старый upstream V1 callback-entrypoint в V2 не регистрируется; upstream `skills/`, `commands/` и `hooks/` не копируются в `~/.config/opencode`.
+Installer управляет отдельным checkout `DietrichGebert/ponytail` v5.3.3 на reviewed commit `7801d061243d7b753bad0e0b3c057cd250b11755`. Путь по умолчанию — `$XDG_DATA_HOME/opencode/ponytail` или `~/.local/share/opencode/ponytail`. Native V2 bridge `plugins/ponytail-v2.js` управляет режимом/state, а `context-lanes.js` подмешивает reviewed instruction builder только для `normal/full`. В `lite/bare` Ponytail не попадает в model context. Старый upstream V1 callback-entrypoint в V2 не регистрируется; upstream `skills/`, `commands/` и `hooks/` не копируются в `~/.config/opencode`.
 
 Provisioning fail-closed проверяет origin, ветку `main`, чистоту checkout, наличие обязательных файлов, принадлежность pin к `origin/main` и fast-forward-only обновление. Неиспользуемые локальные коммиты и изменения не перезаписываются.
 
