@@ -43,7 +43,7 @@ jobs:
       - name: Install pinned native OpenCode
         run: |
           set -euo pipefail
-          npm install -g @opencode/cli@2.1.4
+          npm install -g @opencode/cli@2.2.5
           # npm may block postinstall and leave the placeholder binary.
           # The workflow-level OPENCODE_DISABLE_AUTOUPDATE keeps this bare validation from
           # detaching the CLI's own updater, whose `npm install --global` reify once
@@ -100,7 +100,7 @@ jobs:
       - name: Install pinned native OpenCode
         run: |
           set -euo pipefail
-          npm install -g @opencode/cli@2.1.4
+          npm install -g @opencode/cli@2.2.5
           # Same postinstall-placeholder guard as model-free-matrix; the workflow-level
           # OPENCODE_DISABLE_AUTOUPDATE keeps the bare validation from spawning the CLI's
           # own updater against this pinned tree.

@@ -43,7 +43,7 @@ if [[ "$*" == "uninstall --global --prefix $HOME/.local @opencode-ai/cli" ]]; th
   rm -f "$HOME/.local/bin/opencode2"
   exit 0
 fi
-if [[ "$*" != "install --global --prefix $HOME/.local @opencode/cli@2.1.4" && "$*" != "install --global --prefix $HOME/.local/share/custom-opencode/cli @opencode/cli@2.1.4" ]]; then
+if [[ "$*" != "install --global --prefix $HOME/.local @opencode/cli@2.2.5" && "$*" != "install --global --prefix $HOME/.local/share/custom-opencode/cli @opencode/cli@2.2.5" ]]; then
   echo "unexpected npm invocation: $*" >&2
   exit 2
 fi
@@ -76,7 +76,7 @@ PACKAGE=${1%/postinstall.mjs}
 cat >"$PACKAGE/bin/opencode.exe" <<'INNER'
 #!/usr/bin/env bash
 printf 'opencode2 %s\n' "$*" >>"${CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG:?}"
-if [[ "${1:-}" == "--version" ]]; then printf 'opencode v2.1.4\n'; fi
+if [[ "${1:-}" == "--version" ]]; then printf 'opencode v2.2.5\n'; fi
 exit 0
 INNER
 chmod +x "$PACKAGE/bin/opencode.exe"
@@ -95,7 +95,7 @@ chmod +x "$FAKE_BIN/opencode"
 env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:/usr/bin:/bin" \
   bash "$COPY/scripts/install.sh" >"$TMP/install.out"
 
-grep -Fxq "npm install --global --prefix $HOME_DIR/.local @opencode/cli@2.1.4" "$LOG"
+grep -Fxq "npm install --global --prefix $HOME_DIR/.local @opencode/cli@2.2.5" "$LOG"
 grep -Fxq "node $HOME_DIR/.local/lib/node_modules/@opencode/cli/postinstall.mjs" "$LOG"
 [[ -x "$HOME_DIR/.local/bin/opencode2" ]] || {
   echo "clean install did not bootstrap opencode2" >&2
@@ -125,7 +125,7 @@ env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" HOME="$HOME_D
   bash "$COPY/scripts/install.sh" >"$TMP/upgrade.out"
 grep -Fxq "npm uninstall --global --prefix $HOME_DIR/.local @opencode-ai/cli" "$LOG"
 [[ ! -e "$HOME_DIR/.local/lib/node_modules/@opencode-ai/cli/package.json" ]]
-[[ $(CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" "$HOME_DIR/.local/bin/opencode2" --version) == 'opencode v2.1.4' ]]
+[[ $(CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" "$HOME_DIR/.local/bin/opencode2" --version) == 'opencode v2.2.5' ]]
 
 # The stable package also declares opencode; a user's V1/clipboard wrapper wins.
 cp -p "$FAKE_BIN/opencode" "$HOME_DIR/.local/bin/opencode"
@@ -135,9 +135,9 @@ printf '%s\n' '{"version":"0.0.0-beta-19271"}' >"$HOME_DIR/.local/lib/node_modul
 printf '#!/usr/bin/env bash\necho "opencode v0.0.0-beta-19271"\n' >"$HOME_DIR/.local/bin/opencode2"
 env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:/usr/bin:/bin" \
   bash "$COPY/scripts/install.sh" >"$TMP/wrapper-upgrade.out"
-grep -Fxq "npm install --global --prefix $HOME_DIR/.local/share/custom-opencode/cli @opencode/cli@2.1.4" "$LOG"
+grep -Fxq "npm install --global --prefix $HOME_DIR/.local/share/custom-opencode/cli @opencode/cli@2.2.5" "$LOG"
 cmp "$FAKE_BIN/opencode" "$HOME_DIR/.local/bin/opencode"
 [[ $(stat -c %y "$HOME_DIR/.local/bin/opencode") == "$WRAPPER_MTIME" ]]
-[[ $(CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" "$HOME_DIR/.local/bin/opencode2" --version) == 'opencode v2.1.4' ]]
+[[ $(CUSTOM_OPENCODE_V2_BOOTSTRAP_LOG="$LOG" "$HOME_DIR/.local/bin/opencode2" --version) == 'opencode v2.2.5' ]]
 
 echo "OpenCode V2 bootstrap regression passed: clean install + legacy namespace upgrade + custom wrapper preservation + postinstall repair"

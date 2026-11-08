@@ -45,7 +45,7 @@ jobs:
       - name: Install reviewed OpenCode V2 build
         run: |
           prefix="$RUNNER_TEMP/opencode-v2"
-          npm install --global --prefix "$prefix" @opencode/cli@2.1.4
+          npm install --global --prefix "$prefix" @opencode/cli@2.2.5
           bin="$prefix/bin/opencode2"
           test -x "$bin"
           if ! "$bin" --version; then
