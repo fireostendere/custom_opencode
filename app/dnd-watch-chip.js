@@ -103,7 +103,7 @@ export function createDndWatchChip({
     markup() {
       const view = current()
       if (!view) return ''
-      return `<button type="button" class="wf-pill clickable dnd-watch-pill" id="dndWatchButton" title="${escapeText(view.headline)}" aria-label="Вотчер стола: ${escapeText(view.headline)}"><span class="wf-dot ${TONE_DOT[view.tone] || 'off'}"></span><span class="dnd-watch-label">🎲 ${escapeText(view.label || view.headline)}</span></button>`
+      return `<button type="button" class="wf-pill clickable dnd-watch-pill" id="dndWatchButton" title="${escapeText(view.headline)}" aria-label="Вотчер стола: ${escapeText(view.headline)}"><span class="wf-dot ${TONE_DOT[view.tone] || 'off'}"></span><span class="dnd-watch-label">${escapeText(view.label || view.headline)}</span></button>`
     },
     /** Body of the details dialog. */
     detailsMarkup() {

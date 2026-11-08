@@ -73,20 +73,6 @@ const ENV_REF_RE = /^\{env:[A-Z_][A-Z0-9_]*\}$/
 const SENSITIVE_NAME_RE =
   /(?:^|[-_])(?:api[-_]?key|key|token|access[-_]?token|secret|password|passphrase|authorization|auth|credential)(?:$|[-_])/i
 
-function emptyRegistry() {
-  return {
-    version: 2,
-    providers: {},
-    models: {},
-    mcp: {},
-    skills: {},
-    orchestrations: {},
-    mcpProfiles: {},
-    mcpSettings: { mode: "auto", sessions: {} },
-    mcpToggles: {},
-  }
-}
-
 function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {}
 }

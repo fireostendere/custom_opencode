@@ -394,7 +394,7 @@ def desktop_flow(context) -> bool:
             page.wait_for_selector("#dndWatchDialog[open]", timeout=5000)
             details = page.locator("#dndWatchDialogContent").inner_text()
             page.screenshot(path=str(SHOTS / "desktop-07-dnd-watch.png"))
-            ok &= step(label.startswith("🎲") and "Кампания" in details, f"desktop: D&D watcher pill «{label}» opens its details")
+            ok &= step("Кампания" in details, f"desktop: D&D watcher pill «{label}» opens its details")
             close_dialog(page, "dndWatchDialog")
         except PWTimeout as exc:
             ok &= step(False, "desktop: D&D watcher pill", str(exc)[:150])

@@ -305,28 +305,6 @@ export async function deleteSession(sessionID) {
   return request(`/api/session/${encodeURIComponent(sessionID)}`, { method: 'DELETE' })
 }
 
-export async function getPermissions(directory) {
-  const q = locationParams(directory)
-  try { return dataOf(await request(`/api/permission/request?${q}`)) || [] }
-  catch { return [] }
-}
-
-export async function replyPermission(sessionID, permissionID, reply) {
-  const sid = encodeURIComponent(sessionID)
-  const pid = encodeURIComponent(permissionID)
-  try {
-    return await request(`/api/session/${sid}/permission/${pid}/reply`, {
-      method: 'POST', body: JSON.stringify({ reply }),
-    })
-  } catch (error) {
-    if (error.status !== 404) throw error
-    return request(`/api/session/${sid}/permissions/${pid}`, {
-      method: 'POST',
-      body: JSON.stringify({ response: reply === 'reject' ? 'reject' : 'once', remember: reply === 'always' }),
-    })
-  }
-}
-
 export async function getVcs(directory) {
   const q = locationParams(directory)
   try { return dataOf(await request(`/api/vcs?${q}`)) || null }

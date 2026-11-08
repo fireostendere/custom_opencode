@@ -131,7 +131,7 @@ function option(model, providerNames, category, favorite = false, theme = null, 
   const title = `${favorite ? "★ " : ""}${model.name}`
   return {
     title,
-    footer: isPromo ? (promoActive ? "🌙 −50%" : "☀ −50%") : undefined,
+    footer: isPromo ? (promoActive ? "−50% сейчас" : "−50% ночью") : undefined,
     footerColor: promoColor,
     value: { providerID: model.providerID, modelID: model.id },
     description: providerNames[model.providerID] || model.providerID,

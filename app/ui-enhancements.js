@@ -1,31 +1,13 @@
+import { dataOf } from './api.js'
+import { isNightPromoActive, isNightPromoModel, promoBadgeText } from './night-promo.js'
+
 const $ = (id) => document.getElementById(id)
 const FAV_KEY = 'opencode:web:favorites'
 const COLLAPSE_KEY = 'opencode:web:model-provider-collapse-v1'
-const NIGHT_DISCOUNT_MODELS = new Set([
-  'qwen3.8-max',
-  'qwen3.8-orchestrated',
-  'qwen3.8-max-preview',
-  'deepseek-v4-pro-0813',
-  'deepseek-v4-flash-0731',
-])
-function isNightPromoActive(nowMs = Date.now()){
-  const bj = new Date(nowMs + 8 * 3600 * 1000)
-  const min = bj.getUTCHours() * 60 + bj.getUTCMinutes()
-  return min >= 22 * 60 || min < 8 * 60
-}
-function isNightPromoModel(modelID, providerID){
-  if(providerID && providerID !== 'bailian-cli') return false
-  return NIGHT_DISCOUNT_MODELS.has(modelID)
-}
-
 const ORCHESTRATED_CHOICES = [
   { providerID:'bailian-cli', id:'qwen3.8-orchestrated', label:'Qwen3.8 Max · Orchestrated', meta:'Max → Flash worker · optional RAG' },
   { providerID:'openai', id:'gpt-6-sol-orchestrated', label:'GPT-6 Sol · Orchestrated', meta:'Sol builder · Luna reader' },
 ]
-
-function dataOf(value) {
-  return value && typeof value === 'object' && 'data' in value ? value.data : value
-}
 
 async function request(path, options = {}) {
   const response = await fetch(path, {
@@ -183,7 +165,7 @@ function normalizeChoice(button, favorites, orchestrated) {
     if (meta && !meta.querySelector('.night-promo-badge')) {
       const badge = document.createElement('span')
       badge.className = `night-promo-badge ${nightActive ? 'active' : 'inactive'}`
-      badge.textContent = nightActive ? '🌙 −50%' : '☀ −50%'
+      badge.textContent = promoBadgeText(nightActive)
       meta.prepend(badge)
     }
   }
@@ -228,7 +210,7 @@ function providerSection({ id, label, entries, collapsed, providerLabels, orches
     const nightActive = isNightPromoActive()
     if (isPromo) special.classList.add(nightActive ? 'night-promo-active' : 'night-promo-inactive')
     const selected = document.documentElement.dataset.modelProfile === 'orchestrated' && document.documentElement.dataset.orchestratedModel === model.id
-    const promoBadge = isPromo ? `<span class="night-promo-badge ${nightActive ? 'active' : 'inactive'}">${nightActive ? '🌙 −50%' : '☀ −50%'}</span> ` : ''
+    const promoBadge = isPromo ? `<span class="night-promo-badge ${nightActive ? 'active' : 'inactive'}">${promoBadgeText(nightActive)}</span> ` : ''
     special.innerHTML = `<div class="choice-title">${escapeHtml(model.label)}${selected ? ' · ✓' : ''}</div><div class="choice-meta">${promoBadge}${escapeHtml(model.meta)}</div>`
     body.append(special)
   }

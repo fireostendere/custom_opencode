@@ -19,9 +19,7 @@ button,input{font:inherit;color:inherit}
   display:grid;
   place-items:center;
   padding:max(22px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(22px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));
-  background:
-    radial-gradient(700px 420px at 50% -12%,rgba(16,163,127,.13),transparent 68%),
-    linear-gradient(180deg,#181818 0%,#151515 100%);
+  background:#151515;
 }
 .login-card{
   width:min(420px,100%);
