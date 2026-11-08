@@ -129,6 +129,10 @@ done
 "$NODE" "$ROOT/scripts/decisions-regression.mjs"
 "$NODE" "$ROOT/scripts/decisions-worker-regression.mjs"
 DND_FAST_TIER_SELF_CHECK=1 "$NODE" "$ROOT/config/plugins/dnd-fast-tier.js"
+for check in GEMINI_RATE_LIMIT:gemini-rate-limit KEEP_AWAKE:keep-awake NOTIFY_WIN:notify-win \
+  OPENCODE_ORCHESTRATED_QWEN:orchestrated-qwen QWEN_QUOTA:qwen-quota SLOW_CMD:slow-cmd-watchdog; do
+  env "${check%%:*}_SELF_CHECK=1" "$NODE" "$ROOT/config/plugins/${check#*:}.js"
+done
 "$NODE" "$ROOT/scripts/visible-plan-regression.mjs"
 "$NODE" "$ROOT/scripts/ponytail-v2-regression.mjs"
 "$NODE" "$ROOT/scripts/goal-regression.mjs"

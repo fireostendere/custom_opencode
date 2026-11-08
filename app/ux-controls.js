@@ -161,9 +161,6 @@ function selectedOrchestratedModel() {
   return ORCHESTRATED_MODELS.find((model) => text.includes(model.id) || text.includes(model.label)) || null
 }
 function profileForModel(model) { return model?.id === 'gpt-6-dnd-edition' ? 'dnd-edition' : model ? 'orchestrated' : 'direct' }
-function orchestratedModelSelected() {
-  return Boolean(selectedOrchestratedModel())
-}
 function syncOrchestratedChoiceLabel() {
   const selectedID = selectedOrchestratedModel()?.id || ''
   for (const choice of document.querySelectorAll('#modelChoices [data-orchestrated-model]')) {

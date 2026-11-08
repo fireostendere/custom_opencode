@@ -2,6 +2,7 @@ import * as api from './api.js'
 import { escapeHtml, renderMarkdown } from './markdown.js'
 import { ORCHESTRATED_MODELS } from './ux-state.js'
 import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'
+import { isNightPromoActive, isNightPromoModel, promoBadgeText } from './night-promo.js'
 
 const $ = (id) => document.getElementById(id)
 const QUICK_PROJECT_ID = '__custom_opencode_quick__'
@@ -302,7 +303,6 @@ async function handleDrop(event) {
   toast(sourceRemoved?`Сессия перенесена в проект «${projectLabel(project)}»`:'Создана копия; исходная сессия сохранена')
 }
 function activeModelRef() { return state.selected?.model || (!state.selected && state.draftModel) || state.defaultModel || null }
-function modelRefChanged(a,b) { return a?.id!==b?.id || a?.providerID!==b?.providerID || a?.variant!==b?.variant }
 function clearSessionModelState(id) { sessionModelVersions.delete(id);sessionModelOverrides.delete(id);sessionModelQueues.delete(id) }
 function forgetSessionState(id) {
   sessionSyncGeneration += 1
@@ -845,23 +845,6 @@ function directModelRef(){
 }
 window.CustomOpenCodeControls={changeModel,changeAgent,activeModel:activeModelRef,directModel:directModelRef,wasModelManuallySelected,wasCreatedHere,clearAttachments,attachmentSnapshot,readAttachments,ensureQuickSession,sessions:()=>state.sessions,startRun:markStarted}
 
-const NIGHT_DISCOUNT_MODELS = new Set([
-  'qwen3.8-max',
-  'qwen3.8-orchestrated',
-  'qwen3.8-max-preview',
-  'deepseek-v4-pro-0813',
-  'deepseek-v4-flash-0731',
-])
-function isNightPromoActive(nowMs = Date.now()){
-  const bj = new Date(nowMs + 8 * 3600 * 1000)
-  const min = bj.getUTCHours() * 60 + bj.getUTCMinutes()
-  return min >= 22 * 60 || min < 8 * 60
-}
-function isNightPromoModel(modelID, providerID){
-  if(providerID && providerID !== 'bailian-cli') return false
-  return NIGHT_DISCOUNT_MODELS.has(modelID)
-}
-
 function renderModelChoices(){
   const query=$('modelSearch').value.trim().toLowerCase(), current=activeModelRef(),currentKey=modelKey(current),hidden=hiddenModelKeys()
   const models=state.models.filter((m)=>`${m.name||''} ${m.id} ${m.providerID}`.toLowerCase().includes(query)).filter((m)=>showHiddenModels||!hidden.has(modelKey(m))||modelKey(m)===currentKey)
@@ -871,7 +854,7 @@ function renderModelChoices(){
   $('modelChoices').innerHTML=[...groups.entries()].sort((a,b)=>providerName(a[0]).localeCompare(providerName(b[0]))).map(([pid,items])=>`<div class="project">${escapeHtml(providerName(pid))}</div>${items.sort((a,b)=>Number(favorites.has(favKey(b)))-Number(favorites.has(favKey(a)))||(a.name||a.id).localeCompare(b.name||b.id)).map((m)=>{
     const promo=isNightPromoModel(m.id,m.providerID),key=favKey(m),isHidden=hidden.has(key)
     const promoClass=promo?(nightActive?'night-promo-active':'night-promo-inactive'):''
-    const promoBadge=promo?`<span class="night-promo-badge ${nightActive?'active':'inactive'}">${nightActive?'🌙 −50%':'☀ −50%'}</span>`:''
+    const promoBadge=promo?`<span class="night-promo-badge ${nightActive?'active':'inactive'}">${promoBadgeText(nightActive)}</span>`:''
     const actionLabel=isHidden?'Вернуть в список':m.custom?'Удалить модель':'Скрыть модель'
     return `<button class="choice ${promoClass}${isHidden?' model-hidden-choice':''}" data-model="${escapeHtml(m.id)}" data-provider="${escapeHtml(m.providerID)}" data-custom="${m.custom?1:0}" data-promo="${promo?1:0}"><div class="choice-title">${escapeHtml(m.name||m.id)}${current?.id===m.id&&current?.providerID===m.providerID?' · ✓':''}</div><div class="choice-meta">${promoBadge ? promoBadge + ' · ' : ''}${escapeHtml(m.id)} · <span data-fav="${escapeHtml(key)}">${favorites.has(key)?'★':'☆'}</span><span class="model-remove-toggle" data-model-remove="${escapeHtml(key)}" role="button" aria-label="${escapeHtml(actionLabel)}" title="${escapeHtml(actionLabel)}">${isHidden?'↩':'×'}</span></div></button>`
   }).join('')}`).join('')||'<div class="empty">Модели не найдены.</div>'

@@ -650,11 +650,6 @@ async function refreshGemini() {
   return true
 }
 
-/** Cached Gemini snapshot; never touches the filesystem. */
-export function queryGemini() {
-  return geminiState
-}
-
 // --- Shared snapshot, single-flight refresh and reference-counted feed
 
 const EMPTY = { codex: { available: false }, qwen: { available: false } }
@@ -770,11 +765,6 @@ export async function refreshLimits() {
 /** Last known limits; synchronous and free of I/O. */
 export function getLimitsSync() {
   return currentSnapshot()
-}
-
-export function onLimitsChange(fn) {
-  listeners.add(fn)
-  return () => listeners.delete(fn)
 }
 
 function scheduleTick() {
