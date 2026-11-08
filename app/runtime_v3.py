@@ -1180,10 +1180,6 @@ class DynamicContextManager:
         return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
     @staticmethod
-    def _env_flag(name: str) -> bool:
-        return str(os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
-
-    @staticmethod
     def _env_int(name: str) -> int | None:
         try:
             value = int(str(os.environ.get(name) or "").strip())

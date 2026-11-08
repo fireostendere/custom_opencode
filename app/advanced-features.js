@@ -154,7 +154,7 @@ function ensureSurfaces() {
   if (!$('dndWatchDialog')) {
     const dialog = document.createElement('dialog')
     dialog.id = 'dndWatchDialog'
-    dialog.innerHTML = '<div class="modal workflow-modal dnd-watch-modal"><div class="modal-head"><div><h3>🎲 Вотчер стола</h3><div class="choice-meta">Автоожидание игроков в кампании ODM</div></div><button class="icon" type="button" data-workflow-close="dndWatchDialog">×</button></div><div id="dndWatchDialogContent" class="dnd-watch-details"></div></div>'
+    dialog.innerHTML = '<div class="modal workflow-modal dnd-watch-modal"><div class="modal-head"><div><h3>Вотчер стола</h3><div class="choice-meta">Автоожидание игроков в кампании ODM</div></div><button class="icon" type="button" data-workflow-close="dndWatchDialog">×</button></div><div id="dndWatchDialogContent" class="dnd-watch-details"></div></div>'
     document.body.append(dialog)
   }
   if (!$('projectSettingsDialog')) {

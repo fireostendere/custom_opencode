@@ -65,10 +65,6 @@ export async function ensureRouter({ dnd = false } = {}) {
   }
 }
 
-export async function localRouterHealth() {
-  return healthy()
-}
-
 // Native V2 accepts a plain JS manifest; no runtime SDK dependency is needed.
 export default {
   id: "lazy-local-router",

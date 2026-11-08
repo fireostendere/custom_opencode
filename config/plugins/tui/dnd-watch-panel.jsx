@@ -50,7 +50,7 @@ export default Plugin.define({
         staleAt = view.staleAt
         return (
           <box flexDirection="column" flexShrink={0}>
-            <text fg={theme.text.base}><b>🎲 Вотчер стола</b></text>
+            <text fg={theme.text.base}><b>Вотчер стола</b></text>
             <text fg={toneColor(view.tone)} wrapMode="word"><span>{view.headline}</span></text>
             <For each={view.rows}>
               {([label, value]) => (
