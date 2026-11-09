@@ -274,8 +274,10 @@ CUSTOM_OPENCODE_INSTALL_SELFTEST=1
 После первой установки доступно:
 
 ```bash
-custom-opencode-update
+custom-opencode update   # то же, что custom-opencode-update
 ```
+
+`update` (и `upgrade`) перехватывает обёртка `custom-opencode`: встроенный `upgrade` OpenCode не определяет установку в собственном npm-префиксе, а версия OpenCode закреплена репозиторием. Аргументы команда не принимает.
 
 Команда выполняет `git fetch --prune origin main`, затем `git merge --ff-only FETCH_HEAD` и повторно запускает installer. Поэтому verifier и post-install self-test выполняются и после обычного обновления. Если `.env` уже существует и в нём нет строки, начинающейся точно с `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT=`, updater добавляет `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT=1`; существующее значение не меняется. Строки с `export` или ведущими пробелами ключом не считаются.
 

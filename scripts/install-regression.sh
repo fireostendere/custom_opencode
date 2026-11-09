@@ -606,14 +606,19 @@ chmod +x "$FAKE_BIN/git"
 # still starts the service temporarily for its self-test, then restores it.
 mkdir -p "$XDG_CONFIG_HOME/opencode"
 printf '%s\n' '{"version":1,"running":false,"defaultEnabled":false}' >"$XDG_CONFIG_HOME/opencode/webserver.json"
+# `custom-opencode update` must reach this updater; OpenCode's own `upgrade`
+# cannot detect the custom npm prefix and used to be what that command ran.
 env -u OPENCODE_CONFIG_DIR CUSTOM_OPENCODE_REGRESSION_LOG="$LOG" HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" \
-  bash "$COPY/scripts/update.sh" >"$TMP/update.out"
+  "$WRAPPER" update >"$TMP/update.out"
 grep -Fxq 'git fetch --prune origin main' "$LOG"
 grep -Fxq 'git merge --ff-only FETCH_HEAD' "$LOG"
 grep -Fq 'systemctl --user restart opencode-web-client.service' "$LOG"
 grep -Fq 'systemctl --user disable opencode-web-client.service' "$LOG"
 grep -Fq 'systemctl --user stop opencode-web-client.service' "$LOG"
 grep -Fq 'Updated from origin/main' "$TMP/update.out"
+rc=0
+env -u OPENCODE_CONFIG_DIR HOME="$HOME_DIR" PATH="$FAKE_BIN:$PATH" "$WRAPPER" update --method npm >/dev/null 2>&1 || rc=$?
+[[ $rc == 2 ]] || { echo "wrapper accepted extra update arguments (exit $rc)" >&2; exit 1; }
 cmp -s "$TMP/cli-before-update.json" "$CLI_CONFIG" || { echo "updater reset user TUI settings" >&2; exit 1; }
 
 # The update must preserve the V3 render and exact TUI installation path.

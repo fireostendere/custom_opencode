@@ -716,6 +716,13 @@ cat >"$BIN_DIR/custom-opencode" <<EOF
 set -euo pipefail
 export PATH="$BIN_DIR:\$PATH"
 export CUSTOM_OPENCODE_ROOT="$ROOT"
+# OpenCode's built-in upgrade cannot detect this install (custom npm prefix) and
+# the repo pins the OpenCode version, so update/upgrade runs the repo updater.
+# It goes before the env load so a broken .env cannot block the repair path.
+if [[ "\${1:-}" == update || "\${1:-}" == upgrade ]]; then
+  [[ \$# -eq 1 ]] || { echo "custom-opencode: update takes no arguments; the OpenCode version is pinned by the repo." >&2; exit 2; }
+  exec "$ROOT/scripts/update.sh"
+fi
 source "$ROOT/scripts/user-config.sh"
 custom_opencode_load_env "$ROOT"
 # Native standalone servers remove OPENCODE_SERVER_PASSWORD before plugins load.

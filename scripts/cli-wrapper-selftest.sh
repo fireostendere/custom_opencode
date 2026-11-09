@@ -17,6 +17,16 @@ fi
 VERSION=$(printf '%s\n' "$OUTPUT" | head -n 1)
 echo "[PASS] cli-wrapper: ${VERSION:-version command succeeded}"
 
+# update is the repo updater, not OpenCode's own upgrade; extra arguments are
+# refused (exit 2) before anything is fetched, installed or restarted.
+rc=0
+OUTPUT=$("$CLI" update --method npm 2>&1) || rc=$?
+if [[ $rc != 2 ]] || ! grep -q 'update takes no arguments' <<<"$OUTPUT"; then
+  echo "[FAIL] cli-wrapper: 'update --method npm' was not refused by the wrapper (exit $rc)" >&2
+  exit 1
+fi
+echo "[PASS] cli-wrapper: update routes to the repo updater"
+
 if "$CLI" run --agent plan >/dev/null 2>&1; then
   echo "[FAIL] cli-wrapper: bare isolated plan was accepted" >&2
   exit 1
