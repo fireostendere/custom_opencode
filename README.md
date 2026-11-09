@@ -226,7 +226,7 @@ custom-opencode
 Обновление:
 
 ```bash
-custom-opencode-update
+custom-opencode update   # то же, что custom-opencode-update
 ```
 
 Installer по умолчанию выполняет pre-install verification и post-install runtime self-test. Платный model inference автоматически не запускается.

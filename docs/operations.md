@@ -30,7 +30,7 @@ state wizard не записываются; состояние хранится 
 ## Обновление
 
 ```bash
-custom-opencode-update
+custom-opencode update   # то же, что custom-opencode-update
 ```
 
 Последовательность:
