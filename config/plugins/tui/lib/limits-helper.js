@@ -653,7 +653,16 @@ async function refreshGemini() {
 // --- Shared snapshot, single-flight refresh and reference-counted feed
 
 const EMPTY = { codex: { available: false }, qwen: { available: false } }
-let cache = { at: 0, data: EMPTY }
+let cache = { data: EMPTY }
+const checkedAt = {}
+const ALL_SOURCES = ["codex", "qwen", "gemini"]
+const ownerSources = new Map()
+function normalizeSources(sources = ALL_SOURCES) {
+  return ALL_SOURCES.filter((source) => Array.isArray(sources) && sources.includes(source) && (source !== "qwen" || qwenLimitsEnabled()))
+}
+function activeSources() {
+  return normalizeSources([...ownerSources.values()].flat())
+}
 let snapshot = null
 let refreshTimer = null
 let tickTimer = null
@@ -728,32 +737,39 @@ function loadQwen() {
   })
 }
 
-async function refresh() {
-  const [codex, qwen] = await Promise.all([
-    loadCodex().catch(() => CODEX_UNAVAILABLE),
-    loadQwen().catch(() => ({ available: false, reason: "bailian-cli-unavailable" })),
-    refreshGemini().catch(() => false),
-  ])
-  cache = { at: Date.now(), data: { codex, qwen } }
+async function refresh(sources) {
+  const results = {}
+  await Promise.all(sources.map(async (source) => {
+    if (source === "gemini") await refreshGemini().catch(() => false)
+    else {
+      const result = await (source === "codex" ? loadCodex() : loadQwen())
+        .catch(() => source === "codex" ? CODEX_UNAVAILABLE : { available: false, reason: "bailian-cli-unavailable" })
+      results[source] = result
+    }
+    checkedAt[source] = Date.now()
+  }))
+  cache.data = { ...cache.data, ...results }
   notify(listeners)
   return currentSnapshot()
 }
 
-function refreshGeminiAndNotify() {
-  return refreshGemini().then((changed) => {
-    if (changed) notify(listeners)
-    return currentSnapshot()
-  }, () => currentSnapshot())
-}
-
-function requestRefresh(force = false) {
-  if (!force && Date.now() - cache.at < CACHE_TTL) return refreshGeminiAndNotify()
-  if (refreshPending) return refreshPending
-  refreshPending = refresh().finally(() => { refreshPending = null })
+function requestRefresh(force = false, sources = ALL_SOURCES, scoped = false) {
+  // Legacy calls retain the disabled result, without invoking Alibaba's CLI.
+  if (!qwenLimitsEnabled() && cache.data.qwen.reason !== "disabled") cache.data = { ...cache.data, qwen: { available: false, state: "disabled", reason: "disabled" } }
+  sources = normalizeSources(sources)
+  if (refreshPending) return refreshPending.then(() => requestRefresh(false, scoped ? activeSources() : sources, scoped))
+  const due = sources.filter((source) => force || !checkedAt[source] || Date.now() - checkedAt[source] >= CACHE_TTL)
+  if (!due.length) return Promise.resolve(currentSnapshot())
+  refreshPending = refresh(due).finally(() => { refreshPending = null })
   return refreshPending
 }
 
 export async function getLimits() {
+  // Legacy reads also pick up local countdown changes inside the CLI cache TTL.
+  if (!refreshPending && checkedAt.gemini && Date.now() - checkedAt.gemini < CACHE_TTL) {
+    const changed = await refreshGemini().catch(() => false)
+    if (changed) notify(listeners)
+  }
   return requestRefresh(false)
 }
 
@@ -768,14 +784,14 @@ export function getLimitsSync() {
 }
 
 function scheduleTick() {
-  if (!owners || tickTimer) return
-  const delay = geminiState.rateLimited ? TICK_ACTIVE_MS : TICK_IDLE_MS
+  if (!activeSources().length || tickTimer) return
+  const delay = activeSources().includes("gemini") && geminiState.rateLimited ? TICK_ACTIVE_MS : TICK_IDLE_MS
   tickTimer = setTimeout(async () => {
     tickTimer = null
-    if (!owners) return
+    if (!activeSources().length) return
     let changed = false
-    try { changed = await refreshGemini() } catch {}
-    if (!owners) return
+    try { if (activeSources().includes("gemini")) changed = await refreshGemini() } catch {}
+    if (!activeSources().length) return
     if (changed) notify(listeners)
     notify(tickListeners)
     scheduleTick()
@@ -784,16 +800,16 @@ function scheduleTick() {
 }
 
 function startFeed() {
+  const sources = activeSources()
+  if (!sources.length) { stopFeed(); return }
   if (!refreshTimer) {
     refreshTimer = setInterval(() => {
-      requestRefresh(true).catch(() => {})
+      requestRefresh(true, activeSources(), true).catch(() => {})
     }, REFRESH_INTERVAL)
     refreshTimer.unref?.()
   }
   scheduleTick()
-  // The local Gemini state is ready long before the provider CLIs answer.
-  void refreshGeminiAndNotify()
-  requestRefresh(false).catch(() => {})
+  requestRefresh(false, sources, true).catch(() => {})
 }
 
 function stopFeed() {
@@ -809,20 +825,29 @@ function stopFeed() {
  * countdown, 5 s otherwise); the last release stops both. Returns an
  * idempotent release function.
  */
-export function acquireLimits({ onChange, onTick } = {}) {
+export function acquireLimits({ onChange, onTick, sources = ALL_SOURCES } = {}) {
+  const owner = {}
+  ownerSources.set(owner, normalizeSources(sources))
   if (onChange) listeners.add(onChange)
   if (onTick) tickListeners.add(onTick)
   owners += 1
-  if (owners === 1) startFeed()
+  startFeed()
   let released = false
-  return () => {
+  const release = () => {
     if (released) return
     released = true
+    ownerSources.delete(owner)
     if (onChange) listeners.delete(onChange)
     if (onTick) tickListeners.delete(onTick)
     owners = Math.max(0, owners - 1)
-    if (!owners) stopFeed()
+    startFeed()
   }
+  release.setSources = (next) => {
+    if (released) return
+    ownerSources.set(owner, normalizeSources(next))
+    startFeed()
+  }
+  return release
 }
 
 // Backward-compatible owner API.

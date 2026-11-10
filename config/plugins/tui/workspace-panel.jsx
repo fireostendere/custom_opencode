@@ -547,6 +547,7 @@ export default Plugin.define({
 
     function commandRows() {
       const rows = [
+        { id: "custom.limits.configure", title: "Лимиты: настроить", group: "Панели", slash: { name: "limits" }, palette: true, run: views.configureLimits },
         {
           id: "custom.panels.configure",
           title: "Настроить панели",
