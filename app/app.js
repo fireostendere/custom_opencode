@@ -522,7 +522,7 @@ function renderSessionNode(session,children,expanded,query='',depth=0) {
     <span class="session-tree-spacer" aria-hidden="true"></span><button class="session-main" data-session="${escapeHtml(session.id)}">
       <div class="session-title">${escapeHtml(sessionTitle(session))}</div>
       <div class="session-meta">${running?'<span class="run-dot"></span>':''}${depth&&agent?`<span class="session-kind">${escapeHtml(agent)}</span>`:''}<span>${running?'Выполняется':timeText(sessionTime(session))}</span>${queued?`<span class="queued">очередь ${queued}</span>`:''}${hasChildren?`<span class="session-child-count">агенты ${visibleChildren.length}</span>`:''}</div>
-    </button><button class="session-more" data-session-more="${escapeHtml(session.id)}">•••</button>
+    </button><button class="session-more" aria-label="Действия с сессией" data-session-more="${escapeHtml(session.id)}">•••</button>
   </div>${childBody}</div>`
 }
 function queueHistoryProbe(id, entry) {
@@ -604,7 +604,7 @@ function renderSessions() {
   container.innerHTML=html
   const nextAnchor=anchor&&[...container.querySelectorAll('[data-session-node]')].find(node=>node.dataset.sessionNode===anchor.dataset.sessionNode)
   if(nextAnchor)container.scrollTop+=nextAnchor.getBoundingClientRect().top-anchorOffset
-  document.querySelectorAll('[data-project],[data-session-mirror]').forEach((group)=>group.addEventListener('toggle',()=>{const values=new Set(loadJson(PROJECT_COLLAPSE_KEY, [])),id=group.dataset.project||`mirror:${group.dataset.sessionMirror}`;group.open?values.delete(id):values.add(id);saveJson(PROJECT_COLLAPSE_KEY,[...values])}))
+  container.querySelectorAll('[data-project],[data-session-mirror]').forEach((group)=>group.addEventListener('toggle',()=>{const values=new Set(loadJson(PROJECT_COLLAPSE_KEY, [])),id=group.dataset.project||`mirror:${group.dataset.sessionMirror}`;group.open?values.delete(id):values.add(id);saveJson(PROJECT_COLLAPSE_KEY,[...values])}))
   document.querySelectorAll('[data-agent-folder]').forEach((folder)=>folder.addEventListener('toggle',()=>{const values=sessionTreeExpanded(),id=folder.dataset.agentFolder;folder.open?values.add(id):values.delete(id);saveJson(SESSION_TREE_KEY,[...values])}))
   document.querySelectorAll('[data-session]').forEach((button)=>button.addEventListener('click',()=>selectSession(button.dataset.session)))
   document.querySelectorAll('[data-session-more]').forEach((button)=>button.addEventListener('click',(event)=>{event.stopPropagation();openSessionActions(button.dataset.sessionMore)}))
@@ -724,7 +724,7 @@ async function loadContext({force=false,initial=false}={}) {
       }
     }
   }catch(error){
-    if(state.contextCache.get(id)===cache&&state.selected?.id===id){if(cache.messages.length)toast(`История: ${error.message}`);else $('messagesInner').innerHTML=`<div class="empty">Не удалось открыть сессию: ${escapeHtml(error.message)}</div>`}
+    if(state.contextCache.get(id)===cache&&state.selected?.id===id){if(cache.messages.length)toast(`История: ${error.message}`);else{$('messagesInner')._lastHtml='';$('messagesInner').innerHTML=`<div class="empty">Не удалось открыть сессию: ${escapeHtml(error.message)}</div>`}}
   }finally{
     cache.loading=false
     pruneContextCache()
@@ -843,7 +843,7 @@ function directModelRef(){
   if(current&&!ORCHESTRATED_MODELS.some((model)=>model.id===current.id&&model.providerID===current.providerID))return {...current}
   return state.defaultModel?{...state.defaultModel}:null
 }
-window.CustomOpenCodeControls={changeModel,changeAgent,activeModel:activeModelRef,directModel:directModelRef,wasModelManuallySelected,wasCreatedHere,clearAttachments,attachmentSnapshot,readAttachments,ensureQuickSession,sessions:()=>state.sessions,startRun:markStarted}
+window.CustomOpenCodeControls={changeModel,changeAgent,activeModel:activeModelRef,directModel:directModelRef,wasModelManuallySelected,wasCreatedHere,clearAttachments,attachmentSnapshot,readAttachments,ensureQuickSession,sessions:()=>state.sessions,models:()=>state.models,refresh:renderControls,startRun:markStarted}
 
 function renderModelChoices(){
   const query=$('modelSearch').value.trim().toLowerCase(), current=activeModelRef(),currentKey=modelKey(current),hidden=hiddenModelKeys()
@@ -1212,7 +1212,7 @@ function removeAttachment(attachment) {
 function renderAttachments() {
   const attachments=state.attachments
   $('attachments').hidden=!attachments.length
-  $('attachments').innerHTML=attachments.map((file,index)=>`<span class="attachment"><span>${escapeHtml(file.name)}</span><button data-remove-attachment="${index}">×</button></span>`).join('')
+  $('attachments').innerHTML=attachments.map((file,index)=>`<span class="attachment"><span>${escapeHtml(file.name)}</span><button aria-label="Убрать вложение" data-remove-attachment="${index}">×</button></span>`).join('')
   document.querySelectorAll('[data-remove-attachment]').forEach((button)=>{
     const attachment=attachments[Number(button.dataset.removeAttachment)]
     button.addEventListener('click',()=>removeAttachment(attachment))
@@ -1678,7 +1678,7 @@ function bindEvents(){
   messagesView.addEventListener('touchcancel',()=>{historyPaginationTouch=null},{passive:true})
   messagesView.addEventListener('scroll',()=>{if(followDetachedFor&&messagesView.scrollHeight-messagesView.scrollTop-messagesView.clientHeight<4)setFollowDetached(false);maybeLoadOlderFromUser();updateScrollToBottomButton()},{passive:true})
   $('scrollToBottom').addEventListener('click',()=>{setFollowDetached(false);scrollMessagesToBottom()})
-  $('messagesInner').addEventListener('click',(e)=>{const copyCode=e.target.closest('.copy-code');if(copyCode){navigator.clipboard.writeText(copyCode.closest('.code-block').querySelector('code')?.textContent||'');copyCode.textContent='Скопировано';setTimeout(()=>copyCode.textContent='Копировать',900);return}const copy=e.target.closest('[data-copy-message]');if(copy){navigator.clipboard.writeText(messagePlainText(state.context[Number(copy.dataset.copyMessage)])||'');toast('Сообщение скопировано');return}const fork=e.target.closest('[data-fork-message]');if(fork){forkAtMessage(fork.dataset.forkMessage)}})
+  $('messagesInner').addEventListener('click',(e)=>{const copyCode=e.target.closest('.copy-code');if((copyCode||e.target.closest('[data-copy-message]'))&&!navigator.clipboard){toast('Копирование доступно только по HTTPS');return}if(copyCode){navigator.clipboard.writeText(copyCode.closest('.code-block').querySelector('code')?.textContent||'').then(()=>{copyCode.textContent='Скопировано';setTimeout(()=>copyCode.textContent='Копировать',900)},()=>toast('Не удалось скопировать'));return}const copy=e.target.closest('[data-copy-message]');if(copy){navigator.clipboard.writeText(messagePlainText(state.context[Number(copy.dataset.copyMessage)])||'').then(()=>toast('Сообщение скопировано'),()=>toast('Не удалось скопировать'));return}const fork=e.target.closest('[data-fork-message]');if(fork){forkAtMessage(fork.dataset.forkMessage)}})
   window.addEventListener('hashchange',()=>{const id=sessionIdFromHash();if(id&&state.selected?.id!==id)selectSession(id,{push:false});else if(!id&&state.selected)clearSelection()});window.addEventListener('beforeunload',saveDraftNow)
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){ensureEventStream();pollStatuses(true);pollRateLimit(true);statusPolling.reschedule();rateLimitPolling.reschedule();sessionPolling.wake();if(state.selected&&!isRunning(state.selected.id)){loadContext({force:true})}}})
 }

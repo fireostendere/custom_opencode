@@ -219,21 +219,26 @@ def _rpc_write(process: subprocess.Popen[str], payload: dict[str, object]) -> No
 def _rpc_wait(process: subprocess.Popen[str], request_id: int, timeout: float) -> object:
     if process.stdout is None:
         raise RuntimeError("Codex app-server stdout is unavailable")
+    # Read the fd directly: readline() can leave a whole response in Python's
+    # buffer, where select() no longer sees it. The tail survives across calls.
+    fd = process.stdout.fileno()
+    buffer: bytes = getattr(process, "_rpc_buffer", b"")
     selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ)
+    selector.register(fd, selectors.EVENT_READ)
     deadline = time.monotonic() + timeout
     try:
         while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("Codex app-server response timeout")
-            events = selector.select(remaining)
-            if not events:
-                raise TimeoutError("Codex app-server response timeout")
-            line = process.stdout.readline()
-            if not line:
-                code = process.poll()
-                raise RuntimeError(f"Codex app-server exited before response ({code})")
+            while b"\n" not in buffer:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(remaining):
+                    raise TimeoutError("Codex app-server response timeout")
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    code = process.poll()
+                    raise RuntimeError(f"Codex app-server exited before response ({code})")
+                buffer += chunk
+            line, buffer = buffer.split(b"\n", 1)
+            process._rpc_buffer = buffer  # type: ignore[attr-defined]
             try:
                 payload = json.loads(line)
             except json.JSONDecodeError:

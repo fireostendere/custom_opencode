@@ -1125,6 +1125,8 @@ class ArtifactStore:
         if len(data) <= self.INLINE_LIMIT and mime.startswith("text/"):
             inline_text = data.decode("utf-8", errors="replace")
         else:
+            if task_id and (Path(task_id).name != task_id or task_id in {".", ".."}):
+                raise ValueError("invalid task id")
             directory = self.store.paths.artifacts / (task_id or "shared")
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             path = directory / (artifact_id + (".gz" if compress else ""))

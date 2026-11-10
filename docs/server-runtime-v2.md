@@ -75,18 +75,8 @@ The capability details remain server-side; the model picker shows only compact p
 Relevant settings:
 
 ```text
-OPENCODE_RESOURCE_SCHEDULER=auto
-OPENCODE_GAME_PROCESSES=
-OPENCODE_RESOURCE_CPU_THRESHOLD=0.85
-OPENCODE_RESOURCE_PAUSE_COMMAND=
-OPENCODE_RESOURCE_RESUME_COMMAND=
-OPENCODE_LOCAL_CODER_MODEL=ollama/qwen3.8:27b
-OPENCODE_CLOUD_CODER_MODEL=bailian-cli/qwen3.8-max
-OPENCODE_FAST_MODEL=bailian-cli/qwen3.6-flash
 OPENCODE_REVIEW_MODEL=bailian-cli/qwen3.8-max
 ```
-
-The process detector sees processes in the server OS namespace. When the server runs inside WSL and the game runs only in Windows, configure an external process snapshot/integration or pause/resume command instead of assuming `/proc` sees the Windows process.
 
 Pause/resume commands are hooks. Runtime V2 does not yet maintain a universal registry of every local Whisper/embedding/inference process.
 

@@ -1220,6 +1220,8 @@ const linked = markdown.renderMarkdown("[init](https://example.invalid/pkg/__ini
 for (const marker of ['href="https://example.invalid/pkg/__init__.py"', "<em>em</em>", "<strong>b</strong>", 'href="https://example.invalid/a*b*c"']) {
   if (!linked.includes(marker)) throw new Error(`markdown link/emphasis regression: ${marker} in ${linked}`)
 }
+if (markdown.renderMarkdown("[`app.js`](https://example.invalid/app.js)").includes("CODE"))
+  throw new Error("inline code inside a link label must not leave a placeholder")
 const fenced = markdown.renderMarkdown("```python title=main.py\nprint(1)\n```\nafter")
 if (!fenced.includes('data-lang="python"') || fenced.includes("<p>```")) throw new Error(`markdown fence info string regression: ${fenced}`)
 

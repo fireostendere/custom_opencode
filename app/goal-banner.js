@@ -37,7 +37,8 @@ export function mountGoalBanner() {
   })
   async function select() {
     const match = /^#\/session\/([^/?]+)/.exec(location.hash)
-    const id = match ? decodeURIComponent(match[1]) : null
+    let id = null
+    try { id = match ? decodeURIComponent(match[1]) : null } catch {}
     if (sessionID === id && (directory || !id)) return
     sessionID = id; directory = ''; generation++
     watcher.setSession(null)

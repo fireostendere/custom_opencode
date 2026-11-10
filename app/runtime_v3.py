@@ -1918,9 +1918,13 @@ class ToolGateway:
             for path in paths:
                 target = Path(path).expanduser()
                 target = target if target.is_absolute() else project_root / target
-                relative_paths.append(
-                    target.resolve(strict=False).relative_to(project_root).as_posix()
-                )
+                try:
+                    relative_paths.append(
+                        target.resolve(strict=False).relative_to(project_root).as_posix()
+                    )
+                except ValueError:
+                    # Only full-machine reaches here; ownership covers project files.
+                    continue
             conflicts = self.store.ownership_replace(owner, task_id, relative_paths)
             if conflicts:
                 self.store.event(
@@ -2531,7 +2535,11 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
 
                 view = NativeContextFeatures(features, native)
             directory = view._session_directory(sid)
-            settings = features.project_settings(directory)
+            try:
+                settings = features.project_settings(directory)
+            except ValueError:
+                # A native session outside the project roots still gets its memory and decisions.
+                settings = {}
             result = v3.context.envelope(
                 view,
                 runtime,

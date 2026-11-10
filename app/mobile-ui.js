@@ -145,5 +145,13 @@ if (sidebar && menu) {
   sidebar.addEventListener('pointercancel', () => { swipeStart = null })
   mobileQuery.addEventListener?.('change', (event) => {
     if (!event.matches && sidebarOpen()) closeSidebar()
+    // The desktop sidebar is always visible; a drawer-era aria-hidden would hide it from assistive tech.
+    if (!event.matches) sidebar.removeAttribute('aria-hidden')
   })
+  // app.js closes the drawer by removing the class directly (session select,
+  // fork, hash navigation); without this the scrim stays over the whole page.
+  new MutationObserver(() => {
+    const scrim = document.getElementById('sidebarScrim')
+    if (!sidebarOpen() && scrim && !scrim.hidden) finishSidebarClose()
+  }).observe(sidebar, { attributes:true, attributeFilter:['class'] })
 }
