@@ -626,6 +626,53 @@ export default {
       }
     })
 
+    if (ctx.integration?.transform) {
+      await ctx.integration.transform((editor) => {
+        if (!editor.get("anthropic")) return
+        const method = editor.method.list("anthropic").find((method) => method.type === "key")
+        if (!method) return
+        const field = {
+          type: "string",
+          key: "anthropicWorkspaceID",
+          title: "Workspace ID (необязательно)",
+          description: "ID рабочего пространства Anthropic, не Organization ID и не API-ключ. Пусто — общее значение из /configure или конфигурации.",
+          required: false,
+          maxLength: 512,
+          pattern: "^[\\x20-\\x7e]{0,512}(?![\\s\\S])",
+        }
+        const form = [...(method.form || [])]
+        const index = form.findIndex((item) => item.key === field.key)
+        if (index < 0) form.push(field)
+        else form[index] = field
+        editor.method.update({ integrationID: "anthropic", method: { ...method, form } })
+      })
+
+      await ctx.session.hook("http.request", async (event) => {
+        if (event.model?.providerID !== "anthropic") return
+        // Native config overlays provider transforms, so enforce the saved override on the wire.
+        if (registry.anthropicWorkspaceID)
+          event.request.headers.set("anthropic-workspace-id", registry.anthropicWorkspaceID)
+        let credential
+        try {
+          const connection = await ctx.integration.connection.active("anthropic")
+          if (connection?.type !== "credential" || connection.method !== "key") return
+          credential = await ctx.integration.connection.resolve(connection)
+        } catch {
+          throw new Error("Workspace ID: не удалось проверить аккаунт Anthropic. Проверьте /accounts и повторите запрос.")
+        }
+        if (credential?.type !== "key")
+          throw new Error("Workspace ID: API-ключ аккаунта Anthropic недоступен. Проверьте /accounts и повторите запрос.")
+        const value = credential.metadata?.anthropicWorkspaceID
+        if (value === undefined) return
+        const workspaceID = assertWorkspaceID(value)
+        if (!workspaceID) return
+        // The selected account may change after native request headers were built.
+        if (event.request.headers.get("x-api-key") !== credential.key)
+          throw new Error("Workspace ID: аккаунт Anthropic изменился или ключ запроса не совпадает. Проверьте /accounts и повторите запрос.")
+        event.request.headers.set("anthropic-workspace-id", workspaceID)
+      }, { providerID: "anthropic" })
+    }
+
     // mcp_discover only helps when this request deferred tool schemas; it is
     // otherwise pure per-request prompt overhead.
     const hideDiscovery = (tools) => {

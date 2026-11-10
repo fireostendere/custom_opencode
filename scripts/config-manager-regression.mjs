@@ -39,6 +39,12 @@ let providerTransform = null
 let modelTransform = null
 let mcpTransform = null
 let skillTransform = null
+let integrationTransform
+let activeConnection
+let resolvedCredential
+let connectionFailure
+let resolveCalls = 0
+const hookScopes = {}
 let mcpListCalls = 0
 let mcpReloads = 0
 const deferred = () => {
@@ -52,6 +58,22 @@ let emitEvent
 const managerEvents = new ReadableStream({ start(controller) { emitEvent = (event) => controller.enqueue(event) } })
 
 const ctx = {
+  integration: {
+    transform: async callback => { integrationTransform = callback },
+    connection: {
+      active: async id => {
+        assert.equal(id, 'anthropic')
+        if (connectionFailure === 'active') throw new Error('secret-provider-payload')
+        return activeConnection
+      },
+      resolve: async connection => {
+        resolveCalls++
+        assert.equal(connection, activeConnection)
+        if (connectionFailure === 'resolve') throw new Error('secret-provider-payload')
+        return resolvedCredential
+      },
+    },
+  },
   tool: { transform: async callback => callback({ add: definition => registeredTools.set(definition.name, definition) }) },
   storage: {
     get: async (key) => (key === STORAGE_KEY ? store.get(key) : undefined),
@@ -96,7 +118,7 @@ const ctx = {
       sessionGets += 1
       return { parentID: sessionID === 'child-session' ? 'parent-session' : null }
     },
-    hook: async (name, callback) => { hooks[name] = callback },
+    hook: async (name, callback, scope) => { hooks[name] = callback; hookScopes[name] = scope },
     synthetic: async ({ text, resume }) => {
       assert.equal(resume, false, 'Configuration receipts must not start model inference')
       synthetics.push(text)
@@ -154,6 +176,124 @@ const snapshot = () => {
 
 const exec = (name, input, sessionID = 'ses_regression') =>
   commands.get(name).execute({ sessionID, prompt: { text: JSON.stringify(input) } })
+
+// Native /connect owns the key and account metadata; only extend its existing form.
+{
+assert.equal(typeof integrationTransform, 'function', 'native Anthropic key form must be extended')
+const originalMethods = {
+  anthropic: [{ type: 'key', label: 'Existing key label', form: [{ type: 'string', key: 'region', title: 'Region' }] }, { type: 'oauth', id: 'login', label: 'OAuth' }, { type: 'env', names: ['ANTHROPIC_API_KEY'] }, { type: 'command', id: 'cli', command: ['login'] }, { type: 'external', id: 'external', form: [] }],
+  other: [{ type: 'key', form: [] }],
+}
+function integrationMethods(base) {
+  const methods = structuredClone(base)
+  integrationTransform({
+    get: id => methods[id] && { id },
+    method: {
+      list: id => methods[id] || [],
+      update: ({ integrationID, method }) => {
+        const index = methods[integrationID].findIndex(item => item.type === method.type)
+        assert.notEqual(index, -1, 'must not create a method')
+        methods[integrationID][index] = method
+      },
+    },
+  })
+  return methods
+}
+const extendedMethods = integrationMethods(originalMethods)
+const workspaceField = extendedMethods.anthropic[0].form.at(-1)
+assert.equal(workspaceField.key, 'anthropicWorkspaceID')
+assert.equal(workspaceField.type, 'string')
+assert.equal(workspaceField.required, false)
+assert.equal(workspaceField.maxLength, 512)
+assert.match(workspaceField.description, /Organization ID/)
+assert.ok(new RegExp(workspaceField.pattern).test('wrkspc_example'))
+assert.ok(new RegExp(workspaceField.pattern).test(''))
+for (const invalid of ['line\nbreak', 'trailing\n', 'кириллица', '\t', 'a'.repeat(513)])
+  assert.ok(!new RegExp(workspaceField.pattern).test(invalid))
+assert.deepEqual({ ...extendedMethods.anthropic[0], form: extendedMethods.anthropic[0].form.slice(0, -1) }, originalMethods.anthropic[0])
+assert.deepEqual(extendedMethods.anthropic.slice(1), originalMethods.anthropic.slice(1))
+assert.deepEqual(extendedMethods.other, originalMethods.other)
+assert.deepEqual(integrationMethods(extendedMethods), extendedMethods, 'replay must not duplicate the field')
+assert.deepEqual(integrationMethods({ anthropic: [{ type: 'key' }] }), { anthropic: [{ type: 'key', form: [workspaceField] }] })
+assert.deepEqual(integrationMethods({ other: originalMethods.other }), { other: originalMethods.other })
+assert.deepEqual(integrationMethods({ anthropic: originalMethods.anthropic.slice(1) }), { anthropic: originalMethods.anthropic.slice(1) })
+
+assert.deepEqual(hookScopes['http.request'], { providerID: 'anthropic' })
+const workspaceHook = hooks['http.request']
+const account = id => ({ type: 'credential', id, method: 'key', label: id })
+function requestEvent(key = 'fake-key-A', providerID = 'anthropic') {
+  return { model: { providerID }, request: new Request('https://example.test', { method: 'POST', headers: { 'X-API-KEY': key, 'AnThRoPiC-WoRkSpAcE-Id': 'shared-default', other: 'keep' }, body: '{ "bytes": "unchanged" }\n' }) }
+}
+activeConnection = account('A')
+resolvedCredential = { type: 'key', key: 'fake-key-A', metadata: { anthropicWorkspaceID: 'wrkspc_A' } }
+let event = requestEvent()
+const originalRequest = event.request
+await workspaceHook(event)
+assert.equal(event.request, originalRequest)
+assert.equal(event.request.headers.get('anthropic-workspace-id'), 'wrkspc_A')
+assert.equal(event.request.headers.get('other'), 'keep')
+assert.equal(event.request.headers.get('x-api-key'), 'fake-key-A')
+assert.equal(await event.request.text(), '{ "bytes": "unchanged" }\n')
+activeConnection = account('B')
+resolvedCredential = { type: 'key', key: 'fake-key-B', metadata: { anthropicWorkspaceID: 'wrkspc_B' } }
+event = requestEvent('fake-key-B')
+await workspaceHook(event)
+assert.equal(event.request.headers.get('anthropic-workspace-id'), 'wrkspc_B', 'switch must not reuse A metadata')
+for (const metadata of [undefined, {}, { anthropicWorkspaceID: '' }, { anthropicWorkspaceID: '   ' }]) {
+  resolvedCredential = { type: 'key', key: 'fake-key-B', metadata }
+  event = requestEvent('fake-key-B')
+  await workspaceHook(event)
+  assert.equal(event.request.headers.get('anthropic-workspace-id'), 'shared-default')
+}
+for (const connection of [undefined, { type: 'env' }, { type: 'credential', method: 'oauth' }, { type: 'credential', method: 'external' }]) {
+  activeConnection = connection
+  const calls = resolveCalls
+  event = requestEvent()
+  await workspaceHook(event)
+  assert.equal(resolveCalls, calls, 'non-key connections must not resolve')
+  assert.equal(event.request.headers.get('anthropic-workspace-id'), 'shared-default')
+}
+activeConnection = account('A')
+resolvedCredential = { type: 'key', key: 'fake-key-A', metadata: { anthropicWorkspaceID: 'wrkspc_A' } }
+const calls = resolveCalls
+event = requestEvent('fake-key-A', 'other')
+await workspaceHook(event)
+assert.equal(resolveCalls, calls)
+assert.equal(event.request.headers.get('anthropic-workspace-id'), 'shared-default')
+for (const invalid of ['org_wrong', 'sk-secret', 'bad\r\nheader', 'a b', 123, 'x'.repeat(513)]) {
+  resolvedCredential.metadata.anthropicWorkspaceID = invalid
+  await assert.rejects(workspaceHook(requestEvent()), error => /Workspace ID:/.test(error.message) && !error.message.includes(String(invalid)))
+}
+resolvedCredential.metadata.anthropicWorkspaceID = 'wrkspc_A'
+event = requestEvent('fake-key-B')
+await assert.rejects(workspaceHook(event), /Workspace ID:.*\/accounts/)
+assert.equal(event.request.headers.get('anthropic-workspace-id'), 'shared-default')
+for (const failure of ['active', 'resolve']) {
+  connectionFailure = failure
+  await assert.rejects(workspaceHook(requestEvent()), error => /Workspace ID:/.test(error.message) && !error.message.includes('secret-provider-payload'))
+}
+connectionFailure = undefined
+for (const credential of [undefined, { type: 'oauth' }]) {
+  resolvedCredential = credential
+  await assert.rejects(workspaceHook(requestEvent()), /Workspace ID:.*\/accounts/)
+}
+activeConnection = undefined
+assert.equal(store.get(STORAGE_KEY)?.anthropicWorkspaceID, undefined, 'account metadata must not write shared storage')
+await exec('anthropic-workspace', { workspaceID: 'wrkspc_shared_wire' })
+event = requestEvent()
+await workspaceHook(event)
+assert.equal(event.request.headers.get('anthropic-workspace-id'), 'wrkspc_shared_wire', 'shared override must beat a later native config overlay on the wire')
+activeConnection = account('A')
+resolvedCredential = { type: 'key', key: 'fake-key-A', metadata: { anthropicWorkspaceID: 'wrkspc_A' } }
+event = requestEvent()
+await workspaceHook(event)
+assert.equal(event.request.headers.get('anthropic-workspace-id'), 'wrkspc_A', 'account metadata must beat the shared wire override')
+await exec('anthropic-workspace', { workspaceID: '' })
+activeConnection = undefined
+event = requestEvent()
+await workspaceHook(event)
+assert.equal(event.request.headers.get('anthropic-workspace-id'), 'shared-default', 'clearing the shared override restores the native config header')
+}
 
 // Workspace overrides must edit only the header, never replace/enable providers.
 assert.ok(commands.has('anthropic-workspace'), 'workspace setting command must be registered')
@@ -504,4 +644,4 @@ assert.equal(legacyRegistry.skills.legacy.location, '/legacy/SKILL.md', 'migrati
   assert.equal(mcpReloads, before + 1, 'a global toggle saved elsewhere reloads this folder')
 }
 
-console.log('config-manager regression OK: self-check, happy path, secret rejection, rollback, serialization, managed context metadata, /mcp toggles')
+console.log('config-manager regression OK: self-check, native Workspace ID form/account HTTP hook, happy path, secret rejection, rollback, serialization, managed context metadata, /mcp toggles')
