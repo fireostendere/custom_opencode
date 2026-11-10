@@ -273,6 +273,32 @@ async function runButton(id, promptsToReturn, selectsToReturn = []) {
   if (commandCalls.at(-1).error) throw new Error(`${id} mutation failed: ${commandCalls.at(-1).error.message}`)
 }
 
+// /configure owns a provider-wide workspace override, not a managed provider.
+await runButton('configure', ['wrkspc_first'], ['anthropic-workspace'])
+assert.ok(selectOptions.at(-1).some(option => option.title === 'Anthropic: Workspace ID'))
+assert.equal(promptInputs.at(-1).value, '')
+assert.match(promptInputs.at(-1).placeholder, /не.*Organization ID/i)
+assert.equal((await store.get('registry-v2')).anthropicWorkspaceID, 'wrkspc_first')
+await runButton('configure', ['wrkspc_second'], ['anthropic-workspace'])
+assert.equal(promptInputs.at(-1).value, 'wrkspc_first')
+assert.equal((await store.get('registry-v2')).anthropicWorkspaceID, 'wrkspc_second')
+for (const [answer, confirmed] of [[null, true], ['wrkspc_cancelled', false]]) {
+  const before = await store.get('registry-v2')
+  const calls = commandCalls.length
+  confirmSave = confirmed
+  configureDialog([answer], ['anthropic-workspace'])
+  rows.find(row => row.id === 'custom.add-wizard.configure').run('')
+  await waitFor(() => !dialogPrompts.length && !dialogSelects.length, 'workspace cancellation')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(commandCalls.length, calls)
+  assert.deepEqual(await store.get('registry-v2'), before)
+}
+confirmSave = true
+await runButton('configure', [''], ['anthropic-workspace'])
+assert.equal(promptInputs.at(-1).value, 'wrkspc_second')
+assert.equal((await store.get('registry-v2')).anthropicWorkspaceID, undefined)
+assert.deepEqual((await store.get('registry-v2')).providers, {}, 'workspace setting must not create a provider')
+
 const providerCase = fixture.buttons.find((item) => item.id === 'provider')
 await runButton('provider', providerCase.prompts, providerCase.selects)
 assert.ok(alerts.some((message) => message.includes('ID провайдера: начинается с буквы')))
@@ -449,7 +475,7 @@ assert.equal(contextPolicy.managedOrchestration(orchestrationEvent).prompt, 'Ver
 await configManager.default.setup(serverContext)
 assert.deepEqual(appliedSettings(), applied, 'persisted settings must apply after a fresh config-manager setup')
 assert.equal(hooks.has('context'), true)
-assert.equal(synthetic.filter((item) => item.includes(': saved\n')).length, commandCalls.length)
+assert.equal(synthetic.filter((item) => item.includes(': saved\n')).length, commandCalls.filter(call => call.command !== 'anthropic-workspace').length)
 assert.equal(reloads.length, commandCalls.length * 3)
 assert.equal(toasts.filter((item) => item.variant === 'success').length, commandCalls.length)
 assert.ok(prompts.length >= 20)
@@ -583,6 +609,17 @@ assert.deepEqual(appliedSettings().mcp.get('jlcpcb'), { type: 'local', command: 
   await assert.rejects(readConfigReceipt(missing, 'ses_r', 'none', { timeoutMs: 400 }), /Configuration response missing/)
   assert.ok(missing.calls.context <= 3, 'Even a missing receipt reads the full context only a few times')
 }
+
+// A backend validation receipt must not be mistaken for a successful save.
+const beforeInvalidWorkspace = await store.get('registry-v2')
+const successesBeforeInvalid = toasts.filter(item => item.variant === 'success').length
+const invalidCalls = commandCalls.length
+configureDialog(['org_not_a_workspace'], ['anthropic-workspace'])
+rows.find(row => row.id === 'custom.add-wizard.configure').run('')
+await waitFor(() => commandCalls.length === invalidCalls + 1 && commandCalls.at(-1).completed, 'invalid workspace rejection')
+await waitFor(() => toasts.at(-1)?.message.includes('Workspace ID:'), 'workspace error receipt')
+assert.deepEqual(await store.get('registry-v2'), beforeInvalidWorkspace)
+assert.equal(toasts.filter(item => item.variant === 'success').length, successesBeforeInvalid)
 
 const report = {
   schema: 1,

@@ -77,8 +77,20 @@ function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {}
 }
 
+function assertWorkspaceID(value) {
+  if (typeof value !== "string" || value.length > 512 || /[^\x20-\x7e]/.test(value))
+    throw new Error("Workspace ID: введите строку до 512 символов без управляющих символов.")
+  const id = value.trim()
+  if (/\s/.test(id) || /^(?:org(?:anization)?[-_]|sk[-_]|bearer\b)/i.test(id))
+    throw new Error("Workspace ID: нужен ID рабочего пространства, не Organization ID или API-ключ.")
+  return id
+}
+
 function normalizeRegistry(value) {
-  const raw = asObject(value)
+  const raw = { ...asObject(value) }
+  const workspaceID = raw.anthropicWorkspaceID === undefined ? "" : assertWorkspaceID(raw.anthropicWorkspaceID)
+  if (workspaceID) raw.anthropicWorkspaceID = workspaceID
+  else delete raw.anthropicWorkspaceID
   return {
     ...raw,
     version: 2,
@@ -506,6 +518,14 @@ export default {
           providers.add({ info: { id: providerID, activation: "enabled", ...migrated }, models: [] })
         }
       }
+      if (registry.anthropicWorkspaceID && providers.get("anthropic")) {
+        providers.update("anthropic", (draft) => {
+          draft.headers = Object.fromEntries(
+            Object.entries(draft.headers || {}).filter(([name]) => name.toLowerCase() !== "anthropic-workspace-id"),
+          )
+          draft.headers["anthropic-workspace-id"] = registry.anthropicWorkspaceID
+        })
+      }
     })
     await ctx.model.transform((models) => {
       const slash = DEFAULT_MODEL.indexOf("/")
@@ -605,6 +625,53 @@ export default {
         draft.add({ ...skill, path: skill.path ?? location })
       }
     })
+
+    if (ctx.integration?.transform) {
+      await ctx.integration.transform((editor) => {
+        if (!editor.get("anthropic")) return
+        const method = editor.method.list("anthropic").find((method) => method.type === "key")
+        if (!method) return
+        const field = {
+          type: "string",
+          key: "anthropicWorkspaceID",
+          title: "Workspace ID (необязательно)",
+          description: "ID рабочего пространства Anthropic, не Organization ID и не API-ключ. Пусто — общее значение из /configure или конфигурации.",
+          required: false,
+          maxLength: 512,
+          pattern: "^[\\x20-\\x7e]{0,512}(?![\\s\\S])",
+        }
+        const form = [...(method.form || [])]
+        const index = form.findIndex((item) => item.key === field.key)
+        if (index < 0) form.push(field)
+        else form[index] = field
+        editor.method.update({ integrationID: "anthropic", method: { ...method, form } })
+      })
+
+      await ctx.session.hook("http.request", async (event) => {
+        if (event.model?.providerID !== "anthropic") return
+        // Native config overlays provider transforms, so enforce the saved override on the wire.
+        if (registry.anthropicWorkspaceID)
+          event.request.headers.set("anthropic-workspace-id", registry.anthropicWorkspaceID)
+        let credential
+        try {
+          const connection = await ctx.integration.connection.active("anthropic")
+          if (connection?.type !== "credential" || connection.method !== "key") return
+          credential = await ctx.integration.connection.resolve(connection)
+        } catch {
+          throw new Error("Workspace ID: не удалось проверить аккаунт Anthropic. Проверьте /accounts и повторите запрос.")
+        }
+        if (credential?.type !== "key")
+          throw new Error("Workspace ID: API-ключ аккаунта Anthropic недоступен. Проверьте /accounts и повторите запрос.")
+        const value = credential.metadata?.anthropicWorkspaceID
+        if (value === undefined) return
+        const workspaceID = assertWorkspaceID(value)
+        if (!workspaceID) return
+        // The selected account may change after native request headers were built.
+        if (event.request.headers.get("x-api-key") !== credential.key)
+          throw new Error("Workspace ID: аккаунт Anthropic изменился или ключ запроса не совпадает. Проверьте /accounts и повторите запрос.")
+        event.request.headers.set("anthropic-workspace-id", workspaceID)
+      }, { providerID: "anthropic" })
+    }
 
     // mcp_discover only helps when this request deferred tool schemas; it is
     // otherwise pure per-request prompt overhead.
@@ -717,6 +784,19 @@ export default {
               } catch {}
             }),
         })
+
+      add(
+        "anthropic-workspace",
+        "Anthropic: Workspace ID",
+        async (input) => {
+          const workspaceID = assertWorkspaceID(input.workspaceID)
+          registry = { ...registry }
+          if (workspaceID) registry.anthropicWorkspaceID = workspaceID
+          else delete registry.anthropicWorkspaceID
+        },
+        "Workspace ID: пустая строка убирает переопределение; это не Organization ID.",
+        true,
+      )
 
       add(
         "addprovider",
