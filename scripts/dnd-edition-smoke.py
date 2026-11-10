@@ -79,15 +79,19 @@ for name in expected_agents:
 
 prompt = (ROOT / 'config/prompts/dnd-edition.md').read_text(encoding='utf-8')
 assert 'Чикен Карри' in prompt and 'HarmonQuest' in prompt
-assert 'право на попытку, а не успех' in prompt
-assert '### Сначала разрешение, потом рассказ' in prompt
 assert "filters.source='yolo_reference'" in prompt
-assert 'успех — больше заявленного' not in prompt
-assert 'Пост без всратого эмодзи в заголовке — брак' not in prompt
-teamwork = prompt.split('## Совместные трюки и участие другого героя', 1)[1].split('\n## ', 1)[0]
-for phrase in ('владелец второго героя', 'Молчание не считается согласием', 'send_whisper',
-               'не расходует его ход', 'не обязательно два встречных броска',
-               'не автоматический отказ', 'Не спрашивай это перед каждой обычной атакой'):
-    assert phrase in teamwork, f'teamwork consent contract missing: {phrase}'
+# The YOLO rules live in the preloaded yolo-dm skill; the prompt keeps the house rule
+# and its non-negotiables. The wording below is what stifled play in #150/#151.
+assert 'предзагруженном навыке `yolo-dm`' in prompt
+for phrase in ('«Да, и…» вместо «нет, потому что»', 'Просто «да» или кубик',
+               'Исход громкий в обе стороны', 'NPC — партнёр по сцене', 'мораль не читай'):
+    assert phrase in prompt, f'YOLO contract missing: {phrase}'
+for phrase in ('право на попытку, а не успех', 'не дополнительный эффект сверх разрешённого',
+               'Молчание не считается согласием', 'Пост без всратого эмодзи в заголовке — брак'):
+    assert phrase not in prompt, f'stifling wording is back: {phrase}'
+teamwork = prompt.split('### Герой и другой герой', 1)[1].split('\n### ', 1)[0]
+for phrase in ('Сопротивляешься?', 'шёпот и ожидание ради этого не нужны',
+               'Молчит и в следующем раунде — не сопротивлялся', 'не автоматический отказ', '`contest`'):
+    assert phrase in teamwork, f'hero-on-hero contract missing: {phrase}'
 
 print("DnD Edition profile/config and YOLO prompt contracts passed")
