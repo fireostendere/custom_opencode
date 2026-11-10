@@ -712,7 +712,8 @@ def git_revert(payload: dict[str, Any]) -> dict[str, Any]:
     header_paths: list[str] = []
     in_hunk = False
     for line in patch.splitlines():
-        if line.startswith("diff --git "):
+        # No hunk body line starts with "diff "; git ends the hunk there (any diff flavour).
+        if line.startswith("diff "):
             in_hunk = False
         elif line.startswith("@@"):
             in_hunk = True
@@ -724,7 +725,7 @@ def git_revert(payload: dict[str, Any]) -> dict[str, Any]:
             "120000" in line or "160000" in line
         ):
             raise ValueError("patch changes a symlink or submodule")
-        if line.startswith("diff --git ") and line not in (
+        if line.startswith("diff ") and line not in (
             f"diff --git a/{relative} b/{relative}",
             f"diff --git {relative} {relative}",
         ):

@@ -104,8 +104,7 @@ outside = server_plus.directory_snapshot(os.path.dirname(projects_root))
 assert outside.get("error") == "directory-outside-allowed-roots"
 print("Session isolation + project-browser boundary self-check passed")
 PY
-rm -rf "$WORKSPACE_TEST_ROOT"
-trap - EXIT
+# HOME stays inside WORKSPACE_TEST_ROOT for every test below; the EXIT trap removes it.
 
 for file in "$ROOT/app/"*.js "$ROOT/config/events.js" "$ROOT/config/plugins/"*.js; do
   "$NODE" --check "$file"
@@ -144,6 +143,8 @@ done
 "$NODE" "$ROOT/scripts/refresh-coalescing-regression.mjs"
 "$NODE" "$ROOT/scripts/server-runtime-guard-regression.mjs"
 "$NODE" "$ROOT/scripts/audit-fixes-regression.mjs"
+"$NODE" "$ROOT/scripts/control-plane-race-regression.mjs"
+"$PYTHON3" "$ROOT/scripts/audit-cache-race.py"
 "$NODE" "$ROOT/scripts/hardware-orchestrator-regression.mjs"
 "$NODE" "$ROOT/scripts/mcp-reconnect-regression.mjs"
 "$NODE" "$ROOT/scripts/tool-fabric-config-smoke.mjs"

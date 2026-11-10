@@ -8,7 +8,8 @@ import { gunzipSync, zstdDecompressSync } from "node:zlib"
 const execFileAsync = promisify(execFile)
 
 const WEB_HOST = process.env.OPENCODE_RUNTIME_PLUGIN_HOST || "127.0.0.1"
-const WEB_PORT = process.env.OPENCODE_POLICY_PORT || process.env.OPENCODE_WEB_PORT || "4100"
+// The policy listener, never OPENCODE_WEB_PORT: the public web server answers 404 for /internal/runtime/*.
+const WEB_PORT = process.env.OPENCODE_POLICY_PORT || "4100"
 // Read per call: sibling plugins reuse this client (hardware workers).
 const runtimeToken = () =>
   process.env.OPENCODE_RUNTIME_PLUGIN_TOKEN || process.env.OPENCODE_SERVER_PASSWORD || ""

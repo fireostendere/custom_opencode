@@ -196,8 +196,9 @@ def _shell_risk(command: str, preset: str, workspace: str | None) -> tuple[str, 
             "command references a path outside the workspace or a sensitive path",
         )
 
-    if executable == "rg" and any(arg == "--pre" or arg.startswith("--pre=") for arg in argv[1:]):
-        return "R3", False, "ripgrep preprocessor can execute another command"
+    # --pre/--pre-glob and --hostname-bin all make ripgrep run another program.
+    if executable == "rg" and any(arg.startswith(("--pre", "--hostname-bin")) for arg in argv[1:]):
+        return "R3", False, "ripgrep option can execute another command"
     if executable == "tree" and any(arg == "-o" or arg.startswith("--output") for arg in argv[1:]):
         return "R3", False, "tree output option can mutate the filesystem"
 

@@ -312,7 +312,7 @@ function syncProjectModelOptions() {
   const select = $('projectDefaultModel')
   if (!select) return
   const current = select.value
-  const models = state.models || []
+  const models = window.CustomOpenCodeControls?.models?.() || []
   // Offer an orchestration alias only while its model is in the catalog (an
   // unpaid provider such as Alibaba is not rendered at all).
   const available = (ref) => !models.length || models.some((model) => `${model?.providerID}/${model?.id}` === ref)
@@ -536,7 +536,7 @@ function renderQueueDialog() {
   const host = $('queueDialogContent')
   if (!host) return
   const items = state.queue?.items || []
-  host.innerHTML = `${state.queue?.error ? `<div class="queue-error">${escapeHtml(state.queue.error)}</div>` : ''}${items.map((item, index) => `<div class="queue-item"><div class="queue-item-main"><div class="queue-item-text">${escapeHtml(item.text || (item.files?.length ? `[${item.files.length} attachment]` : ''))}</div><div class="queue-item-meta">${escapeHtml(item.profile || 'direct')} · ${fmtTime(item.createdAt)}${item.files?.length ? ` · файлов ${item.files.length}` : ''}</div></div><div class="queue-item-actions"><button type="button" data-queue-up="${index}" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" data-queue-down="${index}" ${index === items.length - 1 ? 'disabled' : ''}>↓</button><button type="button" class="workflow-button-danger" data-queue-delete="${escapeHtml(item.id)}">×</button></div></div>`).join('') || '<div class="empty">Очередь пуста.</div>'}`
+  host.innerHTML = `${state.queue?.error ? `<div class="queue-error">${escapeHtml(state.queue.error)}</div>` : ''}${items.map((item, index) => `<div class="queue-item"><div class="queue-item-main"><div class="queue-item-text">${escapeHtml(item.text || (item.files?.length ? `[${item.files.length} attachment]` : ''))}</div><div class="queue-item-meta">${escapeHtml(item.profile || 'direct')} · ${fmtTime(item.createdAt)}${item.files?.length ? ` · файлов ${item.files.length}` : ''}</div></div><div class="queue-item-actions"><button type="button" aria-label="Выше в очереди" data-queue-up="${index}" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" aria-label="Ниже в очереди" data-queue-down="${index}" ${index === items.length - 1 ? 'disabled' : ''}>↓</button><button type="button" class="workflow-button-danger" aria-label="Удалить из очереди" data-queue-delete="${escapeHtml(item.id)}">×</button></div></div>`).join('') || '<div class="empty">Очередь пуста.</div>'}`
   host.querySelectorAll('[data-queue-delete]').forEach((button) => button.addEventListener('click', () => deleteQueue(button.dataset.queueDelete)))
   host.querySelectorAll('[data-queue-up]').forEach((button) => button.addEventListener('click', () => moveQueue(Number(button.dataset.queueUp), -1)))
   host.querySelectorAll('[data-queue-down]').forEach((button) => button.addEventListener('click', () => moveQueue(Number(button.dataset.queueDown), 1)))
@@ -1498,7 +1498,7 @@ async function revertReviewHunk(fileIndex, hunkIndex) {
 }
 
 async function notifyAdvanced(title, body, tag) {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return
+  if (!('Notification' in window) || Notification.permission !== 'granted' || localStorage.getItem('opencode:web:notifications')!=='1') return
   const data = { url:state.sessionID ? `/#/session/${encodeURIComponent(state.sessionID)}` : '/' }
   // `ready` never settles when the service worker failed to register; race it
   // with a short timeout instead of awaiting forever.

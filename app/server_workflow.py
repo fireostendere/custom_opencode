@@ -108,7 +108,8 @@ def _request_identity(handler: object) -> str:
         # Forwarded client IP is considered only when the actual TCP peer is
         # loopback (the supported local reverse-proxy deployment). A directly
         # exposed remote client cannot spoof its throttle bucket with XFF.
-        forwarded = str(handler.headers.get("X-Forwarded-For", "")).split(",", 1)[0].strip()
+        # The proxy appends the address it saw; earlier entries are client-supplied.
+        forwarded = str(handler.headers.get("X-Forwarded-For", "")).rsplit(",", 1)[-1].strip()
         if forwarded:
             return f"proxy:{forwarded}"
     return f"peer:{peer}"
@@ -132,6 +133,10 @@ def _record_login_failure(key: str) -> None:
     with _login_lock:
         recent = [stamp for stamp in _login_failures.get(key, []) if stamp >= cutoff]
         recent.append(now)
+        if len(_login_failures) > 4096:
+            # Keys that never retry are otherwise never pruned.
+            for stale in [k for k, stamps in _login_failures.items() if stamps[-1] < cutoff]:
+                del _login_failures[stale]
         _login_failures[key] = recent[-_LOGIN_MAX_FAILURES:]
 
 
@@ -436,6 +441,9 @@ class Handler(rag.Handler, features.Handler):
                 self.json_response(create(features, self._feature_body(), sandbox_override=self.owner_sandbox()))
             except Exception as exc:
                 self._feature_error(exc)
+            return
+        # After the block above: task creation there carries the owner sandbox.
+        if runtime.handle_post(self, parsed, features):
             return
         if parsed.path == "/client-send.json":
             if not self.authenticated():
