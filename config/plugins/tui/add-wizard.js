@@ -302,11 +302,38 @@ async function configure(context) {
   if (!sessionID(context)) return toast(context, "Сначала откройте сессию.")
   const action = await choose(context, "Конфигурация", [
     { title: "Добавить или изменить конфигурацию", value: "add" },
+    { title: "Anthropic: Workspace ID", value: "anthropic-workspace" },
     { title: "Профиль MCP: выбрать", value: "profile" },
     { title: "Видимость инструментов MCP и статус", value: "status" },
     { title: "Удалить управляемый элемент", value: "remove" },
   ])
   if (action === "add") return openWizard(context)
+  if (action === "anthropic-workspace") {
+    const { registry } = await managed(context)
+    const workspaceID = await context.ui.dialog.prompt({
+      title: "Anthropic: Workspace ID",
+      placeholder: "Workspace ID, не Organization ID. Пустое поле убирает переопределение для всех аккаунтов Anthropic.",
+      value: registry.anthropicWorkspaceID || "",
+    })
+    if (workspaceID == null) return
+    if (!(await context.ui.dialog.confirm({
+      title: workspaceID.trim() ? "Сохранить Workspace ID?" : "Убрать Workspace ID?",
+      message: "Для всех аккаунтов Anthropic. Ключи не меняются. Пустое поле возвращает заголовок из конфигурации.",
+    }))) return
+    const current = sessionID(context)
+    const requestID = globalThis.crypto.randomUUID()
+    await context.client.session.command({
+      sessionID: current,
+      name: "anthropic-workspace",
+      text: JSON.stringify({ workspaceID, requestID }),
+    })
+    const on = typeof context.data?.on === "function" ? (type, handler) => context.data.on(type, handler) : undefined
+    const receipt = await readConfigReceipt(context.client, current, requestID, { on })
+    if (receipt.error) throw new Error(receipt.error)
+    if (!receipt.saved) throw new Error("Workspace ID: сохранение не подтверждено.")
+    toast(context, "Workspace ID сохранён", "success")
+    return
+  }
   if (action === "profile") return selectProfile(context)
   if (action === "status") {
     const state = await managed(context)

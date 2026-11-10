@@ -155,6 +155,63 @@ const snapshot = () => {
 const exec = (name, input, sessionID = 'ses_regression') =>
   commands.get(name).execute({ sessionID, prompt: { text: JSON.stringify(input) } })
 
+// Workspace overrides must edit only the header, never replace/enable providers.
+assert.ok(commands.has('anthropic-workspace'), 'workspace setting command must be registered')
+const nativeProviders = {
+  anthropic: { id: 'anthropic', package: '@opencode/ai/providers/anthropic', activation: 'disabled', settings: { baseURL: 'https://example.test', apiKey: '{env:ANTHROPIC_API_KEY}' }, headers: { other: 'keep', 'Anthropic-Workspace-Id': 'config-default', 'ANTHROPIC-WORKSPACE-ID': 'another-default' }, models: ['claude'] },
+  other: { id: 'other', headers: { other: 'untouched' } },
+}
+function workspaceProviders(base = nativeProviders, transform = providerTransform) {
+  const result = structuredClone(base)
+  transform({ get: id => result[id], update: (id, update) => update(result[id]), add: ({ info }) => { result[info.id] = info } })
+  return result
+}
+assert.deepEqual(workspaceProviders(), nativeProviders)
+const workspaceID = 'wrkspc_01JwQvzr7rXLA5AGx3HKfFUJ'
+await exec('anthropic-workspace', { workspaceID })
+assert.equal(store.get(STORAGE_KEY).anthropicWorkspaceID, workspaceID)
+assert.deepEqual(workspaceProviders(), { ...nativeProviders, anthropic: { ...nativeProviders.anthropic, headers: { other: 'keep', 'anthropic-workspace-id': workspaceID } } })
+assert.deepEqual(workspaceProviders({ other: nativeProviders.other }), { other: nativeProviders.other }, 'missing Anthropic must not be created')
+let freshTransform
+await plugin.setup({
+  ...ctx,
+  event: undefined,
+  tool: { transform: async () => {} },
+  session: { ...ctx.session, hook: async () => {} },
+  command: { transform: async () => {} },
+  provider: { ...ctx.provider, transform: async callback => { freshTransform = callback } },
+  model: { transform: async () => {} },
+  mcp: { ...ctx.mcp, transform: async () => {} },
+  skill: { ...ctx.skill, transform: async () => {} },
+})
+assert.equal(workspaceProviders(nativeProviders, freshTransform).anthropic.headers['anthropic-workspace-id'], workspaceID, 'fresh setup must restore override')
+await exec('anthropic-workspace', { workspaceID: 'wrkspc_changed' })
+assert.equal(workspaceProviders().anthropic.headers['anthropic-workspace-id'], 'wrkspc_changed')
+const enabledWithoutHeaders = { anthropic: { id: 'anthropic', activation: 'enabled' } }
+assert.deepEqual(workspaceProviders(enabledWithoutHeaders), {
+  anthropic: { ...enabledWithoutHeaders.anthropic, headers: { 'anthropic-workspace-id': 'wrkspc_changed' } },
+})
+await assert.rejects(exec('anthropic-workspace', {}), /Workspace ID/)
+for (const workspaceID of [null, 42, {}, [], true, 'a\nb', 'a\rb', '\nwrkspc_test', 'a\0b', 'a\tb', 'org_123', 'organization-123', 'sk-ant-test', 'sk-test', 'Bearer test', 'a'.repeat(513)]) {
+  const before = structuredClone(store.get(STORAGE_KEY))
+  await assert.rejects(exec('anthropic-workspace', { workspaceID }), /Workspace ID/)
+  assert.deepEqual(store.get(STORAGE_KEY), before)
+}
+reloadFailures = 1
+await assert.rejects(exec('anthropic-workspace', { workspaceID: 'wrkspc_failed' }), /managed reload failed/)
+assert.equal(store.get(STORAGE_KEY).anthropicWorkspaceID, 'wrkspc_changed')
+assert.equal(workspaceProviders().anthropic.headers['anthropic-workspace-id'], 'wrkspc_changed')
+saveFailures = 1
+await assert.rejects(exec('anthropic-workspace', { workspaceID: 'wrkspc_unsaved' }), /simulated storage failure/)
+assert.equal(store.get(STORAGE_KEY).anthropicWorkspaceID, 'wrkspc_changed')
+assert.equal(workspaceProviders().anthropic.headers['anthropic-workspace-id'], 'wrkspc_changed')
+await exec('anthropic-workspace', { workspaceID: '' })
+assert.equal(store.get(STORAGE_KEY).anthropicWorkspaceID, undefined)
+assert.equal(Object.hasOwn(store.get(STORAGE_KEY), 'anthropicWorkspaceID'), false, 'clear must remove the stored property')
+assert.deepEqual(workspaceProviders(), nativeProviders, 'clear restores native header')
+const noHeader = { anthropic: { id: 'anthropic', activation: 'enabled' } }
+assert.deepEqual(workspaceProviders(noHeader), noHeader)
+
 // 1. Happy path: every managed type persists and reaches its transform.
 await exec('addprovider', {
   id: 'acme',
@@ -164,6 +221,8 @@ await exec('addprovider', {
 })
 assert.ok(synthetics.at(-1).startsWith('addprovider: saved'), synthetics.at(-1))
 assert.ok(store.get(STORAGE_KEY).providers.acme, 'provider must be persisted')
+assert.equal(Object.hasOwn(store.get(STORAGE_KEY), 'anthropicWorkspaceID'), false, 'ordinary writes must not manufacture an undefined JSON property')
+assert.deepEqual(store.get(STORAGE_KEY), JSON.parse(JSON.stringify(store.get(STORAGE_KEY))))
 
 await exec('addmodel', { providerID: 'acme', id: 'coder', modelID: 'qwen3-coder', name: 'Coder' })
 await assert.rejects(exec('addmodel', { providerID: 'acme', id: 'coder', enabled: 'true' }), /enabled must be a boolean/)

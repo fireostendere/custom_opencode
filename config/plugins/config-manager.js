@@ -77,8 +77,20 @@ function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {}
 }
 
+function assertWorkspaceID(value) {
+  if (typeof value !== "string" || value.length > 512 || /[^\x20-\x7e]/.test(value))
+    throw new Error("Workspace ID: введите строку до 512 символов без управляющих символов.")
+  const id = value.trim()
+  if (/\s/.test(id) || /^(?:org(?:anization)?[-_]|sk[-_]|bearer\b)/i.test(id))
+    throw new Error("Workspace ID: нужен ID рабочего пространства, не Organization ID или API-ключ.")
+  return id
+}
+
 function normalizeRegistry(value) {
-  const raw = asObject(value)
+  const raw = { ...asObject(value) }
+  const workspaceID = raw.anthropicWorkspaceID === undefined ? "" : assertWorkspaceID(raw.anthropicWorkspaceID)
+  if (workspaceID) raw.anthropicWorkspaceID = workspaceID
+  else delete raw.anthropicWorkspaceID
   return {
     ...raw,
     version: 2,
@@ -506,6 +518,14 @@ export default {
           providers.add({ info: { id: providerID, activation: "enabled", ...migrated }, models: [] })
         }
       }
+      if (registry.anthropicWorkspaceID && providers.get("anthropic")) {
+        providers.update("anthropic", (draft) => {
+          draft.headers = Object.fromEntries(
+            Object.entries(draft.headers || {}).filter(([name]) => name.toLowerCase() !== "anthropic-workspace-id"),
+          )
+          draft.headers["anthropic-workspace-id"] = registry.anthropicWorkspaceID
+        })
+      }
     })
     await ctx.model.transform((models) => {
       const slash = DEFAULT_MODEL.indexOf("/")
@@ -717,6 +737,19 @@ export default {
               } catch {}
             }),
         })
+
+      add(
+        "anthropic-workspace",
+        "Anthropic: Workspace ID",
+        async (input) => {
+          const workspaceID = assertWorkspaceID(input.workspaceID)
+          registry = { ...registry }
+          if (workspaceID) registry.anthropicWorkspaceID = workspaceID
+          else delete registry.anthropicWorkspaceID
+        },
+        "Workspace ID: пустая строка убирает переопределение; это не Organization ID.",
+        true,
+      )
 
       add(
         "addprovider",
