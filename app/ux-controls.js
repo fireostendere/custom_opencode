@@ -260,6 +260,8 @@ function endModelTransition(pending, profile) {
   desiredProfile = profile
   persistProfile(profile)
   setTransitionControls(false)
+  // The snapshot predates the switch; the new model decides which controls are enabled.
+  window.CustomOpenCodeControls?.refresh?.()
   syncAgentSurface(); syncModelSurface()
 }
 function cancelModelTransition(pending) {

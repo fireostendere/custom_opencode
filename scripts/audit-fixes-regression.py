@@ -344,6 +344,20 @@ class Fixes(unittest.TestCase):
         ns["_send_with_project_context"]("s", "user text", [])
         self.assertEqual(fallback, [("s", "user text", [])])
 
+    def test_audit_20261110_boundaries(self):
+        import control_plane
+
+        for argv in ("rg --hostname-bin ./x.sh hi f.txt", "rg --hostname-bin=./x.sh hi", "rg --pre-glob '*' --pre ./x.sh hi"):
+            self.assertFalse(control_plane._shell_risk(argv, "workspace", self.temp.name)[1], argv)
+        self.assertTrue(control_plane._shell_risk("rg hi f.txt", "workspace", self.temp.name)[1])
+        for task_id in ("../../escape", "/abs", ".."):
+            with self.assertRaises(ValueError):
+                ArtifactStore(self.store).put(task_id=task_id, project_dir=None, kind="note", title="t",
+                                              content=b"x", mime="application/octet-stream")
+        # The Task Center POST routes were once dropped from the dispatcher by an unrelated commit.
+        workflow = (ROOT / "app/server_workflow.py").read_text(encoding="utf-8")
+        self.assertIn("runtime.handle_post(self, parsed, features)", workflow)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

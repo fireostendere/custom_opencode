@@ -353,10 +353,8 @@ def add_user(username: str, password: str) -> list[dict[str, Any]]:
     if _same(username, env_user):
         raise UsersError(f"user {username!r} already exists (environment user)")
 
-    try:
-        users = read_users()
-    except UsersError:
-        users = []
+    # An unreadable store must fail here: writing would drop every other account.
+    users = read_users()
 
     if any(user["username"] == username for user in users):
         raise UsersError(f"user {username!r} already exists")

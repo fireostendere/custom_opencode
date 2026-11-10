@@ -16,10 +16,10 @@ fi
 VERSION=$(awk -F'"' '/"version"/ { print $4; exit }' "$SRC/packages/cli/package.json")
 [[ -n "$VERSION" ]] || { echo "cannot read the CLI version from $SRC/packages/cli/package.json" >&2; exit 1; }
 
+# The build rewrites packages/cli/package.json; leave the checkout clean even when it fails.
+trap 'git -C "$SRC" checkout -- packages/cli/package.json' EXIT
 # The build shells out to bun itself.
 (cd "$SRC/packages/cli" &&
   PATH="$(dirname "$BUN"):$PATH" OPENCODE_VERSION="$VERSION" OPENCODE_CHANNEL=latest \
     "$BUN" run script/build.ts --single --outdir="$OUT" >&2)
-# The build rewrites packages/cli/package.json; leave the checkout clean.
-git -C "$SRC" checkout -- packages/cli/package.json
 find "$OUT" -path '*/bin/opencode' -type f -print -quit

@@ -299,7 +299,7 @@ def _global_search(runtime: Any, *, directory: str, query: str, limit: int = 60)
             results.append({"type": "event", "id": event.get("id"), "title": str(event.get("kind") or "Event"), "taskID": event.get("task_id"), "createdAt": event.get("created_at"), "data": event.get("data")})
     try:
         repo = runtime.INDEXER.search(directory, query, limit=max(5, min(40, limit // 2)))
-        rows = repo.get("results") if isinstance(repo, dict) and isinstance(repo.get("results"), list) else repo if isinstance(repo, list) else []
+        rows = repo.get("hits") if isinstance(repo, dict) and isinstance(repo.get("hits"), list) else repo if isinstance(repo, list) else []
         for row in rows:
             if isinstance(row, dict):
                 results.append({"type": "repo", **row})
