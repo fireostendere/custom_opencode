@@ -91,8 +91,8 @@ Installer:
 1. загружает `.env`;
 2. если версия `opencode2` отличается от `OPENCODE_CLI_PACKAGE`, устанавливает закреплённую сборку в `~/.local`; при заданном `OPENCODE_CLI_BINARY` ставит поверх неё собственную сборку той же версии (см. `docs/configuration.md#собственная-сборка-opencode`);
 3. обнаруживает RAG;
-4. валидирует и provision-ит pinned Ponytail checkout, если он включён;
-5. при включённом self-test выполняет pre-install verifier до записи конфигов;
+4. при включённом self-test выполняет pre-install verifier до записи конфигов;
+5. валидирует и provision-ит pinned Ponytail checkout, если он включён;
 6. создаёт/обновляет user systemd unit;
 7. рендерит актуальный OpenCode V2 config;
 8. делает backup существующего `opencode.json`;
@@ -167,7 +167,7 @@ Repository-defined `lint`/`test`/`pytest`/`cargo`/`go` команды счита
 
 ## Что проверяет install self-test
 
-До изменений на диске запускается полный `scripts/verify.sh`: Python/JS/bash syntax, web smoke, router/config invariants, project-browser boundaries, RAG mocked lifecycle, secret/path guards.
+До записи конфигов и unit-файлов (CLI закреплённой версии к этому моменту уже установлен) запускается полный `scripts/verify.sh`: Python/JS/bash syntax, web smoke, router/config invariants, project-browser boundaries, RAG mocked lifecycle, secret/path guards.
 
 После рестарта проверяется реальная машина:
 

@@ -5,6 +5,8 @@ const GRACE_MIN = 30
 const STALE_BUSY_MS = 6 * 60 * 60_000
 let keeper = null
 let warned = false
+// One plugin instance per location shares this module; only the last one out releases.
+let instances = 0
 // The one shared keeper lives while ANY session is busy: parallel sessions and
 // subagents finish independently and one idle session must not release it.
 const busy = new Map()
@@ -61,10 +63,10 @@ function releaseKeeper() {
 
 export function observe(event, now = Date.now()) {
   const kind = classify(event?.type)
-  if (kind === "ignore") return busy.size > 0 || holds.size > 0
   const id = String(event?.data?.sessionID || "")
   if (kind === "busy") busy.set(id, now)
-  else busy.delete(id)
+  else if (kind === "idle") busy.delete(id)
+  // Also on the renew tick (event null): a lost idle event must still expire.
   for (const [session, since] of busy) if (now - since > STALE_BUSY_MS) busy.delete(session)
   return busy.size > 0 || holds.size > 0
 }
@@ -85,6 +87,7 @@ export function releaseAwake(key) {
 export default {
   id: "keep-awake",
   setup(ctx) {
+    instances += 1
     const sync = (awake) => (awake ? ensureKeeper() : releaseKeeper())
     const stop = startEvents(ctx, (event) => {
       if (classify(event?.type) !== "ignore") sync(observe(event))
@@ -95,6 +98,7 @@ export default {
     return () => {
       stop()
       clearInterval(renew)
+      if (--instances > 0) return
       busy.clear()
       releaseKeeper()
     }
@@ -112,5 +116,7 @@ if (process.env.KEEP_AWAKE_SELF_CHECK) {
     const got = classify(input)
     if (got !== want) throw new Error(`classify(${JSON.stringify(input)}) = ${got}, want ${want}`)
   }
+  observe({ type: "session.execution.started", data: { sessionID: "lost" } }, 0)
+  if (!observe(null, 1) || observe(null, STALE_BUSY_MS + 1)) throw new Error("renew tick must expire a stale busy session")
   console.log("keep-awake self-check OK")
 }

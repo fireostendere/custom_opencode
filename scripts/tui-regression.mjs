@@ -6,6 +6,33 @@ import { fileURLToPath } from "node:url"
 import { dirname, join, relative } from "node:path"
 
 const root = new URL("../", import.meta.url)
+// Fixture subscriptions are independent of the operator's installed settings.
+process.env.OPENCODE_ALIBABA_ENABLED = "1"
+process.env.OPENCODE_LIMITS_QWEN = "1"
+const selection = await import(new URL("config/plugins/tui/lib/limit-selection.js", root))
+const connectedModels = [
+  { providerID: "openai", id: "gpt-6", enabled: true },
+  { providerID: "bailian-cli", id: "qwen", enabled: true },
+  { providerID: "google", id: "gemini-2.5-pro", enabled: true },
+]
+assert.equal(selection.selectedLimitIDs(connectedModels).length, 7)
+const allHidden = selection.LIMIT_DEFS.map(({ id }) => id)
+assert.deepEqual(selection.selectedLimitIDs(connectedModels, allHidden), [])
+assert.deepEqual(selection.selectedLimitIDs([], allHidden), [])
+assert.deepEqual(selection.selectedLimitIDs(connectedModels, JSON.parse(JSON.stringify(allHidden))), [])
+assert.equal(selection.selectedLimitIDs(connectedModels, []).length, 7, "Reset restores connected defaults")
+assert.deepEqual(selection.connectedLimitSources([
+  { providerID: "openai-api", id: "gpt-6", enabled: true },
+  { providerID: "openai", enabled: true },
+  { providerID: "chatgpt", id: "", enabled: true },
+  { providerID: "chatgpt", enabled: false },
+  { providerID: "google", id: "gemini-image", enabled: true },
+  { providerID: "openai", enabled: true, status: "deprecated" }, null,
+]), [])
+assert.deepEqual(selection.connectedLimitSources(connectedModels, { alibabaEnabled: false }), ["codex", "gemini"])
+assert.deepEqual(selection.trackedLimitSources([null, "qwen.fiveHour", "qwen.sevenDay", "fake"]), ["qwen"])
+assert.deepEqual(selection.selectedLimitIDs(connectedModels, ["codex.primary", null]).filter((id) => id.startsWith("codex")), ["codex.secondary"])
+assert.deepEqual(selection.selectedLimitIDs(null, {}), [])
 const helperUrl = new URL("config/plugins/tui/lib/limits-helper.js", root)
 const panelDataUrl = new URL("config/plugins/tui/lib/panel-data.js", root)
 const panelCommandUrl = new URL("config/plugins/tui/lib/panel-command.js", root)
@@ -16,18 +43,87 @@ const workspacePanel = await readFile(
   "utf8",
 )
 const panelViews = await readFile(new URL("config/plugins/tui/lib/panel-views.jsx", root), "utf8")
+// Execute the real non-rendering factory/settings code without a terminal renderer.
+{
+  const prefix = panelViews.slice(panelViews.indexOf("export function createPanelViews(context) {"), panelViews.indexOf("  const tone = (name) =>"))
+  const makeViews = new Function("createSignal", "getLimitsSync", "LIMIT_DEFS", "selectedLimitIDs", "trackedLimitSources", "qwenLimitsEnabled", "PANEL_EVENTS", "SESSION_TREE_EVENTS",
+    `${prefix.replace("export function", "function")}\nreturn { configureLimits, selectedIDs, reloadLimitModels, models }; }\nreturn createPanelViews`)(
+    (initial) => { let value = initial; return [() => value, (next) => { value = typeof next === "function" ? next(value) : next }] },
+    () => ({}), selection.LIMIT_DEFS, selection.selectedLimitIDs, selection.trackedLimitSources,
+    () => process.env.OPENCODE_LIMITS_QWEN !== "0", [], [],
+  )
+  let saved = { hidden: [] }
+  let storageError = false
+  const storageWarnings = []
+  let catalog = connectedModels
+  let directory = "first"
+  let catalogCalls = 0
+  const events = new Map()
+  const choices = []
+  const context = {
+    theme: {}, storage: { store: () => [saved, (update) => storageError ? Promise.reject(new Error("disk full")) : update(saved)] },
+    data: { on: (name, callback) => { events.set(name, callback) }, location: { default: () => ({ directory }) } },
+    client: { model: { list: async () => { catalogCalls++; return { data: catalog } } } },
+    ui: { router: { current: () => ({ type: "home" }) }, dialog: { select: async () => choices.shift() }, toast: { show: (value) => storageWarnings.push(value) } },
+  }
+  const views = makeViews(context)
+  assert.equal(catalogCalls, 0, "Setup must not load a catalog or start polling")
+  events.get("model.updated")()
+  assert.equal(catalogCalls, 0, "Inactive views ignore catalog events")
+  assert.equal(views.models(), null, "Loading must not look like disconnection")
+  choices.push("codex.primary", undefined)
+  await views.configureLimits()
+  assert.deepEqual(saved.hidden, ["codex.primary"])
+  assert.ok(!views.selectedIDs().includes("codex.primary"))
+  catalog = []
+  await views.reloadLimitModels()
+  assert.deepEqual(views.selectedIDs(), [])
+  catalog = connectedModels
+  await views.reloadLimitModels()
+  assert.ok(!views.selectedIDs().includes("codex.primary"), "Reconnect preserves hidden windows")
+  choices.push("codex.primary", "hide-all", undefined)
+  await views.configureLimits()
+  assert.deepEqual(views.selectedIDs(), [])
+  const restored = makeViews(context)
+  await restored.reloadLimitModels()
+  assert.deepEqual(restored.selectedIDs(), [], "All-hidden survives a new factory")
+  choices.push("reset", undefined)
+  await views.configureLimits()
+  assert.equal(views.selectedIDs().length, 7)
+  storageError = true
+  choices.push("hide-all", undefined)
+  await assert.doesNotReject(views.configureLimits(), "A storage failure must not crash the settings dialog")
+  assert.equal(views.selectedIDs().length, 7, "A rejected save must not pretend to persist the selection")
+  assert.equal(storageWarnings.length, 1)
+  storageError = false
+  process.env.OPENCODE_LIMITS_QWEN = "0"
+  assert.ok(!views.selectedIDs().some((id) => id.startsWith("qwen.")))
+  process.env.OPENCODE_LIMITS_QWEN = "1"
+  let finishOld
+  context.client.model.list = () => new Promise((resolve) => { finishOld = resolve })
+  const stale = views.reloadLimitModels()
+  directory = "second"
+  context.client.model.list = async () => ({ data: [] })
+  await views.reloadLimitModels()
+  finishOld({ data: connectedModels })
+  await stale
+  assert.deepEqual(views.models(), [], "Stale location results cannot restore disconnected quotas")
+}
 {
   const factory = panelViews.slice(
     panelViews.indexOf("export function createPanelViews(context) {"),
-    panelViews.indexOf("function LimitsView()"),
+    panelViews.indexOf("function LimitsView(props)"),
   )
   for (const forbidden of ["acquireLimits(", "setInterval(", "getLimits(", "startAutoRefresh(", "readFileSync", "existsSync"]) {
     assert.ok(!factory.includes(forbidden), `Panel views must not start limits machinery at TUI start: ${forbidden}`)
   }
-  const limitsView = panelViews.slice(panelViews.indexOf("function LimitsView()"), panelViews.indexOf("function TodoRows("))
+  const limitsView = panelViews.slice(panelViews.indexOf("function LimitsView(props)"), panelViews.indexOf("function TodoRows("))
   assert.match(limitsView, /acquireLimits\(\{[\s\S]*?onCleanup\(/, "LimitsView must own (acquire and release) the limits feed")
   assert.ok(limitsView.includes("geminiSeconds()"), "The Gemini countdown must be derived from the ticking clock")
   assert.ok(panelViews.includes("for (const release of limitReleases) release()"), "Disposing views must release mounted feeds")
+  const alibabaBlock = limitsView.slice(limitsView.indexOf('<Show when={tracks("qwen")}>'), limitsView.indexOf('<Show when={tracks("gemini")}>'))
+  assert.ok(alibabaBlock.includes("getNightPromoStatus(now())"), "Promo belongs only to the tracked Alibaba block")
+  assert.ok(!limitsView.slice(limitsView.indexOf('<Show when={tracks("gemini")}>')).includes("getNightPromoStatus"), "Promo must not follow unrelated sources")
 }
 const retiredPanel = await readFile(new URL("config/plugins/tui/limits-panels.jsx", root), "utf8")
 const tuiPackage = JSON.parse(
@@ -802,7 +898,7 @@ assert.match(
 )
 assert.match(
   panelViews,
-  /function LimitsView\(\)[\s\S]*?<box flexDirection="column" width="100%" minWidth=\{0\} gap=\{1\} flexShrink=\{0\}>/,
+  /function LimitsView\(props\)[\s\S]*?<box flexDirection="column" width="100%" minWidth=\{0\} gap=\{1\} flexShrink=\{0\}>/,
   "Limits view must fit narrow panels",
 )
 assert.equal(
@@ -1264,6 +1360,54 @@ assert.deepEqual(
   "Unmounting the last Limits view must stop every timer",
 )
 
+// Explicit owner scopes never poll hidden sources, even during selection changes.
+const scopedHelper = await import(`${helperUrl.href}?scoped=${Date.now()}`)
+await writeFile(invocations, "", "utf8")
+const scoped = scopedHelper.acquireLimits({ sources: [] })
+await new Promise((resolve) => setTimeout(resolve, 30))
+assert.deepEqual(await invocationLines(), [], "All-hidden must not spawn any CLI")
+assert.equal(scopedHelper.getAutoRefreshState().active, false)
+assert.equal(scopedHelper.getAutoRefreshState().ticking, false)
+scoped.setSources(["codex"])
+// Add Alibaba while Codex is still in flight; it must not get lost.
+const scopedB = scopedHelper.acquireLimits({ sources: ["qwen"] })
+for (let attempt = 0; attempt < 100 && (!scopedHelper.getLimitsSync().codex.available || !scopedHelper.getLimitsSync().qwen.available); attempt += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 20))
+}
+assert.equal(scopedHelper.getLimitsSync().codex.available, true)
+assert.equal(scopedHelper.getLimitsSync().qwen.available, true)
+assert.equal(scopedHelper.getLimitsSync().gemini.available, false, "Untracked Gemini must not read quota state")
+assert.equal((await invocationLines()).filter((line) => line.startsWith("codex app-server")).length, 1)
+assert.equal((await invocationLines()).filter((line) => line.startsWith("bl")).length, 1)
+scopedB()
+scoped.setSources([])
+assert.equal(scopedHelper.getAutoRefreshState().active, false)
+scoped.setSources(["qwen"])
+await new Promise((resolve) => setTimeout(resolve, 30))
+assert.equal((await invocationLines()).filter((line) => line.startsWith("bl")).length, 1, "Reconnect reuses source cache within TTL")
+scoped()
+
+const queuedHelper = await import(`${helperUrl.href}?queued=${Date.now()}`)
+await writeFile(invocations, "", "utf8")
+const codexOwner = queuedHelper.acquireLimits({ sources: ["codex"] })
+const removedOwner = queuedHelper.acquireLimits({ sources: ["qwen"] })
+removedOwner.setSources([])
+for (let attempt = 0; attempt < 100 && queuedHelper.getAutoRefreshState().pending; attempt += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 20))
+}
+assert.equal((await invocationLines()).filter((line) => line.startsWith("bl")).length, 0, "A source removed while queued must not be queried")
+assert.equal(queuedHelper.getLimitsSync().codex.available, true)
+removedOwner.setSources(["qwen"])
+for (let attempt = 0; attempt < 100 && !queuedHelper.getLimitsSync().qwen.available; attempt += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 20))
+}
+assert.equal(queuedHelper.getLimitsSync().qwen.available, true, "New source must load within another source's TTL")
+assert.equal((await invocationLines()).filter((line) => line.startsWith("codex app-server")).length, 1)
+assert.equal((await invocationLines()).filter((line) => line.startsWith("bl")).length, 1)
+codexOwner()
+assert.equal(queuedHelper.getAutoRefreshState().active, true, "One remaining owner retains its feed")
+removedOwner()
+
 // Gemini 429 countdown watcher: one stat per poll, change-only callbacks, and
 // a stale `active` file expires from its `until` timestamp.
 assert.equal(helper.normalizeRateLimit(null), helper.INACTIVE_RATE_LIMIT)
@@ -1388,7 +1532,7 @@ assert.deepEqual(
   [],
   "Disabled Qwen limits must never spawn bl",
 )
-assert.ok(panelViews.includes(`<Field label="Alibaba" value="не используется"`), "Disabled Qwen limits must read as unused, not missing")
+assert.ok(!panelViews.includes(`<Field label="Alibaba" value="не используется"`), "Disabled Qwen limits must not render a placeholder")
 delete process.env.OPENCODE_LIMITS_QWEN
 
 // A missing CLI must not be searched for on every refresh.

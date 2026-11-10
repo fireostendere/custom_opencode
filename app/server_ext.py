@@ -12,7 +12,7 @@ import signal
 import subprocess
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import server as base
 
@@ -219,21 +219,26 @@ def _rpc_write(process: subprocess.Popen[str], payload: dict[str, object]) -> No
 def _rpc_wait(process: subprocess.Popen[str], request_id: int, timeout: float) -> object:
     if process.stdout is None:
         raise RuntimeError("Codex app-server stdout is unavailable")
+    # Read the fd directly: readline() can leave a whole response in Python's
+    # buffer, where select() no longer sees it. The tail survives across calls.
+    fd = process.stdout.fileno()
+    buffer: bytes = getattr(process, "_rpc_buffer", b"")
     selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ)
+    selector.register(fd, selectors.EVENT_READ)
     deadline = time.monotonic() + timeout
     try:
         while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("Codex app-server response timeout")
-            events = selector.select(remaining)
-            if not events:
-                raise TimeoutError("Codex app-server response timeout")
-            line = process.stdout.readline()
-            if not line:
-                code = process.poll()
-                raise RuntimeError(f"Codex app-server exited before response ({code})")
+            while b"\n" not in buffer:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(remaining):
+                    raise TimeoutError("Codex app-server response timeout")
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    code = process.poll()
+                    raise RuntimeError(f"Codex app-server exited before response ({code})")
+                buffer += chunk
+            line, buffer = buffer.split(b"\n", 1)
+            process._rpc_buffer = buffer  # type: ignore[attr-defined]
             try:
                 payload = json.loads(line)
             except json.JSONDecodeError:
@@ -627,23 +632,45 @@ def query_gemini_status() -> dict[str, object]:
     }
 
 
-def limits_snapshot() -> dict[str, object]:
-    return {
-        "generatedAt": int(time.time()),
-        "qwen": query_qwen_status(),
-        "openai": query_codex_rate_limits(),
-        "gemini": query_gemini_status(),
-    }
+def limits_snapshot(sources: list[str] | None = None) -> dict[str, object]:
+    queries = {"codex": ("openai", query_codex_rate_limits), "qwen": ("qwen", query_qwen_status), "gemini": ("gemini", query_gemini_status)}
+    selected = set(queries if sources is None else sources)
+    if not selected.issubset(queries):
+        raise ValueError("unknown limit source")
+    return {"generatedAt": int(time.time()), **{key: query() for source, (key, query) in queries.items() if source in selected}}
 
 
 class Handler(base.Handler):
     def do_GET(self) -> None:
-        path = urlsplit(self.path).path
-        if path == "/client-limits.json":
+        parsed = urlsplit(self.path)
+        if parsed.path in ("/client-limits.json", "/client-limit-selection.js", "/client-config.json"):
             if not self.authenticated():
                 self.unauthorized()
                 return
-            self.json_response(limits_snapshot())
+            if parsed.path == "/client-config.json":
+                self.json_response({"scratchDirectory": base.SCRATCH_DIRECTORY, "alibabaLimitsEnabled": qwen_limits_enabled()})
+                return
+            if parsed.path == "/client-limit-selection.js":
+                try:
+                    body = (base.ROOT.parent / "config/plugins/tui/lib/limit-selection.js").read_bytes()
+                except OSError:
+                    self.json_response({"error": "limit selection unavailable"}, status=503)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/javascript; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            sources = params["sources"][0].split(",") if params.get("sources", [""])[0] else []
+            try:
+                snapshot = limits_snapshot(sources if "sources" in params else None)
+            except ValueError:
+                self.json_response({"error": "unknown limit source"}, status=400)
+                return
+            self.json_response(snapshot)
             return
         super().do_GET()
 

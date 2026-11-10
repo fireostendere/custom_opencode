@@ -27,7 +27,7 @@ self.addEventListener('fetch',(event)=>{
     const cached=caches.open(CACHE).then((cache)=>cache.match(req)).catch(()=>undefined)
     try{
       const network=await fetch(req,{cache:'no-cache'})
-      if(network.ok){const copy=network.clone();event.waitUntil(caches.open(CACHE).then((cache)=>cache.put(req,copy)).catch(()=>{}))}
+      if(network.ok&&!network.redirected){const copy=network.clone();event.waitUntil(caches.open(CACHE).then((cache)=>cache.put(req,copy)).catch(()=>{}))}
       return network
     }catch{
       const offline=await cached

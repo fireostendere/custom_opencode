@@ -37,6 +37,12 @@
       </div>
       <details class="limits-shell" id="limitsShell" open>
         <summary class="limits-summary"><span>Лимиты</span></summary>
+        <details class="limit-settings">
+          <summary>Настроить лимиты</summary>
+          <fieldset><legend>Отслеживаемые лимиты</legend><div id="limitChoices"></div></fieldset>
+          <div class="limit-settings-actions"><button type="button" id="limitsHideAll">Скрыть все</button><button type="button" id="limitsReset">По умолчанию</button></div>
+          <p class="quota-note">Общие лимиты аккаунта, не отдельных моделей. Выбор сохраняется в этом браузере.</p>
+        </details>
         <div class="provider-limits" id="providerLimits" aria-live="polite">
           <div class="quota-title"><span>Лимиты</span></div>
           <div class="quota-note">Загрузка…</div>

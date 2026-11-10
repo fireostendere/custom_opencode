@@ -126,7 +126,7 @@ function rememberRejection(model) {
 export default {
   id: "typed-output",
   async setup(ctx) {
-    if (String(process.env.TYPED_OUTPUT || "on").toLowerCase() === "off") return
+    if (/^(0|false|off|no)$/i.test(process.env.TYPED_OUTPUT || "")) return
     let registry
     try {
       registry = loadRegistry()

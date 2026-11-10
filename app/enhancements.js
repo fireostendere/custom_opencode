@@ -1,12 +1,29 @@
+import { LIMIT_DEFS, selectedLimitIDs, trackedLimitSources } from './client-limit-selection.js'
+import { isNightPromoActive } from './night-promo.js'
+import { createRefreshCoalescer } from './refresh-coalescer.js'
+
 const $ = (id) => document.getElementById(id)
 const COMMAND_CACHE_MS = 60_000
 const OPENAI_LIMITS_CACHE_KEY = 'opencode:web:openai-limits-last-good-v1'
 const OPENAI_LIMITS_CACHE_MAX_AGE_MS = 2 * 60 * 60 * 1000
+const LIMIT_PREFERENCES_KEY = 'custom-opencode:limits-hidden-v1'
 const RETIRED_COMMANDS = new Set(['doctor'])
 const commandCache = new Map()
 let paletteItems = []
 let paletteIndex = 0
 let limitsTimer = null
+let hiddenLimitIDs = readLimitPreferences()
+let limitModels = []
+let limitOptions = { alibabaEnabled: true }
+let lastLimits = {}
+const coalesceLimits = createRefreshCoalescer()
+
+export function readLimitPreferences(storage = globalThis.localStorage) {
+  try {
+    const hidden = JSON.parse(storage?.getItem(LIMIT_PREFERENCES_KEY) || '[]')
+    return Array.isArray(hidden) ? hidden.filter((id) => LIMIT_DEFS.some((limit) => limit.id === id)) : []
+  } catch { return [] }
+}
 
 function dataOf(value) {
   return value && typeof value === 'object' && 'data' in value ? value.data : value
@@ -123,7 +140,7 @@ export function planLabel(plan) {
   return PLAN_LABELS[id] || String(plan)
 }
 
-function renderOpenAIQuota(value) {
+function renderOpenAIQuota(value, selected) {
   if (!value?.available) {
     const reasons = {
       'codex-not-found':'Codex CLI не найден',
@@ -133,7 +150,7 @@ function renderOpenAIQuota(value) {
     }
     return `<section class="quota-provider"><div class="quota-provider-head"><strong>ChatGPT / OpenAI</strong><span class="quota-muted">недоступно</span></div><div class="quota-note">${escapeHtml(reasons[value?.reason] || 'Нет rate-limit snapshot')}</div></section>`
   }
-  const windows = [value.primary, value.secondary].filter(Boolean).sort((a, b) => (a.windowDurationMins || 0) - (b.windowDurationMins || 0))
+  const windows = ['primary', 'secondary'].filter((key) => selected.includes(`codex.${key}`)).map((key) => value[key]).filter(Boolean).sort((a, b) => (a.windowDurationMins || 0) - (b.windowDurationMins || 0))
   const state = value.stale ? 'последние данные' : planLabel(value.planType)
   return `<section class="quota-provider">
     <div class="quota-provider-head"><strong>ChatGPT / OpenAI</strong><span class="${value.stale ? 'quota-muted' : 'quota-good'}">${escapeHtml(state)}</span></div>
@@ -156,7 +173,7 @@ function renderQwenWindow(window, fallbackLimit, fallbackMinutes) {
   return `<div class="quota-cap"><span>${escapeHtml(windowLabel(window?.windowDurationMins || fallbackMinutes))}</span><strong>${limit.toLocaleString('ru-RU')}</strong></div>`
 }
 
-function renderQwenQuota(value) {
+function renderQwenQuota(value, selected) {
   if (value?.state === 'disabled') return '' // not configured: nothing to watch, no card
   const isExpired = value?.state === 'expired' || value?.reason === 'session-expired'
   const state = value?.state === 'ok' ? 'OK' : value?.state === 'exhausted' ? 'исчерпан' : (isExpired ? 'сессия истекла' : 'нет probe')
@@ -168,9 +185,10 @@ function renderQwenQuota(value) {
       ? 'Сессия Bailian истекла. Выполните: bl auth login --console'
       : (value?.reason === 'bailian-cli-not-found' ? 'Bailian CLI не найден; показаны caps + probe.' : 'Token Plan usage недоступен; показаны caps + probe.'))
   return `<section class="quota-provider">
-    <div class="quota-provider-head"><strong>Qwen</strong><span class="${stateClass}">${escapeHtml(state)}</span></div>
-    ${renderQwenWindow(value?.fiveHour, 12000, 300)}
-    ${renderQwenWindow(value?.sevenDay, 40000, 10080)}
+    <div class="quota-provider-head"><strong>Alibaba</strong><span class="${stateClass}">${escapeHtml(state)}</span></div>
+    ${selected.includes('qwen.fiveHour') ? renderQwenWindow(value?.fiveHour, 12000, 300) : ''}
+    ${selected.includes('qwen.sevenDay') ? renderQwenWindow(value?.sevenDay, 40000, 10080) : ''}
+    <div class="quota-note">${isNightPromoActive() ? 'ночная скидка −50% действует' : 'ночная скидка −50%: 22:00–08:00 Пекин'} · для участвующих моделей</div>
     ${!live && value?.resetAt ? `<div class="quota-reset">probe reset ${escapeHtml(value.resetAt)}</div>` : ''}
     <div class="quota-note">${escapeHtml(note)}</div>
   </section>`
@@ -188,7 +206,7 @@ function renderGeminiWindow(window, fallbackLabel, fallbackLimit) {
   return `<div class="quota-cap"><span>${escapeHtml(label)}</span><strong>${limit.toLocaleString('ru-RU')}</strong></div>`
 }
 
-function renderGeminiQuota(value) {
+function renderGeminiQuota(value, selected) {
   if (!value?.available) {
     if (value?.reason === 'key-not-found') return '' // not configured: nothing to watch, no card
     return `<section class="quota-provider"><div class="quota-provider-head"><strong>Google Gemini</strong><span class="quota-muted">не настроен</span></div><div class="quota-note">${escapeHtml(value?.reason === 'key-not-found' ? 'GEMINI_API_KEY не задан в .env' : 'Лимиты Gemini недоступны')}</div></section>`
@@ -200,25 +218,72 @@ function renderGeminiQuota(value) {
   const stateClass = isRateLimited ? 'quota-bad' : 'quota-good'
   return `<section class="quota-provider">
     <div class="quota-provider-head"><strong>Google Gemini</strong><span class="${stateClass}">${escapeHtml(stateLabel)}</span></div>
-    ${renderGeminiWindow(value?.minuteTokens, '1 мин (TPM)', 2000000)}
-    ${renderGeminiWindow(value?.minuteRequests, '1 мин (RPM)', 1000)}
+    ${selected.includes('gemini.minuteTokens') ? renderGeminiWindow(value?.minuteTokens, 'токены/мин (TPM)', 2000000) : ''}
+    ${selected.includes('gemini.minuteRequests') ? renderGeminiWindow(value?.minuteRequests, 'запросы/мин (RPM)', 1000) : ''}
+    ${selected.includes('gemini.dailyRequests') ? renderGeminiWindow(value?.dailyRequests, 'запросы/сутки (RPD)', 4000000) : ''}
     ${isRateLimited && value?.resetAt ? `<div class="quota-reset">сброс через ${escapeHtml(String(value?.seconds || 0))}с · ${escapeHtml(resetText(value?.resetAt))}</div>` : ''}
     <div class="quota-note">${escapeHtml(value?.note || 'Google AI Studio · Pay-as-you-go (2M TPM / 1K RPM)')}</div>
   </section>`
 }
 
-async function refreshLimits() {
+export function renderLimits(value, selected) {
+  const sources = trackedLimitSources(selected)
+  return `${sources.includes('codex') ? renderOpenAIQuota(value?.openai, selected) : ''}${sources.includes('qwen') ? renderQwenQuota(value?.qwen, selected) : ''}${sources.includes('gemini') ? renderGeminiQuota(value?.gemini, selected) : ''}` || '<div class="quota-note">Нет выбранных лимитов. Откройте «Настроить лимиты».</div>'
+}
+
+function renderLimitSettings() {
+  const choices = $('limitChoices')
+  if (!choices) return
+  const available = selectedLimitIDs(limitModels, [], limitOptions)
+  const markup = LIMIT_DEFS.filter((limit) => available.includes(limit.id)).map((limit) => `<label><input type="checkbox" data-limit-id="${escapeHtml(limit.id)}"${hiddenLimitIDs.includes(limit.id) ? '' : ' checked'}> ${escapeHtml(limit.label)}</label>`).join('') || '<div class="quota-note">Нет подключённых моделей с поддержкой лимитов.</div>'
+  if (choices._lastMarkup !== markup) {
+    const focused = document.activeElement?.dataset?.limitId
+    choices.innerHTML = markup
+    choices._lastMarkup = markup
+    if (focused) choices.querySelector(`[data-limit-id="${focused}"]`)?.focus()
+  }
+}
+
+function paintLimits() {
+  const panel = $('providerLimits')
+  if (!panel) return
+  const markup = renderLimits(lastLimits, selectedLimitIDs(limitModels, hiddenLimitIDs, limitOptions))
+  if (panel._lastMarkup !== markup) { panel._lastMarkup = markup; panel.innerHTML = markup }
+  renderLimitSettings()
+}
+
+function saveLimitPreferences(hidden) {
+  hiddenLimitIDs = hidden
+  try { localStorage.setItem(LIMIT_PREFERENCES_KEY, JSON.stringify(hidden)) }
+  catch { toast('Выбор лимитов изменён, но браузер не разрешил сохранить настройки', 5000) }
+  paintLimits()
+  void refreshLimits(true)
+}
+
+export function refreshLimits(force = false) { return coalesceLimits(refreshLimitsOnce, force) }
+
+async function refreshLimitsOnce() {
   const panel = $('providerLimits')
   if (!panel) return
   if (!panel._lastMarkup) panel.classList.add('loading-limits')
   try {
-    const value = await request('/client-limits.json')
-    const openai = stableOpenAILimits(value?.openai)
-    const markup = `${renderQwenQuota(value?.qwen)}${renderOpenAIQuota(openai)}${renderGeminiQuota(value?.gemini)}` || '<div class="quota-note">Лимиты провайдеров не настроены.</div>'
-    if (panel._lastMarkup !== markup) {
-      panel._lastMarkup = markup
-      panel.innerHTML = markup
-    }
+    const sessionID = sessionIdFromHash()
+    const directory = await selectedDirectory()
+    const params = new URLSearchParams()
+    if (directory) params.set('location[directory]', directory)
+    const [catalog, config] = await Promise.all([request(`/api/model?${params}`), request('/client-config.json')])
+    const models = dataOf(catalog)
+    if (!Array.isArray(models)) throw new Error('Список подключённых моделей недоступен')
+    if (sessionIdFromHash() !== sessionID) return
+    limitModels = models
+    limitOptions = { alibabaEnabled: config?.alibabaLimitsEnabled !== false }
+    paintLimits()
+    const selection = selectedLimitIDs(limitModels, hiddenLimitIDs, limitOptions)
+    if (!selection.length) return
+    const value = await request(`/client-limits.json?sources=${trackedLimitSources(selection).join(',')}`)
+    if (sessionIdFromHash() !== sessionID || selection.join() !== selectedLimitIDs(limitModels, hiddenLimitIDs, limitOptions).join()) return
+    lastLimits = { ...value, ...(selection.some((id) => id.startsWith('codex.')) ? {openai:stableOpenAILimits(value?.openai)} : {}) }
+    paintLimits()
   } catch (error) {
     if (!panel._lastMarkup) panel.innerHTML = `<div class="quota-note">Не удалось обновить: ${escapeHtml(error.message)}</div>`
   } finally {
@@ -429,12 +494,30 @@ function bindSlashCommands() {
   window.addEventListener('hashchange', () => { commandCache.clear(); closePalette() })
 }
 
-async function initializeEnhancements() {
+export async function initializeEnhancements() {
   bindSlashCommands()
+  $('limitChoices')?.addEventListener('change', (event) => {
+    const id = event.target.dataset.limitId
+    if (!LIMIT_DEFS.some((limit) => limit.id === id)) return
+    saveLimitPreferences(event.target.checked ? hiddenLimitIDs.filter((hidden) => hidden !== id) : [...new Set([...hiddenLimitIDs, id])])
+  })
+  $('limitsHideAll')?.addEventListener('click', () => saveLimitPreferences(LIMIT_DEFS.map((limit) => limit.id)))
+  $('limitsReset')?.addEventListener('click', () => saveLimitPreferences([]))
   void refreshLimits()
   limitsTimer = setInterval(() => { if (!document.hidden) refreshLimits() }, 60_000)
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshLimits() })
   window.addEventListener('custom-rate-limit', () => { void refreshLimits() })
+  window.addEventListener('custom-opencode:session-selected', () => { void refreshLimits(true) })
+  window.addEventListener('hashchange', () => { void refreshLimits(true) })
+  window.addEventListener('custom-opencode:event', (event) => {
+    if (['model.updated', 'provider.updated'].includes(event.detail?.type)) void refreshLimits(true)
+  })
+  window.addEventListener('storage', (event) => {
+    if (event.key !== LIMIT_PREFERENCES_KEY && event.key !== null) return
+    hiddenLimitIDs = readLimitPreferences()
+    paintLimits()
+    void refreshLimits(true)
+  })
 }
 
 if (typeof document !== 'undefined') initializeEnhancements().catch((error) => console.warn('enhancements init failed', error))

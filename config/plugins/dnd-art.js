@@ -48,7 +48,7 @@ function command(bin, args, input, signal) {
     // Never return stderr: a remote transport can echo credentials.
     proc.stderr.resume()
     proc.once('error', reject)
-    proc.once('exit', code => { try { code === 0 ? resolve(JSON.parse(output)) : reject(Error(`${bin} art operation failed (${code})`)) } catch (error) { reject(error) } })
+    proc.once('close', code => { try { code === 0 ? resolve(JSON.parse(output)) : reject(Error(`${bin} art operation failed (${code})`)) } catch (error) { reject(error) } })
     proc.stdin.on('error', () => {})
     proc.stdin.end(input === undefined ? undefined : JSON.stringify(input))
   })

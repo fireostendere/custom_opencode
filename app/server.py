@@ -735,6 +735,8 @@ def valid_session_token(token: str) -> str | None:
         payload = b64url_decode(payload_part)
         supplied_signature = b64url_decode(signature_part)
         data = json.loads(payload.decode("utf-8"))
+        if not isinstance(data, dict):
+            return None
         version = data.get("v")
         username = data.get("u")
 

@@ -60,7 +60,8 @@ function renderInline(text) {
   })
   value = emphasis(value)
   // split/join, not replace(): code such as `$&` or `$$` must not be read as a replacement pattern.
-  codes.forEach((html, index) => { value = value.split(`\u0000CODE${index}\u0000`).join(html) })
+  // Newest first: a link stashed after a code span still holds that span's placeholder.
+  for (let index = codes.length - 1; index >= 0; index--) value = value.split(`\u0000CODE${index}\u0000`).join(codes[index])
   return value
 }
 

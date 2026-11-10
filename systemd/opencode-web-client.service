@@ -23,7 +23,7 @@ Environment=MALLOC_ARENA_MAX=2
 EnvironmentFile=-__CUSTOM_OPENCODE_USER_SETTINGS__
 EnvironmentFile=-__CUSTOM_OPENCODE_ROOT__/.env
 # server_workflow.py composes the existing app/server_rag.py lifecycle with persistent workflow features.
-ExecStart=__PYTHON3__ __CUSTOM_OPENCODE_ROOT__/app/server_workflow.py
+ExecStart="__PYTHON3__" "__CUSTOM_OPENCODE_ROOT__/app/server_workflow.py"
 Restart=always
 RestartSec=5
 

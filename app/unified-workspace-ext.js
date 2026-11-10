@@ -69,7 +69,7 @@ function observeRuntime(){
 }
 
 async function serviceWorkerNotify(task,sessionID){
-  if(!('serviceWorker'in navigator)||!('Notification'in window)||Notification.permission!=='granted')return
+  if(!('serviceWorker'in navigator)||!('Notification'in window)||Notification.permission!=='granted'||localStorage.getItem('opencode:web:notifications')!=='1')return
   try{
     // `ready` never settles when registration failed (insecure LAN origin);
     // the 7 s watcher has no re-entrancy guard, so pending awaits would pile up.

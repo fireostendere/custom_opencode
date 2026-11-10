@@ -638,7 +638,7 @@ export default {
           if (hasDiscovery) discovery.update(event.sessionID, { ...event.tools }, report)
           // The D&D allowlist is eager: nothing is ever deferred behind discovery.
           hideDiscovery(event.tools)
-          exposure.set(event.sessionID, report)
+          bounded(exposure, event.sessionID, report)
           return
         }
         await observeMcp(event.sessionID)

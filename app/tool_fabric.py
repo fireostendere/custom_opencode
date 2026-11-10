@@ -603,6 +603,8 @@ class Fabric:
             self.store.cache_set("fabric-negative", signature, f"last attempt failed ({category}); retry after 30 seconds", ttl_seconds=30)
             self.store.transition(job_id, "failed", event="fabric.failed", error=f"{category}; inspect bounded output/artifacts. No automatic retry.")
         finally:
+            # _collect already copied the outputs into the artifact store.
+            shutil.rmtree(output, ignore_errors=True)
             if self._policy(row["id"]).get("workspaceWrite", False):
                 self._fingerprint_cache = None
             state = self.status(job_id)["state"]

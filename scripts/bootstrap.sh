@@ -82,7 +82,7 @@ if [[ -n "$ENV_SOURCE" ]]; then
   [[ -f "$ENV_SOURCE" && ! -L "$ENV_SOURCE" ]] || die "env source must be a regular non-symlink file: $ENV_SOURCE"
 fi
 
-required=(git python3 node npm systemctl)
+required=(git python3 node npm)
 missing=()
 for command_name in "${required[@]}"; do
   command -v "$command_name" >/dev/null 2>&1 || missing+=("$command_name")
@@ -99,7 +99,6 @@ install_missing() {
     case "$item" in
       git|python3|npm) packages+=("$item") ;;
       node) packages+=(nodejs) ;;
-      systemctl) packages+=(systemd) ;;
     esac
   done
   note "Installing missing dependencies with explicit sudo consent"
@@ -165,6 +164,10 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
   note "Fetching pinned repository ref: $REF"
   run git -C "$INSTALL_DIR" fetch --prune -- origin "$REF"
   run git -C "$INSTALL_DIR" merge --ff-only FETCH_HEAD
+  # ff-only succeeds as a no-op when the ref is behind HEAD; never report an older pin as installed.
+  if [[ "$DRY_RUN" == 0 && $(git -C "$INSTALL_DIR" rev-parse HEAD) != "$(git -C "$INSTALL_DIR" rev-parse FETCH_HEAD)" ]]; then
+    die "checkout is ahead of the requested ref $REF; reset it yourself to install an older revision"
+  fi
 else
   [[ ! -e "$INSTALL_DIR" || -z "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]] || die "existing install directory is not an empty Git checkout"
   note "Cloning pinned repository ref: $REF"

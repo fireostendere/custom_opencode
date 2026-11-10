@@ -116,7 +116,7 @@ def serve(world: World) -> str:
             if path == "/api/event":
                 self.record(None)
                 return self.events()
-            if not path.startswith(("/api/", "/client-", "/auth/")):
+            if path == "/client-limit-selection.js" or not path.startswith(("/api/", "/client-", "/auth/")):
                 return self.static(path)
             self.record(None)
             query = parse_qs(parsed.query)
@@ -209,8 +209,9 @@ def serve(world: World) -> str:
                 self.close_connection = True
 
         def static(self, path: str) -> None:
-            candidate = (APP / (path.lstrip("/") or "index.html")).resolve()
-            if APP not in candidate.parents or candidate.suffix not in TYPES or not candidate.is_file():
+            shared = path == "/client-limit-selection.js"
+            candidate = (APP.parent / "config/plugins/tui/lib/limit-selection.js" if shared else APP / (path.lstrip("/") or "index.html")).resolve()
+            if (not shared and APP not in candidate.parents) or candidate.suffix not in TYPES or not candidate.is_file():
                 self.send_response(404)
                 self.send_header("Content-Length", "0")
                 self.end_headers()

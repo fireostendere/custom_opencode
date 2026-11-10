@@ -3,7 +3,8 @@ import { createEffect, createSignal, For, Match, onCleanup, Show, Switch } from 
 import { readdir, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
-import { acquireLimits, getLimitsSync, getNightPromoStatus } from "./limits-helper.js"
+import { acquireLimits, getLimitsSync, getNightPromoStatus, qwenLimitsEnabled } from "./limits-helper.js"
+import { LIMIT_DEFS, selectedLimitIDs, trackedLimitSources } from "./limit-selection.js"
 import { normalizeFamilyIDs, resolvePlanSources, resolveRootID, selectV2PlanCandidates, selectV2PlanEntries, syncFamilyMessages } from "./panel-data.js"
 import {
   activityRows,
@@ -185,6 +186,74 @@ export function createPanelViews(context) {
     })
   }
 
+  const [selection, updateSelection] = context.storage.store("limits.selection", { initial: { hidden: [] } })
+  const [hidden, setHidden] = createSignal(Array.isArray(selection.hidden) ? selection.hidden : [])
+  const [models, setModels] = createSignal(null)
+  const [catalogError, setCatalogError] = createSignal(false)
+  let catalogDirectory = null
+  let catalogRequest = 0
+  let disposed = false
+  let settingsOpen = false
+  function limitDirectory() {
+    const route = context.ui.router.current()
+    const session = route?.type === "session" ? context.data.session.get(route.sessionID) : null
+    return (session?.location ?? context.location ?? context.data.location.default()).directory
+  }
+  async function reloadLimitModels() {
+    const directory = limitDirectory()
+    const request = ++catalogRequest
+    if (catalogDirectory !== directory) setModels(null)
+    catalogDirectory = directory
+    try {
+      const response = await context.client.model.list({ location: { directory } })
+      if (disposed || request !== catalogRequest || directory !== limitDirectory()) return
+      if (!Array.isArray(response?.data)) throw new Error("Missing model catalog")
+      setCatalogError(false)
+      setModels(response.data)
+    } catch {
+      if (!disposed && request === catalogRequest && directory === limitDirectory()) setCatalogError(true)
+    }
+  }
+  const selectedIDs = () => selectedLimitIDs(models(), hidden(), { alibabaEnabled: qwenLimitsEnabled() })
+  async function saveHidden(value) {
+    try {
+      await updateSelection((draft) => { draft.hidden = value })
+      setHidden(value)
+    } catch {
+      context.ui.toast.show({ message: "Не удалось сохранить выбор лимитов", variant: "error" })
+    }
+  }
+  async function configureLimits() {
+    if (settingsOpen) return
+    settingsOpen = true
+    try {
+      await reloadLimitModels()
+      while (!disposed) {
+        const available = selectedLimitIDs(models(), [], { alibabaEnabled: qwenLimitsEnabled() })
+        const result = await context.ui.dialog.select({
+          title: "Настроить лимиты",
+          placeholder: models() === null ? "Каталог недоступен — повторите позже" : "Выберите окно, чтобы показать или скрыть",
+          options: [
+            ...LIMIT_DEFS.filter(({ id }) => available.includes(id)).map(({ id, label }) => ({
+              title: `${selectedIDs().includes(id) ? "✓" : "○"} ${label}`, value: id,
+            })),
+            { title: "Скрыть все лимиты", value: "hide-all" },
+            { title: "Сбросить к подключённым по умолчанию", value: "reset" },
+          ],
+        })
+        if (disposed) break
+        const value = result?.value ?? result
+        if (!value) break
+        if (value === "reset") await saveHidden([])
+        else if (value === "hide-all") await saveHidden(LIMIT_DEFS.map(({ id }) => id))
+        else if (available.includes(value)) await saveHidden(hidden().includes(value) ? hidden().filter((id) => id !== value) : [...hidden(), value])
+      }
+    } finally { settingsOpen = false }
+  }
+  for (const event of ["model.updated", "provider.updated"]) subscribe(event, () => {
+    if (limitReleases.size || settingsOpen) void reloadLimitModels()
+  })
+
   const tone = (name) =>
     ({
       active: theme.text.formfield.selected,
@@ -269,10 +338,11 @@ export function createPanelViews(context) {
       </Show>
     )
   }
-  function LimitsView() {
+  function LimitsView(props) {
     // Reference-counted: the 120 s provider refresh and the Gemini ticker run
     // only while at least one Limits view is mounted (visible).
     const release = acquireLimits({
+      sources: [],
       onChange: () => setLimits(getLimitsSync()),
       onTick: () => setNow(Date.now()),
     })
@@ -281,7 +351,16 @@ export function createPanelViews(context) {
       limitReleases.delete(release)
       release()
     })
+    void reloadLimitModels()
+    createEffect(() => {
+      version()
+      props.sessionID
+      if (catalogDirectory !== limitDirectory()) void reloadLimitModels()
+    })
+    createEffect(() => release.setSources(trackedLimitSources(selectedIDs())))
     setLimits(getLimitsSync())
+    const selected = (id) => selectedIDs().includes(id)
+    const tracks = (source) => trackedLimitSources(selectedIDs()).includes(source)
     const data = () => limits() ?? {}
     const codex = () => data().codex ?? { available: false }
     const qwen = () => data().qwen ?? { available: false }
@@ -293,44 +372,51 @@ export function createPanelViews(context) {
     }
     return (
       <box flexDirection="column" width="100%" minWidth={0} gap={1} flexShrink={0}>
-        <Show when={codex().available} fallback={<Field label="ChatGPT" value="нет данных" color={theme.text.muted} />}>
-          <WindowRows label={`ChatGPT · ${fmtWindow(codex().primary?.windowDurationMins) || "окно"}`} win={codex().primary} />
-          <WindowRows label={`ChatGPT · ${fmtWindow(codex().secondary?.windowDurationMins) || "доп."}`} win={codex().secondary} />
+        <text fg={theme.text.action.primary.base} onMouseUp={() => { void configureLimits() }}><span>Настроить лимиты</span></text>
+        <Show when={models() === null}>
+          <Field label="Лимиты" value={catalogError() ? "каталог недоступен" : "загрузка каталога…"} color={theme.text.muted} />
         </Show>
-        <Show
-          when={qwen().available && qwen().state === "ok"}
-          fallback={
-            qwen().reason === "disabled" ? (
-              <Field label="Alibaba" value="не используется" color={theme.text.muted} />
-            ) : qwen().state === "expired" || qwen().reason === "session-expired" ? (
+        <Show when={models() !== null && !selectedIDs().length}>
+          <text fg={theme.text.muted} wrapMode="word"><span>{selectedLimitIDs(models(), [], { alibabaEnabled: qwenLimitsEnabled() }).length ? "Все лимиты скрыты. Измените выбор в настройках." : "Нет подключённых источников лимитов. Поддерживаются ChatGPT, Alibaba и Gemini (оценка)."}</span></text>
+        </Show>
+        <Show when={tracks("codex")}>
+          <Show when={codex().available} fallback={<Field label="ChatGPT" value="нет данных" color={theme.text.muted} />}>
+            <Show when={selected("codex.primary")}><WindowRows label={`ChatGPT · ${fmtWindow(codex().primary?.windowDurationMins) || "окно"}`} win={codex().primary} /></Show>
+            <Show when={selected("codex.secondary")}><WindowRows label={`ChatGPT · ${fmtWindow(codex().secondary?.windowDurationMins) || "доп."}`} win={codex().secondary} /></Show>
+          </Show>
+        </Show>
+        <Show when={tracks("qwen")}>
+          <Show
+            when={qwen().available && qwen().state === "ok"}
+            fallback={qwen().state === "expired" || qwen().reason === "session-expired" ? (
               <box flexDirection="column" width="100%" minWidth={0} flexShrink={0}>
                 <Field label="Alibaba" value="сессия истекла" color={theme.text.feedback.warning.base} />
                 <text fg={theme.text.muted} wrapMode="word"><span>bl auth login --console</span></text>
               </box>
-            ) : (
-              <Field label="Alibaba" value="нет данных" color={theme.text.muted} />
-            )
-          }
-        >
-          <WindowRows label="Alibaba · 5 ч" win={qwen().fiveHour} />
-          <WindowRows label="Alibaba · 7 д" win={qwen().sevenDay} />
-        </Show>
-        <Show when={gemini().available} fallback={<Field label="Gemini" value="не настроен" color={theme.text.muted} />}>
-          <Show when={gemini().rateLimited}>
-            <text fg={theme.text.feedback.warning.base} wrapMode="word"><span>Лимит Gemini (429): повтор через {geminiSeconds()}с…</span></text>
+            ) : <Field label="Alibaba" value="нет данных" color={theme.text.muted} />}
+          >
+            <Show when={selected("qwen.fiveHour")}><WindowRows label="Alibaba · 5 ч" win={qwen().fiveHour} /></Show>
+            <Show when={selected("qwen.sevenDay")}><WindowRows label="Alibaba · 7 д" win={qwen().sevenDay} /></Show>
           </Show>
-          <WindowRows label="Gemini · токены/мин" win={gemini().minuteTokens} />
-          <WindowRows label="Gemini · запросы/мин" win={gemini().minuteRequests} />
-          <WindowRows label="Gemini · запросы/сутки" win={gemini().dailyRequests} />
+          {(() => {
+            const promo = getNightPromoStatus(now())
+            return (
+              <text fg={promo.active ? theme.text.feedback.success.base : theme.text.muted} wrapMode="word">
+                <span>{promo.active ? `☾ ночная скидка −50% на участвующие модели · ещё ${fmtDur(promo.minutesToToggle)}` : `☼ ночная скидка −50% на участвующие модели через ${fmtDur(promo.minutesToToggle)}`}</span>
+              </text>
+            )
+          })()}
         </Show>
-        {(() => {
-          const promo = getNightPromoStatus(now())
-          return (
-            <text fg={promo.active ? theme.text.feedback.success.base : theme.text.muted} wrapMode="word">
-              <span>{promo.active ? `☾ ночная скидка −50% · ещё ${fmtDur(promo.minutesToToggle)}` : `☼ ночная скидка −50% через ${fmtDur(promo.minutesToToggle)}`}</span>
-            </text>
-          )
-        })()}
+        <Show when={tracks("gemini")}>
+          <Show when={gemini().available} fallback={<Field label="Gemini" value="не настроен" color={theme.text.muted} />}>
+            <Show when={gemini().rateLimited}>
+              <text fg={theme.text.feedback.warning.base} wrapMode="word"><span>Лимит Gemini (429): повтор через {geminiSeconds()}с…</span></text>
+            </Show>
+            <Show when={selected("gemini.minuteTokens")}><WindowRows label="Gemini · токены/мин" win={gemini().minuteTokens} /></Show>
+            <Show when={selected("gemini.minuteRequests")}><WindowRows label="Gemini · запросы/мин" win={gemini().minuteRequests} /></Show>
+            <Show when={selected("gemini.dailyRequests")}><WindowRows label="Gemini · запросы/сутки" win={gemini().dailyRequests} /></Show>
+          </Show>
+        </Show>
       </box>
     )
   }
@@ -581,14 +667,17 @@ export function createPanelViews(context) {
         <Match when={props.view === "plan"}><PlanView sessionID={props.sessionID} /></Match>
         <Match when={props.view === "orchestration"}><OrchestrationView sessionID={props.sessionID} /></Match>
         <Match when={props.view === "history"}><HistoryView sessionID={props.sessionID} /></Match>
-        <Match when={props.view === "limits"}><LimitsView /></Match>
+        <Match when={props.view === "limits"}><LimitsView sessionID={props.sessionID} /></Match>
       </Switch>
     )
   }
 
   return {
     PanelContent,
+    configureLimits,
     dispose() {
+      disposed = true
+      catalogRequest += 1
       for (const unsubscribe of subscriptions) unsubscribe()
       for (const release of limitReleases) release()
       limitReleases.clear()

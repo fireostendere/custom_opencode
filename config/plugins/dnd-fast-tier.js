@@ -6,8 +6,13 @@ import { createPendingProviderRequests, FALLBACK_RESET_EVENTS, providerErrorDeta
 // providerOptions.serviceTier for model IDs it does not list as
 // priority-capable (gpt-6-* included), so a variant setting never reaches the
 // wire. Set it on the outgoing D&D Edition request instead.
-// DND_FAST_TIER=default (or off) disables it.
-const TIER = String(process.env.DND_FAST_TIER || "priority").toLowerCase()
+// DND_FAST_TIER=default (or off, 0) disables it; 1 means the default tier name.
+export function tierFrom(value) {
+  const raw = String(value || "priority").toLowerCase()
+  if (/^(1|true|on|yes)$/.test(raw)) return "priority"
+  return /^(0|false|no)$/.test(raw) ? "off" : raw
+}
+const TIER = tierFrom(process.env.DND_FAST_TIER)
 // After a 400 that names the tier, the model runs on the default tier this long.
 const REJECTED_MS = 60 * 60_000
 const TIER_ERROR = /service[_ ]?tier|priority/i
@@ -86,6 +91,7 @@ if (process.env.DND_FAST_TIER_SELF_CHECK) {
   if (withServiceTier({ model: "gpt-6-luna" }).service_tier !== "priority") throw new Error("priority tier not applied")
   if (withServiceTier({ model: "gpt-6-luna", service_tier: "flex" }).service_tier !== "flex") throw new Error("explicit tier must win")
   if ("service_tier" in withServiceTier({ model: "gpt-6-luna" }, "default")) throw new Error("default must not add a tier")
+  if (tierFrom("1") !== "priority" || tierFrom("0") !== "off" || tierFrom("") !== "priority" || tierFrom("Flex") !== "flex") throw new Error("DND_FAST_TIER switch values")
   const original = { model: "gpt-6-luna" }
   withServiceTier(original)
   if ("service_tier" in original) throw new Error("request body must not be mutated")
