@@ -452,6 +452,57 @@ def login(page, base_url: str) -> None:
     page.locator("#sessions .session").first.wait_for(state="visible", timeout=60000)
 
 
+def limit_preferences(browser, base_url: str) -> None:
+    context = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = context.new_page()
+    requests = []
+    alibaba_enabled = [True]
+    models = [{"providerID": "openai", "id": "gpt-test", "name": "GPT Test", "enabled": True}]
+    def quota_response(route):
+        requests.append(route.request.url)
+        route.fulfill(json={
+            "openai": {"available": True, "primary": {"remainingPercent": 75, "windowDurationMins": 300}, "secondary": {"remainingPercent": 80, "windowDurationMins": 10080}},
+            "qwen": {"available": True, "state": "ok", "source": "bailian-cli", "fiveHour": {"remainingPercent": 60}, "sevenDay": {"remainingPercent": 70}},
+        })
+    page.route("**/client-limits.json*", quota_response)
+    page.route("**/client-config.json", lambda route: route.fulfill(json={"scratchDirectory": os.environ["OPENCODE_SCRATCH_DIRECTORY"], "alibabaLimitsEnabled": alibaba_enabled[0]}))
+    page.route("**/api/model?*", lambda route: route.fulfill(json={"data": models}))
+    try:
+        login(page, base_url)
+        page.locator("#providerLimits").get_by_text("ChatGPT / OpenAI").wait_for()
+        assert all("sources=codex" in url for url in requests), requests
+        assert "скидка" not in page.locator("#providerLimits").inner_text()
+        page.locator(".limit-settings>summary").click()
+        assert page.locator("#limitChoices input").count() == 2
+        page.locator('[data-limit-id="codex.primary"]').uncheck()
+        page.wait_for_function("!document.getElementById('providerLimits').textContent.includes('Сессия')")
+        page.locator("#limitsHideAll").click()
+        page.wait_for_function("document.getElementById('providerLimits').textContent.includes('Нет выбранных')")
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_function("document.getElementById('providerLimits').textContent.includes('Нет выбранных')")
+        page.locator(".limit-settings>summary").click()
+        assert page.locator("#limitChoices input:checked").count() == 0
+        page.locator("#limitsReset").click()
+        page.locator("#providerLimits").get_by_text("ChatGPT / OpenAI").wait_for()
+        models[:] = [{"providerID": "bailian-cli", "id": "qwen3.8-max", "name": "Qwen", "enabled": True}]
+        page.evaluate("window.dispatchEvent(new CustomEvent('custom-opencode:event', {detail:{type:'model.updated'}}))")
+        page.locator("#providerLimits").get_by_text("Alibaba", exact=True).wait_for()
+        assert "ночная скидка" in page.locator("#providerLimits .quota-provider").inner_text()
+        assert page.locator("#limitChoices input").count() == 2
+        alibaba_enabled[0] = False
+        before_disabled = len(requests)
+        page.evaluate("window.dispatchEvent(new CustomEvent('custom-opencode:event', {detail:{type:'model.updated'}}))")
+        page.wait_for_function("document.querySelectorAll('#limitChoices input').length === 0")
+        assert len(requests) == before_disabled
+        assert "скидка" not in page.locator("#providerLimits").inner_text()
+        page.locator("#limitsHideAll").click()
+        page.wait_for_function("!document.getElementById('providerLimits').textContent.includes('скидка')")
+        assert all("sources=codex" in url or "sources=qwen" in url for url in requests), requests
+        print("Limits browser regression passed: connected-only defaults, checkboxes, persistence, reset, Alibaba-only promo")
+    finally:
+        context.close()
+
+
 def open_session(page) -> None:
     menu = page.locator("#menu")
     if menu.is_visible():
@@ -1272,6 +1323,7 @@ def main() -> int:
                 with sync_playwright() as pw:
                     browser = pw.chromium.launch(headless=True)
                     try:
+                        limit_preferences(browser, base_url)
                         universal_plan_session_switch(browser, base_url)
                         prompt_history_fresh_context(browser, base_url)
                         desktop(browser, base_url, server_workflow)

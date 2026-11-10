@@ -8,7 +8,7 @@ const loadSource = async (relative) => {
   const source = readFileSync(sourcePath, "utf8").replace(
     /(from\s+['"])(\.\.?\/[^'"]+)(['"])/g,
     (_, start, specifier, end) =>
-      `${start}${pathToFileURL(resolve(dirname(sourcePath), specifier)).href}${end}`,
+      `${start}${pathToFileURL(specifier === './client-limit-selection.js' ? resolve(root, 'config/plugins/tui/lib/limit-selection.js') : resolve(dirname(sourcePath), specifier)).href}${end}`,
   )
   return import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`)
 }
@@ -202,6 +202,109 @@ if (controls.agents.some((agent) => agent.id === "role-builder"))
   throw new Error("Hidden role agents must not leak into web controls")
 
 const enhancements = await loadSource("app/enhancements.js")
+const quotaFixture = {
+  openai: { available:true, primary:{ remainingPercent:70, windowDurationMins:300 }, secondary:{ remainingPercent:80, windowDurationMins:10080 } },
+  qwen: { available:true, state:'ok', source:'bailian-cli', fiveHour:{ remainingPercent:60 }, sevenDay:{ remainingPercent:50 } },
+  gemini: { available:true, minuteTokens:{ remainingPercent:90 }, minuteRequests:{ remainingPercent:80 }, dailyRequests:{ remainingPercent:70 } },
+}
+const onlyChatGPT = enhancements.renderLimits(quotaFixture, ['codex.primary'])
+if (!onlyChatGPT.includes('ChatGPT') || onlyChatGPT.includes('Неделя') || /Alibaba|Gemini|скидка/.test(onlyChatGPT))
+  throw new Error('Only selected quota windows may render; hidden Alibaba must not leak its promo')
+const onlyAlibaba = enhancements.renderLimits(quotaFixture, ['qwen.sevenDay'])
+if (!onlyAlibaba.includes('Alibaba') || !onlyAlibaba.includes('ночная скидка') || onlyAlibaba.includes('Сессия'))
+  throw new Error('Alibaba promo must accompany only its selected windows')
+if (!enhancements.renderLimits(quotaFixture, ['gemini.dailyRequests']).includes('запросы/сутки'))
+  throw new Error('Every available Gemini window must be individually selectable')
+if (/ChatGPT|Alibaba|Gemini|скидка/.test(enhancements.renderLimits(quotaFixture, [])))
+  throw new Error('Hiding every quota must remain an intentionally empty selection')
+if (enhancements.renderLimits({qwen:{state:'disabled'}}, ['qwen.fiveHour']).includes('скидка'))
+  throw new Error('Disabled Alibaba must not render its promo')
+for (const invalid of ['null', '{}', '"bad"', '{oops']) {
+  if (enhancements.readLimitPreferences({getItem:()=>invalid}).length)
+    throw new Error('Malformed visibility preferences must not hide limits')
+}
+if (enhancements.readLimitPreferences({getItem:()=>JSON.stringify(['codex.primary','unknown',null])}).join() !== 'codex.primary')
+  throw new Error('Only known quota IDs may be restored')
+{
+  const savedGlobals = Object.fromEntries(['document','window','location','localStorage','setInterval','fetch'].map((key) => [key, globalThis[key]]))
+  const makeElement = () => ({innerHTML:'', listeners:{}, classList:{add(){},remove(){}}, addEventListener(name, callback){this.listeners[name]=callback}, querySelector(){return null}})
+  const elements = Object.fromEntries(['providerLimits','limitChoices','limitsHideAll','limitsReset'].map((id) => [id, makeElement()]))
+  const events = {}
+  const storage = new Map()
+  let connectedModels = [{providerID:'openai',id:'gpt-test',enabled:true},{providerID:'bailian-cli',id:'qwen-test',enabled:false}]
+  let alibabaEnabled = true
+  const quotaRequests = []
+  let holdSnapshot = null
+  let onSnapshot = null
+  try {
+    globalThis.document = {getElementById:(id)=>elements[id],addEventListener(){},hidden:false}
+    globalThis.window = {addEventListener:(name, callback)=>{events[name]=callback}}
+    globalThis.location = {hash:''}
+    globalThis.localStorage = {getItem:(key)=>storage.get(key) ?? null,setItem:(key,value)=>storage.set(key,value)}
+    globalThis.setInterval = () => 0
+    globalThis.fetch = async (path) => {
+      if (path === '/client-config.json') return response(200,{scratchDirectory:'/fixture',alibabaLimitsEnabled:alibabaEnabled})
+      if (path.startsWith('/api/model?')) return response(200,{data:connectedModels})
+      if (path.startsWith('/client-limits.json?')) {
+        quotaRequests.push(path)
+        if (holdSnapshot) { onSnapshot?.(); await holdSnapshot }
+        return response(200,quotaFixture)
+      }
+      throw new Error(`Unexpected quota request ${path}`)
+    }
+    await enhancements.initializeEnhancements()
+    await enhancements.refreshLimits()
+    if (!quotaRequests.at(-1).endsWith('sources=codex') || /Alibaba|Gemini|скидка/.test(elements.providerLimits.innerHTML))
+      throw new Error('Disconnected sources must neither render nor be polled')
+    elements.limitChoices.listeners.change({target:{dataset:{limitId:'codex.primary'},checked:false}})
+    await enhancements.refreshLimits()
+    if (elements.providerLimits.innerHTML.includes('Сессия')) throw new Error('Checkbox must hide one window immediately')
+    elements.limitsHideAll.listeners.click()
+    await enhancements.refreshLimits()
+    const hiddenRequestCount = quotaRequests.length
+    await enhancements.refreshLimits(true)
+    if (quotaRequests.length !== hiddenRequestCount || /ChatGPT|скидка/.test(elements.providerLimits.innerHTML))
+      throw new Error('All-hidden preferences must suppress every quota poll')
+    const preferenceKey = [...storage.keys()].find((key)=>key.includes('limits-hidden'))
+    if (JSON.parse(storage.get(preferenceKey)).length !== 7) throw new Error('All-hidden selection must persist every quota ID')
+    connectedModels = []
+    await enhancements.refreshLimits(true)
+    connectedModels = [{providerID:'openai',id:'gpt-test',enabled:true}]
+    await enhancements.refreshLimits(true)
+    if (quotaRequests.length !== hiddenRequestCount) throw new Error('Reconnect must not discard saved hidden limits')
+    elements.limitsReset.listeners.click()
+    await enhancements.refreshLimits()
+    if (!elements.providerLimits.innerHTML.includes('ChatGPT')) throw new Error('Reset must restore connected limits')
+    storage.set(preferenceKey,JSON.stringify(['codex.primary','codex.secondary']))
+    events.storage({key:preferenceKey})
+    await enhancements.refreshLimits()
+    if (elements.providerLimits.innerHTML.includes('ChatGPT')) throw new Error('Saved choices must load on storage changes')
+    connectedModels = [{providerID:'bailian-cli',id:'qwen-test',enabled:true}]
+    await enhancements.refreshLimits(true)
+    if (!elements.providerLimits.innerHTML.includes('ночная скидка')) throw new Error('Tracked Alibaba must have adjacent promo')
+    alibabaEnabled = false
+    const beforeDisabled = quotaRequests.length
+    await enhancements.refreshLimits(true)
+    if (quotaRequests.length !== beforeDisabled || elements.limitChoices.innerHTML.includes('qwen.') || elements.providerLimits.innerHTML.includes('скидка'))
+      throw new Error('Server-disabled Alibaba must be absent from choices, polling and promo even with an enabled Bailian model')
+    alibabaEnabled = true
+    await enhancements.refreshLimits(true)
+    let releaseSnapshot
+    holdSnapshot = new Promise((resolve)=>{releaseSnapshot=resolve})
+    const snapshotStarted = new Promise((resolve)=>{onSnapshot=resolve})
+    const pendingRefresh = enhancements.refreshLimits(true)
+    await snapshotStarted
+    elements.limitsHideAll.listeners.click()
+    releaseSnapshot()
+    await pendingRefresh
+    if (elements.providerLimits.innerHTML.includes('скидка')) throw new Error('An old response must not restore hidden Alibaba promo')
+  } finally {
+    for (const [key,value] of Object.entries(savedGlobals)) {
+      if (value === undefined) delete globalThis[key]
+      else globalThis[key] = value
+    }
+  }
+}
 const enhancementsSource = readFileSync(resolve(root, "app/enhancements.js"), "utf8")
 if (!enhancementsSource.includes("if (!panel._lastMarkup) panel.innerHTML"))
   throw new Error("Failed quota refresh must preserve the last rendered limits")

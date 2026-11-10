@@ -16,6 +16,7 @@ os.environ.setdefault("OPENCODE_BACKEND_URL", "http://localhost:9")
 os.environ.setdefault("OPENCODE_BACKEND_PASSWORD", "test")
 # The fixture exercises the Qwen probe; a local .env may disable it.
 os.environ["OPENCODE_LIMITS_QWEN"] = "1"
+os.environ["OPENCODE_ALIBABA_ENABLED"] = "1"
 os.environ.setdefault("OPENCODE_SCRATCH_DIRECTORY", str(Path(tempfile.gettempdir()) / "custom-opencode-limits-smoke-scratch"))
 sys.path.insert(0, str(ROOT / "app"))
 py_compile.compile(str(ROOT / "scripts/rag-probe.py"), doraise=True)
@@ -52,6 +53,55 @@ with tempfile.TemporaryDirectory() as temp:
     os.environ["BAILIAN_CLI_BIN"] = str(fake_bl)
 
     import server_ext
+
+    from io import BytesIO
+    from types import SimpleNamespace
+
+    route_replies = []
+    route = SimpleNamespace(
+        path="/client-limits.json?sources=codex",
+        authenticated=lambda: True,
+        unauthorized=lambda: route_replies.append("unauthorized"),
+        json_response=lambda value, status=200: route_replies.append((status, value)),
+        send_response=lambda status: route_replies.append(status),
+        send_header=lambda *_args: None,
+        end_headers=lambda: None,
+        wfile=BytesIO(),
+    )
+    with patch.object(server_ext, "limits_snapshot", return_value={}) as snapshot_query:
+        server_ext.Handler.do_GET(route)
+        snapshot_query.assert_called_once_with(["codex"])
+    with patch.object(server_ext, "query_codex_rate_limits") as codex_query:
+        route.path = "/client-limits.json?sources=unknown"
+        server_ext.Handler.do_GET(route)
+        assert route_replies[-1][0] == 400
+        codex_query.assert_not_called()
+    route.path = "/client-config.json"
+    with patch.object(server_ext, "qwen_limits_enabled", return_value=False):
+        server_ext.Handler.do_GET(route)
+        assert route_replies[-1][1]["alibabaLimitsEnabled"] is False
+    route.path = "/client-limit-selection.js"
+    server_ext.Handler.do_GET(route)
+    assert b"selectedLimitIDs" in route.wfile.getvalue()
+    route.authenticated = lambda: False
+    route.wfile = BytesIO()
+    server_ext.Handler.do_GET(route)
+    assert route_replies[-1] == "unauthorized" and not route.wfile.getvalue()
+
+    with patch.object(server_ext, "query_codex_rate_limits", return_value={"available": True}) as codex_query, \
+         patch.object(server_ext, "query_qwen_status") as qwen_query, \
+         patch.object(server_ext, "query_gemini_status") as gemini_query:
+        selected_snapshot = server_ext.limits_snapshot(["codex"])
+        assert selected_snapshot["openai"]["available"] is True
+        assert "qwen" not in selected_snapshot and "gemini" not in selected_snapshot
+        codex_query.assert_called_once()
+        qwen_query.assert_not_called()
+        gemini_query.assert_not_called()
+        codex_query.reset_mock()
+        assert set(server_ext.limits_snapshot([])) == {"generatedAt"}
+        codex_query.assert_not_called()
+        qwen_query.assert_not_called()
+        gemini_query.assert_not_called()
 
     server_ext.base.backend_json = lambda method, target: {
         "data": [{"title": "Smoke · Qwen exhausted→08-29 02:00 UTC"}]

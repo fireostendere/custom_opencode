@@ -12,7 +12,7 @@ import signal
 import subprocess
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import server as base
 
@@ -632,23 +632,45 @@ def query_gemini_status() -> dict[str, object]:
     }
 
 
-def limits_snapshot() -> dict[str, object]:
-    return {
-        "generatedAt": int(time.time()),
-        "qwen": query_qwen_status(),
-        "openai": query_codex_rate_limits(),
-        "gemini": query_gemini_status(),
-    }
+def limits_snapshot(sources: list[str] | None = None) -> dict[str, object]:
+    queries = {"codex": ("openai", query_codex_rate_limits), "qwen": ("qwen", query_qwen_status), "gemini": ("gemini", query_gemini_status)}
+    selected = set(queries if sources is None else sources)
+    if not selected.issubset(queries):
+        raise ValueError("unknown limit source")
+    return {"generatedAt": int(time.time()), **{key: query() for source, (key, query) in queries.items() if source in selected}}
 
 
 class Handler(base.Handler):
     def do_GET(self) -> None:
-        path = urlsplit(self.path).path
-        if path == "/client-limits.json":
+        parsed = urlsplit(self.path)
+        if parsed.path in ("/client-limits.json", "/client-limit-selection.js", "/client-config.json"):
             if not self.authenticated():
                 self.unauthorized()
                 return
-            self.json_response(limits_snapshot())
+            if parsed.path == "/client-config.json":
+                self.json_response({"scratchDirectory": base.SCRATCH_DIRECTORY, "alibabaLimitsEnabled": qwen_limits_enabled()})
+                return
+            if parsed.path == "/client-limit-selection.js":
+                try:
+                    body = (base.ROOT.parent / "config/plugins/tui/lib/limit-selection.js").read_bytes()
+                except OSError:
+                    self.json_response({"error": "limit selection unavailable"}, status=503)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/javascript; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            sources = params["sources"][0].split(",") if params.get("sources", [""])[0] else []
+            try:
+                snapshot = limits_snapshot(sources if "sources" in params else None)
+            except ValueError:
+                self.json_response({"error": "unknown limit source"}, status=400)
+                return
+            self.json_response(snapshot)
             return
         super().do_GET()
 
