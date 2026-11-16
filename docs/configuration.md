@@ -451,6 +451,19 @@ PONYTAIL_DEFAULT_MODE=full
 
 Состояние режима находится в `$XDG_CONFIG_HOME/opencode/.ponytail-active` или `~/.config/opencode/.ponytail-active`. Менять режим во время работы можно командами `/ponytail`, `/ponytail lite`, `/ponytail full`, `/ponytail ultra` и `/ponytail off`.
 
+## Code Mode
+
+Команда `/codemode` управляет сессионным режимом пакетного выполнения скриптов и защиты контекста модели (аналог Code Mode в Claude Code / Cloudflare):
+
+- `/codemode` или `/codemode toggle` — переключить режим для текущей сессии (вкл/выкл).
+- `/codemode on` — включить Code Mode (агент объединяет цепочки действий в скрипты/пайплайны, фильтрует данные локально и не засоряет контекст промежуточными логами).
+- `/codemode off` — выключить Code Mode (стандартный пошаговый диалог).
+- `/codemode status` — показать текущее состояние режима.
+- `/codemode <задача>` — включить Code Mode и сразу запустить выполнение задачи.
+
+По умолчанию выключен. Переменная окружения `CODEMODE_ENABLED=0` полностью отключает плагин.
+
+
 ## Планирование задач
 
 Установленный `AGENTS.md` и plugin `visible-plan.js` требуют явный план для любой работы primary-agent с инструментами. `todowrite` относится к V1 и отсутствует в OpenCode V2; вместо него Build и Plan используют закреплённый tool `plan_update`.
