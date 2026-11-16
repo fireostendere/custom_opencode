@@ -136,6 +136,7 @@ done
 "$NODE" "$ROOT/scripts/ponytail-v2-regression.mjs"
 "$NODE" "$ROOT/scripts/goal-regression.mjs"
 "$NODE" "$ROOT/scripts/goal-ui-regression.mjs"
+"$NODE" "$ROOT/scripts/codemode-regression.mjs"
 "$NODE" --expose-gc "$ROOT/scripts/plugin-memory-regression.mjs"
 "$NODE" "$ROOT/scripts/gemini-rate-limit-regression.mjs"
 "$NODE" "$ROOT/scripts/provider-retry-guard-regression.mjs"
