@@ -112,17 +112,30 @@ def main():
 
         def until(check):
             deadline = time.monotonic() + 25
+            last_err = None
             while time.monotonic() < deadline:
-                if value := check():
-                    return value
+                try:
+                    if value := check():
+                        return value
+                except Exception as err:
+                    last_err = err
                 time.sleep(.1)
-            raise AssertionError("Timed out waiting for native goal")
+            raise AssertionError(f"Timed out waiting for native goal: {last_err}") if last_err else AssertionError("Timed out waiting for native goal")
 
         def session():
             return api("POST", "/api/session", {"agent": "build", "model": {"providerID": "fixture", "id": "fixture"}, "location": {"directory": str(project)}})["id"]
 
         def command(sid, text):
-            return api("POST", f"/api/session/{sid}/command", {"name": "goal", "text": text})
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                try:
+                    return api("POST", f"/api/session/{sid}/command", {"name": "goal", "text": text})
+                except urllib.error.HTTPError as error:
+                    payload = error.read().decode(errors="replace")
+                    if error.code == 404 and "CommandNotFoundError" in payload and time.monotonic() < deadline:
+                        time.sleep(.1)
+                        continue
+                    raise
 
         def status(sid, expected):
             command(sid, "status")
@@ -130,7 +143,16 @@ def main():
             return any(f"Goal: {expected}" in item.get("payload", {}).get("text", "") for item in inbox)
 
         def snapshot(sid):
-            return api("POST", "/api/rpc/custom.goal/get", {"input": {"sessionID": sid}})["output"]["goal"]
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                try:
+                    return api("POST", "/api/rpc/custom.goal/get", {"input": {"sessionID": sid}})["output"]["goal"]
+                except urllib.error.HTTPError as error:
+                    payload = error.read().decode(errors="replace")
+                    if error.code == 400 and "rpc.unavailable" in payload and time.monotonic() < deadline:
+                        time.sleep(.1)
+                        continue
+                    raise
 
         def terminal_goal(sid):
             master, slave = pty.openpty()
