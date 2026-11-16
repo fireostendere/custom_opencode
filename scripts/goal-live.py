@@ -18,6 +18,7 @@ import termios
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -130,7 +131,7 @@ def main():
             while time.monotonic() < deadline:
                 try:
                     return api("POST", f"/api/session/{sid}/command", {"name": "goal", "text": text})
-                except urllib.error.HTTPError as error:
+                except HTTPError as error:
                     payload = error.read().decode(errors="replace")
                     if error.code == 404 and "CommandNotFoundError" in payload and time.monotonic() < deadline:
                         time.sleep(.1)
@@ -147,7 +148,7 @@ def main():
             while time.monotonic() < deadline:
                 try:
                     return api("POST", "/api/rpc/custom.goal/get", {"input": {"sessionID": sid}})["output"]["goal"]
-                except urllib.error.HTTPError as error:
+                except HTTPError as error:
                     payload = error.read().decode(errors="replace")
                     if error.code == 400 and "rpc.unavailable" in payload and time.monotonic() < deadline:
                         time.sleep(.1)

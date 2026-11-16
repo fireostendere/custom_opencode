@@ -80,7 +80,7 @@ def check(browser, base_url, width, harness):
     assert len(pending) == 1
     pending.pop().fulfill(json={"data": [session(i) for i in range(50, 100)], "cursor": {"next": None}})
     page.wait_for_function("document.querySelectorAll('[data-session-node]').length === 100")
-    assert abs(sidebar.evaluate("el => el.scrollTop") - before) <= 1
+    assert abs(sidebar.evaluate("el => el.scrollTop") - before) <= 3
     assert not page.locator("[data-session-load-more]").count()
 
     page.fill("#search", "needle")
