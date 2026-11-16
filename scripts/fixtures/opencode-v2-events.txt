@@ -1,4 +1,4 @@
-# Event types of the pinned OpenCode V2 (@opencode/client 2.2.5, promise/generated/types.ts).
+# Event types of the pinned OpenCode V2 (@opencode/client 2.3.0, promise/generated/types.ts).
 # Plugin subscriptions must name one of these; refresh when the pin moves.
 # Replay-only types (never published live) are left out on purpose: session.message.content.updated.
 agent.updated
@@ -7,6 +7,7 @@ command.updated
 config.updated
 credential.switched
 credential.updated
+experimental.mcp.event
 filesystem.changed
 form.cancelled
 form.created
