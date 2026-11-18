@@ -9,7 +9,8 @@ import { resolveContextClass, resolveContextPolicy } from '../config/plugins/tui
 
 const endpoint = 'https://chatgpt.com/backend-api/codex/responses'
 const models = ['luna', 'sol', 'astra'].map(family => ({
-  providerID: 'openai', id: `gpt-6-${family}-direct`, modelID: `gpt-6-${family}`,
+  providerID: 'openai', id: family === 'luna' ? `gpt-6-${family}-direct` : `gpt-6.2-${family}-direct`,
+  modelID: family === 'luna' ? `gpt-6-${family}` : `gpt-6.2-${family}`,
   name: family, capabilities: { tools: true, input: ['text', 'image', 'pdf'] },
   variants: ['low', 'xhigh', 'max'].map(id => ({ id })),
 }))
@@ -107,7 +108,7 @@ test('hardware lane is exact; direct models and D&D policy are untouched', () =>
   assert.equal(policy.clearNative, false)
   for (const key of ['engineering', 'ponytail', 'planPrompt', 'runtime', 'rag', 'automaticReview']) assert.equal(policy[key], false)
   assert.equal(resolveContextPolicy({ model: { providerID: 'openai', id: 'gpt-6-dnd-edition' } }).lane, 'dnd')
-  assert.equal(resolveContextPolicy({ model: { providerID: 'openai', id: 'gpt-6-sol-direct' } }).runtime, true)
+  assert.equal(resolveContextPolicy({ model: { providerID: 'openai', id: 'gpt-6.2-sol-direct' } }).runtime, true)
 })
 
 test('model resolution uses catalog variants, supports explicit mapping, and never invents Astra', () => {
@@ -125,7 +126,7 @@ test('routing preserves history and media without mutating request; OAuth tier i
   const original = parent('Image review', [image]); original.reasoning_effort = 'low'
   const routed = routeBody(original, resolveModel(models, 'sol'), endpoint)
   assert.equal(routed.input, original.input)
-  assert.equal(routed.model, 'gpt-6-sol')
+  assert.equal(routed.model, 'gpt-6.2-sol')
   assert.equal(routed.reasoning.effort, 'xhigh')
   assert.equal(routed.reasoning.summary, 'auto')
   assert.equal(routed.service_tier, undefined)
@@ -158,7 +159,7 @@ test('revision-scoped packets reject unknown fields, missing locators and oversi
 test('worker has fresh evidence-only context, exact selected images, no recursive tools/history/IDs', () => {
   const p = { ...parent('PRIVATE HISTORY'), previous_response_id: 'private-conversation', instructions: 'PRIVATE SYSTEM', prompt_cache_key: 'private-key' }
   const body = workerBody(p, 'pcb_review', packet(), [image], resolveModel(models, 'sol'), endpoint)
-  assert.equal(body.model, 'gpt-6-sol'); assert.equal(body.input.length, 1)
+  assert.equal(body.model, 'gpt-6.2-sol'); assert.equal(body.input.length, 1)
   assert.deepEqual(body.input[0].content[1], image)
   assert.equal(body.store, false); assert.deepEqual(body.tools, [])
   assert.equal(JSON.stringify(body).includes('PRIVATE'), false)
@@ -259,12 +260,12 @@ test('native routing respects manual direct selection and isolates sessions', as
   const routed = await h.request(parent('Design'))
   assert.equal((await routed.request.json()).model, 'gpt-6-luna')
   await h.request(parent('PCB review'), 's2')
-  assert.equal((await h.status('s2')).parentModel, 'gpt-6-sol')
+  assert.equal((await h.status('s2')).parentModel, 'gpt-6.2-sol')
   assert.equal((await h.status('s1')).parentModel, 'gpt-6-luna')
-  const direct = await h.request(parent('Other'), 's1', { providerID: 'openai', id: 'gpt-6-sol-direct' })
+  const direct = await h.request(parent('Other'), 's1', { providerID: 'openai', id: 'gpt-6.2-sol-direct' })
   assert.equal((await direct.request.json()).model, 'gpt-6-luna') // Exact unchanged fixture.
   await assert.rejects(h.status('s1'), /Select/)
-  assert.equal((await h.status('s2')).parentModel, 'gpt-6-sol')
+  assert.equal((await h.status('s2')).parentModel, 'gpt-6.2-sol')
 })
 
 test('specialists reuse exact native transport but never credentials/history in receipts; requests deduplicate', async t => {
@@ -275,7 +276,7 @@ test('specialists reuse exact native transport but never credentials/history in 
   const call = h.calls[0]
   assert.equal(call.url, endpoint); assert.equal(call.headers.get('authorization'), 'Bearer secret-fixture')
   assert.equal(call.headers.get('idempotency-key'), null); assert.equal(call.headers.get('x-client-request-id'), null)
-  assert.equal(call.body.model, 'gpt-6-sol'); assert.equal(JSON.stringify(call.body).includes('PRIVATE MAIN HISTORY'), false)
+  assert.equal(call.body.model, 'gpt-6.2-sol'); assert.equal(JSON.stringify(call.body).includes('PRIVATE MAIN HISTORY'), false)
   assert.equal(a.content.includes('secret-fixture'), false)
   assert.equal(JSON.parse(a.content).advisoryOnly, true)
   assert.equal(JSON.parse(a.content).usage.input_tokens, 100)
@@ -360,7 +361,7 @@ test('incremental Responses continuation retains original route, image indices a
   await h.request(parent('PCB review', [image]))
   await h.consult('vision', packet(), { imageIndices: [0] })
   const continued = await h.request({ model: 'gpt-6-luna', previous_response_id: 'fixture-prior', input: [{ type: 'function_call_output', call_id: 'fixture-call', output: 'Done' }] })
-  assert.equal((await continued.request.json()).model, 'gpt-6-sol')
+  assert.equal((await continued.request.json()).model, 'gpt-6.2-sol')
   assert.deepEqual((await h.status()).availableImages, [0])
   assert.equal((await h.status()).consultationsStarted, 1)
   await h.consult('vision', packet(), { imageIndices: [0] })

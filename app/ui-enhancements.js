@@ -6,7 +6,8 @@ const FAV_KEY = 'opencode:web:favorites'
 const COLLAPSE_KEY = 'opencode:web:model-provider-collapse-v1'
 const ORCHESTRATED_CHOICES = [
   { providerID:'bailian-cli', id:'qwen3.8-orchestrated', label:'Qwen3.8 Max · Orchestrated', meta:'Max → Flash worker · optional RAG' },
-  { providerID:'openai', id:'gpt-6-sol-orchestrated', label:'GPT-6 Sol · Orchestrated', meta:'Sol builder · Luna reader' },
+  { providerID:'openai', id:'gpt-6.2-sol-orchestrated', label:'GPT-6.2 Sol · Orchestrated', meta:'Sol builder · Astra reviewer' },
+  { providerID:'openai', id:'gpt-6.2-astra-orchestrated', label:'GPT-6.2 Astra · Orchestrated', meta:'Astra lead · Sol builder · Astra reviewer' },
 ]
 
 async function request(path, options = {}) {

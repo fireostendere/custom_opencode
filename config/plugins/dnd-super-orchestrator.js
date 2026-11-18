@@ -92,7 +92,7 @@ function applyRoute(body, decision) {
     // narrator call that pretends to be NO_LLM.
     throw new Error(`D&D ${selected || "unknown"} route requires managed ODM tool dispatch`)
   }
-  const target = selected === "SOL_XHIGH" ? "gpt-6.1-sol" : "gpt-6-luna"
+  const target = selected === "SOL_XHIGH" ? "gpt-6.2-sol" : "gpt-6-luna"
   const effort = selected === "LUNA_LOW" ? "low" : selected === "LUNA_MAX" ? "max" : "xhigh"
   const result = { ...body }
   result.model = target
@@ -203,24 +203,24 @@ if (process.env.DND_SUPER_ORCHESTRATOR_SELF_CHECK) {
   const event = { agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-6-dnd-edition" } }
   if (!isDndOrchestratorRequest(event)) throw new Error("D&D request selector failed")
   if (isDndOrchestratorRequest({ agent: "dnd-narrator-high", model: { providerID: "openai", id: "gpt-6-luna-direct" } })) throw new Error("pinned D&D worker must not be rerouted")
-  if (isDndOrchestratorRequest({ agent: "dnd-narrator-max", model: { providerID: "openai", id: "gpt-6-sol-orchestrated" } })) throw new Error("pinned Sol worker must not be rerouted")
+  if (isDndOrchestratorRequest({ agent: "dnd-narrator-max", model: { providerID: "openai", id: "gpt-6.2-sol-orchestrated" } })) throw new Error("pinned Sol worker must not be rerouted")
   for (const providerID of ["bailian-cli", "ollama", "google"])
     if (isDndOrchestratorRequest({ agent: "dnd-narrator", model: { providerID, id: "qwen3.8-max" } })) throw new Error(`${providerID} narrator must not be rewritten to an OpenAI model`)
-  if (isDndOrchestratorRequest({ agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-6-sol-direct" } })) throw new Error("an explicit OpenAI pick must not be downgraded")
+  if (isDndOrchestratorRequest({ agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-6.2-sol-direct" } })) throw new Error("an explicit OpenAI pick must not be downgraded")
   if (isDndOrchestratorRequest({ agent: "narrator-referee", model: { providerID: "openai", id: "gpt-6-dnd-edition" } })) throw new Error("isolated narrator roles keep their pinned route")
   if (!isDndOrchestratorRequest({ agent: "build", model: { providerID: "openai", id: "gpt-6-dnd-edition" } })) throw new Error("Edition model selector failed")
   const continuation = { input: [{ role: "user", content: "attack" }, { type: "function_call", name: "odm" }, { type: "function_call_output", output: "hit" }] }
   if (turnKey(continuation) !== turnKey({ input: [{ role: "user", content: "attack" }] })) throw new Error("tool continuation must keep its turn")
   if (turnKey(continuation) === turnKey({ input: [...continuation.input, { role: "user", content: "attack" }] })) throw new Error("a new user turn must route again")
-  if (routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_LOW" }).model !== "gpt-6-luna") throw new Error("Luna low route failed")
-  const lunaLow = routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_LOW" })
-  const lunaXhigh = routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_XHIGH" })
-  const lunaMax = routeBody({ model: "gpt-6-sol", messages: [] }, { route: "LUNA_MAX" })
+  if (routeBody({ model: "gpt-6.2-sol", messages: [] }, { route: "LUNA_LOW" }).model !== "gpt-6-luna") throw new Error("Luna low route failed")
+  const lunaLow = routeBody({ model: "gpt-6.2-sol", messages: [] }, { route: "LUNA_LOW" })
+  const lunaXhigh = routeBody({ model: "gpt-6.2-sol", messages: [] }, { route: "LUNA_XHIGH" })
+  const lunaMax = routeBody({ model: "gpt-6.2-sol", messages: [] }, { route: "LUNA_MAX" })
   if ("service_tier" in lunaLow || "service_tier" in lunaXhigh || "service_tier" in lunaMax) throw new Error("Luna OAuth tier contract failed")
   if (lunaLow.reasoning?.effort !== "low" || lunaXhigh.reasoning?.effort !== "xhigh" || lunaMax.reasoning?.effort !== "max" || "reasoning_effort" in lunaLow) throw new Error("Luna reasoning contract failed")
   const solXhigh = routeBody({ model: "gpt-6-luna", messages: [] }, { route: "SOL_XHIGH" })
   if ("service_tier" in solXhigh) throw new Error("Sol default tier failed")
-  if (solXhigh.model !== "gpt-6.1-sol" || solXhigh.reasoning?.effort !== "xhigh") throw new Error("Sol route must target GPT-6.1 Sol at xhigh")
+  if (solXhigh.model !== "gpt-6.2-sol" || solXhigh.reasoning?.effort !== "xhigh") throw new Error("Sol route must target GPT-6.2 Sol at xhigh")
   let refused = false
   const original = { messages: [{ role: "user", content: "attack" }], reasoning: { summary: "auto" }, reasoning_effort: "high", service_tier: "priority" }
   const routed = routeBody(original, { route: "LUNA_LOW" })

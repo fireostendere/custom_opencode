@@ -31,25 +31,35 @@ ROLE_ENV = {
     "long_horizon": "OPENCODE_LONG_HORIZON_MODEL",
 }
 SOL_ROLE_DEFAULTS = {
-    "builder": "openai/gpt-6-sol-direct",
+    "builder": "openai/gpt-6.2-sol-direct",
     "reader": "openai/gpt-6-luna-direct",
-    "reviewer": "openai/gpt-6-luna-direct",
+    "reviewer": "openai/gpt-6.2-astra-direct",
 }
 SOL_ROLE_ENV = {
     "builder": "OPENCODE_SOL_BUILDER_MODEL",
     "reader": "OPENCODE_SOL_READER_MODEL",
     "reviewer": "OPENCODE_SOL_REVIEW_MODEL",
 }
+ASTRA_ROLE_DEFAULTS = {
+    "builder": "openai/gpt-6.2-sol-direct",
+    "reader": "openai/gpt-6-luna-direct",
+    "reviewer": "openai/gpt-6.2-astra-direct",
+}
+ASTRA_ROLE_ENV = {
+    "builder": "OPENCODE_ASTRA_BUILDER_MODEL",
+    "reader": "OPENCODE_ASTRA_READER_MODEL",
+    "reviewer": "OPENCODE_ASTRA_REVIEW_MODEL",
+}
 DND_ROLE_DEFAULTS = {
     "narrator": "openai/gpt-6-luna-direct#low",
     "complex": "openai/gpt-6-luna-direct#xhigh",
-    "exceptional": "openai/gpt-6-sol-orchestrated#xhigh",
+    "exceptional": "openai/gpt-6.2-sol-orchestrated#xhigh",
     "planner": "openai/gpt-6-luna-direct#xhigh",
     "memory": "openai/gpt-6-luna-direct#low",
     "reader": "openai/gpt-6-luna-direct#low",
 }
 DND_ROLE_ENV = {role: f"OPENCODE_DND_{role.upper()}_MODEL" for role in DND_ROLE_DEFAULTS}
-SOL_FORBIDDEN_MODEL_IDS = {"gpt-6-sol-fast", "gpt-6.1-sol-fast"}
+SOL_FORBIDDEN_MODEL_IDS = {"gpt-6-sol-fast", "gpt-6.1-sol-fast", "gpt-6.2-sol-fast"}
 ALIBABA_LOCKED_PREFIXES = (
     "qwen",
     "deepseek",
@@ -124,6 +134,22 @@ def sol_role_models() -> dict[str, str]:
     return result
 
 
+def astra_role_models() -> dict[str, str]:
+    result = {}
+    for role, default in ASTRA_ROLE_DEFAULTS.items():
+        value = os.environ.get(ASTRA_ROLE_ENV[role], default).strip() or default
+        ok, error = validate_provider_ref(value, "openai")
+        if not ok:
+            raise ValueError(f"{ASTRA_ROLE_ENV[role]}: {error}")
+        _, model, _ = _split_ref(value)
+        if model.casefold() in SOL_FORBIDDEN_MODEL_IDS:
+            raise ValueError(
+                f"{ASTRA_ROLE_ENV[role]}: {model} is disabled"
+            )
+        result[role] = value
+    return result
+
+
 def dnd_role_models() -> dict[str, str]:
     result = {}
     for role, default in DND_ROLE_DEFAULTS.items():
@@ -160,7 +186,7 @@ def effort_plan(ref: str, requested: str = "auto") -> dict[str, Any]:
     if requested == "auto":
         result.update(effortSupported=True, effortMapping="provider-default")
         return result
-    if provider == "openai" and low.startswith("gpt-6-"):
+    if provider == "openai" and (low.startswith("gpt-6-") or low.startswith("gpt-6.2-")):
         effective = "low" if requested == "minimal" else requested
         result.update(
             effectiveEffort=effective,
@@ -336,6 +362,7 @@ class CapabilityRegistry:
     def profiles(self) -> dict[str, dict[str, Any]]:
         roles = role_models()
         sol_roles = sol_role_models()
+        astra_roles = astra_role_models()
         dnd_roles = dnd_role_models()
         orchestrated = (
             os.environ.get(
@@ -348,13 +375,22 @@ class CapabilityRegistry:
             raise ValueError(f"OPENCODE_ORCHESTRATED_MODEL: {error}")
         sol_orchestrated = (
             os.environ.get(
-                "OPENCODE_SOL_ORCHESTRATED_MODEL", "openai/gpt-6-sol-orchestrated"
+                "OPENCODE_SOL_ORCHESTRATED_MODEL", "openai/gpt-6.2-sol-orchestrated"
             ).strip()
-            or "openai/gpt-6-sol-orchestrated"
+            or "openai/gpt-6.2-sol-orchestrated"
         )
         ok, error = validate_provider_ref(sol_orchestrated, "openai")
         if not ok:
             raise ValueError(f"OPENCODE_SOL_ORCHESTRATED_MODEL: {error}")
+        astra_orchestrated = (
+            os.environ.get(
+                "OPENCODE_ASTRA_ORCHESTRATED_MODEL", "openai/gpt-6.2-astra-orchestrated"
+            ).strip()
+            or "openai/gpt-6.2-astra-orchestrated"
+        )
+        ok, error = validate_provider_ref(astra_orchestrated, "openai")
+        if not ok:
+            raise ValueError(f"OPENCODE_ASTRA_ORCHESTRATED_MODEL: {error}")
 
         # Direct sessions use the visible native agents. The TUI ignores a
         # session's model whenever its agent is hidden (build-direct/plan-direct)
@@ -372,7 +408,7 @@ class CapabilityRegistry:
         }
         sol_profile = {
             "id": "sol-orchestrated",
-            "label": "GPT-6 Sol · Orchestrated",
+            "label": "GPT-6.2 Sol · Orchestrated",
             "route": "cloud",
             "cloudModel": sol_orchestrated,
             "plannerModel": sol_orchestrated,
@@ -399,6 +435,36 @@ class CapabilityRegistry:
             "sandbox": "repo-write",
             "autoReview": "smart",
             "requires": {"tools": True, "coding": 0.80, "planning": 0.85},
+        }
+        astra_profile = {
+            "id": "astra-orchestrated",
+            "label": "GPT-6.2 Astra · Orchestrated",
+            "route": "cloud",
+            "cloudModel": astra_orchestrated,
+            "plannerModel": astra_orchestrated,
+            "builderModel": astra_roles["builder"],
+            "readerModel": astra_roles["reader"],
+            "reviewerModel": astra_roles["reviewer"],
+            "agentBuild": "build",
+            "agentPlan": "plan",
+            "orchestrated": True,
+            "planningPolicy": "required",
+            "readerPolicy": "smart",
+            "reviewPolicy": "planner-checkpoint",
+            "effortPolicy": {
+                "planner": {"default": "high", "critical": "max"},
+                "reader": {"default": "high", "maximum": "max"},
+                "builder": {"default": "medium", "afterFailure": "high", "maximum": "max"},
+                "reviewer": {"default": "high", "critical": "max"},
+            },
+            "contextPolicy": {
+                "mode": "model-aware",
+                "targetRatio": 0.72,
+                "minGrowthBeforeRecompact": 32000,
+            },
+            "sandbox": "repo-write",
+            "autoReview": "smart",
+            "requires": {"tools": True, "coding": 0.85, "planning": 0.90},
         }
         sol_review = {
             "id": "sol-review",
@@ -456,7 +522,7 @@ class CapabilityRegistry:
                     "LUNA_LOW": "openai/gpt-6-luna-direct#low",
                     "LUNA_XHIGH": "openai/gpt-6-luna-direct#xhigh",
                     "LUNA_MAX": "openai/gpt-6-luna-direct#max",
-                    "SOL_XHIGH": "openai/gpt-6-sol-orchestrated#xhigh",
+                    "SOL_XHIGH": "openai/gpt-6.2-sol-orchestrated#xhigh",
                 },
                 "confidence": {"accept": 0.80, "conservative": 0.55},
                 "serviceTiers": {"luna": "default", "sol": "default"},
@@ -628,6 +694,7 @@ class CapabilityRegistry:
         profiles = {
             "direct": direct,
             "sol-orchestrated": sol_profile,
+            "astra-orchestrated": astra_profile,
             "sol-review": sol_review,
             "dnd-edition": dnd_edition,
             "fast": fast,

@@ -168,7 +168,7 @@ def run() -> dict[str, Any]:
         errors.append("integration contract must expose native plans during Build")
     if frontend.get("orchestrationLivesInModelProfile") is not True:
         errors.append("integration contract must keep orchestration in the model profile")
-    if frontend.get("modelProfiles") != ["direct", "qwen3.8-orchestrated", "gpt-6-sol-orchestrated", "gpt-6-dnd-edition"]:
+    if frontend.get("modelProfiles") != ["direct", "qwen3.8-orchestrated", "gpt-6.2-sol-orchestrated", "gpt-6.2-astra-orchestrated", "gpt-6-dnd-edition"]:
         errors.append("integration contract model profiles must match direct and orchestrated aliases")
 
     required_tools = {"knowledge_search", "knowledge_get", "knowledge_sources", "knowledge_status"}

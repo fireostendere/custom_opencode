@@ -34,7 +34,7 @@ dnd = profiles["dnd-edition"]
 assert dnd["cloudModel"] == "openai/gpt-6-dnd-edition"
 assert dnd["narratorModel"] == "openai/gpt-6-luna-direct#low"
 assert dnd["complexModel"] == "openai/gpt-6-luna-direct#xhigh"
-assert dnd["exceptionalModel"] == "openai/gpt-6-sol-orchestrated#xhigh"
+assert dnd["exceptionalModel"] == "openai/gpt-6.2-sol-orchestrated#xhigh"
 assert dnd["plannerModel"] == "openai/gpt-6-luna-direct#xhigh"
 assert dnd["memoryModel"] == "openai/gpt-6-luna-direct#low"
 assert dnd["readerModel"] == "openai/gpt-6-luna-direct#low"
@@ -51,14 +51,14 @@ assert dnd["dndOrchestrator"]["routes"]["LUNA_MAX"] == "openai/gpt-6-luna-direct
 assert dnd["dndOrchestrator"]["decisionMode"] == "constrained-token"
 assert dnd["dndOrchestrator"]["serviceTiers"]["luna"] == "default"
 assert dnd["dndOrchestrator"]["serviceTiers"]["sol"] == "default"
-assert effort_plan("openai/gpt-6-sol-direct", "max")["settings"] == {"reasoningEffort": "max"}
-assert validate_provider_ref("openrouter/gpt-6-sol", "openai")[0] is False
+assert effort_plan("openai/gpt-6.2-sol-direct", "max")["settings"] == {"reasoningEffort": "max"}
+assert validate_provider_ref("openrouter/gpt-6.2-sol", "openai")[0] is False
 
 agents = cfg["agents"]
 expected_agents = {
     "dnd-narrator": "openai/gpt-6-dnd-edition#auto",
     "dnd-narrator-high": "openai/gpt-6-luna-direct#xhigh",
-    "dnd-narrator-max": "openai/gpt-6-sol-orchestrated#xhigh",
+    "dnd-narrator-max": "openai/gpt-6.2-sol-orchestrated#xhigh",
     "dnd-planner": "openai/gpt-6-luna-direct#xhigh",
     "dnd-memory": "openai/gpt-6-luna-direct#low",
     "dnd-reader": "openai/gpt-6-luna-direct#low",

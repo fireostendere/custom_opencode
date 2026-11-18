@@ -197,6 +197,7 @@ with tempfile.TemporaryDirectory() as temp:
         "build",
         "architect",
         "sol-orchestrated",
+        "astra-orchestrated",
         "sol-review",
         "dnd-edition",
         "critical",
@@ -379,7 +380,8 @@ with tempfile.TemporaryDirectory() as temp:
     server_runtime.CONTEXT = ContextService(store, indexer)
     assert server_runtime._profile_id("orchestrated") == "architect"
     assert server_runtime._profile_id("qwen3.8-orchestrated") == "architect"
-    assert server_runtime._profile_id("gpt-6-sol-orchestrated") == "sol-orchestrated"
+    assert server_runtime._profile_id("gpt-6.2-sol-orchestrated") == "sol-orchestrated"
+    assert server_runtime._profile_id("gpt-6.2-astra-orchestrated") == "astra-orchestrated"
     assert server_runtime._profile_id("gpt-6-dnd-edition") == "dnd-edition"
     try:
         server_runtime._profile_id("unknown-profile")
@@ -443,8 +445,8 @@ with tempfile.TemporaryDirectory() as temp:
     # alias must never be re-pinned to the Qwen architect route, and a routed
     # alias without "#variant" must keep the user's effort.
     resolve = server_runtime._profile_for_selected_model
-    assert resolve("orchestrated", "openai/gpt-6-sol-orchestrated#xhigh") == "sol-orchestrated"
-    assert resolve("orchestrated", "openai/gpt-6-astra-orchestrated#xhigh") == "direct"
+    assert resolve("orchestrated", "openai/gpt-6.2-sol-orchestrated#xhigh") == "sol-orchestrated"
+    assert resolve("orchestrated", "openai/gpt-6.2-astra-orchestrated#xhigh") == "astra-orchestrated"
     assert resolve("orchestrated", "bailian-cli/qwen3.8-orchestrated") == "architect"
     assert resolve("direct", "bailian-cli/qwen3.8-orchestrated#high") == "architect"
     assert resolve("direct", "openai/gpt-6-dnd-edition#auto") == "dnd-edition"
@@ -452,8 +454,8 @@ with tempfile.TemporaryDirectory() as temp:
     assert resolve("orchestrated", None) == "direct"
     assert resolve("build", "openai/gpt-6-luna") == "build", "explicit runtime profiles keep their routing"
     for selected, request in (
-        ({"providerID": "openai", "id": "gpt-6-astra-orchestrated", "variant": "xhigh"}, "orchestrated"),
-        ({"providerID": "openai", "id": "gpt-6-sol-orchestrated", "variant": "xhigh"}, "orchestrated"),
+        ({"providerID": "openai", "id": "gpt-6.2-astra-orchestrated", "variant": "xhigh"}, "orchestrated"),
+        ({"providerID": "openai", "id": "gpt-6.2-sol-orchestrated", "variant": "xhigh"}, "orchestrated"),
         ({"providerID": "bailian-cli", "id": "qwen3.8-orchestrated", "variant": "high"}, "direct"),
     ):
         fake.session = {"agent": "build", "model": dict(selected)}
@@ -476,7 +478,8 @@ with tempfile.TemporaryDirectory() as temp:
     # model with a variant all retain their exact model selection.
     for profile, model, expected_agent in (
         ("architect", {"providerID": "bailian-cli", "id": "qwen3.8-orchestrated"}, "plan"),
-        ("sol-orchestrated", {"providerID": "openai", "id": "gpt-6-sol-orchestrated"}, "plan"),
+        ("sol-orchestrated", {"providerID": "openai", "id": "gpt-6.2-sol-orchestrated"}, "plan"),
+        ("astra-orchestrated", {"providerID": "openai", "id": "gpt-6.2-astra-orchestrated"}, "plan"),
         ("dnd-edition", {"providerID": "openai", "id": "gpt-6-dnd-edition"}, "dnd-narrator"),
         ("direct", {"providerID": "custom", "id": "manual", "variant": "precise"}, "plan"),
     ):

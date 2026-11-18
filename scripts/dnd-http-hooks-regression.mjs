@@ -119,7 +119,7 @@ try {
       const event = requestEvent()
       await hooks["http.request"](event)
       const body = await event.request.json()
-      assert.equal(body.model, "gpt-6.1-sol")
+      assert.equal(body.model, "gpt-6.2-sol")
       assert.equal(body.reasoning.effort, "xhigh")
       const continuation = requestEvent({}, { input: [
         { role: "user", content: "I search the room" }, { type: "function_call_output", output: "found a key" },

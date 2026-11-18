@@ -71,8 +71,8 @@ source = source.slice(0, bootIndex)
 
 await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
 const app = globalThis.__smoke.exports
-assert.equal(app.primaryAgentFor({ id: 'gpt-6-astra-orchestrated', providerID: 'openai' }, 'build-direct'), 'build')
-assert.equal(app.primaryAgentFor({ id: 'gpt-6-sol-orchestrated', providerID: 'openai' }, 'plan-direct'), 'plan')
+assert.equal(app.primaryAgentFor({ id: 'gpt-6.2-astra-orchestrated', providerID: 'openai' }, 'build-direct'), 'build')
+assert.equal(app.primaryAgentFor({ id: 'gpt-6.2-sol-orchestrated', providerID: 'openai' }, 'plan-direct'), 'plan')
 assert.equal(app.primaryAgentFor({ id: 'gpt-6-dnd-edition', providerID: 'openai' }, 'build-direct'), 'build')
 assert.equal(app.primaryAgentFor({ id: 'gpt-6-luna', providerID: 'openai' }, 'plan'), 'plan')
 assert.equal(app.primaryAgentFor({ id: 'gpt-6-luna', providerID: 'openai' }, 'dnd-narrator'), 'dnd-narrator')

@@ -25,13 +25,13 @@ assert.equal(knowledge.tools.dnd_knowledge_search.inputSchema, search.inputSchem
 assert.equal(search.description, 'Search the engineering knowledge base', 'D&D hints do not alter shared tool definitions')
 assert.match(plugin.filterDndTools([{ name: 'dnd_knowledge_search', ...search }])[0].description, /English original rule names/)
 
-const sol = { model: { providerID: 'openai', id: 'gpt-6-sol-orchestrated' }, system: [], tools: ['shell'] }
+const sol = { model: { providerID: 'openai', id: 'gpt-6.2-sol-orchestrated' }, system: [], tools: ['shell'] }
 await hook(sol)
 assert.deepEqual(sol.tools, ['shell'], 'SOL alias must retain its tools')
 const qwen = { model: { providerID: 'bailian-cli', id: 'qwen3.8-orchestrated' }, system: [], tools: ['edit'] }
 await hook(qwen)
 assert.deepEqual(qwen.tools, ['edit'], 'Qwen alias must retain its tools')
-const direct = { model: { providerID: 'openai', id: 'gpt-6-sol-direct' }, system: [], tools: ['shell'] }
+const direct = { model: { providerID: 'openai', id: 'gpt-6.2-sol-direct' }, system: [], tools: ['shell'] }
 await hook(direct)
 assert.equal(direct.system.length, 0, 'ordinary SOL must stay direct')
 

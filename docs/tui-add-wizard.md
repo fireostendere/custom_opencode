@@ -92,13 +92,13 @@ node scripts/tui-accounts-regression.mjs
 Команда не запускает LLM и не перезапускает сервер. Это перечитывание текущего
 каталога и общего managed registry, а не принудительная загрузка models.dev.
 
-В установленном custom OpenCode через визард добавлены `openai/gpt-6-astra`
-и `openai/gpt-6-astra-orchestrated` («GPT-6 Astra · Orchestrated»).
-Во втором варианте Astra ведёт задачу, существующие `sol-role-builder*` на GPT-6 Sol
-выполняют изменения, а роли `sol-fast-reader`/`sol-role-reviewer*` на Luna — анализ
+В установленном custom OpenCode через визард добавлены `openai/gpt-6.2-astra`
+и `openai/gpt-6.2-astra-orchestrated` («GPT-6.2 Astra · Orchestrated»).
+Во втором варианте Astra 6.2 ведёт задачу, существующие `sol-role-builder*` на GPT-6.2 Sol
+выполняют изменения, а роли `sol-fast-reader` на Luna и `sol-role-reviewer*` на GPT-6.2 Astra — анализ
 и ревью. Эти записи хранятся в managed registry установленного OpenCode;
 они не добавлены в шаблон конфигурации для новых установок.
-Параметры базовой Astra сверены с [официальной карточкой модели](https://developers.openai.com/api/docs/models/gpt-6-astra).
+Параметры базовой Astra сверены с [официальной карточкой модели](https://developers.openai.com/api/docs/models/gpt-6.2-astra).
 Для явно включаемой скрытой модели JSON-путь `/addmodel` принимает `enabled: true`.
 Служебные квитанции визарда сохраняются с `resume: false`.
 

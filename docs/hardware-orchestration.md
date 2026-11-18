@@ -40,7 +40,7 @@ routing heuristics, not a complete electrical-risk detector. The primary model
 can also request a critical specialist when the difficulty emerges later.
 
 Model IDs and reasoning efforts are resolved from the **actual native catalog**.
-The code prefers existing `gpt-6-luna-direct`, `gpt-6-sol-direct` and a catalog
+The code prefers existing `gpt-6-luna-direct`, `gpt-6.2-sol-direct`, `gpt-6.2-astra-direct` and a catalog
 entry identified as Astra. It does not invent an Astra endpoint or pretend that
 Sol is Astra. Missing model or unadvertised required effort produces an explicit
 error. `max` is the highest canonical effort in this project; `xhigh` is the penultimate level. Astra routing requires an advertised literal `max` and fails closed instead of silently downgrading to `xhigh` or `high`. This checks catalog metadata, not the account's live entitlement.

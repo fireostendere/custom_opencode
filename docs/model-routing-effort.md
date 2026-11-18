@@ -20,12 +20,23 @@ The dedicated SOL profile uses the same provider boundary:
 
 | Role | Model | Provider |
 | --- | --- | --- |
-| planner | `gpt-6-sol` | `openai` |
-| builder | `gpt-6-sol` | `openai` |
+| planner | `gpt-6.2-sol` | `openai` |
+| builder | `gpt-6.2-sol` | `openai` |
 | reader | `gpt-6-luna` | `openai` |
-| reviewer | `gpt-6-luna` | `openai` |
+| reviewer | `gpt-6.2-astra` | `openai` |
 
-Its trigger is `openai/gpt-6-sol-orchestrated`; ordinary Sol and Luna selections remain direct.
+Its trigger is `openai/gpt-6.2-sol-orchestrated`; ordinary Sol, Astra, and Luna selections remain direct.
+
+The dedicated ASTRA profile also keeps all roles on official OpenAI:
+
+| Role | Model | Provider |
+| --- | --- | --- |
+| planner | `gpt-6.2-astra` | `openai` |
+| builder | `gpt-6.2-sol` | `openai` |
+| reader | `gpt-6-luna` | `openai` |
+| reviewer | `gpt-6.2-astra` | `openai` |
+
+Its trigger is `openai/gpt-6.2-astra-orchestrated`.
 
 The dedicated D&D profile is also OpenAI-only:
 
@@ -33,7 +44,7 @@ The dedicated D&D profile is also OpenAI-only:
 | --- | --- | --- |
 | narrator | `gpt-6-luna` | medium |
 | complex/private narrator | `gpt-6-luna` | xhigh |
-| exceptional gated narrator | `gpt-6-sol` | xhigh |
+| exceptional gated narrator | `gpt-6.2-sol` | xhigh |
 | boundary planner | `gpt-6-luna` | xhigh |
 | boundary memory / reader | `gpt-6-luna` | low |
 
@@ -51,13 +62,17 @@ OPENCODE_READER_MODEL=bailian-cli/qwen3.8-flash
 OPENCODE_REVIEW_MODEL=bailian-cli/deepseek-v4-pro-0813
 OPENCODE_LONG_HORIZON_MODEL=bailian-cli/glm-5.2
 OPENCODE_ORCHESTRATED_MODEL=bailian-cli/qwen3.8-orchestrated
-OPENCODE_SOL_ORCHESTRATED_MODEL=openai/gpt-6-sol-orchestrated
-OPENCODE_SOL_BUILDER_MODEL=openai/gpt-6-sol-direct
+OPENCODE_SOL_ORCHESTRATED_MODEL=openai/gpt-6.2-sol-orchestrated
+OPENCODE_SOL_BUILDER_MODEL=openai/gpt-6.2-sol-direct
 OPENCODE_SOL_READER_MODEL=openai/gpt-6-luna-direct
-OPENCODE_SOL_REVIEW_MODEL=openai/gpt-6-luna-direct
+OPENCODE_SOL_REVIEW_MODEL=openai/gpt-6.2-astra-direct
+OPENCODE_ASTRA_ORCHESTRATED_MODEL=openai/gpt-6.2-astra-orchestrated
+OPENCODE_ASTRA_BUILDER_MODEL=openai/gpt-6.2-sol-direct
+OPENCODE_ASTRA_READER_MODEL=openai/gpt-6-luna-direct
+OPENCODE_ASTRA_REVIEW_MODEL=openai/gpt-6.2-astra-direct
 OPENCODE_DND_NARRATOR_MODEL=openai/gpt-6-luna-direct#low
 OPENCODE_DND_COMPLEX_MODEL=openai/gpt-6-luna-direct#xhigh
-OPENCODE_DND_EXCEPTIONAL_MODEL=openai/gpt-6-sol-orchestrated#xhigh
+OPENCODE_DND_EXCEPTIONAL_MODEL=openai/gpt-6.2-sol-orchestrated#xhigh
 OPENCODE_DND_PLANNER_MODEL=openai/gpt-6-luna-direct#xhigh
 OPENCODE_DND_MEMORY_MODEL=openai/gpt-6-luna-direct#low
 OPENCODE_DND_READER_MODEL=openai/gpt-6-luna-direct#low
@@ -143,18 +158,18 @@ Critical review uses Alibaba DeepSeek V4 Pro 0813 / max and is read-only. The re
 - `role-long-horizon`: GLM 5.2 / effective high.
 - `role-long-horizon-max`: GLM 5.2 / max.
 - `sol-fast-reader`: GPT-6 Luna / xhigh, read-only.
-- `sol-role-builder`: GPT-6 Sol / medium.
-- `sol-role-builder-high`: GPT-6 Sol / high.
-- `sol-role-builder-max`: GPT-6 Sol / max.
-- `sol-role-reviewer`: GPT-6 Luna / xhigh, read-only.
-- `sol-role-reviewer-max`: GPT-6 Luna / max, read-only.
+- `sol-role-builder`: GPT-6.2 Sol / medium.
+- `sol-role-builder-high`: GPT-6.2 Sol / high.
+- `sol-role-builder-max`: GPT-6.2 Sol / max.
+- `sol-role-reviewer`: GPT-6.2 Astra / high, read-only.
+- `sol-role-reviewer-max`: GPT-6.2 Astra / max, read-only.
 - `dnd-narrator`: selectable primary Luna / low with only ODM, read-only D&D knowledge and game-skill access.
-- `dnd-narrator-high` and `dnd-planner`: bounded Luna / xhigh roles; the manually selected `dnd-narrator-max` remains exceptional Sol / xhigh. Auto routing tries Luna / max first.
+- `dnd-narrator-high` and `dnd-planner`: bounded Luna / xhigh roles; the manually selected `dnd-narrator-max` remains exceptional Sol 6.2 / xhigh. Auto routing tries Luna / max first.
 - `dnd-memory`, `dnd-reader`: Luna / low, knowledge-only.
 
 The `qwen3.8-orchestrated` catalog entry is a dedicated alias for the primary Qwen 3.8 Max orchestration session. The `orchestrated-qwen` plugin injects orchestration policy only for that alias, so ordinary direct Qwen 3.8 Max sessions remain native/direct.
 
-The same plugin handles `gpt-6-sol-orchestrated` and injects the SOL policy only for that alias. It never changes direct OpenAI model selections.
+The same plugin handles `gpt-6.2-sol-orchestrated` and `gpt-6.2-astra-orchestrated` and injects the corresponding orchestration policy only for those aliases. It never changes direct OpenAI model selections.
 
 For `gpt-6-dnd-edition` the plugin injects only the stable game policy and
 filters the tool surface. Ordinary OpenAI aliases and the SOL orchestrator keep

@@ -7,7 +7,10 @@ export function isOrchestratedQwen(event) {
   return event?.model?.providerID === TARGET_PROVIDER && event?.model?.id === TARGET_MODEL
 }
 export function isOrchestratedSol(event) {
-  return event?.model?.providerID === "openai" && event?.model?.id === "gpt-6-sol-orchestrated"
+  return event?.model?.providerID === "openai" && event?.model?.id === "gpt-6.2-sol-orchestrated"
+}
+export function isOrchestratedAstra(event) {
+  return event?.model?.providerID === "openai" && event?.model?.id === "gpt-6.2-astra-orchestrated"
 }
 export function isDndEdition(event) {
   const modelID = event?.model?.id || event?.model?.modelID
@@ -54,12 +57,15 @@ export default {
 
 if (process.env.OPENCODE_ORCHESTRATED_QWEN_SELF_CHECK) {
   if (!isOrchestratedQwen({ model: { providerID: TARGET_PROVIDER, id: TARGET_MODEL } })) throw new Error("target selector failed")
-  if (!isOrchestratedSol({ model: { providerID: "openai", id: "gpt-6-sol-orchestrated" } })) throw new Error("SOL target selector failed")
+  if (!isOrchestratedSol({ model: { providerID: "openai", id: "gpt-6.2-sol-orchestrated" } })) throw new Error("SOL target selector failed")
+  if (!isOrchestratedAstra({ model: { providerID: "openai", id: "gpt-6.2-astra-orchestrated" } })) throw new Error("ASTRA target selector failed")
   if (isOrchestratedQwen({ model: { providerID: TARGET_PROVIDER, id: "qwen3.8-max" } })) throw new Error("ordinary Max must stay native")
-  if (isOrchestratedSol({ model: { providerID: "openai", id: "gpt-6-sol-direct" } })) throw new Error("ordinary SOL must stay native")
+  if (isOrchestratedSol({ model: { providerID: "openai", id: "gpt-6.2-sol-direct" } })) throw new Error("ordinary SOL must stay native")
+  if (isOrchestratedAstra({ model: { providerID: "openai", id: "gpt-6.2-astra-direct" } })) throw new Error("ordinary ASTRA must stay native")
   if (!isDndEdition({ model: { providerID: "openai", id: "gpt-6-dnd-edition" } })) throw new Error("DnD selector failed")
-  if (isDndEdition({ model: { providerID: "openai", id: "gpt-6-sol-orchestrated" } })) throw new Error("SOL alias must stay SOL")
-  if (!isDndContext({ agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-6-sol-direct" } })) throw new Error("DnD agent context selector failed")
+  if (isDndEdition({ model: { providerID: "openai", id: "gpt-6.2-sol-orchestrated" } })) throw new Error("SOL alias must stay SOL")
+  if (isDndEdition({ model: { providerID: "openai", id: "gpt-6.2-astra-orchestrated" } })) throw new Error("ASTRA alias must stay ASTRA")
+  if (!isDndContext({ agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-6.2-sol-direct" } })) throw new Error("DnD agent context selector failed")
   if (!isDndContext({ agent: "narrator-social", model: { providerID: "openai", id: "gpt-6-luna-direct" } })) throw new Error("ODM narrator context selector failed")
   if (isDndContext({ agent: "build", model: { providerID: "openai", id: "gpt-6-luna-direct" } })) throw new Error("ordinary direct model must stay native")
   const filtered = filterDndTools(["odm_narrator", "odm_narrator_odm_narrator", "odm_narrator_odm_campaigns", "mcp_discover", "shell", "kb_knowledge_search", "dnd_knowledge_search", "edit"])

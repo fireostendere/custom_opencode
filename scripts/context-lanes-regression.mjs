@@ -95,7 +95,7 @@ try {
   const normal = {
     sessionID: "normal",
     agent: "build",
-    model: { providerID: "openai", id: "gpt-6-sol-direct" },
+    model: { providerID: "openai", id: "gpt-6.2-sol-direct" },
     system: [{ type: "text", text: "NATIVE" }],
   }
   await hooks.context(normal)
@@ -107,7 +107,7 @@ try {
   const staticFull = {
     sessionID: "static",
     agent: "build",
-    model: { providerID: "openai", id: "gpt-6-sol-orchestrated" },
+    model: { providerID: "openai", id: "gpt-6.2-sol-orchestrated" },
     system: [{ type: "text", text: "NATIVE" }],
   }
   await hooks.context(staticFull)
@@ -172,14 +172,14 @@ try {
   const compaction = { ...dnd, system: [], messages: [{ role: "user", content: "summarize" }] }
   await hooks.context(compaction)
   assert.equal(compaction.messages[0].content, "summarize", "id-less compaction prompts are untouched")
-  const codingTurn = { sessionID: "coding", agent: "build", model: { providerID: "openai", id: "gpt-6-sol" }, system: [], messages: [{ role: "user", id: "u3", content: [{ type: "text", text: "почему?" }] }] }
+  const codingTurn = { sessionID: "coding", agent: "build", model: { providerID: "openai", id: "gpt-6.2-sol" }, system: [], messages: [{ role: "user", id: "u3", content: [{ type: "text", text: "почему?" }] }] }
   await hooks.context(codingTurn)
   assert.equal(codingTurn.messages[0].content.length, 1, "only the D&D lane labels operator turns")
 
   const dndPinnedModel = {
     sessionID: "dnd-pinned",
     agent: "dnd-narrator",
-    model: { providerID: "openai", id: "gpt-6-sol-direct" },
+    model: { providerID: "openai", id: "gpt-6.2-sol-direct" },
     system: [{ type: "text", text: "GENERIC CODING STARTUP" }],
   }
   await hooks.context(dndPinnedModel)
@@ -245,14 +245,14 @@ try {
   await hooks.context(reader)
   assert.ok(reader.system.some((x) => x.text.includes("FULL ENGINEERING")))
   assert.ok(!reader.system.some((x) => x.text.includes("PONYTAIL")), "readers must not receive Ponytail")
-  assert.equal(policy.resolveContextPolicy({ agent: "fast-reader", model: { providerID: "openai", id: "gpt-6-sol-direct" } }).ponytail, false)
-  assert.equal(policy.resolveContextPolicy({ agent: "build", model: { providerID: "openai", id: "gpt-6-sol-direct" } }).ponytail, true)
+  assert.equal(policy.resolveContextPolicy({ agent: "fast-reader", model: { providerID: "openai", id: "gpt-6.2-sol-direct" } }).ponytail, false)
+  assert.equal(policy.resolveContextPolicy({ agent: "build", model: { providerID: "openai", id: "gpt-6.2-sol-direct" } }).ponytail, true)
 
   // Ponytail state is cached by mtime; a bad state file or checkout never fails a request.
   const stateFile = join(process.env.XDG_CONFIG_HOME, "opencode", ".ponytail-active")
   await mkdir(join(process.env.XDG_CONFIG_HOME, "opencode"), { recursive: true })
   const ponytailText = async () => {
-    const event = { sessionID: "ponytail", agent: "build", model: { providerID: "openai", id: "gpt-6-sol-direct" }, system: [] }
+    const event = { sessionID: "ponytail", agent: "build", model: { providerID: "openai", id: "gpt-6.2-sol-direct" }, system: [] }
     await hooks.context(event)
     return event.system.find((x) => x.text.startsWith("Ponytail V2 engineering policy"))?.text || ""
   }

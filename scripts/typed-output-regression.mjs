@@ -79,7 +79,7 @@ try {
   globalThis.fetch = realFetch
 }
 // An unrelated 400 is passed through untouched.
-const other = { sessionID: 's3', agent: 'narrator-actor', kind: 'generate', request: new Request(url, { method: 'POST', body: JSON.stringify({ ...body, model: 'gpt-6-sol' }) }) }
+const other = { sessionID: 's3', agent: 'narrator-actor', kind: 'generate', request: new Request(url, { method: 'POST', body: JSON.stringify({ ...body, model: 'gpt-6.2-sol' }) }) }
 await hooks['http.request'](other)
 const passthrough = { sessionID: 's3', request: other.request, response: new Response('{"error":"quota"}', { status: 400 }) }
 await hooks['http.response'](passthrough)

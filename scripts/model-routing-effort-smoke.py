@@ -41,6 +41,7 @@ EXPECTED_PROFILES = {
     "research",
     "long-horizon",
     "sol-orchestrated",
+    "astra-orchestrated",
     "sol-review",
     "dnd-edition",
 }
@@ -56,6 +57,10 @@ for name in (
     "OPENCODE_SOL_BUILDER_MODEL",
     "OPENCODE_SOL_READER_MODEL",
     "OPENCODE_SOL_REVIEW_MODEL",
+    "OPENCODE_ASTRA_ORCHESTRATED_MODEL",
+    "OPENCODE_ASTRA_BUILDER_MODEL",
+    "OPENCODE_ASTRA_READER_MODEL",
+    "OPENCODE_ASTRA_REVIEW_MODEL",
     "OPENCODE_DND_NARRATOR_MODEL",
 ):
     os.environ.pop(name, None)
@@ -93,7 +98,7 @@ assert (
 assert effort_plan("bailian-cli/deepseek-v4-pro-0813", "high")["settings"] == {"effort": "high"}
 assert effort_plan("bailian-cli/deepseek-v4-pro-0813", "max")["settings"] == {"effort": "max"}
 assert effort_plan("bailian-cli/glm-5.2", "max")["settings"] == {"effort": "max"}
-assert effort_plan("openai/gpt-6-sol-direct", "minimal")["settings"] == {"reasoningEffort": "low"}
+assert effort_plan("openai/gpt-6.2-sol-direct", "minimal")["settings"] == {"reasoningEffort": "low"}
 assert effort_plan("openai/gpt-6-luna-direct", "max")["settings"] == {"reasoningEffort": "max"}
 
 registry = CapabilityRegistry([])
@@ -101,7 +106,7 @@ profiles = registry.profiles()
 # Unpaid Alibaba Token Plan: only routes that never touch bailian-cli remain.
 os.environ["OPENCODE_ALIBABA_ENABLED"] = "0"
 try:
-    assert set(registry.profiles()) == {"direct", "sol-orchestrated", "sol-review", "dnd-edition"}, set(registry.profiles())
+    assert set(registry.profiles()) == {"direct", "sol-orchestrated", "astra-orchestrated", "sol-review", "dnd-edition"}, set(registry.profiles())
 finally:
     os.environ["OPENCODE_ALIBABA_ENABLED"] = "1"
 assert set(profiles) == EXPECTED_PROFILES
@@ -120,13 +125,18 @@ assert profiles["critical"]["effortPolicy"]["reviewer"]["default"] == "max"
 assert profiles["review"]["cloudModel"] == EXPECTED_ROLES["reviewer"]
 assert profiles["review"]["hidden"] is True
 assert profiles["long-horizon"]["builderModel"] == EXPECTED_ROLES["long_horizon"]
-assert profiles["sol-orchestrated"]["cloudModel"] == "openai/gpt-6-sol-orchestrated"
-assert profiles["sol-orchestrated"]["builderModel"] == "openai/gpt-6-sol-direct"
+assert profiles["sol-orchestrated"]["cloudModel"] == "openai/gpt-6.2-sol-orchestrated"
+assert profiles["sol-orchestrated"]["builderModel"] == "openai/gpt-6.2-sol-direct"
 assert profiles["sol-orchestrated"]["readerModel"] == "openai/gpt-6-luna-direct"
-assert profiles["sol-orchestrated"]["reviewerModel"] == "openai/gpt-6-luna-direct"
+assert profiles["sol-orchestrated"]["reviewerModel"] == "openai/gpt-6.2-astra-direct"
 assert profiles["sol-orchestrated"]["orchestrated"] is True
 assert profiles["sol-orchestrated"]["effortPolicy"]["reader"]["default"] == "high"
-assert profiles["sol-review"]["cloudModel"] == "openai/gpt-6-luna-direct"
+assert profiles["astra-orchestrated"]["cloudModel"] == "openai/gpt-6.2-astra-orchestrated"
+assert profiles["astra-orchestrated"]["builderModel"] == "openai/gpt-6.2-sol-direct"
+assert profiles["astra-orchestrated"]["readerModel"] == "openai/gpt-6-luna-direct"
+assert profiles["astra-orchestrated"]["reviewerModel"] == "openai/gpt-6.2-astra-direct"
+assert profiles["astra-orchestrated"]["orchestrated"] is True
+assert profiles["sol-review"]["cloudModel"] == "openai/gpt-6.2-astra-direct"
 assert profiles["sol-review"]["hidden"] is True
 assert profiles["dnd-edition"]["cloudModel"] == "openai/gpt-6-dnd-edition"
 assert profiles["dnd-edition"]["agentBuild"] == "dnd-narrator"
@@ -149,22 +159,26 @@ models = alibaba["models"]
 agents = config["agents"]
 assert alibaba["name"] == "Alibaba Cloud"
 assert (
-    config["providers"]["openai"]["models"]["gpt-6-sol-orchestrated"]["modelID"] == "gpt-6-sol"
+    config["providers"]["openai"]["models"]["gpt-6.2-sol-orchestrated"]["modelID"] == "gpt-6.2-sol"
+)
+assert (
+    config["providers"]["openai"]["models"]["gpt-6.2-astra-orchestrated"]["modelID"] == "gpt-6.2-astra"
 )
 assert config["providers"]["openai"]["models"]["gpt-6-dnd-edition"]["modelID"] == "gpt-6-luna"
 assert config["providers"]["openai"]["models"]["gpt-6-dnd-edition"]["defaultVariant"] == "auto"
 openai_models = config["providers"]["openai"]["models"]
 assert openai_models["gpt-6-luna-direct"]["modelID"] == "gpt-6-luna"
-assert openai_models["gpt-6-sol-direct"]["modelID"] == "gpt-6-sol"
+assert openai_models["gpt-6.2-sol-direct"]["modelID"] == "gpt-6.2-sol"
+assert openai_models["gpt-6.2-astra-direct"]["modelID"] == "gpt-6.2-astra"
 for name, agent in agents.items():
     ref = agent.get("model", "")
     if ref.startswith("openai/"):
         alias = ref.split("/", 1)[1].split("#", 1)[0]
-        assert alias in openai_models or alias == "gpt-6-astra", (name, ref)
+        assert alias in openai_models or alias in ("gpt-6.2-astra", "gpt-6.2-astra-direct"), (name, ref)
 assert sol_role_models() == {
-    "builder": "openai/gpt-6-sol-direct",
+    "builder": "openai/gpt-6.2-sol-direct",
     "reader": "openai/gpt-6-luna-direct",
-    "reviewer": "openai/gpt-6-luna-direct",
+    "reviewer": "openai/gpt-6.2-astra-direct",
 }
 os.environ["OPENCODE_SOL_REVIEW_MODEL"] = "openai/gpt-6-sol-fast"
 try:
@@ -175,7 +189,7 @@ else:
     raise AssertionError("SOL Fast override must be rejected")
 finally:
     os.environ.pop("OPENCODE_SOL_REVIEW_MODEL", None)
-for fast in ("gpt-6-sol-fast", "gpt-6.1-sol-fast"):
+for fast in ("gpt-6-sol-fast", "gpt-6.1-sol-fast", "gpt-6.2-sol-fast"):
     os.environ["OPENCODE_SOL_BUILDER_MODEL"] = f"openai/{fast}#high"
     try:
         sol_role_models()
@@ -185,13 +199,13 @@ for fast in ("gpt-6-sol-fast", "gpt-6.1-sol-fast"):
         raise AssertionError(f"SOL Fast override {fast} must be rejected")
     finally:
         os.environ.pop("OPENCODE_SOL_BUILDER_MODEL", None)
-os.environ["OPENCODE_SOL_BUILDER_MODEL"] = "openai/gpt-6.1-sol#high"
+os.environ["OPENCODE_SOL_BUILDER_MODEL"] = "openai/gpt-6.2-sol-direct#high"
 try:
-    assert sol_role_models()["builder"] == "openai/gpt-6.1-sol#high", "plain GPT-6.1 Sol stays allowed"
+    assert sol_role_models()["builder"] == "openai/gpt-6.2-sol-direct#high", "plain GPT-6.2 Sol stays allowed"
 finally:
     os.environ.pop("OPENCODE_SOL_BUILDER_MODEL", None)
 assert dnd_role_models()["narrator"] == "openai/gpt-6-luna-direct#low"
-os.environ["OPENCODE_DND_NARRATOR_MODEL"] = "openrouter/gpt-6-sol#medium"
+os.environ["OPENCODE_DND_NARRATOR_MODEL"] = "openrouter/gpt-6.2-sol#medium"
 try:
     dnd_role_models()
 except ValueError as error:
@@ -258,15 +272,15 @@ assert agents["role-reviewer-max"]["model"] == "bailian-cli/deepseek-v4-pro-0813
 assert agents["role-long-horizon"]["model"] == "bailian-cli/glm-5.2#high"
 assert agents["role-long-horizon-max"]["model"] == "bailian-cli/glm-5.2#max"
 assert agents["sol-fast-reader"]["model"] == "openai/gpt-6-luna-direct#xhigh"
-assert agents["sol-role-builder"]["model"] == "openai/gpt-6-sol-direct#medium"
-assert agents["sol-role-builder-high"]["model"] == "openai/gpt-6-sol-direct#high"
-assert agents["sol-role-builder-max"]["model"] == "openai/gpt-6-sol-direct#max"
-assert agents["sol-role-reviewer"]["model"] == "openai/gpt-6-luna-direct#xhigh"
-assert agents["sol-role-reviewer-max"]["model"] == "openai/gpt-6-luna-direct#max"
+assert agents["sol-role-builder"]["model"] == "openai/gpt-6.2-sol-direct#medium"
+assert agents["sol-role-builder-high"]["model"] == "openai/gpt-6.2-sol-direct#high"
+assert agents["sol-role-builder-max"]["model"] == "openai/gpt-6.2-sol-direct#max"
+assert agents["sol-role-reviewer"]["model"] == "openai/gpt-6.2-astra-direct#high"
+assert agents["sol-role-reviewer-max"]["model"] == "openai/gpt-6.2-astra-direct#max"
 for name, model in {
     "dnd-narrator": "openai/gpt-6-dnd-edition#auto",
     "dnd-narrator-high": "openai/gpt-6-luna-direct#xhigh",
-    "dnd-narrator-max": "openai/gpt-6-sol-orchestrated#xhigh",
+    "dnd-narrator-max": "openai/gpt-6.2-sol-orchestrated#xhigh",
     "dnd-planner": "openai/gpt-6-luna-direct#xhigh",
     "dnd-memory": "openai/gpt-6-luna-direct#low",
     "dnd-reader": "openai/gpt-6-luna-direct#low",
@@ -289,8 +303,7 @@ for token in (
     assert token.casefold() in prompt.casefold(), token
 sol_prompt = (ROOT / "config" / "prompts" / "orchestrator-sol.md").read_text(encoding="utf-8")
 for token in (
-    "gpt-6-sol",
-    "gpt-6-sol",
+    "gpt-6.2-sol",
     "gpt-6-luna",
     "sol-role-builder",
     "sol-role-reviewer",

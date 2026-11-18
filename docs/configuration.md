@@ -98,13 +98,17 @@ OPENCODE_READER_MODEL=bailian-cli/qwen3.8-flash
 OPENCODE_REVIEW_MODEL=bailian-cli/deepseek-v4-pro-0813
 OPENCODE_LONG_HORIZON_MODEL=bailian-cli/glm-5.2
 OPENCODE_ORCHESTRATED_MODEL=bailian-cli/qwen3.8-orchestrated
-OPENCODE_SOL_ORCHESTRATED_MODEL=openai/gpt-6-sol-orchestrated
-OPENCODE_SOL_BUILDER_MODEL=openai/gpt-6-sol-direct
+OPENCODE_SOL_ORCHESTRATED_MODEL=openai/gpt-6.2-sol-orchestrated
+OPENCODE_SOL_BUILDER_MODEL=openai/gpt-6.2-sol-direct
 OPENCODE_SOL_READER_MODEL=openai/gpt-6-luna-direct
-OPENCODE_SOL_REVIEW_MODEL=openai/gpt-6-luna-direct
+OPENCODE_SOL_REVIEW_MODEL=openai/gpt-6.2-astra-direct
+OPENCODE_ASTRA_ORCHESTRATED_MODEL=openai/gpt-6.2-astra-orchestrated
+OPENCODE_ASTRA_BUILDER_MODEL=openai/gpt-6.2-sol-direct
+OPENCODE_ASTRA_READER_MODEL=openai/gpt-6-luna-direct
+OPENCODE_ASTRA_REVIEW_MODEL=openai/gpt-6.2-astra-direct
 OPENCODE_DND_NARRATOR_MODEL=openai/gpt-6-luna-direct#low
 OPENCODE_DND_COMPLEX_MODEL=openai/gpt-6-luna-direct#xhigh
-OPENCODE_DND_EXCEPTIONAL_MODEL=openai/gpt-6-sol-orchestrated#xhigh
+OPENCODE_DND_EXCEPTIONAL_MODEL=openai/gpt-6.2-sol-orchestrated#xhigh
 OPENCODE_DND_PLANNER_MODEL=openai/gpt-6-luna-direct#xhigh
 OPENCODE_DND_MEMORY_MODEL=openai/gpt-6-luna-direct#low
 OPENCODE_DND_READER_MODEL=openai/gpt-6-luna-direct#low
@@ -265,7 +269,7 @@ Alibaba-роли provider-locked на Alibaba Cloud/Bailian, а SOL и DnD-ро�
 на официальный OpenAI provider. Ни одна роль из orchestration stack не должна
 автоматически уходить на другой gateway/provider.
 
-`direct` сохраняет ровно выбранную пользователем модель. Managed profiles (`fast`, `build`, `architect`, `sol-orchestrated`, `dnd-edition`, `critical`, `research`, `long-horizon`) используют только собственные role refs. `dnd-edition` доступен в picker как `openai/gpt-6-dnd-edition` и выбирает restricted primary-agent `dnd-narrator`.
+`direct` сохраняет ровно выбранную пользователем модель. Managed profiles (`fast`, `build`, `architect`, `sol-orchestrated`, `astra-orchestrated`, `dnd-edition`, `critical`, `research`, `long-horizon`) используют только собственные role refs. `dnd-edition` доступен в picker как `openai/gpt-6-dnd-edition` и выбирает restricted primary-agent `dnd-narrator`.
 
 Host load, GPU state, запущенные игры и доступность другого inference endpoint не участвуют в выборе model route.
 

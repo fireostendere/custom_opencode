@@ -33,6 +33,7 @@ const OWN_MARKERS = [
   "Custom visible plan policy",
   "Custom orchestrated Qwen policy",
   "Custom orchestrated SOL policy",
+  "Custom orchestrated ASTRA policy",
   "Custom DnD Edition policy",
   "Required game skill already loaded:",
   "Managed orchestration ",
@@ -43,11 +44,17 @@ const STATIC_ORCHESTRATIONS = {
     marker: "Custom orchestrated Qwen policy",
     path: process.env.OPENCODE_ORCHESTRATOR_PROMPT || join(CONFIG_DIR, "prompts", "orchestrator.md"),
   },
-  "openai/gpt-6-sol-orchestrated": {
+  "openai/gpt-6.2-sol-orchestrated": {
     marker: "Custom orchestrated SOL policy",
     path:
       process.env.OPENCODE_SOL_ORCHESTRATOR_PROMPT ||
       join(CONFIG_DIR, "prompts", "orchestrator-sol.md"),
+  },
+  "openai/gpt-6.2-astra-orchestrated": {
+    marker: "Custom orchestrated ASTRA policy",
+    path:
+      process.env.OPENCODE_ASTRA_ORCHESTRATOR_PROMPT ||
+      join(CONFIG_DIR, "prompts", "orchestrator-astra.md"),
   },
   "openai/gpt-6-dnd-edition": {
     marker: "Custom DnD Edition policy",

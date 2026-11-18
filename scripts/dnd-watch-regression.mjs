@@ -209,7 +209,7 @@ const cleanup = await plugin.setup({
 })
 try {
   // dnd_watch exists only in the D&D lane; other lanes never pay for its schema.
-  const coding = { agent: "build", model: { providerID: "openai", id: "gpt-6-sol-direct" }, tools: { dnd_watch: {}, read: {} } }
+  const coding = { agent: "build", model: { providerID: "openai", id: "gpt-6.2-sol-direct" }, tools: { dnd_watch: {}, read: {} } }
   await contextHook(coding)
   assert.deepEqual(Object.keys(coding.tools), ["read"])
   for (const lane of [{ agent: "dnd-narrator", model: { providerID: "openai", id: "gpt-6-dnd-edition" } }, { agent: "build", model: { providerID: "openai", id: "gpt-6-dnd-edition" } }]) {

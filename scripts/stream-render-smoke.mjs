@@ -88,11 +88,11 @@ const uxSource = readFileSync(resolve(root, 'app/ux-controls.js'), 'utf8')
   .replace("if (typeof document !== 'undefined') init()", 'export { currentProfile, restoreDesiredProfile, syncModelSurface }')
 const controls = await import(`data:text/javascript;base64,${Buffer.from(uxSource).toString('base64')}`)
 const button = document.getElementById('modelButton')
-for (const model of [...__smoke.ux.ORCHESTRATED_MODELS, { id: 'qwen3.8-max', providerID: 'bailian-cli' }, { id: 'gpt-6-sol-orchestrated', providerID: 'other' }]) {
+for (const model of [...__smoke.ux.ORCHESTRATED_MODELS, { id: 'qwen3.8-max', providerID: 'bailian-cli' }, { id: 'gpt-6.2-sol-orchestrated', providerID: 'other' }]) {
   state.selected = { id: 'ses_stream', model }
   storage.set('opencode:web:model-profiles-v1', JSON.stringify({ ses_stream: model.label ? 'direct' : 'orchestrated' }))
   controls.restoreDesiredProfile()
-  document.documentElement.dataset.orchestratedModel = 'gpt-6-sol-orchestrated'
+  document.documentElement.dataset.orchestratedModel = 'gpt-6.2-sol-orchestrated'
   button.textContent = model.label || model.id
   controls.syncModelSurface()
   assert.equal(button.textContent, model.label || model.id, 'session model label must survive stale DOM state')
