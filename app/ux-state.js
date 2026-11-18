@@ -4,14 +4,14 @@ export const ORCHESTRATED_MODEL = {
   label: 'Qwen3.8 Max · Orchestrated',
 }
 export const SOL_ORCHESTRATED_MODEL = {
-  id: 'gpt-6-sol-orchestrated',
+  id: 'gpt-6.2-sol-orchestrated',
   providerID: 'openai',
-  label: 'GPT-6 Sol · Orchestrated',
+  label: 'GPT-6.2 Sol · Orchestrated',
 }
 export const ASTRA_ORCHESTRATED_MODEL = {
-  id: 'gpt-6-astra-orchestrated',
+  id: 'gpt-6.2-astra-orchestrated',
   providerID: 'openai',
-  label: 'GPT-6 Astra · Orchestrated',
+  label: 'GPT-6.2 Astra · Orchestrated',
 }
 export const DND_EDITION_MODEL = {
   id: 'gpt-6-dnd-edition',

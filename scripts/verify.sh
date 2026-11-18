@@ -354,11 +354,11 @@ for marker in ('custom.context-lanes', 'orchestrator.md', 'orchestrator-sol.md',
 for marker in ('"bare"', '"lite"', '"normal"', '"full"', 'gpt-6-dnd-edition', 'provider === "ollama"', 'syncManagedOrchestrations', 'setSessionContextClass'):
     if marker not in context_policy_js:
         bad.append(f"context class policy marker missing: {marker}")
-for marker in ('gpt-6-sol', 'gpt-6-sol', 'gpt-6-luna', 'sol-role-builder', 'sol-role-reviewer'):
+for marker in ('gpt-6.2-sol', 'sol-role-builder', 'sol-role-reviewer'):
     if marker not in sol_orchestrator:
         bad.append(f"SOL orchestrator prompt marker missing: {marker}")
-if "gpt-6-sol-fast" in sol_orchestrator:
-    bad.append("SOL orchestrator must not use gpt-6-sol-fast")
+if "gpt-6.2-sol-fast" in sol_orchestrator:
+    bad.append("SOL orchestrator must not use gpt-6.2-sol-fast")
 if not (root / "scripts/rag-mcp.sh").is_file():
     bad.append("missing portable RAG MCP launcher")
 if not (root / "scripts/runtime-smoke.py").is_file():
@@ -487,7 +487,7 @@ expected = {
     "glm-5.2", "deepseek-v4-pro", "deepseek-v4-pro-0813", "deepseek-v4-flash-0731",
 }
 special_ids = {"qwen3.8-orchestrated"}
-openai_special_ids = {"gpt-6-sol-orchestrated", "gpt-6-dnd-edition"}
+openai_special_ids = {"gpt-6.2-sol-orchestrated", "gpt-6.2-astra-orchestrated", "gpt-6-dnd-edition"}
 compat_ids = {"qwen3.8-max-preview"}
 models_map = provider.get("models", {}) if isinstance(provider, dict) else {}
 models = set(models_map)
@@ -514,9 +514,12 @@ if compat.get("modelID") != "qwen3.8-max": bad.append("legacy qwen3.8-max-previe
 special = models_map.get("qwen3.8-orchestrated", {})
 if special.get("modelID") != "qwen3.8-max": bad.append("orchestrated Qwen catalog alias must map to qwen3.8-max")
 if special.get("name") != "Qwen3.8 Max · Orchestrated": bad.append("orchestrated Qwen catalog alias has unexpected label")
-sol_special = providers.get("openai", {}).get("models", {}).get("gpt-6-sol-orchestrated", {}) if isinstance(providers.get("openai"), dict) else {}
-if sol_special.get("modelID") != "gpt-6-sol": bad.append("orchestrated SOL catalog alias must map to gpt-6-sol")
-if sol_special.get("name") != "GPT-6 Sol · Orchestrated": bad.append("orchestrated SOL catalog alias has unexpected label")
+sol_special = providers.get("openai", {}).get("models", {}).get("gpt-6.2-sol-orchestrated", {}) if isinstance(providers.get("openai"), dict) else {}
+if sol_special.get("modelID") != "gpt-6.2-sol": bad.append("orchestrated SOL catalog alias must map to gpt-6.2-sol")
+if sol_special.get("name") != "GPT-6.2 Sol · Orchestrated": bad.append("orchestrated SOL catalog alias has unexpected label")
+astra_special = providers.get("openai", {}).get("models", {}).get("gpt-6.2-astra-orchestrated", {}) if isinstance(providers.get("openai"), dict) else {}
+if astra_special.get("modelID") != "gpt-6.2-astra": bad.append("orchestrated ASTRA catalog alias must map to gpt-6.2-astra")
+if astra_special.get("name") != "GPT-6.2 Astra · Orchestrated": bad.append("orchestrated ASTRA catalog alias has unexpected label")
 dnd_special = providers.get("openai", {}).get("models", {}).get("gpt-6-dnd-edition", {}) if isinstance(providers.get("openai"), dict) else {}
 if dnd_special.get("modelID") != "gpt-6-luna": bad.append("DnD Edition catalog alias must map to gpt-6-luna")
 if dnd_special.get("name") != "GPT-6 · DnD Edition": bad.append("DnD Edition catalog alias has unexpected label")
@@ -564,14 +567,14 @@ role_routes = {
 }
 role_routes.update({
     "sol-fast-reader": "openai/gpt-6-luna-direct#xhigh",
-    "sol-role-builder": "openai/gpt-6-sol-direct#medium",
-    "sol-role-builder-high": "openai/gpt-6-sol-direct#high",
-    "sol-role-builder-max": "openai/gpt-6-sol-direct#max",
-    "sol-role-reviewer": "openai/gpt-6-luna-direct#xhigh",
-    "sol-role-reviewer-max": "openai/gpt-6-luna-direct#max",
+    "sol-role-builder": "openai/gpt-6.2-sol-direct#medium",
+    "sol-role-builder-high": "openai/gpt-6.2-sol-direct#high",
+    "sol-role-builder-max": "openai/gpt-6.2-sol-direct#max",
+    "sol-role-reviewer": "openai/gpt-6.2-astra-direct#high",
+    "sol-role-reviewer-max": "openai/gpt-6.2-astra-direct#max",
     "dnd-narrator": "openai/gpt-6-dnd-edition#auto",
     "dnd-narrator-high": "openai/gpt-6-luna-direct#xhigh",
-    "dnd-narrator-max": "openai/gpt-6-sol-orchestrated#xhigh",
+    "dnd-narrator-max": "openai/gpt-6.2-sol-orchestrated#xhigh",
     "dnd-planner": "openai/gpt-6-luna-direct#xhigh",
     "dnd-memory": "openai/gpt-6-luna-direct#low",
     "dnd-reader": "openai/gpt-6-luna-direct#low",

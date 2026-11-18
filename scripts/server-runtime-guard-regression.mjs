@@ -512,7 +512,7 @@ try {
   const bareDnd = {
     sessionID: 'ses_dnd_bare',
     agent: 'dnd-narrator',
-    model: { providerID: 'openai', id: 'gpt-6-sol' },
+    model: { providerID: 'openai', id: 'gpt-6.2-sol' },
     system: [
       { type: 'text', text: 'keep-this-non-runtime-part' },
       {

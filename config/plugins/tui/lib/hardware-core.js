@@ -65,7 +65,9 @@ export function resolveModel(models, family, desired = "xhigh", override) {
   let model
   if (override) model = entries.find(item => item.id === override || item.modelID === override)
   else {
-    model = entries.find(item => item.id === `gpt-6-${family}-direct`) ||
+    model = entries.find(item => item.id === `gpt-6.2-${family}-direct`) ||
+      entries.find(item => item.id === `gpt-6-${family}-direct`) ||
+      entries.find(item => item.id === `gpt-6.2-${family}`) ||
       entries.find(item => item.id === `gpt-6-${family}`) ||
       entries.find(item => new RegExp(`(?:^|[-\\s·])${family}(?:$|[-\\s·])`, "i").test(`${item.id} ${item.name || ""}`))
   }

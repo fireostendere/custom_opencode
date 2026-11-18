@@ -61,6 +61,7 @@ PROFILE_IDS = {
     "build",
     "architect",
     "sol-orchestrated",
+    "astra-orchestrated",
     "sol-review",
     "dnd-edition",
     "critical",
@@ -71,7 +72,8 @@ PROFILE_IDS = {
 PROFILE_ALIASES = {
     "orchestrated": "architect",
     "qwen3.8-orchestrated": "architect",
-    "gpt-6-sol-orchestrated": "sol-orchestrated",
+    "gpt-6.2-sol-orchestrated": "sol-orchestrated",
+    "gpt-6.2-astra-orchestrated": "astra-orchestrated",
     "gpt-6-dnd-edition": "dnd-edition",
 }
 
@@ -92,7 +94,7 @@ LEGACY_AGENT_ALIASES = {"build-direct": "build", "plan-direct": "plan"}
 # The web composer reports only these coarse profiles. For them the session's
 # selected model is authoritative (see _profile_for_selected_model).
 CLIENT_PROFILES = {"direct", "orchestrated"}
-MODEL_OWNED_PROFILES = ("dnd-edition", "architect", "sol-orchestrated")
+MODEL_OWNED_PROFILES = ("dnd-edition", "architect", "sol-orchestrated", "astra-orchestrated")
 
 
 def _profile_for_selected_model(requested: Any, selected: str | None) -> str:

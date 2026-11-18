@@ -318,7 +318,8 @@ function syncProjectModelOptions() {
   const available = (ref) => !models.length || models.some((model) => `${model?.providerID}/${model?.id}` === ref)
   const options = new Map([['inherit', 'Оставить выбранную']])
   if (available('bailian-cli/qwen3.8-orchestrated')) options.set('orchestrated', 'Qwen 3.8 Max · Оркестрированная')
-  if (available('openai/gpt-6-sol-orchestrated')) options.set('sol-orchestrated', 'GPT-6 Sol · Оркестрированная')
+  if (available('openai/gpt-6.2-sol-orchestrated')) options.set('sol-orchestrated', 'GPT-6.2 Sol · Оркестрированная')
+  if (available('openai/gpt-6.2-astra-orchestrated')) options.set('astra-orchestrated', 'GPT-6.2 Astra · Оркестрированная')
   for (const model of models) {
     const provider = String(model?.providerID || '')
     const id = String(model?.id || '')
@@ -372,7 +373,7 @@ async function applyProjectDefaultsOnce(sessionID = state.sessionID) {
   if (state.sessionID !== sessionID) return
   if(manuallySelected()){setSessionMark(key);return}
   const settings = state.settings
-  const ref = ({ orchestrated:'bailian-cli/qwen3.8-orchestrated', 'sol-orchestrated':'openai/gpt-6-sol-orchestrated' })[settings.defaultModel] || settings.defaultModel
+  const ref = ({ orchestrated:'bailian-cli/qwen3.8-orchestrated', 'sol-orchestrated':'openai/gpt-6.2-sol-orchestrated', 'astra-orchestrated':'openai/gpt-6.2-astra-orchestrated' })[settings.defaultModel] || settings.defaultModel
   if (typeof ref === 'string' && ref.includes('/') && !await chooseConcreteModel(ref)) return
   if (state.sessionID !== sessionID) return
   setSessionMark(key)

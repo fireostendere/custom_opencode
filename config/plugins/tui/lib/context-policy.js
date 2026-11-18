@@ -21,7 +21,8 @@ const AGENT_DEFAULTS = new Map([
 
 const MODEL_DEFAULTS = new Map([
   ["bailian-cli/qwen3.8-orchestrated", "full"],
-  ["openai/gpt-6-sol-orchestrated", "full"],
+  ["openai/gpt-6.2-sol-orchestrated", "full"],
+  ["openai/gpt-6.2-astra-orchestrated", "full"],
   ["openai/gpt-6-dnd-edition", "bare"],
   ["bailian-cli/qwen3.8-flash", "lite"],
 ])

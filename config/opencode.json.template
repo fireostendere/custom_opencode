@@ -87,9 +87,9 @@
     },
     "openai": {
       "models": {
-        "gpt-6-sol-orchestrated": {
-          "modelID": "gpt-6-sol",
-          "name": "GPT-6 Sol · Orchestrated",
+        "gpt-6.2-sol-orchestrated": {
+          "modelID": "gpt-6.2-sol",
+          "name": "GPT-6.2 Sol · Orchestrated",
           "capabilities": {
             "tools": true,
             "input": [
@@ -169,9 +169,173 @@
             }
           ]
         },
-        "gpt-6-sol-direct": {
-          "modelID": "gpt-6-sol",
-          "name": "GPT-6 Sol · Direct",
+        "gpt-6.2-sol-direct": {
+          "modelID": "gpt-6.2-sol",
+          "name": "GPT-6.2 Sol · Direct",
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "input": 272000,
+            "output": 128000
+          },
+          "variants": [
+            {
+              "id": "none",
+              "settings": {
+                "reasoningEffort": "none",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            },
+            {
+              "id": "low",
+              "settings": {
+                "reasoningEffort": "low",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            },
+            {
+              "id": "medium",
+              "settings": {
+                "reasoningEffort": "medium",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            },
+            {
+              "id": "high",
+              "settings": {
+                "reasoningEffort": "high",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            },
+            {
+              "id": "xhigh",
+              "settings": {
+                "reasoningEffort": "xhigh",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            },
+            {
+              "id": "max",
+              "settings": {
+                "reasoningEffort": "max",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            }
+          ]
+        },
+        "gpt-6.2-astra-orchestrated": {
+          "modelID": "gpt-6.2-astra",
+          "name": "GPT-6.2 Astra · Orchestrated",
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "input": 272000,
+            "output": 128000
+          },
+          "variants": [
+            {
+              "id": "none",
+              "settings": {
+                "reasoningEffort": "none",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            },
+            {
+              "id": "low",
+              "settings": {
+                "reasoningEffort": "low",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            },
+            {
+              "id": "medium",
+              "settings": {
+                "reasoningEffort": "medium",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            },
+            {
+              "id": "high",
+              "settings": {
+                "reasoningEffort": "high",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            },
+            {
+              "id": "xhigh",
+              "settings": {
+                "reasoningEffort": "xhigh",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            },
+            {
+              "id": "max",
+              "settings": {
+                "reasoningEffort": "max",
+                "reasoningSummary": "auto",
+                "include": [
+                  "reasoning.encrypted_content"
+                ]
+              }
+            }
+          ]
+        },
+        "gpt-6.2-astra-direct": {
+          "modelID": "gpt-6.2-astra",
+          "name": "GPT-6.2 Astra · Direct",
           "capabilities": {
             "tools": true,
             "input": [
@@ -1265,32 +1429,32 @@
       ]
     },
     "sol-role-builder": {
-      "description": "OpenAI GPT-6 Sol builder at medium effort for SOL orchestration.",
+      "description": "OpenAI GPT-6.2 Sol builder at medium effort for SOL orchestration.",
       "mode": "subagent",
-      "model": "openai/gpt-6-sol-direct#medium",
+      "model": "openai/gpt-6.2-sol-direct#medium",
       "steps": 30,
       "system": "Own the bounded implementation package. Edit, test and fix. Preserve the accepted plan and return a compact checkpoint. Do not spawn another builder."
     },
     "sol-role-builder-high": {
-      "description": "OpenAI GPT-6 Sol builder at high effort after a meaningful failed attempt.",
+      "description": "OpenAI GPT-6.2 Sol builder at high effort after a meaningful failed attempt.",
       "mode": "subagent",
       "hidden": true,
-      "model": "openai/gpt-6-sol-direct#high",
+      "model": "openai/gpt-6.2-sol-direct#high",
       "steps": 36,
       "system": "Own the bounded implementation package. Edit, test and fix. Preserve the accepted plan and return a compact checkpoint. Do not spawn another builder."
     },
     "sol-role-builder-max": {
-      "description": "OpenAI GPT-6 Sol builder at maximum effort for exceptional implementation difficulty.",
+      "description": "OpenAI GPT-6.2 Sol builder at maximum effort for exceptional implementation difficulty.",
       "mode": "subagent",
       "hidden": true,
-      "model": "openai/gpt-6-sol-direct#max",
+      "model": "openai/gpt-6.2-sol-direct#max",
       "steps": 40,
       "system": "Own the bounded implementation package. Edit, test and fix. Preserve the accepted plan and return a compact checkpoint. Do not spawn another builder."
     },
     "sol-role-reviewer": {
-      "description": "OpenAI GPT-6 Luna independent read-only reviewer for SOL orchestration.",
+      "description": "OpenAI GPT-6.2 Astra independent read-only reviewer for orchestration.",
       "mode": "subagent",
-      "model": "openai/gpt-6-luna-direct#xhigh",
+      "model": "openai/gpt-6.2-astra-direct#high",
       "steps": 18,
       "system": "Review independently and read-only. Focus on correctness, regressions, security, concurrency and missing tests. Return findings only with evidence and confidence. Do not edit.",
       "permissions": [
@@ -1347,10 +1511,10 @@
       ]
     },
     "sol-role-reviewer-max": {
-      "description": "OpenAI GPT-6 Luna critical read-only reviewer for SOL orchestration.",
+      "description": "OpenAI GPT-6.2 Astra critical read-only reviewer for orchestration.",
       "mode": "subagent",
       "hidden": true,
-      "model": "openai/gpt-6-luna-direct#max",
+      "model": "openai/gpt-6.2-astra-direct#max",
       "steps": 22,
       "system": "Review independently and read-only. Focus on correctness, regressions, security, concurrency and missing tests. Return findings only with evidence and confidence. Do not edit.",
       "permissions": [
@@ -1740,7 +1904,7 @@
     "dnd-narrator-max": {
       "description": "Exceptional live D&D narrator. Use only authoritative ODM tools and confirmed receipts. Do not code, edit, browse, or administer.",
       "mode": "subagent",
-      "model": "openai/gpt-6-sol-orchestrated#xhigh",
+      "model": "openai/gpt-6.2-sol-orchestrated#xhigh",
       "steps": 16,
       "system": "Exceptional live D&D narrator. If the namespaced ODM narrator tool is not listed, call mcp_discover with query odm_narrator_odm_narrator, then use only odm_narrator_odm_narrator. Use only authoritative ODM tools and confirmed receipts. Do not code, edit, browse, or administer.",
       "permissions": [

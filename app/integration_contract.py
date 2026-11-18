@@ -33,7 +33,8 @@ def contract() -> dict[str, Any]:
             "modelProfiles": [
                 "direct",
                 "qwen3.8-orchestrated",
-                "gpt-6-sol-orchestrated",
+                "gpt-6.2-sol-orchestrated",
+                "gpt-6.2-astra-orchestrated",
                 "gpt-6-dnd-edition",
             ],
             "orchestrationLivesInModelProfile": True,

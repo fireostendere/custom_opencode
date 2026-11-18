@@ -25,7 +25,7 @@ APP = Path(__file__).resolve().parents[1] / "app"
 TYPES = {".js": "text/javascript", ".css": "text/css", ".html": "text/html; charset=utf-8", ".png": "image/png",
          ".svg": "image/svg+xml", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json"}
 QWEN = {"providerID": "bailian-cli", "id": "qwen3.8-max"}
-SOL = {"providerID": "openai", "id": "gpt-6-sol"}
+SOL = {"providerID": "openai", "id": "gpt-6.2-sol"}
 AGENTS = [
     {"id": "build", "name": "build", "mode": "primary"},
     {"id": "plan", "name": "plan", "mode": "primary"},
@@ -35,7 +35,7 @@ AGENTS = [
 ]
 MODELS = [
     {"providerID": "bailian-cli", "id": "qwen3.8-max", "name": "Qwen3.8 Max", "enabled": True, "cost": [{"input": 1, "output": 1}], "limit": {"context": 262144}},
-    {"providerID": "openai", "id": "gpt-6-sol", "name": "GPT-6 Sol", "enabled": True, "cost": [{"input": 1, "output": 1}], "variants": {"low": {}, "high": {}}},
+    {"providerID": "openai", "id": "gpt-6.2-sol", "name": "GPT-6.2 Sol", "enabled": True, "cost": [{"input": 1, "output": 1}], "variants": {"low": {}, "high": {}}},
     {"providerID": "bailian-cli", "id": "qwen3.8-orchestrated", "name": "Qwen3.8 Max · Orchestrated", "enabled": True, "cost": [{"input": 1, "output": 1}]},
 ]
 ORCHESTRATED = {"providerID": "bailian-cli", "id": "qwen3.8-orchestrated"}
@@ -295,7 +295,7 @@ def stale_override_expires(browser) -> None:
     time.sleep(3.5)
     page.click("#modelButton")
     time.sleep(1.0)
-    page.click('#modelChoices [data-model="gpt-6-sol"][data-provider="openai"]')
+    page.click('#modelChoices [data-model="gpt-6.2-sol"][data-provider="openai"]')
     time.sleep(1.5)
     world.sessions["s0"]["model"] = {**SOL, "variant": "high"}  # backend normalises the variant
     time.sleep(2.5)
@@ -316,10 +316,10 @@ def direct_pick_from_orchestrated_chat(browser) -> None:
     check(page.evaluate("document.documentElement.dataset.orchestratedModel") == "qwen3.8-orchestrated", "an orchestrated chat must mark its profile on <html>")
     page.click("#modelButton")
     time.sleep(1.0)
-    page.click('#modelChoices [data-model="gpt-6-sol"][data-provider="openai"] .choice-title')
+    page.click('#modelChoices [data-model="gpt-6.2-sol"][data-provider="openai"] .choice-title')
     time.sleep(1.5)
     writes = world.requests(lambda row: row["method"] == "POST" and row["path"] == "/api/session/s0/model")
-    check([row["body"]["model"]["id"] for row in writes] == ["gpt-6-sol"], f"picking a model in an orchestrated chat wrote {writes}")
+    check([row["body"]["model"]["id"] for row in writes] == ["gpt-6.2-sol"], f"picking a model in an orchestrated chat wrote {writes}")
     check(not page.evaluate("document.getElementById('modelDialog').open"), "the model dialog must close after a successful pick")
     check("Sol" in page.evaluate("document.getElementById('modelButton').textContent"), "the chip must show the picked model")
     page.close()
@@ -359,7 +359,7 @@ def chip_menu_mouse_and_keyboard(browser) -> None:
 def project_defaults_only_new_chats(browser) -> None:
     def setup(world: World) -> None:
         world.add("e1", messages=[])
-        world.settings = {"defaultModel": "openai/gpt-6-sol"}
+        world.settings = {"defaultModel": "openai/gpt-6.2-sol"}
     world, base, page = scenario(browser, setup)
     page.goto(f"{base}/#/session/e1")
     time.sleep(4)
