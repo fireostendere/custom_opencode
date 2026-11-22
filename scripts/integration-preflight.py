@@ -177,10 +177,6 @@ def run() -> dict[str, Any]:
     if tools != required_tools:
         errors.append("integration contract RAG tool set does not match server gate")
 
-    prep = ROOT / "docs/integration-prep-20260829.md"
-    if not prep.is_file():
-        warnings.append("missing integration handoff documentation")
-
     return {
         "ok": not errors,
         "root": str(ROOT),

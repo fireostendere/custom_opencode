@@ -11,12 +11,17 @@
 - [Server Runtime V3](server-runtime-v3.md) — durable tasks/checkpoints, capability registry, adaptive scheduler, native compaction, AST/embedding repo index, MCP Code Mode gateway, sandbox/secret boundary, shared RAG, worktrees, replay и telemetry.
 - [Server Runtime V2](server-runtime-v2.md) — фундамент task/control runtime и история перехода к V3.
 - [Permission control plane](control-plane.md) — R0–R4 risk policy, safe auto-approval, project rules и audit.
+- [Контракты контекста, бюджетов и политики](runtime-contracts.md) — что гарантирует context hook, как считается root budget, отложенные MCP-схемы и policy server.
 - [Модели и routing](models-and-routing.md) — web Build, TUI Plan, direct/server profiles, adaptive local/cloud routing и orchestration.
+- [Role routing и reasoning effort](model-routing-effort.md) — provider-locked стек ролей и уровни reasoning effort.
+- [MCP profiles](mcp-profiles.md) — профили MCP-серверов и автоматическое восстановление соединений.
+- [Universal Tool Fabric](tool-fabric.md) — опциональный workspace-scoped MCP-фасад для приватных слоёв инструментов.
+- [GPT-6 · Hardware Edition](hardware-orchestration.md) — native-профиль для инженерной работы с локальным `kb` RAG и DipTrace MCP.
 - [Интеграция RAG](rag.md) — `mcp-rag`, lifecycle и server-managed retrieval.
 - [`/rag-start`](rag-start.md) — запуск/проверка RAG без LLM-токенов.
 - [Эксплуатация и recovery](operations.md) — systemd, update, backup, logs и recovery.
+- [Проверка и тесты](testing.md) — `verify.sh`, матрица, CI, правило для новых тестов и ручные проверки.
 - [Troubleshooting](troubleshooting.md) — типовые симптомы, включая login/theme/mobile cases.
-- [Исправления памяти — 20 октября 2026](memory-fixes-2026-10-20.md) — lifecycle вложений, лимиты кэшей, потоковое чтение и memory regression.
 - [TUI add wizard](tui-add-wizard.md) — `/add` для provider/model/MCP/skill/orchestration, тестовые сценарии и regression.
 - [TUI server wizard](tui-server-wizard.md) — `/server` для управления web server: статус, запуск/остановка, автозапуск, порт/адрес, пользователи.
 - [VSCode: хоткеи терминала](vscode-terminal.md) — проброс `ctrl+f/p/r/b` в OpenCode TUI вместо команд VSCode (перехват по фокусу).
