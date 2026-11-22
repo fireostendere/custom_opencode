@@ -74,7 +74,7 @@ with tempfile.TemporaryDirectory() as temp:
         assert sent == {"ok": True, "accepted": True}, sent
     server_workflow.features._forget_session_directory()
 
-    base = server_workflow.rag.plus.ext.base
+    base = server_workflow.base
     with patch.object(base.time, "time", return_value=2_000_000_000):
         assert base.issue_session_token(300) != base.issue_session_token(300)
     server = base.ThreadingHTTPServer(("127.0.0.1", 0), server_workflow.Handler)
@@ -376,7 +376,7 @@ with tempfile.TemporaryDirectory() as temp:
         assert reply.count(b"HTTP/1.1 200") == 2, reply[:300]
 
         # ---- login.html next= must stay same-origin (open redirect) ----
-        login_js = (ROOT / "app/login.js").read_text(encoding="utf-8")
+        login_js = (ROOT / "app/web/login.js").read_text(encoding="utf-8")
         function = re.search(r"function sameOriginTarget\(value\) \{.*?\n\}\n", login_js, re.S)
         assert function, "login.js must validate next= with the URL parser"
         probe = function.group(0) + r"""

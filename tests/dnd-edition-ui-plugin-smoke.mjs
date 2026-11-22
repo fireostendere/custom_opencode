@@ -35,7 +35,7 @@ const direct = { model: { providerID: 'openai', id: 'gpt-6.2-sol-direct' }, syst
 await hook(direct)
 assert.equal(direct.system.length, 0, 'ordinary SOL must stay direct')
 
-let ux = await readFile(new URL('app/ux-state.js', root), 'utf8')
+let ux = await readFile(new URL('app/web/ux-state.js', root), 'utf8')
 const uxState = await import(`data:text/javascript;base64,${Buffer.from(ux).toString('base64')}`)
 assert.equal(uxState.agentFor('build', 'dnd-edition'), 'dnd-narrator')
 assert.equal(uxState.agentFor('build', 'direct'), 'build', 'direct models use the visible native agent')
@@ -43,7 +43,7 @@ assert.equal(uxState.agentFor('build', 'orchestrated'), 'build')
 assert.equal(uxState.profileFromAgent('dnd-narrator'), 'dnd-edition')
 assert.equal(uxState.profileFromAgent('build-direct'), 'direct')
 
-const dashboard = await readFile(new URL('app/runtime-dashboard.js', root), 'utf8')
+const dashboard = await readFile(new URL('app/web/runtime-dashboard.js', root), 'utf8')
 assert.match(dashboard, /gpt-6-dnd-edition':'dnd-edition/)
 assert.match(dashboard, /DnD Edition · ODM/)
 console.log('DnD Edition UI/plugin contract passed')

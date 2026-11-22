@@ -103,9 +103,9 @@ print("  ✓ list_users works correctly")
 # Test legacy issue_session_token compatibility
 print("\nTest 5: Legacy issue_session_token compatibility")
 try:
-    token_legacy = server_workflow.rag.plus.ext.base.issue_session_token(300)
+    token_legacy = server_workflow.base.issue_session_token(300)
     print(f"  ✓ issue_session_token(300) works (legacy)")
-    token_new = server_workflow.rag.plus.ext.base.issue_session_token(300, "alice")
+    token_new = server_workflow.base.issue_session_token(300, "alice")
     print(f"  ✓ issue_session_token(300, 'alice') works (new)")
 except Exception as e:
     print(f"  ✗ issue_session_token failed: {e}")
@@ -236,7 +236,7 @@ try:
 
     # Test 7: Env-password rotation invalidates env-user v2 tokens
     print("\nTest 7: Env-password rotation")
-    base = server_workflow.rag.plus.ext.base
+    base = server_workflow.base
     old_password = base.CLIENT_PASSWORD
     
     # Issue env-user v2 token with current password

@@ -41,8 +41,8 @@ OpenCode остаётся execution/model backend; `custom_opencode` управ�
 
 ```text
 server.py
-  └── server_ext.py
-        └── server_plus.py
+  └── server_limits.py
+        └── server_projects.py
               ├── server_rag.py
               └── server_features.py
                     ↓ composed by
@@ -51,9 +51,9 @@ server.py
 
 `server.py` — custom cookie auth, optional legacy Basic compatibility, same-origin proxy, quick-session isolation и scratch cleanup.
 
-`server_ext.py` — provider-limit bridges.
+`server_limits.py` — provider-limit bridges.
 
-`server_plus.py` — constrained host-directory browser, symlink containment и общие backend helpers.
+`server_projects.py` — constrained host-directory browser, symlink containment и общие backend helpers.
 
 `server_rag.py` — `/rag-start`, MCP workspace routing, dynamic `kb` connect и persisted RAG enablement.
 

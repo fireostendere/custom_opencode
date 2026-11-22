@@ -63,7 +63,7 @@ def main() -> int:
     try:
         import server_workflow
 
-        base = server_workflow.rag.plus.ext.base
+        base = server_workflow.base
         host = str(base.WEB_HOST).strip("[]")
         if host in {"0.0.0.0", "::"}:
             host = "localhost"
@@ -137,7 +137,7 @@ def main() -> int:
             import server_workflow
 
             target = server_workflow.rag._v2_workspace_target(
-                "/api/plugin", str(server_workflow.rag.plus.ext.base.SCRATCH_ROOT)
+                "/api/plugin", str(server_workflow.base.SCRATCH_ROOT)
             )
             plugins = server_workflow.features._data(
                 server_workflow.features._backend_request_json("GET", target, timeout=8.0)

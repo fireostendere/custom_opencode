@@ -8,7 +8,7 @@ if [[ -z "$PYTHON3" ]]; then echo "python3 is required" >&2; exit 1; fi
 if [[ -z "$NODE" ]]; then echo "node is required" >&2; exit 1; fi
 
 "$PYTHON3" -m py_compile \
-  "$ROOT/app/server.py" "$ROOT/app/server_ext.py" "$ROOT/app/server_plus.py" \
+  "$ROOT/app/server.py" "$ROOT/app/server_limits.py" "$ROOT/app/server_projects.py" \
   "$ROOT/app/server_rag.py" "$ROOT/app/server_features.py" "$ROOT/app/server_control.py" \
   "$ROOT/app/server_workflow.py" "$ROOT/app/server_runtime.py" "$ROOT/app/runtime_store.py" \
   "$ROOT/app/model_registry.py" "$ROOT/app/repo_services.py" "$ROOT/app/runtime_resume.py" "$ROOT/app/dnd_watch.py" \
@@ -43,7 +43,7 @@ import sys
 
 sys.path.insert(0, sys.argv[1])
 import server
-import server_plus
+import server_projects
 
 workspace = server.allocate_scratch_directory()
 assert workspace.startswith(str(server.SCRATCH_ROOT) + os.sep)
@@ -93,20 +93,20 @@ projects = json.loads(server.transform_json_response("GET", "/api/project", json
 ]).encode()))
 assert [p["id"] for p in projects] == ["real", server.SCRATCH_PROJECT_ID], projects
 
-root = server_plus.directory_snapshot()
+root = server_projects.directory_snapshot()
 assert len(root["roots"]) == 1
 projects_root = root["roots"][0]["path"]
-listing = server_plus.directory_snapshot(projects_root)
+listing = server_projects.directory_snapshot(projects_root)
 names = {item["name"] for item in listing["directories"]}
 assert "alpha" in names
 assert "escape-link" not in names
-outside = server_plus.directory_snapshot(os.path.dirname(projects_root))
+outside = server_projects.directory_snapshot(os.path.dirname(projects_root))
 assert outside.get("error") == "directory-outside-allowed-roots"
 print("Session isolation + project-browser boundary self-check passed")
 PY
 # HOME stays inside WORKSPACE_TEST_ROOT for every test below; the EXIT trap removes it.
 
-for file in "$ROOT/app/"*.js "$ROOT/config/events.js" "$ROOT/config/plugins/"*.js; do
+for file in "$ROOT/app/web/"*.js "$ROOT/config/events.js" "$ROOT/config/plugins/"*.js; do
   "$NODE" --check "$file"
 done
 "$NODE" "$ROOT/tests/web-smoke.mjs"
@@ -219,19 +219,19 @@ import sys
 root = Path(sys.argv[1])
 bad: list[str] = []
 
-index = (root / "app/index.html").read_text(encoding="utf-8")
+index = (root / "app/web/index.html").read_text(encoding="utf-8")
 required_web = [
     "styles.css", "api.js", "markdown.js", "app.js", "enhancements.css",
     "enhancements.js", "ui-enhancements.css", "ui-enhancements.js", "rag-control.js",
     "design-system.css", "sidebar-resize.js",
-    "sw.js", "server.py", "server_ext.py",
-    "server_plus.py", "server_rag.py", "server_features.py", "server_control.py",
+    "sw.js", "server.py", "server_limits.py",
+    "server_projects.py", "server_rag.py", "server_features.py", "server_control.py",
     "server_workflow.py", "server_runtime.py", "runtime_store.py", "model_registry.py",
     "repo_services.py", "runtime_resume.py", "runtime-dashboard.js", "runtime-dashboard.css",
 ]
 for name in required_web:
-    if not (root / "app" / name).is_file():
-        bad.append(f"missing web module: app/{name}")
+    if not (root / ("app" if name.endswith(".py") else "app/web") / name).is_file():
+        bad.append(f"missing web module: {name}")
 for script in (
     '<script type="module" src="/app.js"></script>',
     '<script type="module" src="/rag-control.js"></script>',
@@ -251,7 +251,7 @@ if 'id="providerLimits"' not in index or 'id="slashPalette"' not in index:
     bad.append("index.html must expose provider limits and slash palette surfaces")
 if 'id="modelSearch" placeholder="Поиск моделей…"' not in index:
     bad.append("model picker must expose searchable catalog")
-if "if(!window.matchMedia('(max-width: 760px)').matches)$('modelSearch').focus()" not in (root / "app/app.js").read_text(encoding="utf-8"):
+if "if(!window.matchMedia('(max-width: 760px)').matches)$('modelSearch').focus()" not in (root / "app/web/app.js").read_text(encoding="utf-8"):
     bad.append("model picker must not auto-open the mobile keyboard")
 inline = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", index, re.S | re.I)
 if any(chunk.strip() for chunk in inline):
@@ -259,16 +259,16 @@ if any(chunk.strip() for chunk in inline):
 if len(index.encode()) > 24_000:
     bad.append("index.html grew beyond 24 KB; keep application code in modules")
 
-app_js = (root / "app/app.js").read_text(encoding="utf-8")
-api_js = (root / "app/api.js").read_text(encoding="utf-8")
-markdown_js = (root / "app/markdown.js").read_text(encoding="utf-8")
-enhancements_js = (root / "app/enhancements.js").read_text(encoding="utf-8")
-ui_js = (root / "app/ui-enhancements.js").read_text(encoding="utf-8")
-rag_control_js = (root / "app/rag-control.js").read_text(encoding="utf-8")
-runtime_dashboard_js = (root / "app/runtime-dashboard.js").read_text(encoding="utf-8")
-runtime_dashboard_css = (root / "app/runtime-dashboard.css").read_text(encoding="utf-8")
-server_ext_py = (root / "app/server_ext.py").read_text(encoding="utf-8")
-server_plus_py = (root / "app/server_plus.py").read_text(encoding="utf-8")
+app_js = (root / "app/web/app.js").read_text(encoding="utf-8")
+api_js = (root / "app/web/api.js").read_text(encoding="utf-8")
+markdown_js = (root / "app/web/markdown.js").read_text(encoding="utf-8")
+enhancements_js = (root / "app/web/enhancements.js").read_text(encoding="utf-8")
+ui_js = (root / "app/web/ui-enhancements.js").read_text(encoding="utf-8")
+rag_control_js = (root / "app/web/rag-control.js").read_text(encoding="utf-8")
+runtime_dashboard_js = (root / "app/web/runtime-dashboard.js").read_text(encoding="utf-8")
+runtime_dashboard_css = (root / "app/web/runtime-dashboard.css").read_text(encoding="utf-8")
+server_ext_py = (root / "app/server_limits.py").read_text(encoding="utf-8")
+server_projects_py = (root / "app/server_projects.py").read_text(encoding="utf-8")
 server_rag_py = (root / "app/server_rag.py").read_text(encoding="utf-8")
 server_runtime_py = (root / "app/server_runtime.py").read_text(encoding="utf-8")
 server_workflow_py = (root / "app/server_workflow.py").read_text(encoding="utf-8")
@@ -323,7 +323,7 @@ for marker in ("isFreeModel", "Бесплатные модели", "/client-dire
     if marker not in ui_js:
         bad.append(f"web model/project enhancement missing: {marker}")
 for marker in ("OPENCODE_PROJECT_ROOTS", "directory-outside-allowed-roots"):
-    if marker not in server_plus_py:
+    if marker not in server_projects_py:
         bad.append(f"project browser boundary missing: {marker}")
 for marker in ("knowledge_base.runtime", "/api/mcp", "RAG_SERVER", "_connect_rag", "?{urlencode({'location[directory]': directory})}"):
     if marker not in server_rag_py:

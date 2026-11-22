@@ -81,7 +81,7 @@ systemctl --user restart opencode-web-client.service
 Обычно это invalid/missing runtime environment или ошибка Python import.
 
 ```bash
-python3 -m py_compile app/server.py app/server_ext.py app/server_plus.py app/server_rag.py app/server_features.py app/server_workflow.py
+python3 -m py_compile app/server.py app/server_limits.py app/server_projects.py app/server_rag.py app/server_features.py app/server_workflow.py
 ```
 
 И `.env`:

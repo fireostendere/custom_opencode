@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-const root = new URL('../app/', import.meta.url)
+const root = new URL('../app/web/', import.meta.url)
 const source = (await readFile(new URL('advanced-features.js', root), 'utf8'))
   .replace(/from '\.\/([\w.-]+\.js)'/g, (_, file) => `from '${new URL(file, root).href}'`)
   .replace("if (typeof document !== 'undefined') init()", 'export { state, applyProjectDefaultsOnce, saveProjectSettings }')

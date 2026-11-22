@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 
-const source = readFileSync(new URL('../app/app.js', import.meta.url), 'utf8')
+const source = readFileSync(new URL('../app/web/app.js', import.meta.url), 'utf8')
 const controls = source.slice(source.indexOf('function renderControls(){'), source.indexOf('async function changeModel('))
 const elements = Object.fromEntries(['agentSelect', 'agentControls', 'modelButton', 'variantSelect'].map(id => [id, { dataset:{}, disabled:false }]))
 const state = { selected:{ id:'s0', agent:'review' }, models:[], agents:[{id:'build'}, {id:'plan'}, {id:'review'}, {id:'build-direct', hidden:true}] }

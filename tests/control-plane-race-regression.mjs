@@ -27,8 +27,8 @@ globalThis.MutationObserver = class { observe() {} }
 globalThis.setInterval = () => 1
 globalThis.fetch = (path) => new Promise((resolveResponse) => pending.push({ path, resolveResponse }))
 
-const file = resolve('app/control-plane.js')
-const source = readFileSync(file, 'utf8').replace("'./refresh-coalescer.js'", `'${pathToFileURL(resolve('app/refresh-coalescer.js')).href}'`)
+const file = resolve('app/web/control-plane.js')
+const source = readFileSync(file, 'utf8').replace("'./refresh-coalescer.js'", `'${pathToFileURL(resolve('app/web/refresh-coalescer.js')).href}'`)
 await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
 assert.equal(pending.length, 1)
 

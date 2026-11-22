@@ -95,6 +95,7 @@ GIT_HARDENING_UNDO = harden_git_environment()
 
 
 ROOT = Path(__file__).resolve().parent
+WEB_ROOT = ROOT / "web"  # the static client; Python sources are never under it
 CUSTOM_ENV_FILE = ROOT.parent / ".env"
 DEFAULT_SERVICE_FILE = Path.home() / ".local/state/opencode/service.json"
 DEFAULT_LEGACY_AUTH_FILE = Path.home() / ".config/opencode/mobile-server.env"
@@ -397,7 +398,7 @@ _static_lock = threading.Lock()
 
 
 def static_relative_path(path: str) -> str | None:
-    """Canonical app-relative asset name, or None when it must not be served.
+    """Canonical asset name relative to WEB_ROOT, or None when it must not be served.
 
     Dotfiles, __pycache__, Python sources and any non-asset type are never
     served, and every name has exactly one spelling (bounded cache keys).
@@ -416,7 +417,7 @@ def static_relative_path(path: str) -> str | None:
 
 def _load_static_asset(relative: str) -> StaticAsset | None:
     segments = relative.split("/")
-    directory = ROOT
+    directory = WEB_ROOT
     try:
         for segment in segments:
             # Exact names only: a case-insensitive filesystem must not map
@@ -425,7 +426,7 @@ def _load_static_asset(relative: str) -> StaticAsset | None:
                 return None
             directory = directory / segment
         resolved = directory.resolve(strict=True)
-        inner = resolved.relative_to(ROOT).parts
+        inner = resolved.relative_to(WEB_ROOT).parts
     except (OSError, RuntimeError, ValueError):
         return None
     if not inner or any(part.startswith(".") or part == "__pycache__" for part in inner):

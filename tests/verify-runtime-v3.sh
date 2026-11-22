@@ -16,8 +16,8 @@ NODE=$(command -v node || true)
   "$ROOT/scripts/install-runtime-v3-selftest.py" "$ROOT/tests/context-budget-regression.py" \
   "$ROOT/tests/performance-hot-path-regression.py"
 "$NODE" --check "$ROOT/config/plugins/server-runtime-guard.js"
-"$NODE" --check "$ROOT/app/runtime-v3-dashboard.js"
-"$NODE" --check "$ROOT/app/control-plane.js"
+"$NODE" --check "$ROOT/app/web/runtime-v3-dashboard.js"
+"$NODE" --check "$ROOT/app/web/control-plane.js"
 # Exercise installation with the owner's host opt-in already in the environment.
 OPENCODE_ALLOW_FULL_MACHINE=1 "$PYTHON3" "$ROOT/tests/runtime-v3-smoke.py"
 "$PYTHON3" "$ROOT/tests/context-budget-regression.py"
@@ -54,14 +54,14 @@ required={
   "app/runtime_v3_ext.py":["notification.sent","run-replay","client-mcp-gateway-v3.json","client-runtime-telemetry.json","client-task-sandbox.json","client-worktree-merge.json","worktree.merged","_ownership_root_wrapped"],
   "app/runtime_completion.py":["permission_preview","wasted_retries","branch-state-merged","client-remote-status.json","client-remote-action.json"],
   "app/server_workflow.py":["runtime_v3.install","runtime_v3_ext.install","runtime_completion.install","_send_with_project_context"],
-  "app/runtime-v3-dashboard.js":["client-runtime-telemetry.json","client-repo-index-v3.json","client-session-branch.json","client-session-merge.json","client-task-sandbox.json","client-replay.json","client-worktree-merge.json"],
-  "app/control-plane.js":["decision.preview","serverPreview"],
+  "app/web/runtime-v3-dashboard.js":["client-runtime-telemetry.json","client-repo-index-v3.json","client-session-branch.json","client-session-merge.json","client-task-sandbox.json","client-replay.json","client-worktree-merge.json"],
+  "app/web/control-plane.js":["decision.preview","serverPreview"],
 }
 for name,markers in required.items():
     text=(root/name).read_text(encoding="utf-8")
     for marker in markers:
         if marker not in text: raise SystemExit(f"missing {name} marker: {marker}")
-index=(root/"app/index.html").read_text(encoding="utf-8")
+index=(root/"app/web/index.html").read_text(encoding="utf-8")
 for marker in ('/runtime-v3-dashboard.js','/runtime-v3-dashboard.css'):
     if marker not in index: raise SystemExit(f"missing Runtime V3 UI asset: {marker}")
 text=(root/"config/opencode.json.template").read_text(encoding="utf-8")

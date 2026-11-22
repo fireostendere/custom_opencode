@@ -6,7 +6,7 @@ Server Runtime V2 turns the custom web server from a thin prompt/queue adapter i
 - `app/runtime_store.py` — SQLite/WAL durable state;
 - `app/model_registry.py` — model capabilities, server profiles and resource-aware routing;
 - `app/repo_services.py` — repository/context/artifact/verification helpers;
-- `app/runtime-dashboard.js` / `.css` — Task Center and server-profile UI.
+- `app/web/runtime-dashboard.js` / `.css` — Task Center and server-profile UI.
 
 The legacy `/client-queue.json` contract remains available as a compatibility facade. New work is persisted as runtime tasks.
 

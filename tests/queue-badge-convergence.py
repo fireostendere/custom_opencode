@@ -15,7 +15,7 @@ import pathlib
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SRC = (ROOT / 'app' / 'advanced-features.js').read_text(encoding='utf-8')
+SRC = (ROOT / 'app' / 'web' / 'advanced-features.js').read_text(encoding='utf-8')
 start = SRC.index('function syncQueueBadges()')
 depth = 0
 end = start

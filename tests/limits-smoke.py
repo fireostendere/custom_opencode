@@ -52,7 +52,7 @@ with tempfile.TemporaryDirectory() as temp:
     os.environ["CODEX_BIN"] = str(fake_codex)
     os.environ["BAILIAN_CLI_BIN"] = str(fake_bl)
 
-    import server_ext
+    import server_limits
 
     from io import BytesIO
     from types import SimpleNamespace
@@ -68,48 +68,48 @@ with tempfile.TemporaryDirectory() as temp:
         end_headers=lambda: None,
         wfile=BytesIO(),
     )
-    with patch.object(server_ext, "limits_snapshot", return_value={}) as snapshot_query:
-        server_ext.Handler.do_GET(route)
+    with patch.object(server_limits, "limits_snapshot", return_value={}) as snapshot_query:
+        server_limits.Handler.do_GET(route)
         snapshot_query.assert_called_once_with(["codex"])
-    with patch.object(server_ext, "query_codex_rate_limits") as codex_query:
+    with patch.object(server_limits, "query_codex_rate_limits") as codex_query:
         route.path = "/client-limits.json?sources=unknown"
-        server_ext.Handler.do_GET(route)
+        server_limits.Handler.do_GET(route)
         assert route_replies[-1][0] == 400
         codex_query.assert_not_called()
     route.path = "/client-config.json"
-    with patch.object(server_ext, "qwen_limits_enabled", return_value=False):
-        server_ext.Handler.do_GET(route)
+    with patch.object(server_limits, "qwen_limits_enabled", return_value=False):
+        server_limits.Handler.do_GET(route)
         assert route_replies[-1][1]["alibabaLimitsEnabled"] is False
     route.path = "/client-limit-selection.js"
-    server_ext.Handler.do_GET(route)
+    server_limits.Handler.do_GET(route)
     assert b"selectedLimitIDs" in route.wfile.getvalue()
     route.authenticated = lambda: False
     route.wfile = BytesIO()
-    server_ext.Handler.do_GET(route)
+    server_limits.Handler.do_GET(route)
     assert route_replies[-1] == "unauthorized" and not route.wfile.getvalue()
 
-    with patch.object(server_ext, "query_codex_rate_limits", return_value={"available": True}) as codex_query, \
-         patch.object(server_ext, "query_qwen_status") as qwen_query, \
-         patch.object(server_ext, "query_gemini_status") as gemini_query:
-        selected_snapshot = server_ext.limits_snapshot(["codex"])
+    with patch.object(server_limits, "query_codex_rate_limits", return_value={"available": True}) as codex_query, \
+         patch.object(server_limits, "query_qwen_status") as qwen_query, \
+         patch.object(server_limits, "query_gemini_status") as gemini_query:
+        selected_snapshot = server_limits.limits_snapshot(["codex"])
         assert selected_snapshot["openai"]["available"] is True
         assert "qwen" not in selected_snapshot and "gemini" not in selected_snapshot
         codex_query.assert_called_once()
         qwen_query.assert_not_called()
         gemini_query.assert_not_called()
         codex_query.reset_mock()
-        assert set(server_ext.limits_snapshot([])) == {"generatedAt"}
+        assert set(server_limits.limits_snapshot([])) == {"generatedAt"}
         codex_query.assert_not_called()
         qwen_query.assert_not_called()
         gemini_query.assert_not_called()
 
-    server_ext.base.backend_json = lambda method, target: {
+    server_limits.base.backend_json = lambda method, target: {
         "data": [{"title": "Smoke · Qwen exhausted→08-29 02:00 UTC"}]
     }
-    server_ext._codex_cache.update(at=0.0, value=None)
-    server_ext._bailian_cache.update(at=0.0, value=None)
+    server_limits._codex_cache.update(at=0.0, value=None)
+    server_limits._bailian_cache.update(at=0.0, value=None)
 
-    codex = server_ext.query_codex_rate_limits()
+    codex = server_limits.query_codex_rate_limits()
     assert codex["available"] is True
     assert codex["primary"]["remainingPercent"] == 63
     assert codex["primary"]["windowDurationMins"] == 300
@@ -127,14 +127,14 @@ with tempfile.TemporaryDirectory() as temp:
         " elif r.get('method')=='account/rateLimits/read': print(json.dumps({'id':r['id'],'error':{'message':'temporary quota failure'}}),flush=True)\n",
         encoding="utf-8",
     )
-    server_ext._codex_cache.update(at=0.0, value=None)
-    stale_codex = server_ext.query_codex_rate_limits()
+    server_limits._codex_cache.update(at=0.0, value=None)
+    stale_codex = server_limits.query_codex_rate_limits()
     assert stale_codex["available"] is True
     assert stale_codex["stale"] is True
     assert stale_codex["liveReason"] == "codex-rate-limits-unavailable"
     assert stale_codex["primary"]["remainingPercent"] == 63
 
-    qwen = server_ext.query_qwen_status()
+    qwen = server_limits.query_qwen_status()
     assert qwen["available"] is True
     assert qwen["source"] == "bailian-cli"
     assert qwen["state"] == "ok"
@@ -155,8 +155,8 @@ with tempfile.TemporaryDirectory() as temp:
     )
     fake_bl_expired.chmod(fake_bl_expired.stat().st_mode | stat.S_IXUSR)
     os.environ["BAILIAN_CLI_BIN"] = str(fake_bl_expired)
-    server_ext._bailian_cache.update(at=0.0, value=None)
-    qwen_expired = server_ext.query_qwen_status()
+    server_limits._bailian_cache.update(at=0.0, value=None)
+    qwen_expired = server_limits.query_qwen_status()
     assert qwen_expired["available"] is False
     assert qwen_expired["state"] == "expired"
     assert qwen_expired["reason"] == "session-expired"
@@ -164,13 +164,13 @@ with tempfile.TemporaryDirectory() as temp:
 
     # OPENCODE_LIMITS_QWEN=0 (no Token Plan subscription) never spawns `bl`.
     os.environ["OPENCODE_LIMITS_QWEN"] = "0"
-    server_ext._bailian_cache.update(at=0.0, value=None)
-    assert server_ext.query_qwen_status() == {"available": False, "state": "disabled", "reason": "disabled"}
+    server_limits._bailian_cache.update(at=0.0, value=None)
+    assert server_limits.query_qwen_status() == {"available": False, "state": "disabled", "reason": "disabled"}
     os.environ["OPENCODE_LIMITS_QWEN"] = "1"
 
     # This is a fixture test; a fresh install may have no Google account.
     with patch.dict(os.environ, {"GEMINI_API_KEY": "fixture-gemini-key", "GOOGLE_API_KEY": ""}):
-        gemini = server_ext.query_gemini_status()
+        gemini = server_limits.query_gemini_status()
     assert gemini["available"] is True
     assert gemini["minuteTokens"]["limit"] == 2_000_000
     assert gemini["minuteRequests"]["limit"] == 1_000
@@ -178,8 +178,8 @@ with tempfile.TemporaryDirectory() as temp:
     state_dir = Path(temp) / ".local/state/custom-opencode"
     state_dir.mkdir(parents=True)
     (state_dir / "rate-limit.json").write_text('{"active":true,"seconds":"bad","until":NaN,"limitedBucket":"rpm","limits":{"rpm":17},"usage":{"tokensLastMinute":"bad"}}', encoding="utf-8")
-    with patch.object(server_ext.base.Path, "home", return_value=Path(temp)), patch.dict(os.environ, {"GEMINI_API_KEY": "fixture-gemini-key"}):
-        malformed = server_ext.query_gemini_status()
+    with patch.object(server_limits.base.Path, "home", return_value=Path(temp)), patch.dict(os.environ, {"GEMINI_API_KEY": "fixture-gemini-key"}):
+        malformed = server_limits.query_gemini_status()
     assert malformed["seconds"] == 0 and malformed["minuteRequests"]["limit"] == 17
     assert malformed["minuteRequests"]["usedCredits"] == 17
 

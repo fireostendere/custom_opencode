@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict'
-import { createAdaptivePoller, createRefreshCoalescer } from '../app/refresh-coalescer.js'
+import { createAdaptivePoller, createRefreshCoalescer } from '../app/web/refresh-coalescer.js'
 
 const calls = []
 let releaseFirst

@@ -122,7 +122,7 @@ def serve() -> None:
     from runtime_v3 import _internal_auth, handle_post
 
     runtime, features = production.runtime, production.features
-    base = production.rag.plus.ext.base
+    base = production.base
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "OpenCodePrivatePolicy/1"

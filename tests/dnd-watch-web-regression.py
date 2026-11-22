@@ -54,7 +54,7 @@ with tempfile.TemporaryDirectory() as temp:
     import dnd_watch
     import server_workflow
 
-    base = server_workflow.rag.plus.ext.base
+    base = server_workflow.base
     server_workflow.Handler.log_message = lambda self, *args: None
     server = base.ThreadingHTTPServer(("127.0.0.1", 0), server_workflow.Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

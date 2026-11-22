@@ -18,6 +18,7 @@ import runtime_invariants
 import runtime_resume
 import runtime_v3
 import runtime_v3_ext
+import server as base
 import server_control as control
 import server_features as features
 import server_rag as rag
@@ -102,7 +103,6 @@ features._send_backend_prompt = _send_with_project_context
 
 def _request_identity(handler: object) -> str:
     """Stable login-throttle key without trusting arbitrary remote headers."""
-    base = rag.plus.ext.base
     peer = str(getattr(handler, "client_address", ("unknown",))[0])
     if base.is_loopback(peer):
         # Forwarded client IP is considered only when the actual TCP peer is
@@ -161,7 +161,6 @@ def _revoke_token(token: str) -> None:
     """Revoke a cookie both immediately and across web-server restarts."""
     if not token:
         return
-    base = rag.plus.ext.base
     fingerprint = _token_fingerprint(token)
     ttl = float(base.AUTH_REMEMBER_SECONDS)
     _prune_revocations()
@@ -238,7 +237,6 @@ class Handler(rag.Handler, features.Handler):
     # server.Handler, so every production route shares one decision.
 
     def authenticated(self) -> bool:
-        base = rag.plus.ext.base
         if self.requires_human_session():
             return self.authenticated_human()
         if self.local_bypass():
@@ -275,13 +273,11 @@ class Handler(rag.Handler, features.Handler):
 
     def authenticated_human(self) -> bool:
         """Cookie auth with revocation check; no Basic or loopback substitute."""
-        base = rag.plus.ext.base
         token = self.cookie_token()
         return bool(token and not _token_revoked(token) and base.valid_session_token(token))
 
     def owner_sandbox(self) -> str | None:
         """Server-only authority: never infer ownership from body, Basic or peer IP."""
-        base = rag.plus.ext.base
         token = self.cookie_token()
         if (token and not _token_revoked(token)
                 and base.valid_session_token(token) == base.CLIENT_USER
@@ -304,7 +300,6 @@ class Handler(rag.Handler, features.Handler):
             return True
 
     def login(self) -> None:
-        base = rag.plus.ext.base
         identity = _request_identity(self)
         if _login_limited(identity):
             self.json_response({"ok": False, "error": "Слишком много попыток входа"}, status=429)
@@ -337,7 +332,7 @@ class Handler(rag.Handler, features.Handler):
 
     def logout(self) -> None:
         token = self.cookie_token()
-        if token and rag.plus.ext.base.valid_session_token(token):
+        if token and base.valid_session_token(token):
             _revoke_token(token)
         super().logout()
 
@@ -350,7 +345,6 @@ class Handler(rag.Handler, features.Handler):
         other caller gets 404, so the runtime token (by default the admin
         password) cannot be probed from the LAN or from a web page.
         """
-        base = rag.plus.ext.base
         if not base.is_loopback(self.client_address[0]):
             return False
         if any(self.headers.get(name) for name in base.FORWARDING_HEADER_NAMES):
@@ -380,7 +374,7 @@ class Handler(rag.Handler, features.Handler):
                 self.unauthorized()
                 return
             try:
-                body = (rag.plus.ext.base.ROOT.parent / "config/plugins/tui/lib/goal-view.js").read_bytes()
+                body = (base.ROOT.parent / "config/plugins/tui/lib/goal-view.js").read_bytes()
             except OSError:
                 self.json_response({"ok": False, "error": "not found"}, status=404)
                 return
@@ -474,14 +468,14 @@ class Handler(rag.Handler, features.Handler):
 
 
 def main() -> None:
-    rag.plus.ext.base.SCRATCH_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    base.SCRATCH_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Accept backlog 128 (socketserver defaults to 5) and daemon threads.
-    server = rag.plus.ext.base.ThreadingWebServer(
-        (rag.plus.ext.base.WEB_HOST, rag.plus.ext.base.WEB_PORT), Handler
+    server = base.ThreadingWebServer(
+        (base.WEB_HOST, base.WEB_PORT), Handler
     )
     features._ensure_worker()
     print(
-        f"OpenCode web client started on configured port {rag.plus.ext.base.WEB_PORT}", flush=True
+        f"OpenCode web client started on configured port {base.WEB_PORT}", flush=True
     )
     try:
         server.serve_forever()
