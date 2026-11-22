@@ -183,4 +183,15 @@ class NoProbeRouter(FakeRouter):
 off = DndOrchestrator(router=NoProbeRouter())
 off.mode = "off"
 assert off.status()["enabled"] is False and off.status()["healthy"] is False
+
+# A router port that accepts connections and never answers costs a short probe, not the classify timeout.
+import socket  # noqa: E402
+import time  # noqa: E402
+
+with socket.socket() as silent:
+    silent.bind(("127.0.0.1", 0))
+    silent.listen(1)
+    started = time.monotonic()
+    probe = LocalQwenRouter(url=f"http://127.0.0.1:{silent.getsockname()[1]}/v1", timeout=8.0).health()
+    assert probe["ok"] is False and time.monotonic() - started < 3.0, probe
 print("D&D Super Orchestrator regression passed")

@@ -252,7 +252,9 @@ class LocalQwenRouter:
     def health(self) -> dict[str, Any]:
         started = time.perf_counter()
         try:
-            with urlopen(Request(self.health_url, headers={"Accept": "application/json"}), timeout=self.timeout) as response:
+            # A liveness probe, not inference: a port that accepts but never answers
+            # must not hold /client-runtime-v3.json for the whole classify timeout.
+            with urlopen(Request(self.health_url, headers={"Accept": "application/json"}), timeout=min(self.timeout, 1.5)) as response:
                 raw = response.read(8192) or b"{}"
             try:
                 payload = json.loads(raw)
