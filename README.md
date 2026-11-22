@@ -201,7 +201,7 @@ RAG опционален. При `MCP_RAG_ENABLED=0` или отсутствии
 Provisioning завершается ошибкой при неверном origin, dirty checkout, уходе с `main`, недоступном pin или попытке non-fast-forward обновления. Локальная проверка этого контракта:
 
 ```bash
-./scripts/ponytail-provision-regression.sh
+./tests/ponytail-provision-regression.sh
 ```
 
 ## Быстрый старт
@@ -212,8 +212,8 @@ Provisioning завершается ошибкой при неверном origi
 cp .env.example .env
 # заполнить .env
 ./scripts/verify.sh
-./scripts/verify-runtime-v3.sh
-python3 scripts/model-routing-effort-smoke.py
+./tests/verify-runtime-v3.sh
+python3 tests/model-routing-effort-smoke.py
 ./scripts/install.sh
 ```
 
@@ -267,7 +267,7 @@ Installer по умолчанию выполняет pre-install verification и
 
 ## Воспроизводимая проверка
 
-`python3 scripts/audit-regression.py --output /tmp/opencode-audit` запускает все
+`python3 tests/matrix.py --output /tmp/opencode-audit` запускает все
 независимые model-free наборы из `SUITES`, сохраняет каждый лог и `report.json`, продолжает
 остальные проверки после отказа и возвращает ненулевой код при любой ошибке.
 Нужны Python, Node, Playwright/Chromium, bubblewrap и закреплённый `opencode2`.
@@ -279,8 +279,8 @@ Installer по умолчанию выполняет pre-install verification и
 Post-install self-test проверяет настоящий API и все обязательные backend-плагины,
 используя обычную cookie-авторизацию, без включения legacy Basic Auth.
 
-Native acceptance: `scripts/native-runtime-smoke.mjs` проверяет реальные команды
-и durable configuration, `scripts/native-tui-smoke.py` — открытие/отмену визардов
+Native acceptance: `tests/native-runtime-smoke.mjs` проверяет реальные команды
+и durable configuration, `tests/native-tui-smoke.py` — открытие/отмену визардов
 и шесть панелей через PTY. Эти скрипты требуют отдельный тестовый HOME с маркером
 `.custom-opencode-audit-home`, не предназначены для запуска на пользовательском HOME.
 Полная инструкция и границы проверки: [аудит 2026-09-09](docs/audit-2026-09-09.md).

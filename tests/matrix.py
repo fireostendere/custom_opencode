@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Run the reproducible, model-free audit matrix and retain every suite result.
+"""Run the reproducible, model-free regression matrix and retain every suite result.
+
+The one full runner, local and in CI: `python3 tests/matrix.py --output DIR`
+(`--suite NAME` narrows it). `scripts/verify.sh`, the pre-install gate, is its fast offline core.
 
 Live providers, real RAG/DipTrace, kernel sandboxing and real service deployment
 are deliberately separate acceptance gates, never silently counted as passes.
@@ -20,38 +23,43 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = [
-    ("audit-model-context", [sys.executable, "scripts/audit-fixes-regression.py"]),
-    ("audit-mcp-payload", ["node", "scripts/audit-fixes-regression.mjs"]),
-    ("execution-ledger", [sys.executable, "scripts/execution-ledger-regression.py"]),
-    ("request-budget-protocol", ["node", "scripts/request-budget-regression.mjs"]),
-    ("tool-fabric-contracts", [sys.executable, "scripts/tool-fabric-smoke.py", "--contracts-only"]),
+    ("audit-model-context", [sys.executable, "tests/audit-fixes-regression.py"]),
+    ("audit-mcp-payload", ["node", "tests/audit-fixes-regression.mjs"]),
+    ("execution-ledger", [sys.executable, "tests/execution-ledger-regression.py"]),
+    ("request-budget-protocol", ["node", "tests/request-budget-regression.mjs"]),
+    ("tool-fabric-contracts", [sys.executable, "tests/tool-fabric-smoke.py", "--contracts-only"]),
     ("core", ["bash", "scripts/verify.sh"]),
-    ("native-goal", [sys.executable, "scripts/goal-live.py"]),
-    ("runtime-v3", ["bash", "scripts/verify-runtime-v3.sh"]),
-    ("routing-effort", [sys.executable, "scripts/model-routing-effort-smoke.py"]),
-    ("install-update-fixtures", ["bash", "scripts/install-regression.sh"]),
-    ("bootstrap", ["bash", "scripts/bootstrap-regression.sh"]),
-    ("ponytail", ["bash", "scripts/ponytail-provision-regression.sh"]),
-    ("composed-server", [sys.executable, "scripts/web-server-smoke.py"]),
-    ("web-security", [sys.executable, "scripts/web-security-smoke.py"]),
-    ("runtime-invariants", [sys.executable, "scripts/runtime-invariants-smoke.py"]),
-    ("queue-reconciliation", [sys.executable, "scripts/runtime-queue-reconcile-smoke.py"]),
-    ("tui-panels", ["node", "scripts/tui-regression.mjs"]),
-    ("tui-clipboard", ["node", "scripts/tui-clipboard-regression.mjs"]),
-    ("panel-submit", ["node", "scripts/panel-submit-regression.mjs"]),
-    ("stream-render", ["node", "scripts/stream-render-smoke.mjs"]),
-    ("queue-badges-browser", [sys.executable, "scripts/queue-badge-convergence.py"]),
-    ("web-session-create", [sys.executable, "scripts/web-session-create-e2e.py"]),
-    ("web-session-native", [sys.executable, "scripts/web-session-native-e2e.py"]),
-    ("web-fixtures-browser", [sys.executable, "scripts/web-fixture-e2e.py"]),
-    ("web-production-frontend", [sys.executable, "scripts/local-web-harness.py", "test"]),
-    ("web-critical-controls", [sys.executable, "scripts/web-critical-controls-e2e.py"]),
-    ("web-sidebar-pagination", [sys.executable, "scripts/web-sidebar-pagination-e2e.py"]),
-    ("goal-browser", [sys.executable, "scripts/goal-web-e2e.py"]),
-    ("web-ux-regression", [sys.executable, "scripts/web-ux-regression-e2e.py"]),
-    ("packaged-tui-pty", ["bash", "scripts/tui-package-smoke.sh"]),
+    ("native-goal", [sys.executable, "tests/goal-live.py"]),
+    ("runtime-v3", ["bash", "tests/verify-runtime-v3.sh"]),
+    ("routing-effort", [sys.executable, "tests/model-routing-effort-smoke.py"]),
+    ("install-update-fixtures", ["bash", "tests/install-regression.sh"]),
+    ("bootstrap", ["bash", "tests/bootstrap-regression.sh"]),
+    ("ponytail", ["bash", "tests/ponytail-provision-regression.sh"]),
+    ("composed-server", [sys.executable, "tests/web-server-smoke.py"]),
+    ("web-security", [sys.executable, "tests/web-security-smoke.py"]),
+    ("runtime-invariants", [sys.executable, "tests/runtime-invariants-smoke.py"]),
+    ("runtime-perf", [sys.executable, "tests/runtime-perf-regression.py"]),
+    ("control-plane", [sys.executable, "tests/control-plane-smoke.py"]),
+    ("queue-reconciliation", [sys.executable, "tests/runtime-queue-reconcile-smoke.py"]),
+    ("tui-panels", ["node", "tests/tui-regression.mjs"]),
+    ("tui-clipboard", ["node", "tests/tui-clipboard-regression.mjs"]),
+    ("panel-submit", ["node", "tests/panel-submit-regression.mjs"]),
+    ("stream-render", ["node", "tests/stream-render-smoke.mjs"]),
+    ("dnd-http-hooks", ["node", "tests/dnd-http-hooks-regression.mjs"]),
+    ("queue-badges-browser", [sys.executable, "tests/queue-badge-convergence.py"]),
+    ("web-session-create", [sys.executable, "tests/web-session-create-e2e.py"]),
+    ("web-session-native", [sys.executable, "tests/web-session-native-e2e.py"]),
+    ("web-fixtures-browser", [sys.executable, "tests/web-fixture-e2e.py"]),
+    ("web-production-frontend", [sys.executable, "tests/local-web-harness.py", "test"]),
+    ("web-critical-controls", [sys.executable, "tests/web-critical-controls-e2e.py"]),
+    ("web-sidebar-pagination", [sys.executable, "tests/web-sidebar-pagination-e2e.py"]),
+    ("goal-browser", [sys.executable, "tests/goal-web-e2e.py"]),
+    ("web-ux-regression", [sys.executable, "tests/web-ux-regression-e2e.py"]),
+    ("web-panel-scroll", [sys.executable, "tests/web-panel-scroll-e2e.py"]),
+    ("web-runtime-status", [sys.executable, "tests/web-runtime-status-e2e.py"]),
+    ("packaged-tui-pty", ["bash", "tests/tui-package-smoke.sh"]),
     ("integration-contract", [sys.executable, "scripts/integration-preflight.py"]),
-    ("workflow-cli-consistency", [sys.executable, "scripts/workflow-cli-consistency.py"]),
+    ("workflow-cli-consistency", [sys.executable, "tests/workflow-cli-consistency.py"]),
 ]
 
 

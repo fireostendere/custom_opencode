@@ -160,8 +160,8 @@ new permissions. DipTrace's installed read-only policy is not changed.
 ## Verification
 
 ```bash
-node --test scripts/hardware-orchestrator-regression.mjs
-node scripts/context-lanes-regression.mjs
+node --test tests/hardware-orchestrator-regression.mjs
+node tests/context-lanes-regression.mjs
 ```
 
 The dedicated workflow runs both the new offline suite and existing context

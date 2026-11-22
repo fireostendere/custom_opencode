@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("goal_web_harness", ROOT / "scripts/local-web-harness.py")
+spec = importlib.util.spec_from_file_location("goal_web_harness", ROOT / "tests/local-web-harness.py")
 harness = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = harness
 spec.loader.exec_module(harness)

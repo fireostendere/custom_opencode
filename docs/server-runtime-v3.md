@@ -192,6 +192,6 @@ Other V3 controls cover embeddings, MCP limits, artifacts, loop detection, secre
 
 ## Regression gates
 
-Zero-token regression covers the runtime/store/index/sandbox/context paths plus `scripts/model-routing-effort-smoke.py` for provider lock, effort translation, profile set and retired-router absence.
+Zero-token regression covers the runtime/store/index/sandbox/context paths plus `tests/model-routing-effort-smoke.py` for provider lock, effort translation, profile set and retired-router absence.
 
 The merge gate is static/runtime verification → isolated fresh install/update render → composed web-server regression → final diff review → merge only after explicit approval.

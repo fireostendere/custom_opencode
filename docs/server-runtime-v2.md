@@ -268,6 +268,6 @@ All are served through the existing authenticated web service.
 
 ## Verification
 
-Runtime V2 is covered by `scripts/runtime-smoke.py`, and `scripts/verify.sh` runs it together with the existing web, permission-control, limits and RAG regression checks.
+Runtime V2 is covered by `tests/runtime-smoke.py`, and `scripts/verify.sh` runs it together with the existing web, permission-control, limits and RAG regression checks.
 
 The smoke test covers durable dependencies/checkpoints/events, usage, capability profiles, resource decisions, repository index, semantic diff, artifact range/search, context envelope, failure classification, secret redaction, clean worktree lifecycle, speculative research and MCP metadata facade.

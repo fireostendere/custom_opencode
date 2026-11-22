@@ -68,7 +68,7 @@ printf '%s\n' '# Packaged V2 plan fixture' '- [x] Load the native plan document'
 cp "$ROOT/config/cli.json" "$CONFIG/cli.json"
 cp -a "$ROOT/config/plugins/tui/." "$CONFIG/plugins/tui/"
 mv "$CONFIG/plugins/tui/tui.js" "$CONFIG/plugins/tui/production-tui.js"
-cp "$ROOT/scripts/tui-keyboard-probe.jsx" "$CONFIG/plugins/tui/tui.js"
+cp "$ROOT/tests/tui-keyboard-probe.jsx" "$CONFIG/plugins/tui/tui.js"
 cp -a "$ROOT/config/prompts/." "$CONFIG/prompts/"
 cp -a "$ROOT/config/themes/." "$CONFIG/themes/"
 

@@ -92,7 +92,7 @@ def check(browser, base_url, width, harness):
 
 
 def main():
-    harness = runpy.run_path(str(ROOT / "scripts/web-critical-controls-e2e.py"))["load_harness"]()
+    harness = runpy.run_path(str(ROOT / "tests/web-critical-controls-e2e.py"))["load_harness"]()
     with tempfile.TemporaryDirectory(prefix="opencode-sidebar-") as temp:
         root = Path(temp)
         with harness.isolated_environment(root):

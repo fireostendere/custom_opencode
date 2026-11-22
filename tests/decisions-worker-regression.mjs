@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { DecisionsWorker } from './decisions-worker.mjs'
+import { DecisionsWorker } from '../scripts/decisions-worker.mjs'
 
 const input = { id: 'a'.repeat(64), input: 'A task has made no progress for 20 seconds.',
   questions: [{ name: 'script_plan', type: 'choice', instructions: 'Choose the supplied plan.',

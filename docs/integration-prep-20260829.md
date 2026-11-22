@@ -94,7 +94,7 @@ python3 scripts/integration-preflight.py --json
 
 The preflight is static/model-free and does not touch Qdrant. It checks the Build/Plan frontend contract, native plan compatibility, Runtime V3 wiring, portable RAG launcher, non-destructive lifecycle markers and the UX contract.
 
-Then run the repository regression gates already shipped with Runtime V3, including `scripts/verify-runtime-v3.sh`, `scripts/runtime-v3-smoke.py`, `scripts/runtime-v3-worktree-smoke.py`, `scripts/runtime-completion-smoke.py`, `scripts/install-regression.sh`, `scripts/web-server-smoke.py` and `scripts/install-runtime-v3-selftest.py` as applicable to the host.
+Then run the repository regression gates already shipped with Runtime V3, including `tests/verify-runtime-v3.sh`, `tests/runtime-v3-smoke.py`, `tests/runtime-v3-worktree-smoke.py`, `tests/runtime-completion-smoke.py`, `tests/install-regression.sh`, `tests/web-server-smoke.py` and `scripts/install-runtime-v3-selftest.py` as applicable to the host.
 
 GitHub-hosted Actions are not an acceptance signal until the known runner provisioning problem is fixed: recent jobs failed before a runner/step was assigned. Use the repository/local Linux regression gates for the integration decision.
 

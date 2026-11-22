@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 
-HELPER = Path(__file__).with_name("restore-tui-model.py")
+HELPER = Path(__file__).resolve().parents[1] / "scripts" / "restore-tui-model.py"
 
 
 def run(state: Path, *args: str, home: Path | None = None, cwd: Path | None = None) -> None:

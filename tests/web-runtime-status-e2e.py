@@ -8,6 +8,10 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 
 
+# The run-duration dot; the D&D watcher pill carries a status dot of its own.
+RUN_DOT = '#workflowStatus .wf-pill:not(.dnd-watch-pill) .wf-dot'
+
+
 def check_workspace_settings(page, url, root):
     # Real server persistence, with no provider calls or user configuration.
     page.click('#networkClose')
@@ -15,13 +19,15 @@ def check_workspace_settings(page, url, root):
     page.click('#projectSettingsButton')
     page.locator('#projectSettingsDialog[open]').wait_for()
     page.fill('#projectInstructions', 'Fixture project instruction')
-    page.select_option('#projectDefaultModel', 'sol-orchestrated')
+    # Orchestration aliases are offered only while their model is in the catalog;
+    # the fixture catalog holds one concrete model.
+    page.select_option('#projectDefaultModel', 'bailian-cli/qwen-fixture-00')
     page.select_option('#projectRag', 'off')
     page.click('#projectSettingsSave')
     page.wait_for_function("document.querySelector('#projectSettingsStatus').textContent.startsWith('Сохранено на сервере')")
     saved = page.request.get(url + '/client-project-settings.json?sessionID=ses_fixture').json()['settings']
     assert saved['instructions'] == 'Fixture project instruction'
-    assert saved['defaultModel'] == 'sol-orchestrated' and saved['rag'] == 'off'
+    assert saved['defaultModel'] == 'bailian-cli/qwen-fixture-00' and saved['rag'] == 'off'
     assert page.evaluate('window.CustomOpenCodeControls.activeModel()') == original_model
     assert not (root / 'project/AGENTS.md').exists(), 'Private preferences leaked into the project'
     page.locator('[data-workflow-close="projectSettingsDialog"]').first.click()
@@ -178,9 +184,9 @@ def check_session_mirrors(page):
     assert mirrors.locator('[data-session-shortcut="ses_child_review"]').count() == 0
     assert page.locator('[data-session="ses_child_review"]').count() == 1, 'Keep the worker in the project tree'
     page.wait_for_timeout(300)
-    assert page.locator('#workflowStatus .wf-dot').count() == 0, 'Opening an already-running session must not invent a start time'
+    assert page.locator(RUN_DOT).count() == 0, 'Opening an already-running session must not invent a start time'
     page.evaluate("window.dispatchEvent(new CustomEvent('custom-opencode:event',{detail:{type:'session.execution.started',data:{sessionID:'ses_child_review'}}}))")
-    page.locator('#workflowStatus .wf-dot').wait_for(state='visible')
+    page.locator(RUN_DOT).wait_for(state='visible')
     recent.locator('[data-session-shortcut="ses_fixture"]').click()
     page.wait_for_function("location.hash === '#/session/ses_fixture'")
     page.unroute('**/api/session/active')
@@ -188,7 +194,7 @@ def check_session_mirrors(page):
     page.click('#refresh')
     page.wait_for_function("!document.querySelector('[data-session-mirror=\"current\"]').textContent.includes('Работают агенты')")
     assert active.locator('.count').inner_text() == '1'
-    assert page.locator('#workflowStatus .wf-dot').count() == 0, 'Do not carry another session\'s duration across navigation'
+    assert page.locator(RUN_DOT).count() == 0, 'Do not carry another session\'s duration across navigation'
     for width in (1280, 390):
         page.set_viewport_size({'width':width,'height':600})
         if width == 390:
@@ -223,7 +229,7 @@ def check_session_mirrors(page):
 
 
 def main():
-    harness = runpy.run_path(str(ROOT / 'scripts/web-critical-controls-e2e.py'))['load_harness']()
+    harness = runpy.run_path(str(ROOT / 'tests/web-critical-controls-e2e.py'))['load_harness']()
     with tempfile.TemporaryDirectory(prefix='opencode-status-') as temp:
         root = Path(temp)
         outside = root / 'outside'
@@ -255,20 +261,18 @@ def main():
                     page.wait_for_timeout(5200)
                     assert count() == before, 'Closed task center polled every four seconds'
 
-                    # The real handler must keep an out-of-root session isolated,
-                    # while reporting an unavailable feature instead of repeated 400s.
+                    # The native backend is the authority for a session's workspace: one
+                    # outside OPENCODE_PROJECT_ROOTS keeps its scoped endpoints, no 400s.
                     original = harness.fixture.Backend.session
                     harness.fixture.Backend.session = staticmethod(lambda project: {**original(project), 'location': {'directory': str(outside)}})
                     try:
-                        result = page.request.get(url + '/client-tasks.json?sessionID=ses_fixture')
-                        assert result.status == 200
-                        unavailable = result.json()
-                        assert unavailable['available'] is False and unavailable['tasks'] == []
-                        for path in ('client-project-settings.json', 'client-unified.json', 'client-activity.json'):
+                        for path in ('client-tasks.json', 'client-project-settings.json', 'client-unified.json', 'client-activity.json'):
                             scoped = page.request.get(url + '/' + path + '?sessionID=ses_fixture')
-                            assert scoped.status == 200 and scoped.json()['available'] is False, path
+                            assert scoped.status == 200 and scoped.json().get('available') is not False, path
                     finally:
                         harness.fixture.Backend.session = staticmethod(original)
+                    # An explicit out-of-root directory still answers "unavailable"; the UI must go quiet on it.
+                    unavailable = {'ok': True, 'available': False, 'reason': 'project-outside-roots', 'tasks': [], 'counts': {}}
                     page.route('**/client-tasks.json?*', lambda route: route.fulfill(json=unavailable))
                     page.evaluate(await_refresh)
                     assert 'недоступны' in page.locator('#taskCenterButton').inner_text()

@@ -198,10 +198,10 @@ Changing effort, moving between orchestration roles, or switching context class 
 Run:
 
 ```bash
-python3 scripts/model-routing-effort-smoke.py
-python3 scripts/dnd-edition-smoke.py
-node scripts/dnd-edition-ui-plugin-smoke.mjs
-bash scripts/regression.sh
+python3 tests/model-routing-effort-smoke.py
+python3 tests/dnd-edition-smoke.py
+node tests/dnd-edition-ui-plugin-smoke.mjs
+python3 tests/matrix.py --output /tmp/custom-opencode-matrix
 ```
 
 The focused smoke verifies provider lock, role defaults, canonical effort translation, OpenCode V2 model variants, role agent refs, deterministic provider-pinned routing, and absence of the retired device-routing configuration.

@@ -280,7 +280,7 @@ async function behaviorChecks() {
 }
 
 try {
-  assert.equal(typeof global.gc, 'function', 'Run with node --expose-gc scripts/plugin-memory-regression.mjs')
+  assert.equal(typeof global.gc, 'function', 'Run with node --expose-gc tests/plugin-memory-regression.mjs')
   await behaviorChecks()
   await memoryChecks()
 } finally { rmSync(state, { recursive: true, force: true }) }

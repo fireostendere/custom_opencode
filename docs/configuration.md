@@ -252,9 +252,9 @@ Server вызывается через stdio, использует собств�
 чтения сразу (ошибки хоста непрозрачны: отказ прав и сбой сети выглядят
 одинаково). `/dnd-watch status|stop|auto` работают без inference; `stop`
 выключает и автоожидание. Проверка на настоящем движке с локальными
-MCP/model fixtures: `python3 scripts/dnd-watch-live.py`; без движка —
-`node scripts/dnd-watch-regression.mjs` (плагин, статус мастера, панель и
-веб-плашка) и `python3 scripts/dnd-watch-web-regression.py` (веб-эндпоинты).
+MCP/model fixtures: `python3 tests/dnd-watch-live.py`; без движка —
+`node tests/dnd-watch-regression.mjs` (плагин, статус мастера, панель и
+веб-плашка) и `python3 tests/dnd-watch-web-regression.py` (веб-эндпоинты).
 
 Клиентский `dnd-state-cache` передаёт `knownStateRevision` автоматически после
 полностью полученного `read`/`readAfter`. Кеш изолирован по сессии, кампании и
@@ -262,8 +262,8 @@ MCP/model fixtures: `python3 scripts/dnd-watch-live.py`; без движка —
 Неполные страницы, обрезанные ответы и фоновые чтения watcher не подтверждают
 baseline модели. При compaction/reconnect кеш сбрасывается. Каталог без точного
 `action` по умолчанию возвращает список действий; `summaryOnly:false` сохраняет
-доступ к полным схемам. Проверки: `node scripts/dnd-state-cache-regression.mjs`
-и локальный native fixture `python3 scripts/dnd-watch-live.py`.
+доступ к полным схемам. Проверки: `node tests/dnd-state-cache-regression.mjs`
+и локальный native fixture `python3 tests/dnd-watch-live.py`.
 
 Alibaba-роли provider-locked на Alibaba Cloud/Bailian, а SOL и DnD-роли provider-locked
 на официальный OpenAI provider. Ни одна роль из orchestration stack не должна
@@ -298,7 +298,7 @@ D&D: изолированные роли ODM `narrator-ask` (`odm_ask_answer_v1`
 форму по-прежнему проверяет `validateDecision` в ODM). `narrator-writer` и `narrate.content` — проза для игроков.
 Принимает ли ChatGPT-OAuth путь `text.format`, подтверждается первым живым запросом; при отказе работает откат.
 
-Проверка: `node scripts/typed-output-regression.mjs` (без токенов).
+Проверка: `node tests/typed-output-regression.mjs` (без токенов).
 
 ## OpenAI Decisions API
 
@@ -333,7 +333,7 @@ D&D: изолированные роли ODM `narrator-ask` (`odm_ask_answer_v1`
 и не повторяет запросы автоматически. Права проверяются нативным permission API.
 
 Схема и биллинг: [официальная документация Decisions](https://developers.openai.com/api/docs/guides/decisions).
-Проверка без API-ключа и платных вызовов: `node scripts/decisions-regression.mjs`.
+Проверка без API-ключа и платных вызовов: `node tests/decisions-regression.mjs`.
 
 ### Bounded autonomous Decisions transport
 
@@ -350,7 +350,7 @@ Local process exit does not prove remote cancellation or zero charges. This
 standalone worker returns usage; it does not claim interactive-session ledger
 integration. No project-specific policy, configuration or prompt is included.
 
-Model-free checks: `node scripts/decisions-worker-regression.mjs`.
+Model-free checks: `node tests/decisions-worker-regression.mjs`.
 
 ## Reasoning effort
 
@@ -665,7 +665,7 @@ set -a
 source .env
 set +a
 ./scripts/verify.sh
-python3 scripts/model-routing-effort-smoke.py
+python3 tests/model-routing-effort-smoke.py
 ```
 
 Verifier также ищет случайно закоммиченные secrets, personal absolute paths и запрещённые routing regressions.

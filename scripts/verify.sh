@@ -12,10 +12,10 @@ if [[ -z "$NODE" ]]; then echo "node is required" >&2; exit 1; fi
   "$ROOT/app/server_rag.py" "$ROOT/app/server_features.py" "$ROOT/app/server_control.py" \
   "$ROOT/app/server_workflow.py" "$ROOT/app/server_runtime.py" "$ROOT/app/runtime_store.py" \
   "$ROOT/app/model_registry.py" "$ROOT/app/repo_services.py" "$ROOT/app/runtime_resume.py" "$ROOT/app/dnd_watch.py" \
-  "$ROOT/scripts/rag-probe.py" "$ROOT/scripts/rag-probe-contract-regression.py" "$ROOT/scripts/rag-start-smoke.py" "$ROOT/scripts/runtime-smoke.py" \
-  "$ROOT/scripts/runtime-resume-smoke.py" "$ROOT/scripts/webserver-control.py"
+  "$ROOT/scripts/rag-probe.py" "$ROOT/tests/rag-probe-contract-regression.py" "$ROOT/tests/rag-start-smoke.py" "$ROOT/tests/runtime-smoke.py" \
+  "$ROOT/tests/runtime-resume-smoke.py" "$ROOT/scripts/webserver-control.py"
 
-"$PYTHON3" "$ROOT/scripts/tui-model-startup-regression.py"
+"$PYTHON3" "$ROOT/tests/tui-model-startup-regression.py"
 
 WORKSPACE_TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$WORKSPACE_TEST_ROOT"' EXIT
@@ -109,76 +109,76 @@ PY
 for file in "$ROOT/app/"*.js "$ROOT/config/events.js" "$ROOT/config/plugins/"*.js; do
   "$NODE" --check "$file"
 done
-"$NODE" "$ROOT/scripts/web-smoke.mjs"
-"$NODE" "$ROOT/scripts/mobile-session-title-regression.mjs"
-"$NODE" --expose-gc "$ROOT/scripts/frontend-memory-regression.mjs"
-"$NODE" "$ROOT/scripts/web-agent-picker-regression.mjs"
-"$NODE" "$ROOT/scripts/project-settings-smoke.mjs"
-"$NODE" "$ROOT/scripts/compaction-recovery-regression.mjs"
-"$NODE" "$ROOT/scripts/wizard-validation-smoke.mjs"
-"$NODE" "$ROOT/scripts/config-manager-regression.mjs"
-"$NODE" "$ROOT/scripts/context-lanes-regression.mjs"
-"$PYTHON3" "$ROOT/scripts/dnd-edition-smoke.py"
-"$NODE" "$ROOT/scripts/dnd-edition-ui-plugin-smoke.mjs"
-"$NODE" "$ROOT/scripts/dnd-watch-regression.mjs"
-"$PYTHON3" "$ROOT/scripts/dnd-watch-web-regression.py"
-"$NODE" "$ROOT/scripts/dnd-state-cache-regression.mjs"
-"$NODE" "$ROOT/scripts/dnd-art-regression.mjs"
-"$NODE" "$ROOT/scripts/typed-output-regression.mjs"
-"$NODE" "$ROOT/scripts/decisions-regression.mjs"
-"$NODE" "$ROOT/scripts/decisions-worker-regression.mjs"
+"$NODE" "$ROOT/tests/web-smoke.mjs"
+"$NODE" "$ROOT/tests/mobile-session-title-regression.mjs"
+"$NODE" --expose-gc "$ROOT/tests/frontend-memory-regression.mjs"
+"$NODE" "$ROOT/tests/web-agent-picker-regression.mjs"
+"$NODE" "$ROOT/tests/project-settings-smoke.mjs"
+"$NODE" "$ROOT/tests/compaction-recovery-regression.mjs"
+"$NODE" "$ROOT/tests/wizard-validation-smoke.mjs"
+"$NODE" "$ROOT/tests/config-manager-regression.mjs"
+"$NODE" "$ROOT/tests/context-lanes-regression.mjs"
+"$PYTHON3" "$ROOT/tests/dnd-edition-smoke.py"
+"$NODE" "$ROOT/tests/dnd-edition-ui-plugin-smoke.mjs"
+"$NODE" "$ROOT/tests/dnd-watch-regression.mjs"
+"$PYTHON3" "$ROOT/tests/dnd-watch-web-regression.py"
+"$NODE" "$ROOT/tests/dnd-state-cache-regression.mjs"
+"$NODE" "$ROOT/tests/dnd-art-regression.mjs"
+"$NODE" "$ROOT/tests/typed-output-regression.mjs"
+"$NODE" "$ROOT/tests/decisions-regression.mjs"
+"$NODE" "$ROOT/tests/decisions-worker-regression.mjs"
 DND_FAST_TIER_SELF_CHECK=1 "$NODE" "$ROOT/config/plugins/dnd-fast-tier.js"
 for check in GEMINI_RATE_LIMIT:gemini-rate-limit KEEP_AWAKE:keep-awake NOTIFY_WIN:notify-win \
   OPENCODE_ORCHESTRATED_QWEN:orchestrated-qwen QWEN_QUOTA:qwen-quota SLOW_CMD:slow-cmd-watchdog; do
   env "${check%%:*}_SELF_CHECK=1" "$NODE" "$ROOT/config/plugins/${check#*:}.js"
 done
-"$NODE" "$ROOT/scripts/visible-plan-regression.mjs"
-"$NODE" "$ROOT/scripts/ponytail-v2-regression.mjs"
-"$NODE" "$ROOT/scripts/goal-regression.mjs"
-"$NODE" "$ROOT/scripts/goal-ui-regression.mjs"
-"$NODE" "$ROOT/scripts/codemode-regression.mjs"
-"$NODE" --expose-gc "$ROOT/scripts/plugin-memory-regression.mjs"
-"$NODE" "$ROOT/scripts/gemini-rate-limit-regression.mjs"
-"$NODE" "$ROOT/scripts/provider-retry-guard-regression.mjs"
-"$NODE" "$ROOT/scripts/lazy-local-router-regression.mjs"
-"$NODE" "$ROOT/scripts/refresh-coalescing-regression.mjs"
-"$NODE" "$ROOT/scripts/server-runtime-guard-regression.mjs"
-"$NODE" "$ROOT/scripts/audit-fixes-regression.mjs"
-"$NODE" "$ROOT/scripts/control-plane-race-regression.mjs"
-"$PYTHON3" "$ROOT/scripts/audit-cache-race.py"
-"$NODE" "$ROOT/scripts/hardware-orchestrator-regression.mjs"
-"$NODE" "$ROOT/scripts/mcp-reconnect-regression.mjs"
-"$NODE" "$ROOT/scripts/tool-fabric-config-smoke.mjs"
-"$PYTHON3" "$ROOT/scripts/dnd-super-orchestrator-regression.py"
-"$NODE" "$ROOT/scripts/mcp-profiles-regression.mjs"
-"$NODE" "$ROOT/scripts/tui-add-wizard-regression.mjs"
-"$NODE" "$ROOT/scripts/tui-accounts-regression.mjs"
-"$NODE" "$ROOT/scripts/tui-webserver-wizard-regression.mjs"
-"$NODE" "$ROOT/scripts/tui-server-wizard-regression.mjs"
-"$NODE" "$ROOT/scripts/model-selector-smoke.mjs"
-"$NODE" "$ROOT/scripts/tui-jsx-pragma-regression.mjs"
-"$NODE" "$ROOT/scripts/tui-regression.mjs"
-"$NODE" "$ROOT/scripts/tui-clipboard-regression.mjs"
-"$NODE" "$ROOT/scripts/panel-submit-regression.mjs"
-"$NODE" "$ROOT/scripts/location-recovery-regression.mjs"
-"$PYTHON3" "$ROOT/scripts/webserver-control-smoke.py"
-"$PYTHON3" "$ROOT/scripts/web-users-smoke.py"
-"$PYTHON3" "$ROOT/scripts/unified-workspace-regression.py"
-"$NODE" "$ROOT/scripts/session-transfer-smoke.mjs"
-"$PYTHON3" "$ROOT/scripts/limits-smoke.py"
-"$PYTHON3" "$ROOT/scripts/rag-probe-contract-regression.py"
-"$PYTHON3" "$ROOT/scripts/rag-start-smoke.py"
-"$PYTHON3" "$ROOT/scripts/runtime-smoke.py"
-"$PYTHON3" "$ROOT/scripts/memory-backend-regression.py"
-"$PYTHON3" "$ROOT/scripts/runtime-resume-smoke.py"
-"$PYTHON3" "$ROOT/scripts/security-boundary-smoke.py"
-"$PYTHON3" "$ROOT/scripts/runtime-isolation-regression.py"
-"$PYTHON3" "$ROOT/scripts/mobile-owner-access-regression.py"
-"$PYTHON3" "$ROOT/scripts/webserver-boundary-regression.py"
-for file in "$ROOT/scripts/"*.sh; do
+"$NODE" "$ROOT/tests/visible-plan-regression.mjs"
+"$NODE" "$ROOT/tests/ponytail-v2-regression.mjs"
+"$NODE" "$ROOT/tests/goal-regression.mjs"
+"$NODE" "$ROOT/tests/goal-ui-regression.mjs"
+"$NODE" "$ROOT/tests/codemode-regression.mjs"
+"$NODE" --expose-gc "$ROOT/tests/plugin-memory-regression.mjs"
+"$NODE" "$ROOT/tests/gemini-rate-limit-regression.mjs"
+"$NODE" "$ROOT/tests/provider-retry-guard-regression.mjs"
+"$NODE" "$ROOT/tests/lazy-local-router-regression.mjs"
+"$NODE" "$ROOT/tests/refresh-coalescing-regression.mjs"
+"$NODE" "$ROOT/tests/server-runtime-guard-regression.mjs"
+"$NODE" "$ROOT/tests/audit-fixes-regression.mjs"
+"$NODE" "$ROOT/tests/control-plane-race-regression.mjs"
+"$PYTHON3" "$ROOT/tests/audit-cache-race.py"
+"$NODE" "$ROOT/tests/hardware-orchestrator-regression.mjs"
+"$NODE" "$ROOT/tests/mcp-reconnect-regression.mjs"
+"$NODE" "$ROOT/tests/tool-fabric-config-smoke.mjs"
+"$PYTHON3" "$ROOT/tests/dnd-super-orchestrator-regression.py"
+"$NODE" "$ROOT/tests/mcp-profiles-regression.mjs"
+"$NODE" "$ROOT/tests/tui-add-wizard-regression.mjs"
+"$NODE" "$ROOT/tests/tui-accounts-regression.mjs"
+"$NODE" "$ROOT/tests/tui-webserver-wizard-regression.mjs"
+"$NODE" "$ROOT/tests/tui-server-wizard-regression.mjs"
+"$NODE" "$ROOT/tests/model-selector-smoke.mjs"
+"$NODE" "$ROOT/tests/tui-jsx-pragma-regression.mjs"
+"$NODE" "$ROOT/tests/tui-regression.mjs"
+"$NODE" "$ROOT/tests/tui-clipboard-regression.mjs"
+"$NODE" "$ROOT/tests/panel-submit-regression.mjs"
+"$NODE" "$ROOT/tests/location-recovery-regression.mjs"
+"$PYTHON3" "$ROOT/tests/webserver-control-smoke.py"
+"$PYTHON3" "$ROOT/tests/web-users-smoke.py"
+"$PYTHON3" "$ROOT/tests/unified-workspace-regression.py"
+"$NODE" "$ROOT/tests/session-transfer-smoke.mjs"
+"$PYTHON3" "$ROOT/tests/limits-smoke.py"
+"$PYTHON3" "$ROOT/tests/rag-probe-contract-regression.py"
+"$PYTHON3" "$ROOT/tests/rag-start-smoke.py"
+"$PYTHON3" "$ROOT/tests/runtime-smoke.py"
+"$PYTHON3" "$ROOT/tests/memory-backend-regression.py"
+"$PYTHON3" "$ROOT/tests/runtime-resume-smoke.py"
+"$PYTHON3" "$ROOT/tests/security-boundary-smoke.py"
+"$PYTHON3" "$ROOT/tests/runtime-isolation-regression.py"
+"$PYTHON3" "$ROOT/tests/mobile-owner-access-regression.py"
+"$PYTHON3" "$ROOT/tests/webserver-boundary-regression.py"
+for file in "$ROOT/scripts/"*.sh "$ROOT/tests/"*.sh; do
   bash -n "$file"
 done
-bash "$ROOT/scripts/opencode-v2-bootstrap-regression.sh"
+bash "$ROOT/tests/opencode-v2-bootstrap-regression.sh"
 # Ponytail provisioning script must exist and be sourceable.
 if [[ ! -f "$ROOT/scripts/ponytail-provision.sh" ]]; then
   echo "ponytail provisioning script missing" >&2
@@ -361,9 +361,9 @@ if "gpt-6.2-sol-fast" in sol_orchestrator:
     bad.append("SOL orchestrator must not use gpt-6.2-sol-fast")
 if not (root / "scripts/rag-mcp.sh").is_file():
     bad.append("missing portable RAG MCP launcher")
-if not (root / "scripts/runtime-smoke.py").is_file():
+if not (root / "tests/runtime-smoke.py").is_file():
     bad.append("missing runtime-v2 smoke test")
-if not (root / "scripts/runtime-resume-smoke.py").is_file():
+if not (root / "tests/runtime-resume-smoke.py").is_file():
     bad.append("missing runtime resume smoke test")
 if not (root / "docs/server-runtime-v2.md").is_file():
     bad.append("missing server runtime v2 documentation")
@@ -606,4 +606,4 @@ if bad:
 print(f"Verification passed; Build-only web + native TUI Plan + dedicated Qwen/SOL orchestration + runtime-v2/checkpoint resume + bounded RAG lifecycle + Alibaba Personal models: {len(expected)} current + {len(special_ids) + len(openai_special_ids)} orchestrated aliases + {len(compat_ids)} compatibility ID")
 PY
 
-"$PYTHON3" "$ROOT/scripts/branch-protection-regression.py"
+"$PYTHON3" "$ROOT/tests/branch-protection-regression.py"

@@ -170,6 +170,7 @@ with tempfile.TemporaryDirectory() as temp:
 
         # Installer health checks must authenticate when Basic and localhost
         # bypass are unavailable, without changing production auth defaults.
+        sys.path.insert(0, str(ROOT / "scripts"))
         from install_health import web_auth_headers
         health_headers = web_auth_headers(base)
         assert "Authorization" not in health_headers and "Cookie" in health_headers

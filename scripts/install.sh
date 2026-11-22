@@ -153,7 +153,7 @@ read_package_version() {
 # which this installer does not manage. Those packages carry their own copy of the
 # renderer context, so when they drift from the pinned CLI the TUI can fail at render
 # time while headless regressions stay green (they stub @opencode/plugin via
-# scripts/opencode-plugin-stub-hooks.mjs). Warn, never fail: an existing install keeps
+# tests/opencode-plugin-stub-hooks.mjs). Warn, never fail: an existing install keeps
 # working and the drift becomes visible instead of silent.
 PLUGIN_SDK_VERSION=$(read_package_version "$CONFIG_DIR/node_modules/@opencode/plugin/package.json")
 if [[ -n "$PLUGIN_SDK_VERSION" && "$PLUGIN_SDK_VERSION" != "$OPENCODE_CLI_VERSION" ]]; then
@@ -295,15 +295,15 @@ if [[ "$SELFTEST" != 0 ]]; then
   "$PYTHON3" -m py_compile \
     "$ROOT/scripts/install-selftest.py" \
     "$ROOT/scripts/install-runtime-v3-selftest.py" \
-    "$ROOT/scripts/rag-live-regression.py" \
-    "$ROOT/scripts/runtime-invariants-smoke.py" \
-    "$ROOT/scripts/model-routing-effort-smoke.py" \
+    "$ROOT/tests/rag-live-regression.py" \
+    "$ROOT/tests/runtime-invariants-smoke.py" \
+    "$ROOT/tests/model-routing-effort-smoke.py" \
     "$ROOT/scripts/restore-tui-model.py" \
     "$ROOT/app/runtime_invariants.py" \
     "$ROOT/app/model_registry.py"
   "$ROOT/scripts/verify.sh"
-  "$ROOT/scripts/verify-runtime-v3.sh"
-  "$PYTHON3" "$ROOT/scripts/model-routing-effort-smoke.py"
+  "$ROOT/tests/verify-runtime-v3.sh"
+  "$PYTHON3" "$ROOT/tests/model-routing-effort-smoke.py"
 fi
 
 if [[ "$PONYTAIL_ENABLED" == 1 ]]; then
@@ -913,11 +913,11 @@ if [[ "$SELFTEST" != 0 ]]; then
   fi
   "$PYTHON3" "$ROOT/scripts/install-selftest.py" "${SELFTEST_ARGS[@]}"
   "$PYTHON3" "$ROOT/scripts/install-runtime-v3-selftest.py"
-  "$PYTHON3" "$ROOT/scripts/runtime-invariants-smoke.py"
-  "$PYTHON3" "$ROOT/scripts/model-routing-effort-smoke.py"
+  "$PYTHON3" "$ROOT/tests/runtime-invariants-smoke.py"
+  "$PYTHON3" "$ROOT/tests/model-routing-effort-smoke.py"
   if [[ "$RAG_DISABLED" == false ]]; then
     echo "==> Live RAG retrieval regression (zero LLM tokens)"
-    "$PYTHON3" "$ROOT/scripts/rag-live-regression.py"
+    "$PYTHON3" "$ROOT/tests/rag-live-regression.py"
   fi
 fi
 

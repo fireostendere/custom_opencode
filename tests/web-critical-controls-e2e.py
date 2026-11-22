@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-HARNESS_PATH = ROOT / "scripts" / "local-web-harness.py"
+HARNESS_PATH = ROOT / "tests" / "local-web-harness.py"
 
 
 def load_harness():

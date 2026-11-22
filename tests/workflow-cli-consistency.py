@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-HARNESS = re.compile(r"\b(?:python3|python|node|bash)\s+(scripts/[A-Za-z0-9._-]+)((?:[^\n|&;])*)")
+HARNESS = re.compile(r"\b(?:python3|python|node|bash)\s+((?:scripts|tests)/[A-Za-z0-9._-]+)((?:[^\n|&;])*)")
 OPTION_CACHE: dict[str, tuple[set[str], set[str], bool]] = {}
 ERRORS: list[str] = []
 
@@ -187,7 +187,7 @@ def check_block_policies(where: str, block: str) -> None:
     if "| tee" in block and "pipefail" not in block:
         fail(f"{where}: harness output is piped through tee without pipefail; failures would be masked")
     for line in block.splitlines():
-        if re.search(r"\b(?:python3?|node|bash)\s+scripts/", line) and re.search(r"\|\|\s*(true|:)", line):
+        if re.search(r"\b(?:python3?|node|bash)\s+(?:scripts|tests)/", line) and re.search(r"\|\|\s*(true|:)", line):
             fail(f"{where}: harness invocation is masked by `|| true`: {line.strip()}")
     if re.search(r"@opencode(?:-ai)?/cli", block) and "npm install" in block and "--version" not in block:
         fail(f"{where}: pinned OpenCode CLI install without post-install validation (opencode2 --version)")
@@ -202,6 +202,30 @@ def check_triggers(name: str, text: str) -> None:
     for branch in ("main", "astra2"):
         if branch not in branches:
             fail(f"{name}: push trigger drops branch {branch!r}; pushes to it would skip CI silently")
+
+
+# Need a real provider, running service or terminal; nobody runs them unattended.
+MANUAL_TESTS = {
+    "dnd-watch-live.py", "live-web-smoke.py", "mcp-reconnect-live.py",
+    "native-interrupt-live.py", "rag-live-regression.py", "web-e2e.py",
+}
+
+
+def check_orphan_tests(workflows: list[Path]) -> None:
+    """Every tests/ file is reached from a workflow (transitively, by name) or is manual."""
+    tests = {path.name for path in (ROOT / "tests").iterdir() if path.is_file()}
+    # scripts/verify.sh and scripts/install.sh run tests too: follow references through both.
+    files = {path.name: path for name in ("tests", "scripts") for path in (ROOT / name).iterdir() if path.is_file()}
+    reached: set[str] = set()
+    frontier = [workflow.read_text(encoding="utf-8") for workflow in workflows]
+    while frontier:
+        text = frontier.pop()
+        for name, path in files.items():
+            if name not in reached and re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w.-])", text):
+                reached.add(name)
+                frontier.append(path.read_text(encoding="utf-8", errors="ignore"))
+    for name in sorted(tests - reached - MANUAL_TESTS):
+        fail(f"tests/{name}: no workflow reaches it; add it to tests/matrix.py or MANUAL_TESTS")
 
 
 def main(argv: list[str]) -> int:
@@ -231,6 +255,8 @@ def main(argv: list[str]) -> int:
                         f"{where}: upload-artifact path {path} matches no --output/mkdir directory"
                         f" declared by the job ({sorted(set(declared)) or 'none'})"
                     )
+    if len(argv) <= 1:
+        check_orphan_tests(workflows)
     if ERRORS:
         print("Workflow/CLI consistency FAIL:")
         for error in ERRORS:
@@ -238,7 +264,7 @@ def main(argv: list[str]) -> int:
         return 1
     print(
         f"Workflow/CLI consistency OK: {len(workflows)} workflow(s) checked"
-        " (harness args, artifact paths, masking guards, CLI validation, triggers)"
+        " (harness args, artifact paths, masking guards, CLI validation, triggers, orphan tests)"
     )
     return 0
 
