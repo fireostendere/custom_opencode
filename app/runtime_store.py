@@ -266,6 +266,14 @@ class RuntimeStore:
             with self._journal_lock:
                 if not self._journal_ready:
                     try:
+                        # Takes effect only on a file with no tables, and only before
+                        # WAL writes the header: new stores return freed pages on
+                        # compact(); an existing one needs the offline conversion
+                        # (scripts/runtime-db-maintenance.py).
+                        db.execute("PRAGMA auto_vacuum=INCREMENTAL")
+                    except sqlite3.OperationalError:
+                        pass
+                    try:
                         db.execute("PRAGMA journal_mode=WAL")
                     except sqlite3.OperationalError:
                         try:

@@ -7,8 +7,9 @@
   enable-incremental-vacuum  one-time auto_vacuum=INCREMENTAL + VACUUM
 
 The runtime itself only ever truncates the WAL and runs incremental_vacuum
-after its hourly prune; free pages are returned to the filesystem only once
-the database was converted with ``enable-incremental-vacuum``. That rewrite
+after its hourly prune. A database created by 2.0 or later is incremental
+from the start; an older one returns free pages to the filesystem only once
+it was converted with ``enable-incremental-vacuum``. That rewrite
 needs exclusive access: stop the web service and the private policy server
 first. It refuses while any process holds the runtime worker lease, and it
 requires --yes. Never point it at a database you cannot afford to rewrite

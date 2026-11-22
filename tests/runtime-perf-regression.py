@@ -13,6 +13,7 @@ import gzip
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -188,11 +189,33 @@ class StoreProjectionTests(unittest.TestCase):
         from runtime_lease import WorkerLease
 
         script = ROOT / "scripts/runtime-db-maintenance.py"
-        db = self.store.paths.db
-        with self.store.transaction() as sql:
-            sql.execute("CREATE TABLE filler(blob TEXT)")
-            sql.executemany("INSERT INTO filler VALUES(?)", [("x" * 4000,)] * 500)
-            sql.execute("DELETE FROM filler")
+
+        def churn(store):
+            with store.transaction() as sql:
+                sql.execute("CREATE TABLE filler(blob TEXT)")
+                sql.executemany("INSERT INTO filler VALUES(?)", [("x" * 4000,)] * 500)
+                sql.execute("DELETE FROM filler")
+
+        # A store created now reclaims freed pages by itself.
+        churn(self.store)
+        self.assertTrue(self.store.compact().get("incrementalVacuum"))
+        fresh = subprocess.run(
+            [sys.executable, str(script), "stats", "--db", str(self.store.paths.db)], capture_output=True, text=True
+        )
+        fresh = json.loads(fresh.stdout)
+        self.assertEqual((fresh["autoVacuum"], fresh["freePages"]), ("incremental", 0))
+
+        # A database from before that default keeps its mode until the explicit conversion.
+        db = Path(self.tmp.name) / "legacy" / "runtime.sqlite3"
+        db.parent.mkdir()
+        old = sqlite3.connect(db)
+        old.execute("PRAGMA journal_mode=WAL")
+        old.execute("CREATE TABLE meta (key TEXT PRIMARY KEY,value TEXT NOT NULL)")
+        old.commit()
+        old.close()
+        legacy = RuntimeStore(db)
+        legacy.initialize()
+        churn(legacy)
         run = lambda *args: subprocess.run(  # noqa: E731
             [sys.executable, str(script), *args, "--db", str(db)], capture_output=True, text=True
         )
@@ -210,7 +233,7 @@ class StoreProjectionTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         after = json.loads(done.stdout)["after"]
         self.assertEqual((after["autoVacuum"], after["freePages"]), ("incremental", 0))
-        self.assertTrue(self.store.compact().get("incrementalVacuum"))
+        self.assertTrue(legacy.compact().get("incrementalVacuum"))
 
     def test_gzip_replay_artifact_round_trip(self):
         artifacts = ArtifactStore(self.store)
