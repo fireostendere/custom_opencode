@@ -240,7 +240,7 @@ def main() -> None:
         # Store/maintenance/index regressions live in their own suite; run it
         # here so the existing verify-runtime-v3.sh gate covers them.
         subprocess.run(
-            [sys.executable, str(ROOT / "scripts/runtime-perf-regression.py")],
+            [sys.executable, str(ROOT / "tests/runtime-perf-regression.py")],
             check=True,
             timeout=600,
         )

@@ -146,11 +146,11 @@ custom-opencode-policy stop
 повторяющиеся вложенные тесты в искусственно большой итоговый счётчик:
 
 ```bash
-python scripts/audit-regression.py --output /tmp/custom-opencode-regression
-python scripts/install-native-regression.py --output /tmp/custom-opencode-native-install
-python scripts/native-budget-regression.py --retry-once --output /tmp/custom-opencode-native-wire
+python tests/matrix.py --output /tmp/custom-opencode-regression
+python tests/install-native-regression.py --output /tmp/custom-opencode-native-install
+python tests/native-budget-regression.py --retry-once --output /tmp/custom-opencode-native-wire
 python scripts/sandbox-preflight.py
-python scripts/tool-fabric-smoke.py
+python tests/tool-fabric-smoke.py
 ```
 
 Нужны Python, Node 22, указанные requirements и браузер Playwright 1.57.0.

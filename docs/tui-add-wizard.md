@@ -54,7 +54,7 @@ ID конкретного API-key аккаунта**. Ключи и другие
 или успешный запрос к Anthropic. Для запроса нужен реальный Workspace ID
 с подходящими правами API-ключа; значение по умолчанию не подставляется.
 Нативная форма и HTTP-hook проверяются mock-регрессией
-`OPENCODE_TOOL_FABRIC=0 node scripts/config-manager-regression.mjs`;
+`OPENCODE_TOOL_FABRIC=0 node tests/config-manager-regression.mjs`;
 это не live TUI acceptance и не реальный запрос к Anthropic.
 
 ## Аккаунты провайдеров
@@ -82,7 +82,7 @@ Web/PWA этой командой не затрагивается.
 Проверка маршрутизации команды без реальных аккаунтов и сетевых запросов:
 
 ```bash
-node scripts/tui-accounts-regression.mjs
+node tests/tui-accounts-regression.mjs
 ```
 
 ## Обновление каталога и Astra
@@ -107,7 +107,7 @@ node scripts/tui-accounts-regression.mjs
 Запуск без LLM-токенов и без сетевых запросов:
 
 ```bash
-node scripts/tui-add-wizard-regression.mjs
+node tests/tui-add-wizard-regression.mjs
 ```
 
 Regression вызывает зарегистрированные TUI command rows через mock-реализации
@@ -130,7 +130,7 @@ Regression вызывает зарегистрированные TUI command row
 Для сохранения машиночитаемого отчёта:
 
 ```bash
-node scripts/tui-add-wizard-regression.mjs \
+node tests/tui-add-wizard-regression.mjs \
   --report=docs/artifacts/tui-add-wizard-regression.json
 ```
 
@@ -142,9 +142,9 @@ node scripts/tui-add-wizard-regression.mjs \
 Дополнительные проверки loader и TUI submit transport:
 
 ```bash
-node scripts/tui-regression.mjs
-node scripts/panel-submit-regression.mjs
-bash scripts/tui-package-smoke.sh
+node tests/tui-regression.mjs
+node tests/panel-submit-regression.mjs
+bash tests/tui-package-smoke.sh
 ```
 
 Последняя команда требует установленный `opencode2` и проверяет загрузку

@@ -153,7 +153,7 @@ OpenCode V2 остаётся native model/tool/session/MCP execution engine.
 
 ```bash
 ../scripts/verify.sh
-../scripts/verify-runtime-v3.sh
+../tests/verify-runtime-v3.sh
 ```
 
 Verifier включает JS/Python syntax, web smoke, runtime/RAG/limits smokes и source invariants. Для визуальных изменений дополнительно проверяйте light/dark/system, reduced-motion, mobile drawer и re-auth route restoration.

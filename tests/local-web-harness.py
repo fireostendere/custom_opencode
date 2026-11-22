@@ -4,7 +4,7 @@
 Modes:
   serve  Start the real production web handler against an in-process fake
          OpenCode backend and keep it available for manual browser testing.
-  test   Start the same isolated stack, run scripts/browser-smoke.py against
+  test   Start the same isolated stack, run tests/browser-smoke.py against
          it, then shut everything down.
 
 The harness never uses the user's .env, OpenCode state, providers, RAG data,
@@ -28,7 +28,7 @@ from types import ModuleType
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "scripts"
+SCRIPTS = ROOT / "tests"
 # The fixture session is a D&D table: the browser smoke checks its status pill.
 DND_WATCH_SESSION = "ses_fixture"
 

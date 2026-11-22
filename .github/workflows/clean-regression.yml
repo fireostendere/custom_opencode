@@ -12,8 +12,8 @@ env:
   # On runners npm's global prefix IS the pinned tree, and a mid-job reify once replaced
   # opencode2.exe (packaged-tui-pty "Exec format error"; the runner orphan-tracker killed
   # `npm install @op...` at Complete job). The pinned CLI honors this env gate. The audit
-  # matrix strips OPENCODE_* for suites, so scripts/tui-package-smoke.sh,
-  # scripts/audit-regression.py and scripts/native-budget-regression.py re-export it.
+  # matrix strips OPENCODE_* for suites, so tests/tui-package-smoke.sh,
+  # tests/matrix.py and tests/native-budget-regression.py re-export it.
   OPENCODE_DISABLE_AUTOUPDATE: "1"
 concurrency:
   group: clean-regression-${{ github.workflow }}-${{ github.ref }}
@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-python@v7
         with: {python-version: '3.12'}
       - name: Validate workflow and CLI harness consistency
-        run: python scripts/workflow-cli-consistency.py
+        run: python tests/workflow-cli-consistency.py
       - name: Install browser harness dependencies
         run: |
           set -euo pipefail
@@ -55,7 +55,7 @@ jobs:
       - name: Run clean model-free regression matrix
         run: |
           set -euo pipefail
-          python scripts/audit-regression.py --output "$RUNNER_TEMP/regression"
+          python tests/matrix.py --output "$RUNNER_TEMP/regression"
           test -s "$RUNNER_TEMP/regression/report.json"
       - uses: actions/upload-artifact@v7
         if: always()
@@ -80,7 +80,7 @@ jobs:
       - name: Install native runtime from scratch and exercise TUI
         run: |
           set -euo pipefail
-          python scripts/install-native-regression.py --output "$RUNNER_TEMP/native-install/reports"
+          python tests/install-native-regression.py --output "$RUNNER_TEMP/native-install/reports"
           test -s "$RUNNER_TEMP/native-install/reports/report.json"
       - uses: actions/upload-artifact@v7
         if: always()
@@ -111,7 +111,7 @@ jobs:
       - name: Real native inference, retry, turn boundary and MCP wire contracts
         run: |
           set -euo pipefail
-          python scripts/native-budget-regression.py --retry-once --output "$RUNNER_TEMP/native-budget"
+          python tests/native-budget-regression.py --retry-once --output "$RUNNER_TEMP/native-budget"
           test -n "$(ls -A "$RUNNER_TEMP/native-budget")"
       - uses: actions/upload-artifact@v7
         if: always()
@@ -138,7 +138,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/kernel-sandbox"
           uname -a > "$RUNNER_TEMP/kernel-sandbox/kernel.txt"
           python scripts/sandbox-preflight.py --json | tee "$RUNNER_TEMP/kernel-sandbox/preflight.json"
-          python scripts/tool-fabric-smoke.py | tee "$RUNNER_TEMP/kernel-sandbox/tool-fabric.log"
+          python tests/tool-fabric-smoke.py | tee "$RUNNER_TEMP/kernel-sandbox/tool-fabric.log"
           test -s "$RUNNER_TEMP/kernel-sandbox/preflight.json"
           test -s "$RUNNER_TEMP/kernel-sandbox/tool-fabric.log"
       - uses: actions/upload-artifact@v7

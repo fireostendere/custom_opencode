@@ -19,8 +19,8 @@ are never replayed: recovery restores the catalog for subsequent model requests.
 Logs use the `mcp automatic recovery` marker and contain server names/attempts/status,
 not credentials or tool arguments. Standalone/unmanaged servers are not controlled.
 
-Checks: `node scripts/mcp-reconnect-regression.mjs` and
-`python3 scripts/mcp-reconnect-live.py` (isolated native service, no inference).
+Checks: `node tests/mcp-reconnect-regression.mjs` and
+`python3 tests/mcp-reconnect-live.py` (isolated native service, no inference).
 
 ## Implementation and acceptance status
 
@@ -138,13 +138,13 @@ arguments, headers or credentials. This instrumentation requires an actual HTTP
 model request; context-hook unit tests do not establish wire-level acceptance.
 
 ```sh
-node scripts/mcp-profiles-regression.mjs
-node scripts/config-manager-regression.mjs
-node scripts/tui-add-wizard-regression.mjs
-node scripts/wizard-validation-smoke.mjs
-node scripts/panel-submit-regression.mjs
-node scripts/tui-regression.mjs
-bash scripts/regression.sh
+node tests/mcp-profiles-regression.mjs
+node tests/config-manager-regression.mjs
+node tests/tui-add-wizard-regression.mjs
+node tests/wizard-validation-smoke.mjs
+node tests/panel-submit-regression.mjs
+node tests/tui-regression.mjs
+python3 tests/matrix.py --output /tmp/custom-opencode-matrix
 ```
 
 The profile regression covers v1 migration, profile CRUD, duplicate/missing/disabled
@@ -152,7 +152,7 @@ members, manual/Auto policy, parallel request filtering, membership updates and
 restart persistence with mocked native APIs. The wizard regression additionally
 covers profile creation/editing, MCP membership removal and final/selector Cancel.
 
-At the first full-regression run on this branch, `scripts/web-smoke.mjs:243` fails
+At the first full-regression run on this branch, `tests/web-smoke.mjs:243` fails
 on its existing Activity markup assertion before the remaining full suite runs.
 This must be resolved or independently documented against the base revision before
 declaring the release green.

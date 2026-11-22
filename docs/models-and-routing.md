@@ -281,7 +281,7 @@ Zero-token regression должна фиксировать минимум:
 Основные команды:
 
 ```bash
-python3 scripts/model-routing-effort-smoke.py
-bash scripts/verify-runtime-v3.sh
-bash scripts/regression.sh
+python3 tests/model-routing-effort-smoke.py
+bash tests/verify-runtime-v3.sh
+python3 tests/matrix.py --output /tmp/custom-opencode-matrix
 ```

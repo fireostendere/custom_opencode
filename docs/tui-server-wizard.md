@@ -54,7 +54,7 @@ Submit router перехватывает `/server` и `/server status` в prompt
 Запуск без LLM-токенов и без сетевых запросов:
 
 ```bash
-node scripts/tui-server-wizard-regression.mjs
+node tests/tui-server-wizard-regression.mjs
 ```
 
 Regression проверяет:
@@ -70,7 +70,7 @@ Regression проверяет:
 Дополнительные проверки loader и TUI submit transport:
 
 ```bash
-node scripts/tui-regression.mjs
-node scripts/panel-submit-regression.mjs
-bash scripts/tui-package-smoke.sh
+node tests/tui-regression.mjs
+node tests/panel-submit-regression.mjs
+bash tests/tui-package-smoke.sh
 ```

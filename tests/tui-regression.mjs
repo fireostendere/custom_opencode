@@ -1675,7 +1675,7 @@ for (const file of ["add-wizard.js", "workspace-panel.jsx", "server-wizard.js", 
 // a V1 name such as "message.updated" is accepted and then never fires, freezing the panel.
 {
   const knownEvents = new Set(
-    (await readFile(new URL("scripts/fixtures/opencode-v2-events.txt", root), "utf8"))
+    (await readFile(new URL("tests/fixtures/opencode-v2-events.txt", root), "utf8"))
       .split("\n")
       .filter((line) => line && !line.startsWith("#")),
   )

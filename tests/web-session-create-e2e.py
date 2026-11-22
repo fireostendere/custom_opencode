@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("session_create_harness", ROOT / "scripts/local-web-harness.py")
+spec = importlib.util.spec_from_file_location("session_create_harness", ROOT / "tests/local-web-harness.py")
 assert spec and spec.loader
 harness = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = harness

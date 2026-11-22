@@ -20,7 +20,7 @@ os.environ["OPENCODE_ALIBABA_ENABLED"] = "1"
 os.environ.setdefault("OPENCODE_SCRATCH_DIRECTORY", str(Path(tempfile.gettempdir()) / "custom-opencode-limits-smoke-scratch"))
 sys.path.insert(0, str(ROOT / "app"))
 py_compile.compile(str(ROOT / "scripts/rag-probe.py"), doraise=True)
-py_compile.compile(str(ROOT / "scripts/control-plane-smoke.py"), doraise=True)
+py_compile.compile(str(ROOT / "tests/control-plane-smoke.py"), doraise=True)
 py_compile.compile(str(ROOT / "app/control_plane.py"), doraise=True)
 py_compile.compile(str(ROOT / "app/server_control.py"), doraise=True)
 py_compile.compile(str(ROOT / "app/server_features.py"), doraise=True)
@@ -250,6 +250,6 @@ with tempfile.TemporaryDirectory() as temp:
 
 # Keep permission policy regression in the normal verifier path. It uses only
 # fake backend hooks and local temporary files; no model inference is performed.
-subprocess.run([sys.executable, str(ROOT / "scripts/control-plane-smoke.py")], check=True)
+subprocess.run([sys.executable, str(ROOT / "tests/control-plane-smoke.py")], check=True)
 
 print("Limits + workflow + control-plane zero-token smoke passed")

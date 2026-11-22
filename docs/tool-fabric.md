@@ -270,8 +270,8 @@ Prometheus, Grafana or exporter is started automatically. SQLite events and
 ## Verification and limits of acceptance
 
 ```sh
-python3 scripts/tool-fabric-smoke.py
-node scripts/tool-fabric-config-smoke.mjs
+python3 tests/tool-fabric-smoke.py
+node tests/tool-fabric-config-smoke.mjs
 ```
 
 The smoke exercises actual CLI subprocesses and an SDK MCP subprocess, modern and

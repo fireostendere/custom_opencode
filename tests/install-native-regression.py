@@ -196,7 +196,7 @@ def main() -> int:
                 "native-runtime",
                 [
                     "node",
-                    "scripts/native-runtime-smoke.mjs",
+                    "tests/native-runtime-smoke.mjs",
                     "--home",
                     str(home),
                     "--output",
@@ -208,7 +208,7 @@ def main() -> int:
                 "native-tui",
                 [
                     "python3",
-                    "scripts/native-tui-smoke.py",
+                    "tests/native-tui-smoke.py",
                     "--home",
                     str(home),
                     "--output",

@@ -66,9 +66,9 @@ backend memory suite — 19 тестов, plugin memory/lifecycle suite — вс
 Все три memory regression входят в общий verifier:
 
 ```bash
-node --expose-gc scripts/frontend-memory-regression.mjs
-python3 scripts/memory-backend-regression.py
-node --expose-gc scripts/plugin-memory-regression.mjs
+node --expose-gc tests/frontend-memory-regression.mjs
+python3 tests/memory-backend-regression.py
+node --expose-gc tests/plugin-memory-regression.mjs
 bash scripts/verify.sh
 ```
 

@@ -24,8 +24,8 @@ TUI bundle восстанавливает отображение: если по�
 Перенос сохраняет историю сессии. Уход из сессии, смена её папки/workspace
 или выгрузка плагина отменяют оставшиеся повторы. Медленные проверки не перекрываются.
 
-Проверки: `node scripts/location-recovery-regression.mjs` и
-`bash scripts/tui-package-smoke.sh` (изолированный TUI, без запросов к модели).
+Проверки: `node tests/location-recovery-regression.mjs` и
+`bash tests/tui-package-smoke.sh` (изолированный TUI, без запросов к модели).
 
 ## Installer останавливается на pre-install verification
 

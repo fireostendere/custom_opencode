@@ -100,7 +100,7 @@ async def main():
             (bounded / f"{index:04}.txt").write_text("\n")
         capped = fingerprint(bounded)
         assert len(capped["files"]) == 6000 and capped["truncated"]
-        engine = ROOT / "scripts/fixtures/tool-fabric-engine.py"
+        engine = ROOT / "tests/fixtures/tool-fabric-engine.py"
         fixture = {
             "schemaVersion": 1,
             "id": "fixture",
@@ -402,7 +402,7 @@ async def main():
         # A real upstream process: pin its schema then run through our facade.
         upstream_params = StdioServerParameters(
             command=sys.executable,
-            args=[str(ROOT / "scripts/fixtures/tool-fabric-upstream.py")],
+            args=[str(ROOT / "tests/fixtures/tool-fabric-upstream.py")],
             # The SDK's default child environment drops PYTHONPATH; keep the
             # same import path as the wire case so a user-site mcp is found.
             env={"PYTHONPATH": os.environ.get("PYTHONPATH", "")},
@@ -415,7 +415,7 @@ async def main():
             "id": "native",
             "kind": "mcp",
             "runtime": {
-                "command": [sys.executable, str(ROOT / "scripts/fixtures/tool-fabric-upstream.py")]
+                "command": [sys.executable, str(ROOT / "tests/fixtures/tool-fabric-upstream.py")]
             },
             "operations": {
                 "echo": {

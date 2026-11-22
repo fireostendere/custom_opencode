@@ -113,9 +113,9 @@ UI использует короткие transition/animation только дл�
 Короткие live-сценарии для уже запущенного пользовательского инстанса:
 
 ```bash
-python3 scripts/web-e2e.py
-python3 scripts/browser-smoke.py
-python3 scripts/live-web-smoke.py
+python3 tests/web-e2e.py
+python3 tests/browser-smoke.py
+python3 tests/live-web-smoke.py
 ```
 
 Они используют URL/credential из `.env`; permission response в `web-e2e.py` перехватывается браузером и не отправляется реальному OpenCode.
@@ -123,9 +123,9 @@ python3 scripts/live-web-smoke.py
 Для CI используется изолированный deterministic fixture:
 
 ```bash
-python3 scripts/web-security-smoke.py
-python3 scripts/queue-badge-convergence.py
-python3 scripts/web-fixture-e2e.py
+python3 tests/web-security-smoke.py
+python3 tests/queue-badge-convergence.py
+python3 tests/web-fixture-e2e.py
 ```
 
 `web-fixture-e2e.py` запускает настоящий production `server_workflow.Handler` и настоящий JS/CSS UI против маленького in-process V2 fixture backend. Он не вызывает модель, не тратит токены и проверяет desktop/mobile login, session navigation, model picker, permission lifecycle, composer, appearance и mobile drawer.

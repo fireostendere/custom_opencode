@@ -343,9 +343,8 @@ assert any(action["id"] == "orchestration.add" and action.get("command") == "/ad
 # The wizard, config-manager and unified-workspace behavioral suites must stay
 # wired into the local gate; marker checks alone cannot catch their regressions.
 verify_sh = (ROOT / "scripts/verify.sh").read_text(encoding="utf-8")
-config_manager_regression_js = (ROOT / "scripts/config-manager-regression.mjs").read_text(encoding="utf-8")
-wizard_validation_js = (ROOT / "scripts/wizard-validation-smoke.mjs").read_text(encoding="utf-8")
-workflow_yml = (ROOT / ".github/workflows/unified-workspace.yml").read_text(encoding="utf-8")
+config_manager_regression_js = (ROOT / "tests/config-manager-regression.mjs").read_text(encoding="utf-8")
+wizard_validation_js = (ROOT / "tests/wizard-validation-smoke.mjs").read_text(encoding="utf-8")
 for marker in (
     "OPENCODE_CONFIG_MANAGER_SELF_CHECK",
     "config/plugins/config-manager.js",
@@ -366,6 +365,5 @@ for marker in (
     assert marker in wizard_validation_js, marker
 for script in ("wizard-validation-smoke.mjs", "config-manager-regression.mjs", "unified-workspace-regression.py"):
     assert script in verify_sh, script
-assert "'config/plugins/**'" in workflow_yml
 
 print("Unified workspace regression passed: state/actions/events + durable retry + permission advice + Web/four-zone TUI contracts")
