@@ -134,7 +134,8 @@ def check_session_mirrors(page):
 
     # Mirrors are neither drag sources nor drop targets, for sessions or projects.
     writes = []
-    record_write = lambda request: writes.append(request.url) if request.method in ('POST', 'PATCH', 'DELETE') and '/api/' in request.url else None
+    # custom.goal/get is the goal banner's read over RPC: a POST by transport, not a write.
+    record_write = lambda request: writes.append(request.url) if request.method in ('POST', 'PATCH', 'DELETE') and '/api/' in request.url and '/api/rpc/custom.goal/get' not in request.url else None
     page.on('request', record_write)
     order = page.locator('#sessions > [data-project]').evaluate_all('rows => rows.map(row => row.dataset.project)')
     assert page.evaluate('''() => {
