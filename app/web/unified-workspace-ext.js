@@ -1,10 +1,10 @@
+import { request as req } from './api.js'
+import { escapeHtml as esc } from './markdown.js'
 const $=(id)=>document.getElementById(id)
 const previousTasks=new Map()
 let enrichBusy=false
 
 function sid(){const match=/^#\/session\/([^/?]+)/.exec(location.hash||'');if(!match)return '';try{return decodeURIComponent(match[1])}catch{return ''}}
-function esc(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-async function req(path,options={}){const response=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});if(!response.ok){const text=await response.text().catch(()=>'');throw new Error(`${response.status} ${response.statusText}${text?`: ${text.slice(0,240)}`:''}`)}return response.json()}
 function toast(text){const el=$('toast');if(!el)return;el.textContent=text;el.hidden=false;clearTimeout(el._timer);el._timer=setTimeout(()=>el.hidden=true,3200)}
 
 async function addPermissionRule(rule){

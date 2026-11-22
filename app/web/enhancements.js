@@ -1,3 +1,5 @@
+import { dataOf, request } from './api.js'
+import { escapeHtml } from './markdown.js'
 import { LIMIT_DEFS, selectedLimitIDs, trackedLimitSources } from './client-limit-selection.js'
 import { isNightPromoActive } from './night-promo.js'
 import { createRefreshCoalescer } from './refresh-coalescer.js'
@@ -23,26 +25,6 @@ export function readLimitPreferences(storage = globalThis.localStorage) {
     const hidden = JSON.parse(storage?.getItem(LIMIT_PREFERENCES_KEY) || '[]')
     return Array.isArray(hidden) ? hidden.filter((id) => LIMIT_DEFS.some((limit) => limit.id === id)) : []
   } catch { return [] }
-}
-
-function dataOf(value) {
-  return value && typeof value === 'object' && 'data' in value ? value.data : value
-}
-
-async function request(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-  })
-  if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    const error = new Error(`${response.status} ${response.statusText}${text ? `: ${text.slice(0, 240)}` : ''}`)
-    error.status = response.status
-    throw error
-  }
-  if (response.status === 204) return null
-  const type = response.headers.get('content-type') || ''
-  return type.includes('application/json') ? response.json() : response.text()
 }
 
 function toast(text, ms = 2800) {
@@ -81,10 +63,6 @@ async function selectedDirectory() {
   }
   scratchDirectory ??= request('/client-config.json').then((config) => config?.scratchDirectory || '').catch(() => { scratchDirectory = null; return '' })
   return scratchDirectory
-}
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char])
 }
 
 export function windowLabel(minutes) {

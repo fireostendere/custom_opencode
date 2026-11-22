@@ -1,12 +1,12 @@
 # Правила для AI-агентов (custom_opencode)
 
-Репозиторий — исходник установленного OpenCode: плагины `config/plugins/`, промпты `config/prompts/`, шаблон `config/opencode.json.template`, установщик `scripts/install.sh`, web/runtime `app/`.
+Репозиторий — исходник установленного OpenCode: плагины `config/plugins/`, промпты `config/prompts/`, шаблон `config/opencode.json.template`, установщик и эксплуатация `scripts/`, Python web-сервер и runtime `app/`, статический web-клиент `app/web/`, все тесты `tests/`.
 
 ## Git
 - `main` защищён: 4 обязательных CI. Изменения — только через PR, слияние после зелёного CI.
 - Каждая сессия работает в своём worktree и своей ветке: `git worktree add <папка> -b <ветка> origin/main`. Папка — на постоянном диске (например `../worktrees/` рядом с репозиторием), не в `/tmp`: при перезапуске WSL systemd очищает `/tmp`, и незакоммиченная работа пропадает. Общую рабочую копию не трогай — там может сидеть другая сессия, и чужой `git add -A` заберёт твои правки в чужой коммит.
 - Коммить только свои файлы, без `git add -A` по общей копии.
-- Перед PR: `bash scripts/verify.sh` (для точечных правок — профильные `tests/*-regression.*`).
+- Перед PR: `bash scripts/verify.sh` (для точечных правок — профильные `tests/*-regression.*`); полностью, как в CI, — `python3 tests/matrix.py --output <папка>`. Новый файл в `tests/` подключай к `tests/matrix.py` или `scripts/verify.sh`, иначе CI упадёт. Подробно: `docs/testing.md`.
 
 ## Установленная копия
 - Личные настройки владельца (модели агентов, свои агенты и промпты, флаги, Tool Fabric) — в приватном репо `CUSTOM_OPENCODE_USER_CONFIG` (`settings.env`, `opencode.overlay.json`, см. `docs/configuration.md#private-user-config`), не в шаблоне и не в `.env`; в `.env` только секреты.

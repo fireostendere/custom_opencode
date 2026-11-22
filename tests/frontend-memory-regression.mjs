@@ -90,7 +90,10 @@ function fixture(){
       limit:CONTEXT_CACHE_LIMIT,modelVersions:sessionModelVersions,modelOverrides:sessionModelOverrides,historyProbeQueue,
       draftOf:id=>drafts[id]};
   `,appContext)
-  const advancedContext=vm.createContext({...common})
+  // advanced-features.js imports request/dataOf from api.js: evaluate the real ones over the fixture fetch.
+  const apiContext=vm.createContext({fetch,URLSearchParams,console})
+  vm.runInContext(readFileSync(resolve(root,'app/web/api.js'),'utf8').replace(/^export /gm,'')+';globalThis.exports={request,dataOf}',apiContext)
+  const advancedContext=vm.createContext({...common,...apiContext.exports})
   source=readFileSync(resolve(root,'app/web/advanced-features.js'),'utf8').replace(/^import .*$/gm,'').replace(/^export /gm,'')
     .replace("if (typeof document !== 'undefined') init()",'')
   vm.runInContext(source+`

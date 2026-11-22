@@ -14,7 +14,7 @@ OpenCode остаётся execution/model backend; `custom_opencode` управ�
 
 ### Web/PWA client
 
-Каталог `app/` предоставляет:
+Каталог `app/web/` (статика; сервер в `app/`) предоставляет:
 
 - root sessions в sidebar, child sessions только в orchestration trace;
 - isolated quick workspaces;

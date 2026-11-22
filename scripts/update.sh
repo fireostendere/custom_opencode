@@ -45,4 +45,4 @@ if ! "$ROOT/scripts/install.sh"; then
   git reset --keep "$PREVIOUS" || echo "Rollback failed; run: git -C '$ROOT' reset --keep $PREVIOUS" >&2
   exit 1
 fi
-echo "Updated from origin/main and restarted the web/shared OpenCode services."
+echo "Updated from origin/main to version $(head -n1 "$ROOT/VERSION" 2>/dev/null || echo unknown) and restarted the web/shared OpenCode services."

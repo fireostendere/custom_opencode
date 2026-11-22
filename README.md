@@ -1,5 +1,7 @@
 # custom_opencode
 
+Версия 2.0.0 · [что изменилось](CHANGELOG.md)
+
 Переносимый комплект поверх OpenCode V2: собственный ChatGPT-подобный web/PWA client, Alibaba role routing, серверный Runtime V2/V3 control plane, безопасная работа с проектами, self-test и опциональный инженерный RAG через MCP.
 
 ## Что предоставляет
@@ -212,8 +214,6 @@ Provisioning завершается ошибкой при неверном origi
 cp .env.example .env
 # заполнить .env
 ./scripts/verify.sh
-./tests/verify-runtime-v3.sh
-python3 tests/model-routing-effort-smoke.py
 ./scripts/install.sh
 ```
 
@@ -249,6 +249,8 @@ Installer по умолчанию выполняет pre-install verification и
 - [RAG integration](docs/rag.md)
 - [`/rag-start`](docs/rag-start.md)
 - [Эксплуатация и recovery](docs/operations.md)
+- [Проверка и тесты](docs/testing.md)
+- [Контракты контекста, бюджетов и политики](docs/runtime-contracts.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
 ## Security defaults
@@ -265,22 +267,29 @@ Installer по умолчанию выполняет pre-install verification и
 - auth/API/HTML responses не кэшируются service worker как offline app shell;
 - install/update fail closed при critical self-test failure.
 
-## Воспроизводимая проверка
+## Раскладка репозитория
 
-`python3 tests/matrix.py --output /tmp/opencode-audit` запускает все
-независимые model-free наборы из `SUITES`, сохраняет каждый лог и `report.json`, продолжает
-остальные проверки после отказа и возвращает ненулевой код при любой ошибке.
-Нужны Python, Node, Playwright/Chromium, bubblewrap и закреплённый `opencode2`.
-`OPENCODE2_BIN` позволяет явно указать проверяемый бинарник.
+```text
+app/            Python web-сервер: auth, proxy, limits, projects, RAG, queue, runtime
+app/web/        статический web/PWA-клиент
+config/         плагины, промпты, темы и шаблон конфигурации OpenCode
+scripts/        установка, обновление и эксплуатация
+tests/          regression/smoke/e2e-наборы и их harness
+docs/           документация
+systemd/        unit web-сервера
+```
+
+## Проверка
+
+```bash
+bash scripts/verify.sh                                        # быстро, офлайн, перед PR
+python3 tests/matrix.py --output /tmp/custom-opencode-matrix  # всё, как в CI
+```
+
+Что входит в матрицу, что проверяет CI и как добавлять тесты: [docs/testing.md](docs/testing.md).
 
 Установка без user-systemd поддерживается только при явном
 `CUSTOM_OPENCODE_SERVICE_MODE=manual`. Web запускается через `/server` или
 `custom-opencode-webserver start`; автозапуск не имитируется.
 Post-install self-test проверяет настоящий API и все обязательные backend-плагины,
 используя обычную cookie-авторизацию, без включения legacy Basic Auth.
-
-Native acceptance: `tests/native-runtime-smoke.mjs` проверяет реальные команды
-и durable configuration, `tests/native-tui-smoke.py` — открытие/отмену визардов
-и шесть панелей через PTY. Эти скрипты требуют отдельный тестовый HOME с маркером
-`.custom-opencode-audit-home`, не предназначены для запуска на пользовательском HOME.
-Полная инструкция и границы проверки: [аудит 2026-09-09](docs/audit-2026-09-09.md).

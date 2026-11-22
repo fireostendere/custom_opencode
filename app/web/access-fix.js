@@ -1,3 +1,4 @@
+import { dataOf } from './api.js'
 import { createAdaptivePoller } from './refresh-coalescer.js'
 
 const $ = (id) => document.getElementById(id)
@@ -169,10 +170,6 @@ async function request(path, options = {}) {
   if (response.status === 204) return null
   const type = response.headers.get('content-type') || ''
   return type.includes('application/json') ? response.json() : response.text()
-}
-
-function dataOf(value) {
-  return value && typeof value === 'object' && 'data' in value ? value.data : value
 }
 
 async function sessionDirectory(sessionID) {

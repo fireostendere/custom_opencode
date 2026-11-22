@@ -1,3 +1,5 @@
+import { request as req } from './api.js'
+import { escapeHtml as esc } from './markdown.js'
 import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'
 const $=(id)=>document.getElementById(id)
 const PROFILE_KEY='opencode:web:runtime-profile-v2:'
@@ -5,7 +7,6 @@ const PROFILE_KEY='opencode:web:runtime-profile-v2:'
 const state={sessionID:null,tasks:[],counts:{},capabilities:null,resources:null,selectedTask:null,previous:new Map(),unavailable:false,error:'',loading:false,updatedAt:null}
 const refreshOnce=createRefreshCoalescer()
 
-function esc(value){return String(value??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function sid(){const m=/^#\/session\/([^/?]+)/.exec(location.hash||'');if(!m)return null;try{return decodeURIComponent(m[1])}catch{return null}}
 function key(){return `${PROFILE_KEY}${sid()||'draft'}`}
 function explicitProfile(){return localStorage.getItem(key())||'direct'}
@@ -27,7 +28,6 @@ function stateLabel(id){return STATE_LABELS[id]||id}
 function nextModel(){const ref=window.CustomOpenCodeControls?.activeModel?.();return state.resources?.decisions?.[profile()]?.selectedModel||profileRow(profile())?.cloudModel||(ref?.providerID&&ref?.id?`${ref.providerID}/${ref.id}`:'Данные ещё не загружены')}
 function setProfile(id,label=''){localStorage.setItem(key(),id||'direct');document.documentElement.dataset.runtimeProfile=id||'direct';syncBadge(label);renderProfiles()}
 function toast(text){const el=$('toast');if(!el)return;el.textContent=text;el.hidden=false;clearTimeout(el._timer);el._timer=setTimeout(()=>el.hidden=true,3200)}
-async function req(path,options={}){const response=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});if(!response.ok){const text=await response.text().catch(()=>'');throw new Error(`${response.status} ${response.statusText}${text?`: ${text.slice(0,240)}`:''}`)}const type=response.headers.get('content-type')||'';return type.includes('application/json')?response.json():response.text()}
 
 // Preserve the existing composer/queue implementation and attach only the server profile.
 const nativeFetch=window.fetch.bind(window)

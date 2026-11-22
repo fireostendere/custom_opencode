@@ -1,6 +1,6 @@
+import { escapeHtml as esc } from './markdown.js'
 const $=(id)=>document.getElementById(id)
 const state={sessionID:'',telemetry:null,runtime:null,lastTaskID:'',lastBranch:''}
-function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function sid(){const m=/^#\/session\/([^/?]+)/.exec(location.hash||'');if(!m)return '';try{return decodeURIComponent(m[1])}catch{return ''}}
 async function req(path,options={}){const r=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});if(!r.ok)throw new Error(`${r.status} ${(await r.text()).slice(0,240)}`);return r.json()}
 function toast(text){const el=$('toast');if(!el)return;el.textContent=text;el.hidden=false;clearTimeout(el._timer);el._timer=setTimeout(()=>el.hidden=true,3500)}
