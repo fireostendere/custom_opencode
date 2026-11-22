@@ -138,28 +138,32 @@ export default {
         await rm(directory, { recursive: true })
         context.data.location.invalidate({ directory })
         context.ui.router.navigate({ type: 'session', sessionID: session.id })
-        async function waitFor(check) {
+        async function waitFor(step, check) {
           const deadline = Date.now() + 8_000
           while (Date.now() < deadline) {
             const result = check()
             if (result) return result
             await new Promise(resolve => setTimeout(resolve, 50))
           }
-          throw new Error('Manual move probe timed out')
+          throw new Error(`Manual move probe timed out: ${step}`)
         }
         const button = () => [...renderTree()].find(node => node.id === 'custom.location-recovery.move')
         const prompt = () => [...renderTree()].find(node => node.placeholder === 'Directory path')
-        await waitFor(button)
+        await waitFor('recovery button', button)
         context.keymap.dispatch('session.move')
-        await waitFor(prompt)
+        await waitFor('prompt after /move', prompt)
         await record({ move: 'command-open' })
-        await waitFor(() => !prompt())
-        const link = await waitFor(button)
+        await waitFor('prompt closed by Escape', () => !prompt())
+        const link = await waitFor('recovery button after Escape', button)
+        // Mouse hits are resolved against the last painted frame. Until the frame without the
+        // closed prompt is painted, a click on the button still lands on the prompt's region.
+        await context.renderer.idle?.()
+        await new Promise(resolve => setTimeout(resolve, 150))
         await record({ move: 'button-ready', x: link.x + 1, y: link.y })
-        await waitFor(prompt)
+        await waitFor('prompt after mouse click', prompt)
         await record({ move: 'button-open' })
-        await waitFor(() => context.data.session.get(session.id)?.location.directory === process.cwd())
-        await waitFor(() => !hasNode('custom.location-recovery'))
+        await waitFor('session moved', () => context.data.session.get(session.id)?.location.directory === process.cwd())
+        await waitFor('recovery box cleared', () => !hasNode('custom.location-recovery'))
         await record({ move: 'complete', sessionID: session.id,
           directory: context.data.session.get(session.id).location.directory })
       } catch (error) { await record({ move: 'failed', error: String(error) }) }
@@ -176,7 +180,17 @@ export default {
       context.keymap.layer(() => ({ mode:'base', priority:120, commands:[stop, {
         bind:'f4', title:'Keyboard probe dialog',
         run: async () => {
-          await context.ui.dialog.alert({ title:'Keyboard probe', message:'Escape must close this dialog, not interrupt.' })
+          const existing = renderTree()
+          const closed = context.ui.dialog.alert({ title:'Keyboard probe', message:'Escape must close this dialog, not interrupt.' })
+          // Escape reaches the dialog only once it is mounted and painted; until then it is the interrupt key.
+          const deadline = Date.now() + 8_000
+          while (Date.now() < deadline && ![...renderTree()].some(node => !existing.has(node))) {
+            await new Promise(resolve => setTimeout(resolve, 25))
+          }
+          await context.renderer.idle?.()
+          await new Promise(resolve => setTimeout(resolve, 150))
+          await record('dialog-open')
+          await closed
           await record('dialog-closed')
         },
       }, { bind:'f5', title:'Location recovery probe', run: recoveryProbe }, {

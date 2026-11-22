@@ -306,7 +306,7 @@ console.log(
     chmod(join(backups, "opencode.json.2020-01-01-00-00-00"), 0o644)
     process.env.OPENCODE_CONFIG_DIR = base
     process.env.OPENCODE_CONFIG_BACKUP_KEEP = "2"
-    const { backup } = await import(`../config/plugins/config-backup.js?t=${Date.now()}`)
+    const { backup, stampAfter } = await import(`../config/plugins/config-backup.js?t=${Date.now()}`)
     backup()
     backup()
     backup()
@@ -315,11 +315,16 @@ console.log(
     assert.ok(list(backups).includes("opencode.json.manual-before-upgrade"), "manual files are never pruned")
     assert.equal(stat(backups).mode & 0o777, 0o700)
     for (const name of own()) assert.equal(stat(join(backups, name)).mode & 0o777, 0o600, name)
+    const [, newest] = own()
     write(join(base, "opencode.json"), '{"a":2}')
-    await new Promise((resolve) => setTimeout(resolve, 1100))
-    backup()
+    backup() // same second as the previous copy: still a new, later name
     assert.equal(own().length, 2, "pruning keeps KEEP own copies")
     assert.ok(!own().includes("opencode.json.2020-01-01-00-00-00"), "oldest own copy is pruned first")
+    assert.ok(own()[1] > newest && own()[0] === newest, "a changed config is always copied under a later name")
+    // A wall clock that stepped back must not produce a name that sorts before the newest copy.
+    assert.equal(stampAfter("opencode.json.2026-11-22-14-45-30", Date.UTC(2026, 10, 22, 14, 45, 12)), "2026-11-22-14-45-31")
+    assert.equal(stampAfter("opencode.json.2026-11-22-14-45-30", Date.UTC(2026, 10, 22, 14, 46, 0)), "2026-11-22-14-46-00")
+    assert.equal(stampAfter(undefined, Date.UTC(2026, 0, 2, 3, 4, 5)), "2026-01-02-03-04-05")
   } finally {
     delete process.env.OPENCODE_CONFIG_DIR
     delete process.env.OPENCODE_CONFIG_BACKUP_KEEP

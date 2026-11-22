@@ -162,10 +162,10 @@ while time.time() < deadline:
                 settle(.15)
                 os.write(master, b'\x1b')
                 wait_for_events([{'sessionID':'ses_keyboard_probe','resume':False}])
-                os.write(master, b'\x1bOS')  # F4 opens a real native dialog.
-                settle(.5)
+                os.write(master, b'\x1bOS')  # F4 opens a real native dialog; the probe reports once it is painted.
+                wait_for_events([{'sessionID':'ses_keyboard_probe','resume':False}, 'dialog-open'])
                 os.write(master, b'\x1b')
-                wait_for_events([{'sessionID':'ses_keyboard_probe','resume':False}, 'dialog-closed'])
+                wait_for_events([{'sessionID':'ses_keyboard_probe','resume':False}, 'dialog-open', 'dialog-closed'])
                 def wait_for_select(name, timeout=8):
                     deadline = time.monotonic() + timeout
                     while time.monotonic() < deadline:

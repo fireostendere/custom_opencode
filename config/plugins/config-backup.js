@@ -13,6 +13,16 @@ export function pruneList(names, keep) {
   return names.slice(0, Math.max(0, names.length - keep))
 }
 
+// Names sort by time and pruning trusts that order. A clock that stepped back, or a
+// reload in the same second, must not reuse or precede the newest copy.
+export function stampAfter(latest, now = Date.now()) {
+  if (latest) {
+    const [year, month, day, hour, minute, second] = latest.slice("opencode.json.".length).split("-").map(Number)
+    now = Math.max(now, Date.UTC(year, month - 1, day, hour, minute, second) + 1000)
+  }
+  return new Date(now).toISOString().replace(/[:T]/g, "-").slice(0, 19)
+}
+
 export function backup() {
   const src = [join(BASE, "opencode.json"), join(BASE, "opencode.jsonc")].find((path) => existsSync(path))
   if (!src) return
@@ -24,13 +34,10 @@ export function backup() {
   const files = readdirSync(DIR).filter((file) => OWN.test(file)).sort()
   const latest = files.at(-1)
   if (!latest || !content.equals(readFileSync(join(DIR, latest)))) {
-    const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19)
-    const name = `opencode.json.${stamp}`
-    // wx: never follow or overwrite an existing path (same-second reload).
-    if (!files.includes(name)) {
-      writeFileSync(join(DIR, name), content, { mode: 0o600, flag: "wx" })
-      files.push(name)
-    }
+    const name = `opencode.json.${stampAfter(latest)}`
+    // wx: never follow or overwrite an existing path.
+    writeFileSync(join(DIR, name), content, { mode: 0o600, flag: "wx" })
+    files.push(name)
   }
   for (const file of pruneList(files, KEEP)) unlinkSync(join(DIR, file))
   for (const file of files.slice(Math.max(0, files.length - KEEP))) {
