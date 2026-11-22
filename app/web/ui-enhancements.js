@@ -1,4 +1,5 @@
-import { dataOf } from './api.js'
+import { escapeHtml } from './markdown.js'
+import { dataOf, request } from './api.js'
 import { isNightPromoActive, isNightPromoModel, promoBadgeText } from './night-promo.js'
 
 const $ = (id) => document.getElementById(id)
@@ -9,25 +10,6 @@ const ORCHESTRATED_CHOICES = [
   { providerID:'openai', id:'gpt-6.2-sol-orchestrated', label:'GPT-6.2 Sol · Orchestrated', meta:'Sol builder · Astra reviewer' },
   { providerID:'openai', id:'gpt-6.2-astra-orchestrated', label:'GPT-6.2 Astra · Orchestrated', meta:'Astra lead · Sol builder · Astra reviewer' },
 ]
-
-async function request(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-  })
-  if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(`${response.status} ${response.statusText}${text ? `: ${text.slice(0, 200)}` : ''}`)
-  }
-  if (response.status === 204) return null
-  const type = response.headers.get('content-type') || ''
-  return type.includes('application/json') ? response.json() : response.text()
-}
-
-function escapeHtml(value) {
-  const entities = { '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }
-  return String(value ?? '').replace(/[&<>'"]/g, (char) => entities[char])
-}
 
 function loadSet(key) {
   try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')) } catch { return new Set() }

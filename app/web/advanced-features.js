@@ -1,3 +1,5 @@
+import { dataOf, request } from './api.js'
+import { escapeHtml } from './markdown.js'
 import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'
 import { createDndWatchChip } from './dnd-watch-chip.js'
 
@@ -59,10 +61,6 @@ const DEFAULT_SETTINGS = {
   permissionRules: [],
 }
 
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char])
-}
-function dataOf(value) { return value && typeof value === 'object' && 'data' in value ? value.data : value }
 function fmtDuration(ms) {
   if (!ms || ms < 0) return '0s'
   const sec = Math.floor(ms / 1000)
@@ -90,21 +88,6 @@ function sessionFromHash() {
   const match = /^#\/session\/([^/?]+)/.exec(location.hash || '')
   if (!match) return null
   try { return decodeURIComponent(match[1]) } catch { return null }
-}
-async function request(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: { 'Content-Type':'application/json', ...(options.headers || {}) },
-  })
-  if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    const error = new Error(`${response.status} ${response.statusText}${text ? `: ${text.slice(0, 300)}` : ''}`)
-    error.status = response.status
-    throw error
-  }
-  if (response.status === 204) return null
-  const type = response.headers.get('content-type') || ''
-  return type.includes('application/json') ? response.json() : response.text()
 }
 function workspaceQuery(directory = state.directory) {
   const params = new URLSearchParams()

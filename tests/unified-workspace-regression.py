@@ -73,7 +73,7 @@ for marker in (
     "function localCredentialArgument",
     "Credentials must use env references.",
     "safeRemoteMcpURL",
-    "if(response.status===204)return null",
+    "import { request as req } from './api.js'",
     "req(qs('/client-plan.json'))",
     "const sessionID=sid(),planSeq=++state.planSeq;try{const value=await req(qs('/client-plan.json'));if(sid()!==sessionID||state.planSeq!==planSeq)return",
     "if(sid()!==session||state.refreshSeq!==refreshSeq)return\n    state.snapshot=snapshot",
@@ -89,6 +89,8 @@ for marker in (
 ):
     assert marker in workspace_js, marker
 assert "arguments:JSON.stringify(input)" not in workspace_js
+# The shared request must keep answering 204 with null: an empty plan response is not an error.
+assert "if (response.status === 204) return null" in (APP / "web" / "api.js").read_text(encoding="utf-8")
 
 for marker in (
     "if (!state.sessionID || !activityBelongsToSession(payload)) return",
