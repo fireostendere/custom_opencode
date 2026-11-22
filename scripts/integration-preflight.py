@@ -74,7 +74,7 @@ def run() -> dict[str, Any]:
         errors,
     )
     _check_file(
-        "app/ux-controls.js",
+        "app/web/ux-controls.js",
         (
             "composerActionState",
             "action.kind === 'queue'",
@@ -85,7 +85,7 @@ def run() -> dict[str, Any]:
         errors,
     )
     _check_file(
-        "app/access-fix.js",
+        "app/web/access-fix.js",
         (
             "resolvedPermissions",
             "installPermissionScope",
@@ -93,12 +93,12 @@ def run() -> dict[str, Any]:
         errors,
     )
     _check_file(
-        "app/access-fix.css",
+        "app/web/access-fix.css",
         ("#agentControls", "display:none!important"),
         errors,
     )
     _check_file(
-        "app/design-system.css",
+        "app/web/design-system.css",
         (".composer>.composer-meta{grid-area:meta", "grid-template-columns:auto minmax(0,max-content) auto"),
         errors,
     )

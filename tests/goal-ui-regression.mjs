@@ -5,8 +5,8 @@ import { setImmediate } from 'node:timers/promises'
 import { describeGoal, watchGoal } from '../config/plugins/tui/lib/goal-view.js'
 
 const shared = new URL('../config/plugins/tui/lib/goal-view.js', import.meta.url).href
-const api = new URL('../app/api.js', import.meta.url).href
-const source = (await readFile(new URL('../app/goal-banner.js', import.meta.url), 'utf8'))
+const api = new URL('../app/web/api.js', import.meta.url).href
+const source = (await readFile(new URL('../app/web/goal-banner.js', import.meta.url), 'utf8'))
   .replace("'/client-goal-view.js'", JSON.stringify(shared)).replace("'./api.js'", JSON.stringify(api))
 const { goalMarkup } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
 const goal = { id:'fixture', status:'active', objective:'<img src=x onerror=alert(1)>', summary:'Проверяю тесты', turns:3, failures:0 }

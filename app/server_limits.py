@@ -674,18 +674,3 @@ class Handler(base.Handler):
             return
         super().do_GET()
 
-
-def main() -> None:
-    base.SCRATCH_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
-    server = base.ThreadingHTTPServer((base.WEB_HOST, base.WEB_PORT), Handler)
-    print(f"OpenCode web client started on configured port {base.WEB_PORT}", flush=True)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
-
-
-if __name__ == "__main__":
-    main()

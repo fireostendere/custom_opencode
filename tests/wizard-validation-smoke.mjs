@@ -1,5 +1,5 @@
 // Behavioral smoke for the unified-workspace wizard validation helpers.
-// The helpers are module-private in app/unified-workspace.js, so this suite
+// The helpers are module-private in app/web/unified-workspace.js, so this suite
 // extracts the exact shipping block and executes it instead of re-implementing
 // the logic, pinning the real credential/URL/command validation behavior.
 import assert from 'node:assert/strict'
@@ -8,11 +8,11 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const source = readFileSync(resolve(root, 'app/unified-workspace.js'), 'utf8')
+const source = readFileSync(resolve(root, 'app/web/unified-workspace.js'), 'utf8')
 const start = source.indexOf('function validID(value)')
 const end = source.indexOf('function openConfigWizard(')
 if (start < 0 || end < 0 || end <= start) {
-  throw new Error('wizard validation block not found in app/unified-workspace.js')
+  throw new Error('wizard validation block not found in app/web/unified-workspace.js')
 }
 const { validID, isSensitiveName, credential, localCredentialArgument, parseLocalCommand, safeRemoteMcpURL } =
   new Function(`${source.slice(start, end)};return { validID, isSensitiveName, credential, localCredentialArgument, parseLocalCommand, safeRemoteMcpURL }`)()

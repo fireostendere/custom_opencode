@@ -6,7 +6,7 @@ import plugin, { bootId, createDndWatcher, createPushLinks, failedTurn, isDoorbe
 import { filterDndTools } from "../config/plugins/orchestrated-qwen.js"
 import { describeWatch, isTableSession, readWatchStates } from "../config/plugins/tui/lib/dnd-watch-view.js"
 import * as sharedView from "../config/plugins/tui/lib/dnd-watch-describe.js"
-import { createDndWatchChip } from "../app/dnd-watch-chip.js"
+import { createDndWatchChip } from "../app/web/dnd-watch-chip.js"
 
 // Flags are read at plugin setup: keep tests off the real PC power state,
 // the real ODM server and the real status directory.

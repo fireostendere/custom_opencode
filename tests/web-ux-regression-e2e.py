@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import sync_playwright
 
-APP = Path(__file__).resolve().parents[1] / "app"
+APP = Path(__file__).resolve().parents[1] / "app" / "web"
 TYPES = {".js": "text/javascript", ".css": "text/css", ".html": "text/html; charset=utf-8", ".png": "image/png",
          ".svg": "image/svg+xml", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json"}
 QWEN = {"providerID": "bailian-cli", "id": "qwen3.8-max"}
@@ -210,7 +210,7 @@ def serve(world: World) -> str:
 
         def static(self, path: str) -> None:
             shared = path == "/client-limit-selection.js"
-            candidate = (APP.parent / "config/plugins/tui/lib/limit-selection.js" if shared else APP / (path.lstrip("/") or "index.html")).resolve()
+            candidate = (APP.parents[1] / "config/plugins/tui/lib/limit-selection.js" if shared else APP / (path.lstrip("/") or "index.html")).resolve()
             if (not shared and APP not in candidate.parents) or candidate.suffix not in TYPES or not candidate.is_file():
                 self.send_response(404)
                 self.send_header("Content-Length", "0")

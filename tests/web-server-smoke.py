@@ -95,7 +95,7 @@ with tempfile.TemporaryDirectory() as temp:
     sys.path.insert(0, str(ROOT / "app"))
     import server_workflow
 
-    base = server_workflow.rag.plus.ext.base
+    base = server_workflow.base
     server = base.ThreadingHTTPServer(("localhost", 0), server_workflow.Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -311,7 +311,7 @@ with tempfile.TemporaryDirectory() as temp:
         assert "decisions" in resources
 
         # ---- Static client: allowlisted assets served from memory ----
-        app_dir = ROOT / "app"
+        app_dir = ROOT / "app" / "web"
         status, headers, body = request("GET", "/login.html", full=True, extra_headers={"Accept-Encoding": "identity"})
         assert status == 200 and body == (app_dir / "login.html").read_bytes()
         assert headers["Content-Type"] == "text/html; charset=utf-8" and "Content-Encoding" not in headers
@@ -356,8 +356,8 @@ with tempfile.TemporaryDirectory() as temp:
         outside_js = Path(temp) / "outside.js"
         outside_js.write_text("outside\n", encoding="utf-8")
         (static_root / "escape.js").symlink_to(outside_js)
-        saved_static = (base.ROOT, base.STATIC_REVALIDATE_SECONDS)
-        base.ROOT, base.STATIC_REVALIDATE_SECONDS = static_root.resolve(), 0.0
+        saved_static = (base.WEB_ROOT, base.STATIC_REVALIDATE_SECONDS)
+        base.WEB_ROOT, base.STATIC_REVALIDATE_SECONDS = static_root.resolve(), 0.0
         base._static_cache.clear()
         try:
             for path in ("/.env", "/.hidden.js", "/tool.py", "/notes.txt", "/sub/__pycache__/cached.js", "/escape.js", "/OK.js"):
@@ -377,7 +377,7 @@ with tempfile.TemporaryDirectory() as temp:
             status, _, _ = request("GET", "/ok.js")
             assert status == 404, status
         finally:
-            base.ROOT, base.STATIC_REVALIDATE_SECONDS = saved_static
+            base.WEB_ROOT, base.STATIC_REVALIDATE_SECONDS = saved_static
             base._static_cache.clear()
 
         # ---- Listener backlog / session-directory cache ----

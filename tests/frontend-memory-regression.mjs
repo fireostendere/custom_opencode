@@ -5,8 +5,8 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomBytes } from 'node:crypto'
 import vm from 'node:vm'
-import { createAdaptivePoller, createRefreshCoalescer } from '../app/refresh-coalescer.js'
-import { createDndWatchChip } from '../app/dnd-watch-chip.js'
+import { createAdaptivePoller, createRefreshCoalescer } from '../app/web/refresh-coalescer.js'
+import { createDndWatchChip } from '../app/web/dnd-watch-chip.js'
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..')
 const plain=value=>JSON.parse(JSON.stringify(value))
@@ -79,7 +79,7 @@ function fixture(){
     escapeHtml:value=>String(value??''),renderMarkdown:value=>String(value??''),
   }
   const appContext=vm.createContext({...common})
-  let source=readFileSync(resolve(root,'app/app.js'),'utf8').replace(/^import .*$/gm,'')
+  let source=readFileSync(resolve(root,'app/web/app.js'),'utf8').replace(/^import .*$/gm,'')
   const boot=source.lastIndexOf('initialize().catch')
   assert.ok(boot>0,'core entrypoint must be found')
   source=source.slice(0,boot)
@@ -91,7 +91,7 @@ function fixture(){
       draftOf:id=>drafts[id]};
   `,appContext)
   const advancedContext=vm.createContext({...common})
-  source=readFileSync(resolve(root,'app/advanced-features.js'),'utf8').replace(/^import .*$/gm,'').replace(/^export /gm,'')
+  source=readFileSync(resolve(root,'app/web/advanced-features.js'),'utf8').replace(/^import .*$/gm,'').replace(/^export /gm,'')
     .replace("if (typeof document !== 'undefined') init()",'')
   vm.runInContext(source+`
     renderAll=renderStatus=renderOrchestration=renderDndWatchDialog=()=>{};

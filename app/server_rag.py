@@ -10,7 +10,8 @@ import time
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
 
-import server_plus as plus
+import server as base
+import server_projects as plus
 
 RAG_START_LOCK = threading.Lock()
 RAG_QUERY = "DipTrace PCB layout"
@@ -39,7 +40,7 @@ def _session_directory(session_id: str | None) -> str:
                 return directory
         except Exception:
             pass
-    return str(plus.ext.base.SCRATCH_ROOT)
+    return str(base.SCRATCH_ROOT)
 
 
 def _rag_servers(directory: str) -> dict[str, Any]:
@@ -267,18 +268,3 @@ class Handler(plus.Handler):
             return
         super().do_POST()
 
-
-def main() -> None:
-    plus.ext.base.SCRATCH_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
-    server = plus.ext.base.ThreadingHTTPServer((plus.ext.base.WEB_HOST, plus.ext.base.WEB_PORT), Handler)
-    print(f"OpenCode web client started on configured port {plus.ext.base.WEB_PORT}", flush=True)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
-
-
-if __name__ == "__main__":
-    main()

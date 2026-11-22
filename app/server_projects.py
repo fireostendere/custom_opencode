@@ -10,7 +10,8 @@ import subprocess
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-import server_ext as ext
+import server as base
+import server_limits as limits
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +26,7 @@ class BackendHTTPError(RuntimeError):
 
 
 def _project_roots() -> tuple[Path, ...]:
-    return ext.base.project_roots()
+    return base.project_roots()
 
 
 def _inside(candidate: Path, root: Path) -> bool:
@@ -55,7 +56,7 @@ def validate_project_directory(raw_path: object) -> tuple[int, dict[str, object]
         return 404, {"ok": False, "error": "directory-not-found"}
     if not current.is_dir():
         return 404, {"ok": False, "error": "directory-not-found"}
-    ext.base.remember_explicit_directory(current)
+    base.remember_explicit_directory(current)
     return 200, {
         "ok": True,
         "directory": str(current),
@@ -191,7 +192,7 @@ def _backend_request_json(method: str, target: str, payload: object | None = Non
         request_headers = dict(headers)
         request_headers["Authorization"] = auth
         request_headers["Host"] = host or "localhost"
-        connection = ext.base.backend_connection(host, port, read_timeout=timeout)
+        connection = base.backend_connection(host, port, read_timeout=timeout)
         try:
             connection.request(method, target, body=body, headers=request_headers)
             response = connection.getresponse()
@@ -208,12 +209,12 @@ def _backend_request_json(method: str, target: str, payload: object | None = Non
         finally:
             connection.close()
 
-    host, port, auth = ext.base.current_backend()
+    host, port, auth = base.current_backend()
     try:
         return _attempt(host, port, auth)
     except (OSError, http.client.HTTPException):
         # Backend restarted on a new port; re-read service discovery and retry once.
-        refreshed = ext.base.current_backend(force_refresh=True)
+        refreshed = base.current_backend(force_refresh=True)
         if refreshed == (host, port, auth):
             raise
         host, port, auth = refreshed
@@ -222,7 +223,7 @@ def _backend_request_json(method: str, target: str, payload: object | None = Non
         # Backend restarted keeping its port but rotated its password: 401/403.
         if exc.status not in (401, 403):
             raise
-        refreshed = ext.base.current_backend(force_refresh=True)
+        refreshed = base.current_backend(force_refresh=True)
         if refreshed == (host, port, auth):
             raise
         host, port, auth = refreshed
@@ -236,7 +237,7 @@ def _workspace_target(path: str, directory: str | None = None) -> str:
 
 
 def _read_runtime_config() -> tuple[dict[str, Any] | None, str]:
-    raw_dir = ext.base.setting("OPENCODE_CONFIG_DIR") or str(Path.home() / ".config/opencode")
+    raw_dir = base.setting("OPENCODE_CONFIG_DIR") or str(Path.home() / ".config/opencode")
     path = Path(raw_dir).expanduser() / "opencode.json"
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -260,14 +261,14 @@ def _model_ids(payload: Any) -> set[str]:
 
 
 def _rag_runtime() -> dict[str, object]:
-    configured_root = ext.base.setting("MCP_RAG_ROOT")
+    configured_root = base.setting("MCP_RAG_ROOT")
     candidates: list[Path] = []
     if configured_root:
         candidates.append(Path(configured_root).expanduser())
     candidates.extend([REPO_ROOT.parent / "mcp-rag", Path.home() / "mcp-rag"])
 
     root = next((candidate.resolve() for candidate in candidates if candidate.is_dir()), None)
-    configured_bin = ext.base.setting("MCP_RAG_BIN")
+    configured_bin = base.setting("MCP_RAG_BIN")
     executable = Path(configured_bin).expanduser() if configured_bin else (
         root / ".venv/bin/knowledge-mcp" if root else None)
     if executable:
@@ -326,7 +327,7 @@ def _run_rag_probe(mode: str = "status", query: str = "DipTrace PCB layout") -> 
     return {"ok": True, "runtime": runtime, **payload}
 
 
-class Handler(ext.Handler):
+class Handler(limits.Handler):
     def do_GET(self) -> None:
         parsed = urlsplit(self.path)
         if parsed.path == "/client-directories.json":
@@ -363,18 +364,3 @@ class Handler(ext.Handler):
             return
         status, value = create_child_directory(payload.get("parent"), payload.get("name"))
         self.json_response(value, status=status)
-
-def main() -> None:
-    ext.base.SCRATCH_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
-    server = ext.base.ThreadingHTTPServer((ext.base.WEB_HOST, ext.base.WEB_PORT), Handler)
-    print(f"OpenCode web client started on configured port {ext.base.WEB_PORT}", flush=True)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
-
-
-if __name__ == "__main__":
-    main()

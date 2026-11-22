@@ -92,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         add("server-import", False, f"{type(exc).__name__}: {exc}")
         return emit(checks, started, args.json)
 
-    base = server_rag.plus.ext.base
+    base = server_rag.base
     plus = server_rag.plus
     add("server-import", True, "RAG-aware web server imports successfully")
 

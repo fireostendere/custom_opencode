@@ -24,7 +24,7 @@ const response = (status, value) => ({
 })
 
 // Test 1: api.createSession strips default placeholder titles like 'Новая сессия'
-const api = await loadSource("app/api.js")
+const api = await loadSource("app/web/api.js")
 let capturedRequests = []
 globalThis.fetch = async (path, options = {}) => {
   capturedRequests.push({ path, options })
@@ -67,7 +67,7 @@ assert.equal(capturedRequests.length, 1)
 assert.equal(capturedRequests[0].options.method, "PATCH", "renameSession should use PATCH /api/session/:id")
 
 // Test 3: app.js source invariants
-const appSource = readFileSync(resolve(root, "app/app.js"), "utf8")
+const appSource = readFileSync(resolve(root, "app/web/app.js"), "utf8")
 
 // 3a: sessionTitle must fall back to 'Новая сессия' instead of 'Без названия'
 assert.ok(

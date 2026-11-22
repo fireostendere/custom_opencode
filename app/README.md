@@ -115,8 +115,8 @@ Production composition включает legacy web/features и Runtime V2/V3:
 
 ```text
 server.py
-  └── server_ext.py
-        └── server_plus.py
+  └── server_limits.py
+        └── server_projects.py
               ├── server_rag.py
               └── server_features.py
                     └── server_control.py / server_runtime.py

@@ -13,7 +13,7 @@ const loadSource = async (relative) => {
   return import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`)
 }
 
-const markdown = await loadSource("app/markdown.js")
+const markdown = await loadSource("app/web/markdown.js")
 const rendered = markdown.renderMarkdown(
   "# Header\n\n```js\nconst x = 1\n```\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n<script>alert(1)</script>",
 )
@@ -30,7 +30,7 @@ const response = (status, value) => ({
   text: async () => (typeof value === "string" ? value : JSON.stringify(value)),
 })
 
-const api = await loadSource("app/api.js")
+const api = await loadSource("app/web/api.js")
 // Create identity must survive both command acknowledgements and Session responses.
 for (const ack of [true, {ok:true}, {}, {title:'Renamed'}, {id:'other',location:{directory:'/wrong'}}, null]) {
   const session = {id:'ses_created',title:'Server default',location:{directory:'/chosen'},projectID:'proj_chosen'}
@@ -201,7 +201,7 @@ if (!controls.agents.some((agent) => agent.id === "build-direct"))
 if (controls.agents.some((agent) => agent.id === "role-builder"))
   throw new Error("Hidden role agents must not leak into web controls")
 
-const enhancements = await loadSource("app/enhancements.js")
+const enhancements = await loadSource("app/web/enhancements.js")
 const quotaFixture = {
   openai: { available:true, primary:{ remainingPercent:70, windowDurationMins:300 }, secondary:{ remainingPercent:80, windowDurationMins:10080 } },
   qwen: { available:true, state:'ok', source:'bailian-cli', fiveHour:{ remainingPercent:60 }, sevenDay:{ remainingPercent:50 } },
@@ -305,7 +305,7 @@ if (enhancements.readLimitPreferences({getItem:()=>JSON.stringify(['codex.primar
     }
   }
 }
-const enhancementsSource = readFileSync(resolve(root, "app/enhancements.js"), "utf8")
+const enhancementsSource = readFileSync(resolve(root, "app/web/enhancements.js"), "utf8")
 if (!enhancementsSource.includes("if (!panel._lastMarkup) panel.innerHTML"))
   throw new Error("Failed quota refresh must preserve the last rendered limits")
 if (!enhancementsSource.includes("OPENAI_LIMITS_CACHE_KEY") || !enhancementsSource.includes("stableOpenAILimits"))
@@ -324,7 +324,7 @@ if (
 )
   throw new Error("Slash command transport must not send arguments")
 if (
-  !readFileSync(resolve(root, "app/enhancements.js"), "utf8").includes(
+  !readFileSync(resolve(root, "app/web/enhancements.js"), "utf8").includes(
     "RETIRED_COMMANDS = new Set(['doctor'])",
   )
 )
@@ -335,7 +335,7 @@ if (
 )
   throw new Error("Rate-limit window labels failed")
 
-const rag = await loadSource("app/rag-control.js")
+const rag = await loadSource("app/web/rag-control.js")
 if (rag.parseRagStart("/rag-start")?.mode !== "full")
   throw new Error("RAG default start parser failed")
 if (rag.parseRagStart("/rag-start quick")?.mode !== "quick")
@@ -345,11 +345,11 @@ if (rag.parseRagStart("/rag-start full")?.mode !== "full")
 if (rag.parseRagStart("/rag-start nope") !== null)
   throw new Error("RAG parser accepted unknown mode")
 
-const ui = await loadSource("app/ui-enhancements.js")
-const uiProjectSource = readFileSync(resolve(root, "app/ui-enhancements.js"), "utf8")
-const appProjectSource = readFileSync(resolve(root, "app/app.js"), "utf8")
-const uxControlsSource = readFileSync(resolve(root, "app/ux-controls.js"), "utf8")
-const advancedFeaturesSource = readFileSync(resolve(root, "app/advanced-features.js"), "utf8")
+const ui = await loadSource("app/web/ui-enhancements.js")
+const uiProjectSource = readFileSync(resolve(root, "app/web/ui-enhancements.js"), "utf8")
+const appProjectSource = readFileSync(resolve(root, "app/web/app.js"), "utf8")
+const uxControlsSource = readFileSync(resolve(root, "app/web/ux-controls.js"), "utf8")
+const advancedFeaturesSource = readFileSync(resolve(root, "app/web/advanced-features.js"), "utf8")
 if (uiProjectSource.includes("request('/api/session'"))
   throw new Error("Directory browser must delegate session creation to app bridge")
 for (const marker of [
@@ -429,7 +429,7 @@ if (
 )
   throw new Error("Selected provider must sort before fixed provider priorities")
 
-const ux = await loadSource("app/ux-state.js")
+const ux = await loadSource("app/web/ux-state.js")
 if (ux.composerActionState({ running: false, hasPayload: false }).kind !== "send")
   throw new Error("Idle composer must show send")
 if (ux.composerActionState({ running: true, hasPayload: false }).kind !== "stop")
@@ -481,7 +481,7 @@ if (
 if (ux.ASTRA_ORCHESTRATED_MODEL.id !== "gpt-6.2-astra-orchestrated" || ux.ASTRA_ORCHESTRATED_MODEL.providerID !== "openai")
   throw new Error("Orchestrated Astra identity regression")
 
-const index = readFileSync(resolve(root, "app/index.html"), "utf8")
+const index = readFileSync(resolve(root, "app/web/index.html"), "utf8")
 for (const marker of [
   "/ux-controls.css",
   "/ux-controls.js",
@@ -514,14 +514,14 @@ if (!index.includes('id="sessionActionList" class="action-list"></div></div></di
 if (/<script(?![^>]*\bsrc=)[^>]*>\s*\S/i.test(index))
   throw new Error("Main app shell must keep application JavaScript out of inline scripts")
 
-const uxControls = readFileSync(resolve(root, "app/ux-controls.js"), "utf8")
-const uxCss = readFileSync(resolve(root, "app/ux-controls.css"), "utf8")
-const uiSource = readFileSync(resolve(root, "app/ui-enhancements.js"), "utf8")
-const advanced = readFileSync(resolve(root, "app/advanced-features.js"), "utf8")
-const advancedCss = readFileSync(resolve(root, "app/advanced-features.css"), "utf8")
-const designSystem = readFileSync(resolve(root, "app/design-system.css"), "utf8")
-const sidebarResize = readFileSync(resolve(root, "app/sidebar-resize.js"), "utf8")
-const forms = await loadSource("app/advanced-features.js")
+const uxControls = readFileSync(resolve(root, "app/web/ux-controls.js"), "utf8")
+const uxCss = readFileSync(resolve(root, "app/web/ux-controls.css"), "utf8")
+const uiSource = readFileSync(resolve(root, "app/web/ui-enhancements.js"), "utf8")
+const advanced = readFileSync(resolve(root, "app/web/advanced-features.js"), "utf8")
+const advancedCss = readFileSync(resolve(root, "app/web/advanced-features.css"), "utf8")
+const designSystem = readFileSync(resolve(root, "app/web/design-system.css"), "utf8")
+const sidebarResize = readFileSync(resolve(root, "app/web/sidebar-resize.js"), "utf8")
+const forms = await loadSource("app/web/advanced-features.js")
 const typedRaw = {
   id: "frm_smoke",
   sessionID: "ses_forms",
@@ -608,21 +608,21 @@ const fieldsAlias = forms.normalizeQuestionRequest({
 })
 if (!fieldsAlias || fieldsAlias.formID !== "frm_alias" || fieldsAlias.questions[0].key !== "value")
   throw new Error("Form array compatibility normalization failed")
-const accessFix = readFileSync(resolve(root, "app/access-fix.js"), "utf8")
-const accessFixCss = readFileSync(resolve(root, "app/access-fix.css"), "utf8")
-const appSource = readFileSync(resolve(root, "app/app.js"), "utf8")
-const appearance = readFileSync(resolve(root, "app/appearance.js"), "utf8")
-const appearanceBootstrap = readFileSync(resolve(root, "app/appearance-bootstrap.js"), "utf8")
-const appearanceCss = readFileSync(resolve(root, "app/appearance.css"), "utf8")
-const mobileUi = readFileSync(resolve(root, "app/mobile-ui.js"), "utf8")
-const modalUi = readFileSync(resolve(root, "app/modal-ui.js"), "utf8")
-const authUi = readFileSync(resolve(root, "app/auth-ui.js"), "utf8")
-const login = readFileSync(resolve(root, "app/login.html"), "utf8")
-const loginJs = readFileSync(resolve(root, "app/login.js"), "utf8")
+const accessFix = readFileSync(resolve(root, "app/web/access-fix.js"), "utf8")
+const accessFixCss = readFileSync(resolve(root, "app/web/access-fix.css"), "utf8")
+const appSource = readFileSync(resolve(root, "app/web/app.js"), "utf8")
+const appearance = readFileSync(resolve(root, "app/web/appearance.js"), "utf8")
+const appearanceBootstrap = readFileSync(resolve(root, "app/web/appearance-bootstrap.js"), "utf8")
+const appearanceCss = readFileSync(resolve(root, "app/web/appearance.css"), "utf8")
+const mobileUi = readFileSync(resolve(root, "app/web/mobile-ui.js"), "utf8")
+const modalUi = readFileSync(resolve(root, "app/web/modal-ui.js"), "utf8")
+const authUi = readFileSync(resolve(root, "app/web/auth-ui.js"), "utf8")
+const login = readFileSync(resolve(root, "app/web/login.html"), "utf8")
+const loginJs = readFileSync(resolve(root, "app/web/login.js"), "utf8")
 const serverSource = readFileSync(resolve(root, "app/server.py"), "utf8")
-const runtimeDashboard = readFileSync(resolve(root, "app/runtime-dashboard.js"), "utf8")
-const runtimeCss = readFileSync(resolve(root, "app/runtime-dashboard.css"), "utf8")
-const runtimeV3Dashboard = readFileSync(resolve(root, "app/runtime-v3-dashboard.js"), "utf8")
+const runtimeDashboard = readFileSync(resolve(root, "app/web/runtime-dashboard.js"), "utf8")
+const runtimeCss = readFileSync(resolve(root, "app/web/runtime-dashboard.css"), "utf8")
+const runtimeV3Dashboard = readFileSync(resolve(root, "app/web/runtime-v3-dashboard.js"), "utf8")
 
 if (!uxControls.includes("const mode = currentMode()"))
   throw new Error("Build must remain synchronized with the native agent")
@@ -1073,7 +1073,7 @@ for (const marker of [
     throw new Error(`Runtime V3 dashboard marker missing: ${marker}`)
 }
 
-const serviceWorker = readFileSync(resolve(root, "app/sw.js"), "utf8")
+const serviceWorker = readFileSync(resolve(root, "app/web/sw.js"), "utf8")
 if (!serviceWorker.includes("custom-opencode-web-v6"))
   throw new Error("PWA cache generation must include auth/appearance generation")
 if (!serviceWorker.includes("fetch(req,{cache:'no-cache'})"))

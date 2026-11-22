@@ -46,11 +46,11 @@ globalThis.__smoke = {
     name,
     (...args) => handlers[name]?.(...args),
   ])),
-  ux: await import(`data:text/javascript;base64,${Buffer.from(readFileSync(resolve(root, 'app/ux-state.js'), 'utf8')).toString('base64')}`),
+  ux: await import(`data:text/javascript;base64,${Buffer.from(readFileSync(resolve(root, 'app/web/ux-state.js'), 'utf8')).toString('base64')}`),
 }
 
 // ── Load app.js as a module: swap imports/boot for stubs, expose internals ─
-let source = readFileSync(resolve(root, 'app/app.js'), 'utf8')
+let source = readFileSync(resolve(root, 'app/web/app.js'), 'utf8')
 source = source
   .replace("import * as api from './api.js'", 'const api = globalThis.__smoke.api')
   .replace(
@@ -58,7 +58,7 @@ source = source
     'const escapeHtml = (value) => String(value ?? ""); const renderMarkdown = (value) => String(value ?? "")',
   )
   .replace("import { ORCHESTRATED_MODELS } from './ux-state.js'", 'const { ORCHESTRATED_MODELS } = globalThis.__smoke.ux')
-  .replace("from './night-promo.js'", `from '${pathToFileURL(resolve(root, 'app/night-promo.js')).href}'`)
+  .replace("from './night-promo.js'", `from '${pathToFileURL(resolve(root, 'app/web/night-promo.js')).href}'`)
   .replace("import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'", 'const createAdaptivePoller = () => ({ start() {}, stop() {}, wake() {}, reschedule() {} }); const createRefreshCoalescer = () => (refresh, force) => refresh(force)')
 assert.ok(!source.includes("from './api.js'"), 'api import replacement failed')
 assert.ok(!source.includes("from './markdown.js'"), 'markdown import replacement failed')

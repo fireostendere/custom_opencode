@@ -26,7 +26,7 @@ import server_workflow as web
 import server_users
 
 runtime = web.runtime
-base = web.rag.plus.ext.base
+base = web.base
 server_users.add_user("other", "fixture-password")
 
 

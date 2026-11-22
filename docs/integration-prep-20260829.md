@@ -46,7 +46,7 @@ The server-side task store is authoritative. A future frontend merge should not 
 
 `feat/web-client-v2-candidate` is historically useful but is far behind the current runtime history. Do not merge that branch wholesale as a second backend baseline. Rebase/cherry-pick only genuinely newer frontend changes onto `backend/runtime-v3-front-rag-ready`, preserving the Runtime V3 server files and the stable contract above.
 
-Current `main` already contains the V2 web modules (`app/api.js`, `app/app.js`, UX overlays and Runtime dashboards), so the integration job is to reconcile newer visual/frontend changes rather than resurrect the old branch history.
+Current `main` already contains the V2 web modules (`app/web/api.js`, `app/web/app.js`, UX overlays and Runtime dashboards), so the integration job is to reconcile newer visual/frontend changes rather than resurrect the old branch history.
 
 ## RAG integration contract
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent workflow features layered between server_plus and server_rag.
+"""Persistent workflow features layered between server_projects and server_rag.
 
 This layer owns server-backed prompt queues, per-project instructions and
 permission policies, plus safe Git revert helpers. Local model lifecycle and
@@ -23,10 +23,10 @@ from urllib.parse import parse_qs, quote, urlsplit
 from uuid import uuid4
 
 import control_plane
-import server_plus as baseplus
+import server as base
+import server_projects as baseplus
 
-# Re-export server_plus helpers used by the composed production entrypoint.
-ext = baseplus.ext
+# Re-export server_projects helpers used by the composed production entrypoint.
 REPO_ROOT = baseplus.REPO_ROOT
 BackendHTTPError = baseplus.BackendHTTPError
 _data = baseplus._data
@@ -66,7 +66,7 @@ _TRUSTED_SESSION_DIRECTORIES: dict[str, float] = {}
 
 
 def _state_path() -> Path:
-    configured = ext.base.setting("CUSTOM_OPENCODE_FEATURE_STATE")
+    configured = base.setting("CUSTOM_OPENCODE_FEATURE_STATE")
     if configured:
         return Path(configured).expanduser()
     root = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local/state"))
@@ -153,7 +153,7 @@ def _canonical_directory(
     allowed = baseplus._allowed(path, roots)
     if allow_scratch:
         try:
-            scratch = ext.base.SCRATCH_ROOT.expanduser().resolve(strict=False)
+            scratch = base.SCRATCH_ROOT.expanduser().resolve(strict=False)
             allowed = allowed or baseplus._inside(path, scratch)
         except Exception:
             pass
@@ -602,7 +602,7 @@ def _git_path(directory: str, relative: str) -> tuple[Path, str, str]:
     `ls-files` fails for every path) is refused instead of treating arbitrary
     files as untracked.
     """
-    base = Path(_canonical_directory(directory)).resolve(strict=True)
+    session_dir = Path(_canonical_directory(directory)).resolve(strict=True)
     if not relative or relative.startswith("/") or "\\" in relative or "\x00" in relative:
         raise ValueError("invalid file path")
     parts = relative.split("/")
@@ -610,14 +610,14 @@ def _git_path(directory: str, relative: str) -> tuple[Path, str, str]:
         raise ValueError("invalid file path")
     if control_plane.git_metadata_path(relative):
         raise ValueError("git metadata cannot be reverted")
-    probe = _run_git(base, ["rev-parse", "--show-toplevel"])
+    probe = _run_git(session_dir, ["rev-parse", "--show-toplevel"])
     toplevel = probe.stdout.strip() if probe.returncode == 0 else ""
     if not toplevel:
         raise ValueError("directory is not inside a git work tree")
     root = Path(toplevel).resolve(strict=True)
-    if not baseplus._inside(base, root):
+    if not baseplus._inside(session_dir, root):
         raise ValueError("directory is not inside its git work tree")
-    prefix = base.relative_to(root).as_posix()
+    prefix = session_dir.relative_to(root).as_posix()
     pathspec = relative if prefix == "." else f"{prefix}/{relative}"
     return root, pathspec, "" if prefix == "." else prefix
 

@@ -28,13 +28,13 @@ globalThis.document = {
 }
 globalThis.__smoke = {
   api: { connectEvents() {}, async hasConversation() { return null } },
-  ux: await import(`data:text/javascript;base64,${Buffer.from(readFileSync(resolve(root, 'app/ux-state.js'), 'utf8')).toString('base64')}`),
+  ux: await import(`data:text/javascript;base64,${Buffer.from(readFileSync(resolve(root, 'app/web/ux-state.js'), 'utf8')).toString('base64')}`),
 }
 
-let source = readFileSync(resolve(root, 'app/app.js'), 'utf8')
+let source = readFileSync(resolve(root, 'app/web/app.js'), 'utf8')
 source = source
-  .replace("from './refresh-coalescer.js'", `from '${pathToFileURL(resolve(root, 'app/refresh-coalescer.js')).href}'`)
-  .replace("from './night-promo.js'", `from '${pathToFileURL(resolve(root, 'app/night-promo.js')).href}'`)
+  .replace("from './refresh-coalescer.js'", `from '${pathToFileURL(resolve(root, 'app/web/refresh-coalescer.js')).href}'`)
+  .replace("from './night-promo.js'", `from '${pathToFileURL(resolve(root, 'app/web/night-promo.js')).href}'`)
   .replace("import * as api from './api.js'", 'const api = globalThis.__smoke.api')
   .replace("import { escapeHtml, renderMarkdown } from './markdown.js'", 'const escapeHtml = (value) => String(value ?? ""); const renderMarkdown = (value) => String(value ?? "")')
   .replace("import { ORCHESTRATED_MODELS } from './ux-state.js'", 'const { ORCHESTRATED_MODELS } = globalThis.__smoke.ux')
@@ -83,8 +83,8 @@ console.log('History refresh smoke passed: in-flight update is replayed')
 // A previous session's DOM/profile must not relabel the active model.
 globalThis.location = { hash: '#/session/ses_stream' }
 document.documentElement = { dataset: {} }
-const uxSource = readFileSync(resolve(root, 'app/ux-controls.js'), 'utf8')
-  .replace("from './ux-state.js'", `from '${pathToFileURL(resolve(root, 'app/ux-state.js')).href}'`)
+const uxSource = readFileSync(resolve(root, 'app/web/ux-controls.js'), 'utf8')
+  .replace("from './ux-state.js'", `from '${pathToFileURL(resolve(root, 'app/web/ux-state.js')).href}'`)
   .replace("if (typeof document !== 'undefined') init()", 'export { currentProfile, restoreDesiredProfile, syncModelSurface }')
 const controls = await import(`data:text/javascript;base64,${Buffer.from(uxSource).toString('base64')}`)
 const button = document.getElementById('modelButton')
