@@ -98,11 +98,9 @@ This is **not yet** a full Tree-sitter/LSP AST index, embedding index, Git graph
 `ContextService` builds a bounded server context envelope from:
 
 - project instructions;
-- project memory;
 - decision log;
 - semantic diff from task baseline;
 - cached repository dependency metadata;
-- task mailbox;
 - typed handoff.
 
 Identical server-generated sections are deduplicated and the envelope is truncated to its budget.
@@ -127,13 +125,9 @@ Runtime V2 does not yet transparently intercept every shell/tool/MCP read call, 
 
 The runtime provides:
 
-- structured mailbox messages (`finding`, `question`, `patch`, `blocker`, etc.);
 - typed handoff metadata;
-- speculative research (2–3 cheap read-only forks + dependent aggregator);
 - task dependencies;
 - patch ownership/conflict events.
-
-Speculative research uses the mailbox automatically. Generic OpenCode subagents are not yet forced through the mailbox protocol.
 
 Handoff storage is typed JSON, but automatic planner-to-builder schema generation/validation remains a follow-up.
 
@@ -205,9 +199,9 @@ Profiles carry a sandbox intent (`safe`, `repo-write`, etc.) so policy and UI ca
 
 Runtime V2 does not yet enforce these profiles through Docker, namespaces, WSL isolation or a syscall/file/network sandbox. Permission policy remains the actual enforcement layer for current OpenCode actions.
 
-## Project memory and decision log
+## Decision log
 
-Persistent project memory and decisions are stored separately from the giant system prompt and are injected into the bounded context envelope.
+Decisions are stored separately from the giant system prompt and are injected into the bounded context envelope.
 
 They currently have authenticated read/write API endpoints. Automatic extraction of architectural decisions from every completed conversation is not implemented yet.
 
@@ -247,7 +241,6 @@ Read endpoints include:
 /client-resource-status.json
 /client-repo-index.json
 /client-artifact.json
-/client-project-memory.json
 /client-decisions.json
 /client-mcp-gateway.json
 ```
@@ -257,10 +250,7 @@ Mutation endpoints include:
 ```text
 /client-task-control.json
 /client-task-create.json
-/client-project-memory.json
 /client-decisions.json
-/client-mailbox.json
-/client-speculate.json
 /client-artifact.json
 ```
 
@@ -270,4 +260,4 @@ All are served through the existing authenticated web service.
 
 Runtime V2 is covered by `tests/runtime-smoke.py`, and `scripts/verify.sh` runs it together with the existing web, permission-control, limits and RAG regression checks.
 
-The smoke test covers durable dependencies/checkpoints/events, usage, capability profiles, resource decisions, repository index, semantic diff, artifact range/search, context envelope, failure classification, secret redaction, clean worktree lifecycle, speculative research and MCP metadata facade.
+The smoke test covers durable dependencies/checkpoints/events, usage, capability profiles, resource decisions, repository index, semantic diff, artifact range/search, context envelope, failure classification, secret redaction, clean worktree lifecycle and MCP metadata facade.

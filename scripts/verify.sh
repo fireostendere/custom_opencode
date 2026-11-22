@@ -374,7 +374,7 @@ for marker in ("/client-tasks.json", "/client-task-control.json", "/client-model
 for marker in ("runtime-task", "runtime-profile", "runtime-state"):
     if marker not in runtime_dashboard_css:
         bad.append(f"runtime dashboard CSS marker missing: {marker}")
-for marker in ("CREATE TABLE IF NOT EXISTS tasks", "CREATE TABLE IF NOT EXISTS checkpoints", "CREATE TABLE IF NOT EXISTS events", "CREATE TABLE IF NOT EXISTS usage", "CREATE TABLE IF NOT EXISTS mailbox"):
+for marker in ("CREATE TABLE IF NOT EXISTS tasks", "CREATE TABLE IF NOT EXISTS checkpoints", "CREATE TABLE IF NOT EXISTS events", "CREATE TABLE IF NOT EXISTS usage"):
     if marker not in runtime_store_py:
         bad.append(f"runtime durable-store marker missing: {marker}")
 for marker in ("qwen3.8-orchestrated", "ResourceScheduler", "ROLE_DEFAULTS", "role_models", "validate_provider_ref", "qwen3.7-plus", "deepseek-v4-pro-0813", "glm-5.2"):
@@ -386,7 +386,7 @@ for retired in ("game process detected",):
 for marker in ("class RepoIndexer", "class ContextService", "class ArtifactStore", "class VerificationPipeline", "class SecretBroker", "semantic_diff"):
     if marker not in repo_services_py:
         bad.append(f"repo/context service marker missing: {marker}")
-for marker in ("recover_inflight", "spawn_speculative", "mcp_gateway", "_create_worktree", "agent.loop_detected", "agent.stuck", "review.decision", "verification.code_failure"):
+for marker in ("recover_inflight", "mcp_gateway", "_create_worktree", "agent.loop_detected", "agent.stuck", "review.decision", "verification.code_failure"):
     if marker not in server_runtime_py:
         bad.append(f"server runtime integration marker missing: {marker}")
 for marker in ("runtime_resume.continuation_payload", "task.resume_continuation", "effective_files"):

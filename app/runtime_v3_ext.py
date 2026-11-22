@@ -211,7 +211,7 @@ def handle_get(handler:Any,parsed:Any,runtime:Any,v3mod:Any,features:Any)->bool:
 
 
 def handle_post(handler:Any,parsed:Any,runtime:Any,v3mod:Any,features:Any)->bool:
-    if parsed.path not in {"/client-task-sandbox.json","/client-worktree-merge.json","/client-mailbox.json","/client-decision.json","/client-project-memory-v3.json"}: return False
+    if parsed.path not in {"/client-task-sandbox.json","/client-worktree-merge.json","/client-decision.json"}: return False
     if not handler.authenticated(): handler.unauthorized(); return True
     try:
         payload=handler._feature_body(); v3=v3mod.instance(runtime,features)
@@ -230,14 +230,8 @@ def handle_post(handler:Any,parsed:Any,runtime:Any,v3mod:Any,features:Any)->bool
             task=runtime.STORE.get_task(str(payload.get("taskID") or ""))
             if not task: raise KeyError(payload.get("taskID"))
             result=_worktree_merge(runtime,task,bool(payload.get("cleanup")))
-        elif parsed.path=="/client-mailbox.json":
-            project=_directory(features,payload); body=payload.get("payload") if isinstance(payload.get("payload"),dict) else {"text":str(payload.get("text") or "")}; result={"ok":True,"message":runtime.STORE.mailbox_send(project_dir=project,from_task=str(payload.get("fromTask") or "") or None,to_task=str(payload.get("toTask") or "") or None,message_type=str(payload.get("type") or "finding")[:80],payload=body)}
-        elif parsed.path=="/client-decision.json":
-            project=_directory(features,payload); result={"ok":True,"decision":runtime.STORE.decision_add(project,str(payload.get("title") or "Decision"),str(payload.get("decision") or ""),str(payload.get("rationale") or ""))}
         else:
-            project=_directory(features,payload); key=str(payload.get("key") or "")[:240]
-            if not key: raise ValueError("memory key required")
-            runtime.STORE.memory_set(project,key,str(payload.get("value") or ""),str(payload.get("category") or "note")); result={"ok":True,"memory":runtime.STORE.memory_list(project,limit=200)}
+            project=_directory(features,payload); result={"ok":True,"decision":runtime.STORE.decision_add(project,str(payload.get("title") or "Decision"),str(payload.get("decision") or ""),str(payload.get("rationale") or ""))}
         handler.json_response(result)
     except Exception as exc: handler._feature_error(exc)
     return True

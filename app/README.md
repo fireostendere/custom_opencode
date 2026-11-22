@@ -125,7 +125,7 @@ server.py
 
 Runtime modules:
 
-- `runtime_store.py` — SQLite/WAL tasks/checkpoints/events/usage/mailbox;
+- `runtime_store.py` — SQLite/WAL tasks/checkpoints/events/usage;
 - `model_registry.py` — model capabilities, server profiles, adaptive scheduler;
 - `repo_services.py` — repo index/context/artifacts/verification/secrets;
 - `runtime_resume.py` — checkpoint continuation policy;

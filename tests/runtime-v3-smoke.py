@@ -28,7 +28,6 @@ with tempfile.TemporaryDirectory() as temp:
     from runtime_store import RuntimeStore
     from repo_services import ArtifactStore, ContextService, RepoIndexer, git_snapshot
     from runtime_v3 import (
-        BranchStateService,
         DynamicContextManager,
         ReplayService,
         SandboxManager,
@@ -390,18 +389,6 @@ with tempfile.TemporaryDirectory() as temp:
             == 0
         )
 
-    store.memory_set(str(project), "rule", "source memory", "policy")
-    source = store.create_task(session_id="source-session", project_dir=str(project), text="source")
-    target = store.create_task(session_id="target-session", project_dir=str(project), text="target")
-    branches = BranchStateService(store)
-    branched = branches.branch(fake, "source-session")
-    assert branched["session"]["id"].startswith("fork-")
-    merged = branches.merge(fake, "source-session", "target-session")
-    assert merged["ok"] and merged["sourceTasks"] >= 1
-    # A target session without tasks falls back to the source project.
-    into_empty = branches.merge(fake, "source-session", "session-without-tasks")
-    assert into_empty["ok"], into_empty
-
 print(
-    "Runtime V3 smoke passed: AST/embeddings/diff + sandbox/broker/gateway + provider-pinned routing + compaction + replay/branching"
+    "Runtime V3 smoke passed: AST/embeddings/diff + sandbox/broker/gateway + provider-pinned routing + compaction + replay"
 )

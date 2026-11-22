@@ -3,7 +3,7 @@
 
 Adds provider-pinned role orchestration support, dynamic native compaction,
 AST/embedding repository indexes, shared RAG retrieval, tool/MCP policy hooks,
-sandbox enforcement, notifications, and replay/state-branch helpers on top of
+sandbox enforcement, notifications, and replay helpers on top of
 server_runtime V2.
 """
 from __future__ import annotations
@@ -2157,73 +2157,6 @@ class ReplayService:
         }
 
 
-class BranchStateService:
-    def __init__(self, store: RuntimeStore):
-        self.store = store
-
-    def branch(
-        self, features: Any, session_id: str, title: str = "Runtime branch"
-    ) -> dict[str, Any]:
-        value = features._data(
-            features._backend_request_json(
-                "POST", f"/api/session/{quote(session_id,safe='')}/fork",
-                {"boundary": {"type": "through"}}, timeout=20.0
-            )
-        )
-        if not isinstance(value, dict) or not value.get("id"):
-            raise RuntimeError("session fork failed")
-        source = self.store.list_tasks(session_id=session_id, limit=100, projection="light")
-        self.store.event(
-            kind="session.branch_created",
-            session_id=session_id,
-            data={
-                "childSessionID": str(value["id"]),
-                "title": title,
-                "sourceTasks": [t["id"] for t in source[:30]],
-            },
-        )
-        return {
-            "sourceSessionID": session_id,
-            "session": value,
-            "sourceTasks": [t["id"] for t in source],
-        }
-
-    def merge(
-        self, features: Any, source_session: str, target_session: str, *, include_state: bool = True
-    ) -> dict[str, Any]:
-        source = self.store.list_tasks(session_id=source_session, limit=200, projection="light")
-        target = self.store.list_tasks(session_id=target_session, limit=200, projection="light")
-        copied = []
-        if include_state and source:
-            source_project = str(source[0].get("project_dir") or "")
-            target_project = str((target[0] if target else source[0]).get("project_dir") or source_project)
-            for item in self.store.memory_list(source_project, limit=200):
-                self.store.memory_set(target_project, item["key"], item["value"], item["category"])
-            for item in self.store.decision_list(source_project, limit=200):
-                copied.append(
-                    self.store.decision_add(
-                        target_project, item["title"], item["decision"], item["rationale"]
-                    )["id"]
-                )
-        self.store.event(
-            kind="session.branch_merged",
-            session_id=target_session,
-            data={
-                "sourceSessionID": source_session,
-                "copiedDecisions": copied,
-                "sourceTaskIDs": [t["id"] for t in source],
-            },
-        )
-        return {
-            "ok": True,
-            "sourceSessionID": source_session,
-            "targetSessionID": target_session,
-            "copiedDecisions": copied,
-            "sourceTasks": len(source),
-            "targetTasks": len(target),
-        }
-
-
 @dataclass
 class RuntimeV3:
     store: RuntimeStore
@@ -2235,7 +2168,6 @@ class RuntimeV3:
     gateway: ToolGateway
     notifier: RemoteNotifier
     replay: ReplayService
-    branches: BranchStateService
     dnd: DndOrchestrator
 
 
@@ -2262,7 +2194,6 @@ def install(runtime: Any, features: Any) -> RuntimeV3:
         gateway,
         RemoteNotifier(runtime.STORE),
         ReplayService(runtime.STORE, runtime.ARTIFACTS),
-        BranchStateService(runtime.STORE),
         DndOrchestrator(),
     )
     from execution_ledger import ExecutionLedger
@@ -2350,7 +2281,6 @@ def runtime_snapshot(runtime: Any, features: Any, directory: str | None = None) 
             "scopedSecretBroker": True,
             "sandboxEnforcement": True,
             "sharedNativeRAG": True,
-            "sessionStateBranching": True,
             "zeroTokenReplay": True,
             "providerLockedRoleRouter": True,
             "remoteNotificationAPI": True,
@@ -2435,8 +2365,6 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
         "/internal/runtime/dnd/route",
     }
     public = {
-        "/client-session-branch.json",
-        "/client-session-merge.json",
         "/client-replay-capture.json",
         "/client-notify-test.json",
     }
@@ -2571,19 +2499,6 @@ def handle_post(handler: Any, parsed: Any, runtime: Any, features: Any) -> bool:
                 )
             else:
                 raise ValueError("action must be status or request")
-        elif parsed.path == "/client-session-branch.json":
-            result = v3.branches.branch(
-                features,
-                str(payload.get("sessionID") or ""),
-                str(payload.get("title") or "Runtime branch"),
-            )
-        elif parsed.path == "/client-session-merge.json":
-            result = v3.branches.merge(
-                features,
-                str(payload.get("sourceSessionID") or ""),
-                str(payload.get("targetSessionID") or ""),
-                include_state=bool(payload.get("includeState", True)),
-            )
         elif parsed.path == "/client-replay-capture.json":
             task = runtime.STORE.get_task(str(payload.get("taskID") or ""))
             if not task:
