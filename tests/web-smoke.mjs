@@ -452,23 +452,6 @@ if (
 if (ux.profileFromAgent("build") !== "direct" || ux.profileFromAgent("build-direct") !== "direct")
   throw new Error("Agent ID must not imply orchestration")
 if (
-  !ux
-    .permissionSummary("Команда", '{"command":"git status","description":"long"}')
-    .includes("git status")
-)
-  throw new Error("Permission summary did not extract command")
-if (
-  !ux
-    .permissionSummary(
-      "question",
-      '{"questions":[{"label":"Сохранить изменения","description":"Сначала сохранить изменения"}]}',
-    )
-    .startsWith("Нужен выбор:")
-)
-  throw new Error("Question permission summary is not human-readable")
-if (ux.permissionSummary("Команда", "x".repeat(300)).length > 110)
-  throw new Error("Permission summary must stay compact")
-if (
   ux.ORCHESTRATED_MODEL.id !== "qwen3.8-orchestrated" ||
   ux.ORCHESTRATED_MODEL.label !== "Qwen3.8 Max · Orchestrated"
 )

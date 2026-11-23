@@ -223,12 +223,10 @@ function providerSection({ id, label, entries, collapsed, providerLabels, orches
 }
 
 let decoratingModels = false
-let modelObserver = null
 async function decorateModelChoices() {
   const root = $('modelChoices')
   if (!root || decoratingModels || root.querySelector(':scope > .model-provider-section') || !root.querySelector('[data-model]')) return
   decoratingModels = true
-  modelObserver?.disconnect()
   try {
     const providerLabels = providerLabelsFromFlatList(root)
     const cached = freeKeysState.session === currentSessionKey() && freeKeysState.at && Date.now() - freeKeysState.at < 60_000
@@ -294,7 +292,7 @@ async function decorateModelChoices() {
     console.warn('model catalog enhancement failed', error)
   } finally {
     decoratingModels = false
-    if (modelObserver && root.isConnected) modelObserver.observe(root, { childList:true })
+    window.dispatchEvent(new CustomEvent('custom-opencode:rendered',{detail:{part:'models-decorated'}}))
   }
 }
 
@@ -307,10 +305,9 @@ function installModelPickerEnhancements() {
   }
   const root = $('modelChoices')
   if (root) {
-    modelObserver = new MutationObserver(() => {
-      if (!decoratingModels) queueMicrotask(decorateModelChoices)
+    window.addEventListener('custom-opencode:rendered', ({ detail }) => {
+      if (detail?.part === 'models' && !decoratingModels) queueMicrotask(decorateModelChoices)
     })
-    modelObserver.observe(root, { childList: true })
   }
   $('modelButton')?.addEventListener('click', () => setTimeout(decorateModelChoices, 0))
 }

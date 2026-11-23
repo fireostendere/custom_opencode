@@ -1,9 +1,9 @@
+import { toast } from './toast.js'
 import { escapeHtml as esc } from './markdown.js'
 const $=(id)=>document.getElementById(id)
 const state={sessionID:'',telemetry:null,runtime:null,lastTaskID:''}
 function sid(){const m=/^#\/session\/([^/?]+)/.exec(location.hash||'');if(!m)return '';try{return decodeURIComponent(m[1])}catch{return ''}}
 async function req(path,options={}){const r=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});if(!r.ok)throw new Error(`${r.status} ${(await r.text()).slice(0,240)}`);return r.json()}
-function toast(text){const el=$('toast');if(!el)return;el.textContent=text;el.hidden=false;clearTimeout(el._timer);el._timer=setTimeout(()=>el.hidden=true,3500)}
 
 function ensure(){
   const dialog=$('taskCenterDialog');if(!dialog||$('runtimeV3Panel'))return Boolean(dialog)
@@ -29,17 +29,14 @@ async function setSandbox(){if(!state.lastTaskID){toast('Сначала выбе
 async function search(){const session=sid(),query=$('runtimeV3Search')?.value.trim()||'';if(!session||!query)return;try{const value=await req(`/client-repo-index-v3.json?sessionID=${encodeURIComponent(session)}&query=${encodeURIComponent(query)}`);$('runtimeV3Results').innerHTML=(value.hits||[]).slice(0,20).map(hit=>`<div><strong>${esc(hit.qualified||hit.path)}</strong><span>${esc(hit.type)} · score ${esc(hit.score)}</span></div>`).join('')||'<div class="runtime-muted">Нет совпадений.</div>'}catch(error){toast(`Repo index: ${error.message}`)}}
 
 // Панель вставляется один раз, когда появляется #taskCenterDialog.
-// ВАЖНО: observer не должен вызывать render() на каждую мутацию документа —
-// render() перезаписывает innerHTML (новая мутация), и это зацикливает
-// event loop намертво (вкладка зависает, интерфейс «отваливается»).
 let panelAttached=false
 function attachPanel(){
   if(panelAttached)return false
   if(!ensure())return false
   panelAttached=true
-  observer.disconnect()
   render()
   return true
 }
 function visible(){return $('taskCenterDialog')?.open&&$('taskCenterDialog').dataset.unavailable!=='true'&&$('runtimeV3Panel')?.open&&!document.hidden}
-const observer=new MutationObserver(attachPanel);observer.observe(document.documentElement,{childList:true,subtree:true});window.addEventListener('hashchange',()=>{if(visible())setTimeout(refresh,100)});setInterval(()=>{if(visible())refresh()},5000);setTimeout(attachPanel,500)
+// runtime-dashboard.js creates the Task Center dialog this panel lives in and says when it exists.
+window.addEventListener('custom-opencode:rendered',({detail})=>{if(detail?.part==='task-center')attachPanel()});window.addEventListener('hashchange',()=>{if(visible())setTimeout(refresh,100)});setInterval(()=>{if(visible())refresh()},5000);setTimeout(attachPanel,500)

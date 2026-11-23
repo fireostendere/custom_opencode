@@ -35,6 +35,7 @@ let source = readFileSync(resolve(root, 'app/web/app.js'), 'utf8')
 source = source
   .replace("from './refresh-coalescer.js'", `from '${pathToFileURL(resolve(root, 'app/web/refresh-coalescer.js')).href}'`)
   .replace("from './night-promo.js'", `from '${pathToFileURL(resolve(root, 'app/web/night-promo.js')).href}'`)
+  .replace("from './toast.js'", `from '${pathToFileURL(resolve(root, 'app/web/toast.js')).href}'`)
   .replace("import * as api from './api.js'", 'const api = globalThis.__smoke.api')
   .replace("import { escapeHtml, renderMarkdown } from './markdown.js'", 'const escapeHtml = (value) => String(value ?? ""); const renderMarkdown = (value) => String(value ?? "")')
   .replace("import { ORCHESTRATED_MODELS } from './ux-state.js'", 'const { ORCHESTRATED_MODELS } = globalThis.__smoke.ux')

@@ -1,3 +1,4 @@
+import { toast } from './toast.js'
 import { dataOf } from './api.js'
 import { createAdaptivePoller } from './refresh-coalescer.js'
 
@@ -148,15 +149,6 @@ function permissionFromEvent(payload) {
   return sessionID && !nested.sessionID ? { ...source, ...nested, sessionID } : nested
 }
 
-function toast(text, ms = 3500) {
-  const el = $('toast')
-  if (!el) return
-  el.textContent = text
-  el.hidden = false
-  clearTimeout(el._timer)
-  el._timer = setTimeout(() => { el.hidden = true }, ms)
-}
-
 async function request(path, options = {}) {
   const response = await fetch(path, {
     ...options,
@@ -200,7 +192,7 @@ function clearBanner() {
   const banner = $('permissionBanner')
   if (!banner) return
   const key = `${banner.dataset.permissionSession||''}:${banner.dataset.permissionId||''}`
-  if (!banner.hidden) banner.hidden = true
+  if (!banner.hidden) { banner.hidden = true; window.dispatchEvent(new CustomEvent('custom-opencode:rendered',{detail:{part:'permission'}})) }
   delete banner.dataset.permissionSession
   delete banner.dataset.permissionId
   delete $('permissionSummary')?.dataset.serverPreview
@@ -248,7 +240,7 @@ function showPermission(requestRow) {
   const details = $('permissionDetails')
   if (details && details.open && details.dataset.permissionId !== pid) details.open = false
   if (details) details.dataset.permissionId = pid
-  banner.hidden = false
+  if (banner.hidden) { banner.hidden = false; window.dispatchEvent(new CustomEvent('custom-opencode:rendered',{detail:{part:'permission'}})) }
 }
 
 async function refreshPermission() {
@@ -338,24 +330,6 @@ async function handlePermissionAction(button, event) {
 function installPermissionScope() {
   const banner = $('permissionBanner')
   if (!banner) return
-  new MutationObserver(() => {
-    if (banner.hidden) return
-    const sid = currentSessionID()
-    const bannerSid = banner.dataset.permissionSession || ''
-    const bannerPid = banner.dataset.permissionId || ''
-    if (bannerSid && bannerPid && bannerSid === sid) return
-    const pid = permissionID(activePermission)
-    if (!sid || !activePermission || !inCurrentFamily(activePermission) || banner.dataset.permissionSession !== sid || banner.dataset.permissionId !== pid) {
-      clearBanner()
-      queueMicrotask(refreshPermission)
-    }
-  }).observe(banner, { attributes:true, attributeFilter:['hidden'] })
-
-  const detail = $('permissionDetail')
-  if (detail) new MutationObserver(() => {
-    if (activePermission && detail.textContent !== expectedPermissionDetail) queueMicrotask(restorePermissionCopy)
-  }).observe(detail, { childList:true, characterData:true, subtree:true })
-
   document.addEventListener('click', (event) => {
     const button = event.target.closest?.('[data-permission]')
     if (button) handlePermissionAction(button, event)

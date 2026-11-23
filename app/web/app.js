@@ -1,3 +1,4 @@
+import { toast } from './toast.js'
 import * as api from './api.js'
 import { escapeHtml, renderMarkdown } from './markdown.js'
 import { ORCHESTRATED_MODELS } from './ux-state.js'
@@ -142,7 +143,6 @@ function draftKey() { return state.selected?.id || '__new__' }
 function saveDraftNow() { drafts[draftKey()] = promptHistory.sessionID === state.selected?.id && promptHistory.cursor < promptHistory.entries.length ? promptHistory.draft : $('input').value; saveJson(DRAFT_KEY, drafts) }
 function restoreDraft() { $('input').value = drafts[draftKey()] || ''; autosizeInput() }
 function scheduleDraftSave() { clearTimeout(draftSaveTimer); draftSaveTimer = setTimeout(saveDraftNow, 180) }
-function toast(text, ms = 2600) { const el=$('toast'); el.textContent=text; el.hidden=false; clearTimeout(el._timer); el._timer=setTimeout(()=>el.hidden=true,ms) }
 // Last explicitly chosen model for new sessions. Restored after reload so a
 // fresh chat does not silently fall back to whatever the backend calls the
 // default; existing sessions keep their own stored model untouched.
@@ -316,6 +316,8 @@ function forgetSessionState(id) {
   if(state.actionSession?.id===id)state.actionSession=null
 }
 function hasSession(id) { return state.selected?.id===id||state.sessions.some((session)=>session.id===id) }
+// Feature modules follow what was just rendered through this event instead of watching the DOM.
+function rendered(part){window.dispatchEvent?.(new CustomEvent('custom-opencode:rendered',{detail:{part}}))}
 function dispatchModelChanged(sessionID,model,previousModel,ok,error) { window.dispatchEvent(new CustomEvent('custom-opencode:model-changed',{detail:{sessionID,model:{...model},previousModel,ok,...(error?{error}:{})}})) }
 // Tab-scoped flags. Storage can be unavailable (privacy modes, blocked site
 // data); a failed write must never break a model switch.
@@ -609,6 +611,7 @@ function renderSessions() {
   document.querySelectorAll('[data-session]').forEach((button)=>button.addEventListener('click',()=>selectSession(button.dataset.session)))
   document.querySelectorAll('[data-session-more]').forEach((button)=>button.addEventListener('click',(event)=>{event.stopPropagation();openSessionActions(button.dataset.sessionMore)}))
   requestAnimationFrame(maybeLoadMoreSessions)
+  rendered('sessions')
 }
 
 async function selectSession(id,{push=true,saveDraft=true,waitForDetails=true}={}) {followDetachedFor=null;delete $('messages')?.dataset.followDetached;
@@ -626,7 +629,7 @@ async function selectSession(id,{push=true,saveDraft=true,waitForDetails=true}={
   meta(id).lastOpenedAt=Date.now();saveMeta()
   initialMessageScrollObserver?.disconnect();initialMessageScrollObserver=null;initialMessageScrollSession=id;historyPaginationIntent=false;clearTimeout(historyPaginationIntentTimer);historyPaginationIntentTimer=0;historyPaginationTouch=null
   resetPromptHistory(id)
-  renderAttachments(); renderSessions(); renderHeader(); renderMessages({bottom:true}); restoreDraft(); $('sidebar').classList.remove('open')
+  renderAttachments(); renderSessions(); renderHeader(); renderMessages({bottom:true}); restoreDraft(); $('sidebar').classList.remove('open'); rendered('sidebar')
   if(push) setSessionHash(id)
   window.dispatchEvent(new CustomEvent('custom-opencode:session-selected',{detail:{sessionID:id}}))
   renderControls()
@@ -793,6 +796,7 @@ function renderControls(){
   // Suffix (" · Orchestrated") in its own span: phones hide it, textContent stays the full label for other modules.
   const label=modelRefLabel(ref)||'Модель', cut=label.indexOf(' · ')
   $('modelButton').innerHTML=cut<0?escapeHtml(label):`${escapeHtml(label.slice(0,cut))}<span class="model-tag">${escapeHtml(label.slice(cut))}</span>`
+  rendered('controls')
   if(ref?.id==='gpt-6-dnd-edition'&&ref?.providerID==='openai'){
     $('variantSelect').innerHTML='<option value="auto">Авто</option>'; $('variantSelect').value='auto'; $('variantSelect').disabled=true; return
   }
@@ -859,6 +863,7 @@ function renderModelChoices(){
     return `<button class="choice ${promoClass}${isHidden?' model-hidden-choice':''}" data-model="${escapeHtml(m.id)}" data-provider="${escapeHtml(m.providerID)}" data-custom="${m.custom?1:0}" data-promo="${promo?1:0}"><div class="choice-title">${escapeHtml(m.name||m.id)}${current?.id===m.id&&current?.providerID===m.providerID?' · ✓':''}</div><div class="choice-meta">${promoBadge ? promoBadge + ' · ' : ''}${escapeHtml(m.id)} · <span data-fav="${escapeHtml(key)}">${favorites.has(key)?'★':'☆'}</span><span class="model-remove-toggle" data-model-remove="${escapeHtml(key)}" role="button" aria-label="${escapeHtml(actionLabel)}" title="${escapeHtml(actionLabel)}">${isHidden?'↩':'×'}</span></div></button>`
   }).join('')}`).join('')||'<div class="empty">Модели не найдены.</div>'
   renderModelManagerButtons()
+  rendered('models')
 }
 
 function renderHeader(){
@@ -897,7 +902,7 @@ async function pollRateLimitNow(){
   }catch{}
 }
 function renderRunControls(){
-  const running=!!state.selected&&isRunning(state.selected.id); $('stop').hidden=!running; $('deliveryControls').hidden=!running
+  const running=!!state.selected&&isRunning(state.selected.id),wasRunning=!$('stop').hidden; $('stop').hidden=!running; $('deliveryControls').hidden=!running
   $('chatStatus').hidden=!running
   if(!running&&rateLimitActiveState){
     rateLimitActiveState=false
@@ -905,6 +910,7 @@ function renderRunControls(){
     if(span)span.textContent='Модель работает…'
   }
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.classList.toggle('active',b.dataset.delivery===state.deliveryMode))
+  if(wasRunning!==running)rendered('run')
   $('input').placeholder=running?(state.deliveryMode==='queue'?'Сообщение будет отправлено после завершения':'Steer: скорректировать текущую работу'):'Сообщение'
 }
 
@@ -1154,7 +1160,7 @@ function usageSummary(){
 }
 function fmtTokens(n){if(!n)return'0';if(n>=1e6)return`${(n/1e6).toFixed(1)}M`;if(n>=1e3)return`${(n/1e3).toFixed(1)}k`;return String(Math.round(n))}
 function renderUsage(){
-  const u=usageSummary(), pct=u.limit?Math.min(100,Math.round(u.current/u.limit*100)):0, q=latestQuota(); $('usageButton').textContent=u.limit?`Ctx ${pct}%`:`Ctx ${fmtTokens(u.current)}`
+  const u=usageSummary(), pct=u.limit?Math.min(100,Math.round(u.current/u.limit*100)):0, q=latestQuota(); $('usageButton').textContent=u.limit?`Ctx ${pct}%`:`Ctx ${fmtTokens(u.current)}`; rendered('usage')
   const quota=q?.state==='ok'?'OK':q?.state==='exhausted'?`исчерпан → ${q.resetAt||'?'}`:'нет данных'
   $('usageDetails').innerHTML=`<div class="usage-grid"><span>Текущий контекст${u.approx?' (оценка)':''}</span><strong>${fmtTokens(u.current)}${u.limit?` / ${fmtTokens(u.limit)}`:''}</strong><span>Input за сессию</span><span>${fmtTokens(u.input)}</span><span>Output за сессию</span><span>${fmtTokens(u.output)}</span><span>Cache read/write</span><span>${fmtTokens(u.cacheRead)} / ${fmtTokens(u.cacheWrite)}</span><span>Стоимость</span><span>${u.cost?`$${u.cost.toFixed(4)}`:'—'}</span><span>Qwen probe</span><span>${escapeHtml(quota)}</span><span>Personal Pro caps</span><span>${PERSONAL_PRO_LIMITS.fiveHour.toLocaleString()} / 5h · ${PERSONAL_PRO_LIMITS.sevenDay.toLocaleString()} / 7d</span></div>${u.limit?`<div class="usage-bar"><div style="width:${pct}%"></div></div>`:''}<p class="choice-meta">Лимиты плана показываются как caps; текущий расход Alibaba API публичным probe не возвращает.</p>`
 }
@@ -1167,7 +1173,7 @@ async function refreshGit(){
 function gitBranch(){const v=state.git.vcs;return [v,v?.branch,v?.name,v?.ref].find(value=>typeof value==='string'&&value.trim())||''}
 function renderGitButton(){const branch=gitBranch(),count=state.git.files.length;$('gitButton').disabled=!state.selected;$('gitButton').textContent=state.selected?`${branch||'Git'}${count?` · ${count}`:''}`:'Git —'}
 async function openGitDialog(){
-  if(!state.selected)return; $('gitDialog').showModal(); $('gitSummary').textContent='Загрузка…'; const id=state.selected.id
+  if(!state.selected)return; $('gitDialog').showModal(); rendered('git'); $('gitSummary').textContent='Загрузка…'; const id=state.selected.id
   let diffs=await api.getSessionDiff(id); if(state.selected?.id!==id)return;if(!Array.isArray(diffs)||!diffs.length)diffs=await api.getVcsDiff(directory(state.selected));if(state.selected?.id!==id)return;state.git.diffs=Array.isArray(diffs)?diffs:[];renderGitDialog()
 }
 function renderGitDialog(){
@@ -1217,6 +1223,7 @@ function renderAttachments() {
     const attachment=attachments[Number(button.dataset.removeAttachment)]
     button.addEventListener('click',()=>removeAttachment(attachment))
   })
+  rendered('attachments')
 }
 function readFile(file,attachment,attachments) {
   const reader=new FileReader()
@@ -1623,7 +1630,7 @@ function bindEvents(){
   $('sessions').addEventListener('click',event=>{const button=event.target.closest('[data-session-shortcut]');if(button)selectSession(button.dataset.sessionShortcut)})
    $('newSession').addEventListener('click',()=>openProjectDialog('create'))
   $('chooseProject').addEventListener('click',()=>openProjectDialog('create'));$('refresh').addEventListener('click',()=>{loadSessions();if(state.selected)loadContext({force:true})});$('search').addEventListener('input',searchSessions)
-  $('menu').addEventListener('click',()=> $('sidebar').classList.toggle('open'));$('sessionActions').addEventListener('click',()=>openSessionActions());$('modelButton').addEventListener('click',()=>{renderModelChoices();$('modelDialog').showModal();if(!window.matchMedia('(max-width: 760px)').matches)$('modelSearch').focus()});$('modelSearch').addEventListener('input',renderModelChoices);$('modelAddButton').addEventListener('click',()=>{$('modelAddForm').reset();$('modelAddDialog').showModal();$('modelAddProvider').focus()});$('modelHiddenButton').addEventListener('click',()=>{showHiddenModels=!showHiddenModels;renderModelChoices()});$('modelAddForm').addEventListener('submit',(event)=>{event.preventDefault();try{const model=addCustomModel($('modelAddProvider').value,$('modelAddID').value,$('modelAddName').value);$('modelAddDialog').close();showHiddenModels=false;renderModelChoices();toast(`Модель ${model.name||model.id} добавлена`)}catch(error){toast(error.message||String(error),4200)}});$('modelChoices').addEventListener('click',(event)=>{const fav=event.target.closest?.('[data-fav]');if(fav){event.preventDefault();event.stopPropagation();const key=fav.dataset.fav;favorites.has(key)?favorites.delete(key):favorites.add(key);saveJson(FAV_KEY,[...favorites]);renderModelChoices();return}const remove=event.target.closest?.('[data-model-remove]');if(remove){event.preventDefault();event.stopPropagation();const key=remove.dataset.modelRemove;if(modelKey(activeModelRef())===key){toast('Сначала выберите другую модель.');return}if(hiddenModelKeys().has(key))setModelHidden(key,false);else removeModelFromPicker(key);renderModelChoices();return}const button=event.target.closest?.('[data-model][data-provider]');if(!button)return;$('modelDialog').close();changeModel({id:button.dataset.model,providerID:button.dataset.provider})})
+  $('menu').addEventListener('click',()=>{$('sidebar').classList.toggle('open');rendered('sidebar')});$('sessionActions').addEventListener('click',()=>openSessionActions());$('modelButton').addEventListener('click',()=>{renderModelChoices();$('modelDialog').showModal();if(!window.matchMedia('(max-width: 760px)').matches)$('modelSearch').focus()});$('modelSearch').addEventListener('input',renderModelChoices);$('modelAddButton').addEventListener('click',()=>{$('modelAddForm').reset();$('modelAddDialog').showModal();$('modelAddProvider').focus()});$('modelHiddenButton').addEventListener('click',()=>{showHiddenModels=!showHiddenModels;renderModelChoices()});$('modelAddForm').addEventListener('submit',(event)=>{event.preventDefault();try{const model=addCustomModel($('modelAddProvider').value,$('modelAddID').value,$('modelAddName').value);$('modelAddDialog').close();showHiddenModels=false;renderModelChoices();toast(`Модель ${model.name||model.id} добавлена`)}catch(error){toast(error.message||String(error),4200)}});$('modelChoices').addEventListener('click',(event)=>{const fav=event.target.closest?.('[data-fav]');if(fav){event.preventDefault();event.stopPropagation();const key=fav.dataset.fav;favorites.has(key)?favorites.delete(key):favorites.add(key);saveJson(FAV_KEY,[...favorites]);renderModelChoices();return}const remove=event.target.closest?.('[data-model-remove]');if(remove){event.preventDefault();event.stopPropagation();const key=remove.dataset.modelRemove;if(modelKey(activeModelRef())===key){toast('Сначала выберите другую модель.');return}if(hiddenModelKeys().has(key))setModelHidden(key,false);else removeModelFromPicker(key);renderModelChoices();return}const button=event.target.closest?.('[data-model][data-provider]');if(!button)return;$('modelDialog').close();changeModel({id:button.dataset.model,providerID:button.dataset.provider})})
   $('variantSelect').addEventListener('change',(e)=>{const ref=activeModelRef();if(!ref)return;const model={id:ref.id,providerID:ref.providerID};if(e.target.value)model.variant=e.target.value;changeModel(model)})
   $('agentSelect').addEventListener('change',(e)=>changeAgent(e.target.value))
   $('form').addEventListener('submit',sendMessage);$('stop').addEventListener('click',stopSelected);$('input').addEventListener('input',()=>{notePromptInput();autosizeInput();scheduleDraftSave()});$('input').addEventListener('keydown',(e)=>{if(e.key==='ArrowUp'&&navigatePromptHistory(-1,e)){e.preventDefault();return}if(e.key==='ArrowDown'&&navigatePromptHistory(1,e)){e.preventDefault();return}if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&(e.ctrlKey||e.metaKey||!window.matchMedia('(max-width: 760px)').matches)){e.preventDefault();$('form').requestSubmit()}})

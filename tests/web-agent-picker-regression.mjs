@@ -8,7 +8,7 @@ const elements = Object.fromEntries(['agentSelect', 'agentControls', 'modelButto
 const state = { selected:{ id:'s0', agent:'review' }, models:[], agents:[{id:'build'}, {id:'plan'}, {id:'review'}, {id:'build-direct', hidden:true}] }
 let writes = 0, resolveWrite, rejectWrite
 const sandbox = { state, pendingAgentChanges:new Set(), $:id=>elements[id], escapeHtml:value=>String(value).replaceAll('"', '&quot;'),
-  document:{ documentElement:{dataset:{}}, querySelectorAll:()=>[] }, window:{dispatchEvent:()=>{}}, CustomEvent:class {},
+  document:{ documentElement:{dataset:{}}, querySelectorAll:()=>[] }, window:{dispatchEvent:()=>{}}, CustomEvent:class {}, rendered:()=>{},
   modeFromAgent:id=>id.startsWith('plan')?'plan':'build', activeModelRef:()=>null, activeModel:()=>null, modelRefLabel:()=>'', modelVariants:()=>[], toast:()=>{},
   api:{ switchAgent:()=>{ writes++; return new Promise((resolve,reject)=>{resolveWrite=resolve;rejectWrite=reject}) } } }
 vm.createContext(sandbox)

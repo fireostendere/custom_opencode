@@ -1,3 +1,4 @@
+import { toast } from './toast.js'
 import { dataOf, request } from './api.js'
 import { escapeHtml } from './markdown.js'
 import { LIMIT_DEFS, selectedLimitIDs, trackedLimitSources } from './client-limit-selection.js'
@@ -25,15 +26,6 @@ export function readLimitPreferences(storage = globalThis.localStorage) {
     const hidden = JSON.parse(storage?.getItem(LIMIT_PREFERENCES_KEY) || '[]')
     return Array.isArray(hidden) ? hidden.filter((id) => LIMIT_DEFS.some((limit) => limit.id === id)) : []
   } catch { return [] }
-}
-
-function toast(text, ms = 2800) {
-  const el = $('toast')
-  if (!el) return
-  el.textContent = text
-  el.hidden = false
-  clearTimeout(el._timer)
-  el._timer = setTimeout(() => { el.hidden = true }, ms)
 }
 
 function sessionIdFromHash() {
@@ -317,6 +309,7 @@ function renderPalette() {
   if (!paletteItems.length) {
     palette.innerHTML = '<div class="slash-empty">Команды не найдены</div>'
     palette.hidden = false
+    window.dispatchEvent(new CustomEvent('custom-opencode:rendered',{detail:{part:'slash-palette'}}))
     return
   }
   palette.innerHTML = paletteItems.map((command, index) => `<button type="button" class="slash-item ${index === paletteIndex ? 'active' : ''}" data-slash-index="${index}"><span class="slash-name">/${escapeHtml(commandName(command))}</span><span class="slash-desc">${escapeHtml(commandDescription(command))}</span></button>`).join('')
@@ -326,6 +319,7 @@ function renderPalette() {
     insertCommand(Number(button.dataset.slashIndex))
   }))
   palette.querySelector('.slash-item.active')?.scrollIntoView({ block:'nearest' })
+  window.dispatchEvent(new CustomEvent('custom-opencode:rendered',{detail:{part:'slash-palette'}}))
 }
 
 let paletteSeq = 0

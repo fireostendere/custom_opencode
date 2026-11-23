@@ -85,7 +85,7 @@ async function autoEvaluate(sid, decision) {
     })
     if (result?.autoReplied) {
       const permissionBanner = $('permissionBanner')
-      if (permissionBanner && permissionBanner.dataset.permissionSession === sid && permissionBanner.dataset.permissionId === String(decision.permissionID)) permissionBanner.hidden = true
+      if (permissionBanner && permissionBanner.dataset.permissionSession === sid && permissionBanner.dataset.permissionId === String(decision.permissionID) && !permissionBanner.hidden) { permissionBanner.hidden = true; window.dispatchEvent(new CustomEvent('custom-opencode:rendered',{detail:{part:'permission'}})) }
       hideRiskSurface()
       window.__permissionSuppression?.markResolved(key)
     }
@@ -124,7 +124,6 @@ function tick(force = false) { void coalescedTick(tickNow, force).catch(() => {}
 
 window.addEventListener('hashchange', () => { lastAttemptKey = ''; tick(true) })
 document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(true) })
-const permissionBanner = $('permissionBanner')
-if (permissionBanner) new MutationObserver(() => tick(true)).observe(permissionBanner, { attributes:true, attributeFilter:['hidden'] })
+window.addEventListener('custom-opencode:rendered', ({ detail }) => { if (detail?.part === 'permission') tick(true) })
 setInterval(tick, 2500)
 tick()

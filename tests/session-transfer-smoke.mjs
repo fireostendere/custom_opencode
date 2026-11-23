@@ -59,6 +59,7 @@ source = source
   )
   .replace("import { ORCHESTRATED_MODELS } from './ux-state.js'", 'const { ORCHESTRATED_MODELS } = globalThis.__smoke.ux')
   .replace("from './night-promo.js'", `from '${pathToFileURL(resolve(root, 'app/web/night-promo.js')).href}'`)
+  .replace("from './toast.js'", `from '${pathToFileURL(resolve(root, 'app/web/toast.js')).href}'`)
   .replace("import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'", 'const createAdaptivePoller = () => ({ start() {}, stop() {}, wake() {}, reschedule() {} }); const createRefreshCoalescer = () => (refresh, force) => refresh(force)')
 assert.ok(!source.includes("from './api.js'"), 'api import replacement failed')
 assert.ok(!source.includes("from './markdown.js'"), 'markdown import replacement failed')

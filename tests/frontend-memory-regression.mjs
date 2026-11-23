@@ -77,6 +77,7 @@ function fixture(){
     console,URLSearchParams,CustomEvent:FixtureEvent,Event:FixtureEvent,performance,
     Date:class extends Date{static now(){return clock}},ORCHESTRATED_MODELS:[],
     escapeHtml:value=>String(value??''),renderMarkdown:value=>String(value??''),
+    toast(){},
   }
   const appContext=vm.createContext({...common})
   let source=readFileSync(resolve(root,'app/web/app.js'),'utf8').replace(/^import .*$/gm,'')

@@ -1,3 +1,4 @@
+import { toast } from './toast.js'
 import { request as req } from './api.js'
 import { escapeHtml as esc } from './markdown.js'
 import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'
@@ -27,7 +28,6 @@ function profileLabel(id){return PROFILE_LABELS[canonicalProfile(id)]||profileRo
 function stateLabel(id){return STATE_LABELS[id]||id}
 function nextModel(){const ref=window.CustomOpenCodeControls?.activeModel?.();return state.resources?.decisions?.[profile()]?.selectedModel||profileRow(profile())?.cloudModel||(ref?.providerID&&ref?.id?`${ref.providerID}/${ref.id}`:'Данные ещё не загружены')}
 function setProfile(id,label=''){localStorage.setItem(key(),id||'direct');document.documentElement.dataset.runtimeProfile=id||'direct';syncBadge(label);renderProfiles()}
-function toast(text){const el=$('toast');if(!el)return;el.textContent=text;el.hidden=false;clearTimeout(el._timer);el._timer=setTimeout(()=>el.hidden=true,3200)}
 
 // Preserve the existing composer/queue implementation and attach only the server profile.
 const nativeFetch=window.fetch.bind(window)
@@ -55,6 +55,7 @@ function ensureUI(){
   const refreshButton=$('runtimeRefresh'),heading=$('taskCenterDialog')?.querySelector('.modal-head')
   if(refreshButton&&heading&&!heading.contains(refreshButton))heading.insertBefore(refreshButton,heading.lastElementChild)
   syncBadge()
+  window.dispatchEvent(new CustomEvent('custom-opencode:rendered',{detail:{part:'task-center'}}))
 }
 function syncBadge(label=''){const badge=$('runtimeProfileBadge');if(badge){const id=profile();badge.textContent=label||profileRow(id)?.label||(id==='direct'?'Direct':id);badge.dataset.profile=id;badge.title=id==='direct'?'Selected OpenCode model':'Server model profile'}syncProfileChip()}
 // An explicit Task Center profile re-routes the session's model on every send
