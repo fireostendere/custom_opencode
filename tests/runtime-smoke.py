@@ -120,22 +120,10 @@ with tempfile.TemporaryDirectory() as temp:
     assert store.checkpoints(second["id"])[0]["summary"] == "plan persisted"
     assert any(event["kind"] == "checkpoint.saved" for event in store.events(task_id=second["id"]))
 
-    store.memory_set(str(project), "testing", "run smoke before merge", "policy")
-    assert store.memory_list(str(project))[0]["key"] == "testing"
     decision = store.decision_add(
         str(project), "Runtime store", "Use SQLite WAL", "durable local state"
     )
     assert decision["decision"] == "Use SQLite WAL"
-    mail = store.mailbox_send(
-        project_dir=str(project),
-        from_task=first["id"],
-        to_task=second["id"],
-        message_type="finding",
-        payload={"text": "shared finding"},
-    )
-    assert mail["type"] == "finding"
-    assert store.mailbox_receive(second["id"])[0]["payload"]["text"] == "shared finding"
-
     store.add_usage(
         task_id=first["id"],
         model_ref="bailian-cli/qwen3.7-plus",
@@ -272,7 +260,6 @@ with tempfile.TemporaryDirectory() as temp:
     )
     assert context["usedChars"] <= context["budgetChars"]
     assert "Project instructions" in context["text"]
-    assert "Project memory" in context["text"]
 
     pipeline = VerificationPipeline(artifacts)
     discovered = {item["name"] for item in pipeline.discover(str(project))}
@@ -634,11 +621,6 @@ with tempfile.TemporaryDirectory() as temp:
     finally:
         server_runtime.VERIFY = original_verify
         server_runtime.review_decision = original_review_decision
-    speculative = server_runtime.spawn_speculative(
-        fake, {"sessionID": "ses_root", "text": "investigate", "count": 2}
-    )
-    assert len(speculative["children"]) == 2
-    assert len(speculative["parent"]["dependencies"]) == 2
     gateway = server_runtime.mcp_gateway(fake, str(project), "kb")
     assert gateway["lazyCatalog"] is True
     assert gateway["detail"]["tools"] == ["kb_knowledge_get", "kb_knowledge_search"]
@@ -678,5 +660,5 @@ with tempfile.TemporaryDirectory() as temp:
     assert not store.dependency_state(dependent["id"])[0]
 
 print(
-    "Server runtime v2 smoke passed: durable tasks + provider-pinned profiles + repo/context/artifacts + worktrees/speculation/MCP metadata"
+    "Server runtime v2 smoke passed: durable tasks + provider-pinned profiles + repo/context/artifacts + worktrees/MCP metadata"
 )

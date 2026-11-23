@@ -48,7 +48,7 @@ server_workflow.py
     |       +--> capability registry + model profiles + adaptive scheduler
     |       +--> context planner + native compaction
     |       +--> repo AST/symbol/embedding/dependency/Git index
-    |       +--> cache / artifacts / mailbox / handoff / verification / review
+    |       +--> cache / artifacts / handoff / verification / review
     |       +--> sandbox / worktrees / scoped secrets / replay / telemetry
     |       +--> Task Center + runtime dashboards
     |

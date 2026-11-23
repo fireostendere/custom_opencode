@@ -2,7 +2,7 @@
 """Final control-plane completion layer for Runtime V3.
 
 Keeps small cross-cutting policies out of the core runtime modules: semantic
-permission previews, wasted-retry accounting, branch-state handoff, and compact
+permission previews, wasted-retry accounting, and compact
 remote approve/cancel APIs.
 """
 from __future__ import annotations
@@ -19,7 +19,6 @@ from runtime_store import now_ms
 _INSTALLED = False
 _ORIGINAL_DECISION = None
 _ORIGINAL_USAGE_STAGE = None
-_ORIGINAL_BRANCH_MERGE = None
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -211,86 +210,18 @@ def _wrap_usage_stage(runtime: Any) -> None:
     runtime._usage_stage = usage_stage
 
 
-def _wrap_branch_merge(runtime: Any, v3mod: Any) -> None:
-    global _ORIGINAL_BRANCH_MERGE
-    if _ORIGINAL_BRANCH_MERGE is not None:
-        return
-    _ORIGINAL_BRANCH_MERGE = v3mod.BranchStateService.merge
-
-    def merge(self, features, source_session, target_session, *, include_state=True):
-        result = _ORIGINAL_BRANCH_MERGE(
-            self, features, source_session, target_session, include_state=include_state
-        )
-        if not include_state:
-            return result
-        source = runtime.STORE.list_tasks(session_id=source_session, limit=200, projection="summary")
-        target = runtime.STORE.list_tasks(session_id=target_session, limit=200, projection="light")
-        target_task = target[0] if target else None
-        state = []
-        for task in source[:40]:
-            checkpoints = runtime.STORE.checkpoints(task["id"], limit=8)
-            meaningful = next(
-                (
-                    cp
-                    for cp in checkpoints
-                    if cp.get("stage") not in {"created", "queued", "dispatched"}
-                ),
-                checkpoints[0] if checkpoints else None,
-            )
-            metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
-            state.append(
-                {
-                    "taskID": task["id"],
-                    "kind": task.get("kind"),
-                    "state": task.get("state"),
-                    "checkpoint": meaningful,
-                    "handoff": metadata.get("handoff"),
-                    "route": task.get("route"),
-                }
-            )
-        if target_task and state:
-            payload = {
-                "sourceSessionID": source_session,
-                "type": "branch-state",
-                "tasks": state[:20],
-            }
-            runtime.STORE.mailbox_send(
-                project_dir=target_task["project_dir"],
-                from_task=None,
-                to_task=target_task["id"],
-                message_type="handoff",
-                payload=payload,
-            )
-            runtime.STORE.checkpoint(
-                target_task["id"],
-                "branch-state-merged",
-                summary=f"Merged agent state from {source_session}",
-                data={"sourceTasks": [item["taskID"] for item in state[:20]]},
-            )
-        result["mergedAgentState"] = len(state)
-        result["targetTaskID"] = target_task.get("id") if target_task else None
-        return result
-
-    v3mod.BranchStateService.merge = merge
-    instance = getattr(v3mod, "_INSTANCE", None)
-    if instance is not None:
-        instance.branches.merge = merge.__get__(instance.branches, v3mod.BranchStateService)
-
-
 def install(runtime: Any, v3mod: Any, control: Any, features: Any) -> None:
     global _INSTALLED
     if _INSTALLED:
         return
     _wrap_permission_decision(control)
     _wrap_usage_stage(runtime)
-    _wrap_branch_merge(runtime, v3mod)
     runtime.STORE.event(
         kind="runtime.completion_installed",
         data={
             "features": [
                 "semantic-permission-preview",
                 "wasted-retry-accounting",
-                "branch-state-handoff",
                 "remote-actions",
             ]
         },

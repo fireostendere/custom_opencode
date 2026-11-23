@@ -1300,14 +1300,6 @@ class ContextService:
         parts = []
         if project_instructions.strip():
             parts.append("Project instructions:\n" + project_instructions.strip())
-        memory = self.store.memory_list(project_dir, limit=20)
-        if memory:
-            parts.append(
-                "Project memory:\n"
-                + "\n".join(
-                    f"- [{item['category']}] {item['key']}: {item['value']}" for item in memory
-                )
-            )
         decisions = self.store.decision_list(project_dir, limit=12)
         if decisions:
             parts.append(
@@ -1344,15 +1336,6 @@ class ContextService:
             except Exception:
                 pass
         if task:
-            inbox = self.store.mailbox_receive(task["id"], consume=False, limit=30)
-            if inbox:
-                parts.append(
-                    "Structured agent mailbox:\n"
-                    + "\n".join(
-                        f"- {item['type']}: {json.dumps(item['payload'],ensure_ascii=False)[:1200]}"
-                        for item in inbox
-                    )
-                )
             handoff = (
                 task.get("metadata", {}).get("handoff")
                 if isinstance(task.get("metadata"), dict)

@@ -60,35 +60,6 @@ with tempfile.TemporaryDirectory() as temp:
     )
     assert decision["preview"].startswith("Удалить 7 объектов") and "build/" in decision["preview"]
 
-    source = store.create_task(
-        task_id="source-task", session_id="source", project_dir=str(project), text="source"
-    )
-    store.checkpoint(
-        source["id"], "implementation", summary="implemented alpha", data={"files": ["a.py"]}
-    )
-    target = store.create_task(
-        task_id="target-task", session_id="target", project_dir=str(project), text="target"
-    )
-
-    class FakeFeatures:
-        @staticmethod
-        def _data(value):
-            return value
-
-        @staticmethod
-        def _backend_request_json(method, target, payload=None, timeout=20.0):
-            if method == "POST" and target.endswith("/fork"):
-                assert (payload or {}).get("boundary", {}).get("type") in ("before", "through"), payload
-                return {"id": "forked"}
-            raise RuntimeError((method, target, payload))
-
-    branches = runtime_v3.BranchStateService(store)
-    merged = branches.merge(FakeFeatures(), "source", "target", include_state=True)
-    assert merged["mergedAgentState"] >= 1
-    inbox = store.mailbox_receive(target["id"])
-    assert inbox and inbox[0]["type"] == "handoff"
-    assert store.checkpoints(target["id"])[0]["stage"] == "branch-state-merged"
-
 print(
-    "Runtime completion smoke passed: semantic permission preview + wasted retries + branch-state handoff"
+    "Runtime completion smoke passed: semantic permission preview + wasted retries"
 )

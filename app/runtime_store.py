@@ -208,20 +208,11 @@ class RuntimeStore:
                     CREATE TABLE IF NOT EXISTS usage_keys (event_key TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
                     CREATE INDEX IF NOT EXISTS idx_usage_task ON usage(task_id,id);
                     CREATE INDEX IF NOT EXISTS idx_usage_model ON usage(model_ref,id DESC);
-                    CREATE TABLE IF NOT EXISTS project_memory (
-                        project_dir TEXT NOT NULL,memory_key TEXT NOT NULL,value TEXT NOT NULL,category TEXT NOT NULL DEFAULT 'note',
-                        updated_at INTEGER NOT NULL,PRIMARY KEY(project_dir,memory_key)
-                    );
                     CREATE TABLE IF NOT EXISTS decisions (
                         id TEXT PRIMARY KEY,project_dir TEXT NOT NULL,title TEXT NOT NULL,decision TEXT NOT NULL,
                         rationale TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
                     );
                     CREATE INDEX IF NOT EXISTS idx_decisions_project ON decisions(project_dir,updated_at DESC);
-                    CREATE TABLE IF NOT EXISTS mailbox (
-                        id TEXT PRIMARY KEY,project_dir TEXT NOT NULL,from_task TEXT,to_task TEXT,message_type TEXT NOT NULL,
-                        payload_json TEXT NOT NULL,consumed INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_mailbox_to ON mailbox(to_task,consumed,created_at);
                     CREATE TABLE IF NOT EXISTS patch_ownership (
                         project_dir TEXT NOT NULL,path TEXT NOT NULL,task_id TEXT NOT NULL,symbol TEXT NOT NULL DEFAULT '',
                         updated_at INTEGER NOT NULL,PRIMARY KEY(project_dir,path,task_id,symbol)
@@ -1211,10 +1202,6 @@ class RuntimeStore:
                 f"DELETE FROM events WHERE task_id IN ({old_tasks}) OR (task_id IS NULL AND created_at<?)",
                 (cutoff,),
             )
-            db.execute(
-                f"DELETE FROM mailbox WHERE from_task IN ({old_tasks}) OR to_task IN ({old_tasks}) OR (consumed=1 AND created_at<?)",
-                (cutoff,),
-            )
             db.execute(f"DELETE FROM patch_ownership WHERE task_id IN ({old_tasks})")
             db.execute(
                 f"DELETE FROM task_dependencies WHERE task_id IN ({old_tasks}) OR depends_on IN ({old_tasks})"
@@ -1442,31 +1429,6 @@ class RuntimeStore:
             "avgCost": sum(float(r["cost"] or 0) for r in rows) / len(rows),
         }
 
-    def memory_set(self, project_dir: str, key: str, value: str, category: str = "note") -> None:
-        self.initialize()
-        with self.transaction() as db:
-            db.execute(
-                "INSERT OR REPLACE INTO project_memory(project_dir,memory_key,value,category,updated_at) VALUES(?,?,?,?,?)",
-                (project_dir, key[:240], value[:20000], category[:80], now_ms()),
-            )
-
-    def memory_list(self, project_dir: str, limit: int = 100) -> list[dict[str, Any]]:
-        self.initialize()
-        with self.connect() as db:
-            rows = db.execute(
-                "SELECT memory_key,value,category,updated_at FROM project_memory WHERE project_dir=? ORDER BY updated_at DESC LIMIT ?",
-                (project_dir, max(1, min(500, int(limit)))),
-            ).fetchall()
-        return [
-            {
-                "key": r["memory_key"],
-                "value": r["value"],
-                "category": r["category"],
-                "updatedAt": r["updated_at"],
-            }
-            for r in rows
-        ]
-
     def decision_add(
         self, project_dir: str, title: str, decision: str, rationale: str = ""
     ) -> dict[str, Any]:
@@ -1513,68 +1475,6 @@ class RuntimeStore:
                 "status": r["status"],
                 "createdAt": r["created_at"],
                 "updatedAt": r["updated_at"],
-            }
-            for r in rows
-        ]
-
-    def mailbox_send(
-        self,
-        *,
-        project_dir: str,
-        message_type: str,
-        payload: dict[str, Any],
-        from_task: str | None = None,
-        to_task: str | None = None,
-    ) -> dict[str, Any]:
-        self.initialize()
-        item = f"m_{uuid4().hex}"
-        timestamp = now_ms()
-        with self.transaction() as db:
-            db.execute(
-                "INSERT INTO mailbox(id,project_dir,from_task,to_task,message_type,payload_json,consumed,created_at) VALUES(?,?,?,?,?,?,0,?)",
-                (
-                    item,
-                    project_dir,
-                    from_task,
-                    to_task,
-                    message_type[:80],
-                    _json(payload),
-                    timestamp,
-                ),
-            )
-        return {
-            "id": item,
-            "projectDir": project_dir,
-            "fromTask": from_task,
-            "toTask": to_task,
-            "type": message_type[:80],
-            "payload": payload,
-            "createdAt": timestamp,
-        }
-
-    def mailbox_receive(
-        self, task_id: str, *, consume: bool = False, limit: int = 100
-    ) -> list[dict[str, Any]]:
-        self.initialize()
-        with self.transaction() as db:
-            rows = db.execute(
-                "SELECT * FROM mailbox WHERE to_task=? AND consumed=0 ORDER BY created_at ASC LIMIT ?",
-                (task_id, max(1, min(500, int(limit)))),
-            ).fetchall()
-            ids = [str(r["id"]) for r in rows]
-            if consume and ids:
-                db.execute(
-                    "UPDATE mailbox SET consumed=1 WHERE id IN (%s)" % ",".join("?" for _ in ids),
-                    ids,
-                )
-        return [
-            {
-                "id": r["id"],
-                "fromTask": r["from_task"],
-                "toTask": r["to_task"],
-                "type": r["message_type"],
-                "payload": _loads(r["payload_json"], {}),
-                "createdAt": r["created_at"],
             }
             for r in rows
         ]
