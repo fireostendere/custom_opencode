@@ -1,6 +1,6 @@
 # custom_opencode
 
-Версия 2.0.0 · [что изменилось](CHANGELOG.md)
+Версия 2.1.0 · [что изменилось](CHANGELOG.md)
 
 Переносимый комплект поверх OpenCode V2: собственный ChatGPT-подобный web/PWA client, Alibaba role routing, серверный Runtime V2/V3 control plane, безопасная работа с проектами, self-test и опциональный инженерный RAG через MCP.
 

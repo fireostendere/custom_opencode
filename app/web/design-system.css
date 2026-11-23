@@ -48,9 +48,9 @@ body{background:var(--bg);color:var(--text)}
 .pull-refresh[data-state="done"] .pull-refresh-check{opacity:1;stroke-dashoffset:0}
 @media(prefers-reduced-motion:no-preference){
   .pull-refresh:not([hidden]){animation:ptr-in .5s var(--ease-out) backwards}
-  .pull-refresh[data-state="pulling"] .pull-refresh-icon{animation:pull-refresh-pull 1.1s var(--ease-out) infinite}
+  .pull-refresh[data-state="pulling"] .pull-refresh-icon{animation:pull-refresh-pull 1.1s ease-in-out infinite}
   .pull-refresh[data-state="refreshing"] .pull-refresh-icon{animation:pull-refresh-spin 1.1s linear infinite}
-  .pull-refresh[data-state="refreshing"] .pull-refresh-progress{animation:ptr-dash 1.4s var(--ease-out) infinite}
+  .pull-refresh[data-state="refreshing"] .pull-refresh-progress{animation:ptr-dash 1.4s ease-in-out infinite}
   .pull-refresh[data-state="done"] .pull-refresh-icon{animation:ptr-pop .5s var(--ease-out)}
   .pull-refresh[data-state="done"] .pull-refresh-check{animation:ptr-draw .36s var(--ease-out) .08s backwards}
 }
@@ -459,3 +459,5 @@ dialog::backdrop{background:#0009;-webkit-backdrop-filter:blur(6px);backdrop-fil
 :is(#refresh,#menu,#notifyButton,#sessionActions,.icon:is([data-close],[data-workflow-close],[data-runtime-close],[data-appearance-close]))::before{content:'';position:absolute;inset:0;margin:auto;width:18px;height:18px;background:currentColor;-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}
 /* Hierarchy comes from size and colour: native bold elements stop at 600. */
 h1,h2,h3,h4,strong,b,th{font-weight:600}
+/* Counters, times and limits keep their column while they change. */
+body{font-variant-numeric:tabular-nums}

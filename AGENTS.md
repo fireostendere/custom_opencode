@@ -8,6 +8,10 @@
 - Коммить только свои файлы, без `git add -A` по общей копии.
 - Перед PR: `bash scripts/verify.sh` (для точечных правок — профильные `tests/*-regression.*`); полностью, как в CI, — `python3 tests/matrix.py --output <папка>`. Новый файл в `tests/` подключай к `tests/matrix.py` или `scripts/verify.sh`, иначе CI упадёт. Подробно: `docs/testing.md`.
 
+## Веб-клиент
+- Значения берутся из токенов `app/web/design-system.css` (`--ui-radius*`, `--ease-out`, `--line`, `--text`, `--muted`), раскрывающиеся блоки — из общего шеврона там же, иконки — маской `--icon`, как у композера. Новые литералы цветов, радиусов и кривых не заводи.
+- Модули не следят за DOM через `MutationObserver`: `app.js` сообщает о перерисовке событием `custom-opencode:rendered` (`detail.part`), остальные на него подписываются. Уведомления — только `toast` из `app/web/toast.js`.
+
 ## Установленная копия
 - Личные настройки владельца (модели агентов, свои агенты и промпты, флаги, Tool Fabric) — в приватном репо `CUSTOM_OPENCODE_USER_CONFIG` (`settings.env`, `opencode.overlay.json`, см. `docs/configuration.md#private-user-config`), не в шаблоне и не в `.env`; в `.env` только секреты.
 - `~/.config/opencode` руками не правь: установщик пересобирает `opencode.json` из шаблона и копирует `config/plugins/*.js` и `config/prompts/`, ручные правки теряются.
