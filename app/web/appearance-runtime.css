@@ -48,7 +48,7 @@ html[data-theme="light"] .runtime-task-actions .runtime-danger{
 .runtime-v3-card,
 .runtime-v3-wide,
 .runtime-v3-panel>summary{
-  transition:background-color .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease;
+  transition:background-color .16s var(--ease-out),border-color .16s var(--ease-out),color .16s var(--ease-out),box-shadow .16s var(--ease-out),transform .16s var(--ease-out);
 }
 .runtime-profile:hover,
 .runtime-task:hover{

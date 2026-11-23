@@ -905,7 +905,7 @@ function renderRunControls(){
     if(span)span.textContent='Модель работает…'
   }
   document.querySelectorAll('[data-delivery]').forEach((b)=>b.classList.toggle('active',b.dataset.delivery===state.deliveryMode))
-  $('input').placeholder=running?(state.deliveryMode==='queue'?'Сообщение будет отправлено после завершения…':'Steer: скорректировать текущую работу…'):'Сообщение…'
+  $('input').placeholder=running?(state.deliveryMode==='queue'?'Сообщение будет отправлено после завершения':'Steer: скорректировать текущую работу'):'Сообщение'
 }
 
 function clipped(value,limit=16000){if(value===undefined||value===null)return'';let text;try{text=typeof value==='string'?value:JSON.stringify(value,null,2)}catch{text=String(value)}return text.length>limit?`${text.slice(0,limit)}\n…обрезано…`:text}
@@ -1053,7 +1053,7 @@ function renderMessages({anchor=null,bottom=false}={}){
   // not be reflected in scrollTop yet, and snapping back cancelled it.
   const stick=followDetachedFor!==state.selected.id&&view.scrollHeight-view.scrollTop-view.clientHeight<100; const prev=view.scrollTop
   const rows=state.context.map((message,index)=>{const type=message.type||message.role;return{message,index,type,body:messageBody(message,type)}}).filter(({type,body})=>type==='user'||body)
-  const articleHtmls=rows.map(({message,index,type,body})=>{const id=message.id||message.messageID||`idx-${index}`;const actor=messagePresentation(message,type),family=type==='user'?'user':'assistant';return `<article class="message ${family} ${actor.origin}" data-message-index="${index}" data-origin="${escapeHtml(actor.origin)}"><div class="avatar">${escapeHtml(actor.avatar)}</div><div class="message-body"><div class="message-head"><span class="message-role">${escapeHtml(actor.role)}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Copy</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`})
+  const articleHtmls=rows.map(({message,index,type,body})=>{const id=message.id||message.messageID||`idx-${index}`;const actor=messagePresentation(message,type),family=type==='user'?'user':'assistant';return `<article class="message ${family} ${actor.origin}" data-message-index="${index}" data-origin="${escapeHtml(actor.origin)}"><div class="avatar">${escapeHtml(actor.avatar)}</div><div class="message-body"><div class="message-head"><span class="message-role">${escapeHtml(actor.role)}</span><span class="message-actions"><button class="mini" data-copy-message="${index}">Копировать</button><button class="mini" data-fork-message="${escapeHtml(id)}">Fork</button></span></div>${body}</div></article>`})
   const fullHtml=articleHtmls.join('')
   // Only messages new to an already open chat rise in (.enter); a streaming
   // message re-rendered mid-animation continues it instead of restarting.
@@ -1418,7 +1418,7 @@ function serviceWorkerReady(timeoutMs=1500){
   ])
 }
 function initNotifications(){renderNotifyButton();if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch((e)=>console.warn('SW registration failed',e))}}
-function renderNotifyButton(){$('notifyButton').textContent=state.notifyEnabled?'◆':'◇';$('notifyButton').title=state.notifyEnabled?'Уведомления включены':'Уведомления выключены'}
+function renderNotifyButton(){$('notifyButton').textContent=state.notifyEnabled?'◆':'◇';$('notifyButton').setAttribute('aria-pressed',String(!!state.notifyEnabled));$('notifyButton').title=state.notifyEnabled?'Уведомления включены':'Уведомления выключены'}
 async function toggleNotifications(){
   if(!('Notification' in window)){
     const ua=navigator.userAgent||''

@@ -249,7 +249,7 @@ for css in ("/enhancements.css", "/ui-enhancements.css", "/runtime-dashboard.css
         bad.append(f"index.html missing stylesheet: {css}")
 if 'id="providerLimits"' not in index or 'id="slashPalette"' not in index:
     bad.append("index.html must expose provider limits and slash palette surfaces")
-if 'id="modelSearch" placeholder="Поиск моделей…"' not in index:
+if 'id="modelSearch" placeholder="Поиск моделей"' not in index:
     bad.append("model picker must expose searchable catalog")
 if "if(!window.matchMedia('(max-width: 760px)').matches)$('modelSearch').focus()" not in (root / "app/web/app.js").read_text(encoding="utf-8"):
     bad.append("model picker must not auto-open the mobile keyboard")

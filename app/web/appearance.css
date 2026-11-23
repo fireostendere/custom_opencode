@@ -56,7 +56,7 @@ body,.main{background:var(--bg);color:var(--text)}
 .activity-code,.activity-output{color:var(--text)}
 .sidebar{background:var(--panel);border-color:var(--line)}
 .header,.composer-wrap{border-color:var(--line)}
-button{transition:background-color .16s ease,border-color .16s ease,color .16s ease,filter .16s ease,transform .11s ease,box-shadow .16s ease}
+button{transition:background-color .16s var(--ease-out),border-color .16s var(--ease-out),color .16s var(--ease-out),filter .16s var(--ease-out),transform .16s var(--ease-out),box-shadow .16s var(--ease-out)}
 button:active:not(:disabled){transform:scale(.97)}
 .primary,.send,.composer-action.send,.composer-action.queue,.login-submit{color:var(--accent-contrast)!important}
 .question-option.selected .question-option-mark{color:var(--accent-contrast)!important}
@@ -65,39 +65,39 @@ button:active:not(:disabled){transform:scale(.97)}
 .provider-limits,.limits-shell,.quota-provider,.slash-palette,.model-provider-section,.model-provider-toggle,.model-provider-count,
 .sidebar-account,.logout-button,.file-row,.tool,.code-block,.attachment,.file-chip,.choice:hover,.action:hover,
 .model-provider-body .choice:hover,.slash-item:hover,.slash-item.active{
-  transition:background-color .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease;
+  transition:background-color .16s var(--ease-out),border-color .16s var(--ease-out),color .16s var(--ease-out),box-shadow .16s var(--ease-out),transform .16s var(--ease-out);
 }
 .composer:has(#input:focus),.search:focus,.text-input:focus,.workflow-input:focus,.workflow-select:focus,.workflow-textarea:focus{
   border-color:color-mix(in srgb,var(--accent) 55%,var(--line));
   box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent);
 }
-.quota-progress i,.usage-bar>div{transition:width .35s ease,background-color .2s ease}
-.session{transition:background-color .14s ease,transform .14s ease}
+.quota-progress i,.usage-bar>div{transition:width .32s var(--ease-out),background-color .2s var(--ease-out)}
+.session{transition:background-color .16s var(--ease-out),transform .16s var(--ease-out)}
 .session:active{transform:translateX(2px)}
-.sidebar{transition:transform .22s cubic-bezier(.22,.8,.24,1),box-shadow .2s ease}
-.permission-banner:not([hidden]),.question-host:not([hidden]),.workflow-status:not([hidden]){animation:surface-rise .18s ease-out both}
-.toast:not([hidden]){animation:toast-in .2s cubic-bezier(.2,.8,.2,1) both}
-dialog[open]{animation:dialog-fade .14s ease-out both}
-dialog[open]>.modal,dialog[open]>.workflow-modal{animation:dialog-pop .18s cubic-bezier(.2,.8,.2,1) both}
-.login-card{animation:login-in .24s cubic-bezier(.2,.8,.2,1) both}
+.sidebar{transition:transform .2s cubic-bezier(.22,.8,.24,1),box-shadow .2s var(--ease-out)}
+.permission-banner:not([hidden]),.question-host:not([hidden]),.workflow-status:not([hidden]){animation:surface-rise .18s var(--ease-out) both}
+.toast:not([hidden]){animation:toast-in .2s var(--ease-out) both}
+dialog[open]{animation:dialog-fade .14s var(--ease-out) both}
+dialog[open]>.modal,dialog[open]>.workflow-modal{animation:dialog-pop .18s var(--ease-out) both}
+.login-card{animation:login-in .24s var(--ease-out) both}
 
 /* Settings */
 .sidebar-account-actions{display:flex;gap:6px;flex:0 0 auto}
-.appearance-button,.logout-button{min-height:34px;padding:6px 10px;border:1px solid var(--line);background:var(--surface-input);color:var(--muted);border-radius:9px;font-size:11px}
+.appearance-button,.logout-button{min-height:34px;padding:6px 10px;border:1px solid var(--line);background:var(--surface-input);color:var(--muted);border-radius:var(--ui-radius);font-size:11px}
 .appearance-button:hover,.logout-button:hover{background:var(--surface-hover);color:var(--text)}
 .appearance-modal{width:min(520px,100%)}
-.appearance-section{padding:13px 0;border-top:1px solid var(--line)}
-.appearance-section:first-of-type{padding-top:3px;border-top:0}
-.appearance-label{font-size:12px;font-weight:650;margin-bottom:8px}
-.appearance-note{font-size:11px;color:var(--muted);margin-top:7px}
-.theme-choice-group{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.appearance-section{padding:12px 0;border-top:1px solid var(--line)}
+.appearance-section:first-of-type{padding-top:4px;border-top:0}
+.appearance-label{font-size:12px;font-weight:600;margin-bottom:8px}
+.appearance-note{font-size:11px;color:var(--muted);margin-top:8px}
+.theme-choice-group{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .theme-choice{min-height:42px;border:1px solid var(--line);background:var(--surface-input);color:var(--muted)}
 .theme-choice.active{border-color:color-mix(in srgb,var(--accent) 62%,var(--line));background:color-mix(in srgb,var(--accent) 12%,var(--surface-input));color:var(--text);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 10%,transparent)}
-.accent-grid{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
-.accent-swatch{width:36px;height:36px;padding:0;border-radius:50%;border:2px solid transparent;background:var(--swatch);box-shadow:0 0 0 1px var(--line)}
+.accent-grid{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.accent-swatch{width:36px;height:36px;padding:0;border-radius:var(--ui-radius);border:2px solid transparent;background:var(--swatch);box-shadow:0 0 0 1px var(--line)}
 .accent-swatch:hover{transform:translateY(-1px) scale(1.04)}
 .accent-swatch.active{box-shadow:0 0 0 2px var(--surface-strong),0 0 0 4px var(--swatch)}
-.accent-custom{width:44px;height:38px;padding:3px;border:1px solid var(--line);border-radius:10px;background:var(--surface-input);cursor:pointer}
+.accent-custom{width:44px;height:38px;padding:4px;border:1px solid var(--line);border-radius:var(--ui-radius);background:var(--surface-input);cursor:pointer}
 .appearance-actions{display:flex;justify-content:flex-end;margin-top:4px}
 .appearance-reset{background:transparent;color:var(--muted);border:1px solid var(--line)}
 
@@ -150,11 +150,11 @@ html[data-theme="light"] .login-security{border-color:var(--line);color:#777}
 @keyframes login-in{from{opacity:0;transform:translateY(10px) scale(.99)}to{opacity:1;transform:none}}
 
 @media(max-width:760px){
-  .sidebar-account-actions{gap:5px}
-  .appearance-button,.logout-button{min-height:38px;padding-inline:11px}
+  .sidebar-account-actions{gap:4px}
+  .appearance-button,.logout-button{min-height:38px;padding-inline:12px}
   .appearance-modal{width:100%}
   .theme-choice-group{gap:6px}
-  .theme-choice{padding:8px 5px}
+  .theme-choice{padding:8px 4px}
 }
 
 @media(prefers-reduced-motion:reduce){

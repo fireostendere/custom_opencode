@@ -34,7 +34,7 @@ function ensureUI(){
     button.id='unifiedPanelToggle'
     button.type='button'
     button.className='header-chip unified-panel-toggle'
-    button.textContent='Panel'
+    button.textContent='Панель'
     button.title='Universal Panel · Ctrl+K'
     const anchor=$('gitButton')||$('usageButton')
     anchor?.after(button)

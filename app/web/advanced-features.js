@@ -123,7 +123,7 @@ function ensureSurfaces() {
     button.className = 'header-chip project-settings-open'
     button.type = 'button'
     button.title = 'Память и permission policy проекта'
-    button.textContent = 'Project'
+    button.textContent = 'Проект'
     button.hidden = true
     $('gitButton')?.after(button)
     button.addEventListener('click', openProjectSettings)

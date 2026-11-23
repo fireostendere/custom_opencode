@@ -103,7 +103,7 @@ dialog .workflow-modal.large{
 .limits-shell{
   margin:0 8px 8px;
   border:1px solid var(--line);
-  border-radius:10px;
+  border-radius:var(--ui-radius);
   background:#1d1d1d;
   overflow:hidden;
 }
@@ -113,15 +113,15 @@ dialog .workflow-modal.large{
   align-items:center;
   justify-content:space-between;
   gap:8px;
-  padding:8px 11px;
+  padding:8px 12px;
   cursor:pointer;
   list-style:none;
   user-select:none;
   color:var(--muted);
   font-size:11px;
-  font-weight:650;
-  text-transform:uppercase;
-  letter-spacing:.06em;
+  font-weight:600;
+  
+  
 }
 .limits-summary::-webkit-details-marker{display:none}
 .limits-shell[open] .limits-summary{border-bottom:1px solid var(--line)}
@@ -136,5 +136,5 @@ dialog .workflow-modal.large{
 .limits-shell .provider-limits .quota-title{min-height:18px;justify-content:flex-end;padding:0}
 
 @media(max-width:760px){
-  .limits-shell{margin:0 8px 7px}
+  .limits-shell{margin:0 8px 8px}
 }

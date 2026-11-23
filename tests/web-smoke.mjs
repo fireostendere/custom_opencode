@@ -649,7 +649,7 @@ if (!designSystem.includes(".composer-action.stop{background:var(--accent)"))
 if (
   !designSystem.includes(".attach::before,.composer-action::before{") ||
   !designSystem.includes("mask:var(--icon) center/contain no-repeat") ||
-  !designSystem.includes("border-radius:12px") ||
+  !designSystem.includes("border-radius:var(--ui-radius-lg)") ||
   accessFixCss.includes("border-radius:50%!important")
 )
   throw new Error("Composer buttons must be rounded squares with masked SVG icons, not forced circles")
@@ -793,7 +793,7 @@ for (const marker of ["CUSTOM_MODELS_KEY", "HIDDEN_MODELS_KEY", "modelAddButton"
   if (!appSource.includes(marker))
     throw new Error(`Model catalog management marker missing: ${marker}`)
 }
-if (!index.includes('id="modelAddDialog"') || !index.includes('id="modelSearch" placeholder="Поиск моделей…"'))
+if (!index.includes('id="modelAddDialog"') || !index.includes('id="modelSearch" placeholder="Поиск моделей"'))
   throw new Error("Model catalog management UI missing")
 if (!uxControls.includes("cancelModelTransition") || !uxControls.includes("if (changed) $('modelDialog')?.close()"))
   throw new Error("Model selection must recover from stale transitions and close only after success")
@@ -902,7 +902,7 @@ if (!/\.plan-panel-body\{[^}]*max-height:300px[^}]*overflow-y:auto/.test(advance
   throw new Error("Long plans need a bounded independent scroll surface")
 if (
   !advancedCss.includes(
-    ".orchestration-nodes{display:grid;gap:7px;max-height:300px;overflow-y:auto",
+    ".orchestration-nodes{display:grid;gap:8px;max-height:300px;overflow-y:auto",
   ) ||
   !advancedCss.includes(".orchestration-nodes,.plan-panel-body{max-height:240px}")
 )

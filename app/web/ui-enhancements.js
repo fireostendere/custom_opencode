@@ -303,7 +303,7 @@ function installModelPickerEnhancements() {
   if (search) {
     search.type = 'search'
     search.tabIndex = 0
-    search.placeholder = 'Поиск моделей…'
+    search.placeholder = 'Поиск моделей'
   }
   const root = $('modelChoices')
   if (root) {
