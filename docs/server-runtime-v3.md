@@ -32,7 +32,7 @@ identified by the edition alias, `dnd-*` agents, or the ODM adapter's
 
 ## Durable task manager
 
-`RuntimeStore` persists tasks, dependency edges, events, checkpoints, artifacts, token/cost usage, project memory, decisions, mailbox messages, caches and patch ownership.
+`RuntimeStore` persists tasks, dependency edges, events, checkpoints, artifacts, token/cost usage, decisions, caches and patch ownership.
 
 Task states include queued, blocked, paused, submitted, running, waiting_permission, verifying, recovering, needs_attention, completed, failed and cancelled. Priorities are bounded and dependency-aware. The legacy `/client-queue.json` API remains a compatibility facade over the durable task store.
 
@@ -96,7 +96,7 @@ The custom preflight threshold is model-aware:
 
 Runtime tracks completed/requested compaction state and requires meaningful context growth before another custom request. It also avoids issuing another request while a native compaction is pending. Effort changes or role transitions do not themselves cause compaction.
 
-The server context envelope is independently bounded and deduplicated. It can contain project instructions, persistent project memory, decision log entries, structured mailbox/handoff messages, semantic repository matches, changed symbols since the task baseline and server-managed engineering RAG retrieval.
+The server context envelope is independently bounded and deduplicated. It can contain project instructions, decision log entries, typed handoff objects, semantic repository matches, changed symbols since the task baseline and server-managed engineering RAG retrieval.
 
 ## Shared repository index and semantic diff
 
@@ -147,9 +147,9 @@ Large tool outputs are stored in `ArtifactStore` and exposed by ID plus bounded 
 
 Per-task usage records planning, implementation, research, review, repair and recovery separately. `wasted_retries` requires an explicit avoidable-waste reason; a successful repair is not automatically waste. Provider-request reservations and observed usage live in the shared execution ledger and must not be added to overlapping native session statistics. See [the runtime contracts](runtime-contracts.md) for context ownership, private policy, shared budgets and evidence limits.
 
-## Mailbox and typed handoff
+## Typed handoff
 
-Agents exchange structured finding/question/patch/blocker/handoff messages through the durable mailbox. Typed planner/builder handoff objects live in task metadata and enter context only when relevant. Reader/research outputs should be bounded findings, not full agent transcripts.
+Typed planner/builder handoff objects live in task metadata and enter context only when relevant. Reader/research outputs should be bounded findings, not full agent transcripts.
 
 ## Verification, reviewer, failure and watchdogs
 
@@ -161,9 +161,7 @@ A diff-impact gate determines whether an independent review is worthwhile. Repea
 
 Parallel writable tasks can use detached Git worktrees. Ownership is tracked against the original project root, so conflicting paths are detected before mutation. `/client-worktree-merge.json` merges tracked changes with three-way Git apply and copies untracked files safely; it refuses to overwrite dirty/conflicting target paths and records durable merge checkpoints/events.
 
-## Session branching and replay
-
-Runtime branching uses native OpenCode session forks. State merge copies project memory/decisions and meaningful source-task checkpoints/handoff data. Git code merging remains independent and uses the worktree path above.
+## Replay
 
 Completed/failed tasks can be captured as replay artifacts containing recorded OpenCode messages/tool results. Replay returns the recording plus task events/checkpoints/usage with `modelCalls: 0`.
 

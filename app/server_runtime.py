@@ -312,38 +312,6 @@ def _usage_totals(features: Any, session_id: str) -> dict[str, Any]:
     return totals
 
 
-def _last_assistant_text(features: Any, session_id: str) -> str:
-    try:
-        value = features._data(
-            features._backend_request_json(
-                "GET", f"/api/session/{quote(session_id,safe='')}/message?limit=80", timeout=10.0
-            )
-        )
-    except Exception:
-        return ""
-    for row in reversed(value if isinstance(value, list) else []):
-        if not isinstance(row, dict):
-            continue
-        info = row.get("info") if isinstance(row.get("info"), dict) else row
-        if not isinstance(info, dict) or info.get("role") != "assistant":
-            continue
-        parts = (
-            row.get("parts")
-            if isinstance(row.get("parts"), list)
-            else row.get("content") if isinstance(row.get("content"), list) else []
-        )
-        texts = [
-            str(part.get("text") or "")
-            for part in parts
-            if isinstance(part, dict) and part.get("type") == "text"
-        ]
-        if texts:
-            return "\n".join(texts)[-16000:]
-        if isinstance(row.get("text"), str):
-            return row["text"][-16000:]
-    return ""
-
-
 def owner_coding_task(features: Any, session_id: str, profile: str, kind: str, *, mode: str = "build") -> bool:
     """Root coding submissions only; authority is supplied separately by the handler."""
     if mode != "build" or kind != "prompt" or profile not in {
@@ -797,23 +765,6 @@ def _finish_async(features: Any, task: dict[str, Any]) -> None:
 
 def _after_completion(features: Any, task: dict, review: dict, verification: dict) -> None:
     task_id = task["id"]
-    if task.get("kind") == "research":
-        target = (
-            (task.get("metadata") or {}).get("mailboxTo")
-            if isinstance(task.get("metadata"), dict)
-            else None
-        )
-        if target:
-            STORE.mailbox_send(
-                project_dir=task["project_dir"],
-                from_task=task_id,
-                to_task=str(target),
-                message_type="finding",
-                payload={
-                    "text": _last_assistant_text(features, task["session_id"])[:14000],
-                    "route": task.get("route"),
-                },
-            )
     profile = REGISTRY.profiles().get(str(task.get("profile")), REGISTRY.profiles()["direct"])
     if (
         task.get("kind") in {"prompt", "verification-fix"}
@@ -1026,7 +977,7 @@ def _verify_finish(features: Any, task_id: str) -> None:
                 summary="Task completed and durable state committed",
                 data={"repo": git_snapshot(task["project_dir"]), "verification": verification},
             )
-            # The task is completed; follow-ups (mailbox, review) that fail must
+            # The task is completed; follow-ups (review) that fail must
             # be recorded, not turned into a completed->failed transition the
             # invariant layer rejects and the outer handler then swallows.
             try:
@@ -1715,69 +1666,6 @@ def _fork(features: Any, sid: str) -> dict[str, Any]:
     return value
 
 
-def spawn_speculative(features: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    sid = str(payload.get("sessionID") or "")
-    text = str(payload.get("text") or "").strip()
-    if not sid or not text:
-        raise ValueError("sessionID and text are required")
-    count = max(2, min(3, int(payload.get("count") or 2)))
-    directory = features._session_directory(sid)
-    children = []
-    # Allocate the shared root before children become dispatchable. Forked
-    # research and the aggregate must not each receive a new full budget.
-    from execution_ledger import ExecutionLedger
-
-    ledger = ExecutionLedger(STORE)
-    binding = ledger.binding(sid)
-    root_id = binding["root_id"] if binding else f"speculative_{uuid4().hex}"
-    for index in range(count):
-        fork = _fork(features, sid)
-        child_sid = str(fork["id"])
-        child = STORE.create_task(
-            session_id=child_sid,
-            project_dir=directory,
-            text=f"Independent researcher {index+1}/{count}. Investigate this problem read-only. Return concrete evidence, risks and a recommended approach.\n\n{text}",
-            files=[],
-            profile="fast",
-            priority=20,
-            kind="research",
-            metadata={
-                "modeAtCreate": "plan",
-                "usageBaseline": _usage_totals(features, child_sid),
-                "sandbox": "safe",
-                "speculativeRootSession": sid,
-                "rootTaskID": root_id,
-            },
-            baseline=git_snapshot(directory),
-        )
-        children.append(child)
-    parent = STORE.create_task(
-        session_id=sid,
-        project_dir=directory,
-        text="Compare the independent researcher findings in the structured mailbox. Resolve disagreements, then produce one compact implementation plan or continue the requested work.",
-        files=[],
-        profile="research",
-        priority=30,
-        dependencies=[item["id"] for item in children],
-        kind="aggregate",
-        metadata={
-            "modeAtCreate": "plan",
-            "usageBaseline": _usage_totals(features, sid),
-            "sandbox": "safe",
-            "speculative": True,
-            "rootTaskID": root_id,
-        },
-        baseline=git_snapshot(directory),
-    )
-    for child in children:
-        STORE.update_task(child["id"], metadata_patch={"mailboxTo": parent["id"]})
-    return {
-        "ok": True,
-        "parent": _public(STORE.get_task(parent["id"]) or parent),
-        "children": [_public(STORE.get_task(item["id"]) or item) for item in children],
-    }
-
-
 def mcp_gateway(features: Any, directory: str, namespace: str | None = None) -> dict[str, Any]:
     key = hashlib.sha256(directory.encode()).hexdigest()
     cached = STORE.cache_get("mcp-health", key)
@@ -1973,14 +1861,12 @@ def runtime_snapshot(features: Any, directory: str | None = None) -> dict[str, A
             "semanticDiff": True,
             "contextCache": True,
             "toolResultCache": True,
-            "agentMailbox": True,
             "typedHandoff": True,
             "verification": True,
             "failureClassifier": True,
             "loopDetector": True,
             "stuckWatchdog": True,
             "patchOwnership": True,
-            "speculativeParallelism": True,
             "providerPinnedRoleRouter": True,
             "capabilityRegistry": True,
             "mcpGatewayMetadata": True,
@@ -1999,7 +1885,6 @@ def handle_get(handler: Any, parsed: Any, features: Any) -> bool:
         "/client-resource-status.json",
         "/client-repo-index.json",
         "/client-artifact.json",
-        "/client-project-memory.json",
         "/client-decisions.json",
         "/client-mcp-gateway.json",
         "/client-plan.json",
@@ -2076,7 +1961,6 @@ def handle_get(handler: Any, parsed: Any, features: Any) -> bool:
                     "events": STORE.events(task_id=task_id),
                     "artifacts": ARTIFACTS.list(task_id),
                     "usage": STORE.usage_summary(task_id),
-                    "mailbox": STORE.mailbox_receive(task_id),
                 }
             )
         elif parsed.path == "/client-task-events.json":
@@ -2117,10 +2001,6 @@ def handle_get(handler: Any, parsed: Any, features: Any) -> bool:
             if value is None:
                 raise KeyError(aid)
             handler.json_response(value)
-        elif parsed.path == "/client-project-memory.json":
-            if not directory:
-                raise ValueError("directory or sessionID is required")
-            handler.json_response({"ok": True, "memory": STORE.memory_list(directory)})
         elif parsed.path == "/client-decisions.json":
             if not directory:
                 raise ValueError("directory or sessionID is required")
@@ -2141,10 +2021,7 @@ def handle_post(handler: Any, parsed: Any, features: Any) -> bool:
     paths = {
         "/client-task-control.json",
         "/client-task-create.json",
-        "/client-project-memory.json",
         "/client-decisions.json",
-        "/client-mailbox.json",
-        "/client-speculate.json",
         "/client-artifact.json",
     }
     if parsed.path not in paths:
@@ -2158,19 +2035,6 @@ def handle_post(handler: Any, parsed: Any, features: Any) -> bool:
             handler.json_response(task_control(features, payload))
         elif parsed.path == "/client-task-create.json":
             handler.json_response(create_task_request(features, payload))
-        elif parsed.path == "/client-project-memory.json":
-            directory = (
-                features._session_directory(str(payload["sessionID"]))
-                if payload.get("sessionID")
-                else features._canonical_directory(str(payload.get("directory") or ""))
-            )
-            STORE.memory_set(
-                directory,
-                str(payload.get("key") or "note"),
-                str(payload.get("value") or ""),
-                str(payload.get("category") or "note"),
-            )
-            handler.json_response({"ok": True, "memory": STORE.memory_list(directory)})
         elif parsed.path == "/client-decisions.json":
             directory = (
                 features._session_directory(str(payload["sessionID"]))
@@ -2188,25 +2052,6 @@ def handle_post(handler: Any, parsed: Any, features: Any) -> bool:
                     ),
                 }
             )
-        elif parsed.path == "/client-mailbox.json":
-            task = STORE.get_task(str(payload.get("toTask") or payload.get("fromTask") or ""))
-            directory = str(payload.get("projectDir") or (task or {}).get("project_dir") or "")
-            if not directory:
-                raise ValueError("projectDir or task reference required")
-            item = STORE.mailbox_send(
-                project_dir=directory,
-                from_task=str(payload.get("fromTask") or "") or None,
-                to_task=str(payload.get("toTask") or "") or None,
-                message_type=str(payload.get("type") or "finding"),
-                payload=(
-                    payload.get("payload")
-                    if isinstance(payload.get("payload"), dict)
-                    else {"text": str(payload.get("text") or "")}
-                ),
-            )
-            handler.json_response({"ok": True, "message": item})
-        elif parsed.path == "/client-speculate.json":
-            handler.json_response(spawn_speculative(features, payload))
         elif parsed.path == "/client-artifact.json":
             handler.json_response(
                 {

@@ -38,12 +38,12 @@
 - `/goal <задача>` — работа до проверенного результата с автоматическим продолжением, статусом, остановкой и восстановлением после перезапуска;
 - Git/content-aware repository, model-catalog и RAG caches;
 - task-scoped large-output artifact storage с range/search и deduplication;
-- structured mailbox, typed handoff и bounded speculative research;
+- typed handoff между planner и builder;
 - verification pipeline, failure classifier, independent review gate, loop/stuck/conflict detection;
 - isolated Git worktree tasks, patch ownership и fail-closed merge/cleanup;
 - OpenCode-central MCP Code Mode/lazy loading + server policy/rate-limit/health layer;
 - scoped Secret Broker и enforced sandbox profiles `safe`, `repo-write`, `docker`, `wsl`, gated `full-machine`;
-- session branching, replay без новых model calls, telemetry и remote authenticated task API.
+- replay без новых model calls, telemetry и remote authenticated task API.
 
 ### Knowledge / providers / operations
 

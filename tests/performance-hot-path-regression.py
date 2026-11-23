@@ -15,13 +15,7 @@ import repo_services
 
 
 class FakeStore:
-    def memory_list(self, project_dir, limit=20):
-        return []
-
     def decision_list(self, project_dir, limit=12):
-        return []
-
-    def mailbox_receive(self, task_id, consume=False, limit=30):
         return []
 
 
