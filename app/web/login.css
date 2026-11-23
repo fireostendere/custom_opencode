@@ -35,30 +35,30 @@ button,input{font:inherit;color:inherit}
   background:#262626;border:1px solid #414141;box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
 }
 .login-mark span{width:15px;height:15px;border:3px solid var(--accent);border-radius:4px;transform:rotate(45deg)}
-.login-product{font-weight:680;font-size:16px;letter-spacing:.01em}
+.login-product{font-weight:600;font-size:16px;letter-spacing:.01em}
 .login-kicker{margin-top:1px;color:var(--muted);font-size:11px}
 .login-copy{margin-bottom:24px}
-.login-copy h1{margin:0 0 6px;font-size:28px;line-height:1.15;letter-spacing:-.025em}
+.login-copy h1{margin:0 0 6px;font-size:28px;line-height:1.15}
 .login-copy p{margin:0;color:var(--muted)}
-#loginForm{display:flex;flex-direction:column;gap:15px}
-.login-field{display:flex;flex-direction:column;gap:7px;font-size:12px;color:#cfcfcf}
+#loginForm{display:flex;flex-direction:column;gap:16px}
+.login-field{display:flex;flex-direction:column;gap:8px;font-size:12px;color:#cfcfcf}
 .login-field>input,.password-field{
   width:100%;min-height:48px;border:1px solid var(--line);border-radius:12px;background:var(--field);outline:0;
 }
-.login-field>input{padding:0 13px}
+.login-field>input{padding:0 12px}
 .password-field{display:flex;align-items:center;overflow:hidden}
 .password-field:focus-within,.login-field>input:focus{border-color:var(--line-focus);box-shadow:0 0 0 3px rgba(16,163,127,.08)}
-.password-field input{min-width:0;flex:1;height:46px;padding:0 8px 0 13px;border:0;background:transparent;outline:0}
-.password-toggle{align-self:stretch;padding:0 13px;border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:11px}
+.password-field input{min-width:0;flex:1;height:46px;padding:0 8px 0 12px;border:0;background:transparent;outline:0}
+.password-toggle{align-self:stretch;padding:0 12px;border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:11px}
 .password-toggle:hover{color:var(--text)}
 .remember-row{display:flex;gap:10px;align-items:flex-start;padding:2px 1px;cursor:pointer}
 .remember-row input{width:17px;height:17px;margin:2px 0 0;accent-color:var(--accent)}
 .remember-row span{display:flex;flex-direction:column;gap:1px}
-.remember-row strong{font-weight:560;font-size:12px}
+.remember-row strong{font-weight:500;font-size:12px}
 .remember-row small{color:var(--muted);font-size:11px}
 .login-submit{
   position:relative;min-height:48px;margin-top:2px;border:0;border-radius:12px;background:var(--accent);color:white;
-  font-weight:650;cursor:pointer;transition:filter .15s,transform .08s;
+  font-weight:600;cursor:pointer;transition:filter .15s,transform .08s;
 }
 .login-submit:hover{filter:brightness(1.08)}
 .login-submit:active{transform:translateY(1px)}
@@ -66,12 +66,12 @@ button,input{font:inherit;color:inherit}
 .login-spinner{display:none;position:absolute;inset:0;margin:auto;width:18px;height:18px;border:2px solid rgba(255,255,255,.35);border-top-color:white;border-radius:50%;animation:spin .7s linear infinite}
 .login-submit.busy .login-submit-label{visibility:hidden}
 .login-submit.busy .login-spinner{display:block}
-.login-error{padding:10px 11px;border:1px solid rgba(227,132,132,.35);border-radius:10px;background:rgba(126,46,46,.16);color:#f0b1b1;font-size:12px}
-.login-security{margin:22px 0 0;padding-top:17px;border-top:1px solid #343434;color:#777;font-size:10.5px;line-height:1.5}
+.login-error{padding:10px 12px;border:1px solid rgba(227,132,132,.35);border-radius:10px;background:rgba(126,46,46,.16);color:#f0b1b1;font-size:12px}
+.login-security{margin:22px 0 0;padding-top:16px;border-top:1px solid #343434;color:#777;font-size:11px;line-height:1.5}
 @keyframes spin{to{transform:rotate(360deg)}}
 @media(max-width:520px){
   .login-shell{place-items:stretch center;padding-top:max(16px,env(safe-area-inset-top));padding-bottom:max(16px,env(safe-area-inset-bottom))}
-  .login-card{align-self:center;padding:23px 20px;border-radius:18px}
+  .login-card{align-self:center;padding:24px 20px;border-radius:18px}
   .login-brand{margin-bottom:24px}.login-copy h1{font-size:25px}
 }
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}.login-spinner{animation-duration:1.4s}}

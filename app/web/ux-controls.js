@@ -211,7 +211,7 @@ function syncComposerAction() {
   button.className = `composer-action ${action.kind}`
   if (action.kind === 'queue') setNativeDelivery('queue')
   const input = $('input')
-  if (input) input.placeholder = action.kind === 'queue' ? 'Сообщение в очередь…' : 'Сообщение…'
+  if (input) input.placeholder = action.kind === 'queue' ? 'Сообщение в очередь' : 'Сообщение'
 }
 
 function syncPermission() {

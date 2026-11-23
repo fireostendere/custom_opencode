@@ -2,7 +2,7 @@
 :root{
   --sidebar-width:320px;
   --ui-radius:10px;
-  --ui-radius-lg:14px;
+  --ui-radius-lg:14px;--ui-radius-sm:6px;--ui-radius-xl:20px;
   --ui-control-height:42px;
   --ui-gap:8px;
   --chip-height:32px;
@@ -26,32 +26,32 @@ body{background:var(--bg);color:var(--text)}
 .main{overflow:hidden}
 .sessions{min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:0 4px 16px 8px}
 .messages-frame{position:relative;display:flex;flex:1;min-width:0;min-height:0}.messages{position:relative;flex:1;min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
-.scroll-to-bottom{position:absolute;right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));z-index:4;display:grid;place-items:center;width:42px;height:42px;margin:0;border:1px solid color-mix(in srgb,var(--accent) 48%,var(--line));border-radius:50%;background:color-mix(in srgb,var(--surface-strong) 92%,transparent);box-shadow:0 8px 22px #0005;color:var(--text);backdrop-filter:blur(12px)}.scroll-to-bottom:hover{background:var(--surface-hover);border-color:var(--accent)}.scroll-to-bottom:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.scroll-to-bottom span{width:10px;height:10px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:translateY(-2px) rotate(45deg)}.scroll-to-bottom[hidden]{display:none}
+.scroll-to-bottom{position:absolute;right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));z-index:4;display:grid;place-items:center;width:42px;height:42px;margin:0;border:1px solid var(--line);border-radius:var(--ui-radius);background:color-mix(in srgb,var(--surface-strong) 92%,transparent);box-shadow:0 8px 22px #0005;color:var(--text);backdrop-filter:blur(12px)}.scroll-to-bottom:hover{background:var(--surface-hover);border-color:var(--line)}.scroll-to-bottom:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.scroll-to-bottom span{width:10px;height:10px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:translateY(-2px) rotate(45deg)}.scroll-to-bottom[hidden]{display:none}
 /* Pull to refresh (app.js setupPullRefresh): a glass pill springs up; one ring
    fills with the pull and then the hold while the arrow leans up and the pill
    starts to glow; the ring breathes as a spinner, closes into a solid disc with
    a drawn check, and the pill fades out in that state. */
-.pull-refresh{position:fixed;z-index:20;display:flex;align-items:center;gap:10px;min-height:44px;padding:8px 16px 8px 9px;border:1px solid color-mix(in srgb,var(--accent) calc(14% + var(--pull-progress,0) * 52%),var(--line));border-radius:999px;background:color-mix(in srgb,var(--surface-strong) 86%,transparent);box-shadow:0 14px 34px -14px #0009,0 0 calc(var(--pull-progress,0) * 26px) -6px var(--accent);color:var(--muted);font-size:12px;font-weight:500;line-height:1.2;white-space:nowrap;pointer-events:none;translate:-50% 0;scale:calc(.92 + var(--pull-progress,0) * .08);transition:opacity .22s var(--ease-out),transform .26s var(--ease-out),scale .12s var(--ease-out),border-color .25s,box-shadow .25s,color .25s,display .26s;transition-behavior:allow-discrete;-webkit-backdrop-filter:blur(16px) saturate(1.5);backdrop-filter:blur(16px) saturate(1.5)}
+.pull-refresh{position:fixed;z-index:20;display:flex;align-items:center;gap:10px;min-height:44px;padding:8px 16px 8px 8px;border:1px solid color-mix(in srgb,var(--accent) calc(14% + var(--pull-progress,0) * 52%),var(--line));border-radius:999px;background:color-mix(in srgb,var(--surface-strong) 86%,transparent);box-shadow:0 14px 34px -14px #0009;color:var(--muted);font-size:12px;font-weight:500;line-height:1.2;white-space:nowrap;pointer-events:none;translate:-50% 0;scale:calc(.92 + var(--pull-progress,0) * .08);transition:opacity .2s var(--ease-out),transform .2s var(--ease-out),scale .16s var(--ease-out),border-color .2s,box-shadow .2s,color .2s,display .2s;transition-behavior:allow-discrete;-webkit-backdrop-filter:blur(16px) saturate(1.5);backdrop-filter:blur(16px) saturate(1.5)}
 .pull-refresh[hidden]{display:none;opacity:0;transform:translateY(10px) scale(.94)}
 .pull-refresh:is([data-state="holding"],[data-state="refreshing"],[data-state="done"]){color:var(--text)}
 .pull-refresh-label{display:inline-block}
 .pull-refresh-icon{width:26px;height:26px;flex:0 0 26px;overflow:visible}
 .pull-refresh-track,.pull-refresh-progress{fill:none;stroke-width:2.25;transform:rotate(-90deg);transform-origin:center}
 .pull-refresh-track{stroke:color-mix(in srgb,var(--text) 12%,transparent)}
-.pull-refresh-progress{fill:transparent;stroke:var(--accent);stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:calc(1 - var(--pull-progress,0));transition:stroke-dashoffset .1s linear,fill .3s var(--ease-out)}
+.pull-refresh-progress{fill:transparent;stroke:var(--accent);stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:calc(1 - var(--pull-progress,0));transition:stroke-dashoffset .16s linear,fill .32s var(--ease-out)}
 .pull-refresh-arrow,.pull-refresh-check{fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transform-box:fill-box;transform-origin:center}
-.pull-refresh-arrow{stroke:currentColor;translate:0 calc(1.5px - var(--pull-progress,0) * 3px);transition:translate .12s var(--ease-out),stroke .25s,opacity .2s var(--ease-out),scale .3s var(--ease-spring)}
+.pull-refresh-arrow{stroke:currentColor;translate:0 calc(1.5px - var(--pull-progress,0) * 3px);transition:translate .16s var(--ease-out),stroke .2s,opacity .2s var(--ease-out),scale .32s var(--ease-out)}
 .pull-refresh[data-state="holding"] .pull-refresh-arrow{stroke:var(--accent)}
 .pull-refresh:is([data-state="refreshing"],[data-state="done"]) .pull-refresh-arrow{opacity:0;scale:.3}
 .pull-refresh-check{stroke:var(--accent-contrast);stroke-dasharray:1;stroke-dashoffset:1;opacity:0}
 .pull-refresh[data-state="done"] .pull-refresh-progress{stroke-dashoffset:0;fill:var(--accent)}
 .pull-refresh[data-state="done"] .pull-refresh-check{opacity:1;stroke-dashoffset:0}
 @media(prefers-reduced-motion:no-preference){
-  .pull-refresh:not([hidden]){animation:ptr-in .5s var(--ease-spring) backwards}
-  .pull-refresh[data-state="pulling"] .pull-refresh-icon{animation:pull-refresh-pull 1.1s ease-in-out infinite}
+  .pull-refresh:not([hidden]){animation:ptr-in .5s var(--ease-out) backwards}
+  .pull-refresh[data-state="pulling"] .pull-refresh-icon{animation:pull-refresh-pull 1.1s var(--ease-out) infinite}
   .pull-refresh[data-state="refreshing"] .pull-refresh-icon{animation:pull-refresh-spin 1.1s linear infinite}
-  .pull-refresh[data-state="refreshing"] .pull-refresh-progress{animation:ptr-dash 1.4s ease-in-out infinite}
-  .pull-refresh[data-state="done"] .pull-refresh-icon{animation:ptr-pop .5s var(--ease-spring)}
+  .pull-refresh[data-state="refreshing"] .pull-refresh-progress{animation:ptr-dash 1.4s var(--ease-out) infinite}
+  .pull-refresh[data-state="done"] .pull-refresh-icon{animation:ptr-pop .5s var(--ease-out)}
   .pull-refresh[data-state="done"] .pull-refresh-check{animation:ptr-draw .36s var(--ease-out) .08s backwards}
 }
 @keyframes ptr-in{from{opacity:0;transform:translateY(16px) scale(.82)}}
@@ -62,7 +62,7 @@ body{background:var(--bg);color:var(--text)}
 @keyframes ptr-draw{from{stroke-dashoffset:1}}
 
 .sidebar-resizer{position:relative;z-index:3;flex:0 0 9px;width:9px;cursor:col-resize;touch-action:none;background:transparent}
-.sidebar-resizer::before{content:'';position:absolute;top:0;bottom:0;left:4px;width:1px;background:var(--line);transition:width .15s,background-color .15s,left .15s}
+.sidebar-resizer::before{content:'';position:absolute;top:0;bottom:0;left:4px;width:1px;background:var(--line);transition:width .16s,background-color .16s,left .16s}
 .sidebar-resizer:hover::before,.sidebar-resizer.is-dragging::before{left:3px;width:3px;background:var(--accent)}
 body.sidebar-resizing{cursor:col-resize;user-select:none}
 body.sidebar-resizing *{cursor:col-resize!important}
@@ -72,7 +72,7 @@ body.sidebar-resizing *{cursor:col-resize!important}
    chosen option. The model column alone shrinks (ellipsis); status chips wrap below.
    The message field spans the card; attach, chips and send share one row under it,
    so both buttons sit on the same centre line as the chips. */
-.composer{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"input input input" "attach meta action";align-items:center;gap:2px 6px;min-height:0;padding:6px 8px 8px;border-radius:20px}
+.composer{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"input input input" "attach meta action";align-items:center;gap:2px 6px;min-height:0;padding:6px 8px 8px;border-radius:var(--ui-radius-xl)}
 .composer>textarea{grid-area:input;min-height:44px;padding:10px 6px 4px}
 .composer>.attach{grid-area:attach}
 .composer>.composer-action{grid-area:action}
@@ -83,7 +83,7 @@ body.sidebar-resizing *{cursor:col-resize!important}
 .agent-chip{--chip-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 8V4H8'/%3E%3Crect width='16' height='12' x='4' y='8' rx='2'/%3E%3Cpath d='M2 14h2M20 14h2M15 13v2M9 13v2'/%3E%3C/svg%3E")}
 .effort-chip{--chip-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m12 14 4-4'/%3E%3Cpath d='M3.34 19a10 10 0 1 1 17.32 0'/%3E%3C/svg%3E")}
 #modelButton{--chip-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.94 15.5a2 2 0 0 0-1.44-1.44l-6.13-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.13a.5.5 0 0 1 .96 0l1.58 6.13a2 2 0 0 0 1.44 1.44l6.13 1.58a.5.5 0 0 1 0 .96l-6.13 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.13a.5.5 0 0 1-.96 0z'/%3E%3C/svg%3E")}
-#modelButton,#agentSelect,#variantSelect{position:relative;display:block;width:auto;max-width:100%;min-width:0;height:var(--chip-height);min-height:0;margin:0;padding:0 22px 0 29px;border:0;border-radius:999px;background:transparent;color:var(--muted);font-size:13px;font-weight:500;line-height:var(--chip-height);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:none;cursor:pointer}
+#modelButton,#agentSelect,#variantSelect{position:relative;display:block;width:auto;max-width:100%;min-width:0;height:var(--chip-height);min-height:0;margin:0;padding:0 22px 0 28px;border:0;border-radius:var(--ui-radius);background:transparent;color:var(--muted);font-size:13px;font-weight:500;line-height:var(--chip-height);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:none;cursor:pointer}
 #agentSelect,#variantSelect{color:inherit;appearance:none;background-image:none;field-sizing:content}
 #modelButton .model-tag{opacity:.62}
 #modelButton::before,.control-select::before,#modelButton::after,.control-select::after{content:'';position:absolute;top:50%;pointer-events:none}
@@ -107,24 +107,24 @@ html[data-model-profile="orchestrated"] #modelButton:not(:disabled)::before,html
 }
 @media(pointer:coarse){:root{--chip-height:36px}}
 #modelButton:focus-visible,#agentSelect:focus-visible,#variantSelect:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 65%,transparent);outline-offset:0}
-.limits-summary::after,.model-provider-chevron,.permission-details>summary::after,.tool>summary::after,.trace>summary::after,.review-file>summary::after,.runtime-v3-panel>summary::after,.orchestration-trace details>summary::after{content:'';width:7px;height:7px;flex:0 0 7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform .16s ease;opacity:.72}
+.limits-summary::after,.model-provider-chevron,.permission-details>summary::after,.tool>summary::after,.trace>summary::after,.review-file>summary::after,.runtime-v3-panel>summary::after,.orchestration-trace details>summary::after,.runtime-section>summary::after,.runtime-detail-block>summary::after{content:'';width:7px;height:7px;flex:0 0 7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform .16s var(--ease-out);opacity:.72}
 /* Composer buttons: rounded squares, masked SVG icons. Send dims while there is
    nothing to send; stop is a square icon with a slow "busy" ring. */
-.attach,.composer-action{--btn:36px;position:relative;flex:none;width:var(--btn);height:var(--btn);display:grid;place-items:center;padding:0;border-radius:12px;font-size:0!important;line-height:0;transition:background-color .2s var(--ease-out),color .2s var(--ease-out),border-color .2s var(--ease-out),box-shadow .25s var(--ease-out),transform .2s var(--ease-spring)}
+.attach,.composer-action{--btn:36px;position:relative;flex:none;width:var(--btn);height:var(--btn);display:grid;place-items:center;padding:0;border-radius:var(--ui-radius-lg);font-size:0!important;line-height:0;transition:background-color .2s var(--ease-out),color .2s var(--ease-out),border-color .2s var(--ease-out),box-shadow .2s var(--ease-out),transform .2s var(--ease-out)}
 @media(pointer:coarse){.attach,.composer-action{--btn:40px}}
-.attach::before,.composer-action::before{content:'';position:absolute;inset:0;margin:auto;width:18px;height:18px;background:currentColor;-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat;transition:transform .3s var(--ease-spring)}
+.attach::before,.composer-action::before{content:'';position:absolute;inset:0;margin:auto;width:18px;height:18px;background:currentColor;-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat;transition:transform .32s var(--ease-out)}
 .attach{--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M5 12h14M12 5v14'/%3E%3C/svg%3E");border:1px solid var(--line);background:transparent;color:var(--muted)}
 .composer-action{--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 7-7 7 7M12 19V5'/%3E%3C/svg%3E");border:0}
-.composer-action.send,.composer-action.queue{background:var(--accent);box-shadow:0 4px 14px -2px color-mix(in srgb,var(--accent) 45%,transparent)}
+.composer-action.send,.composer-action.queue{background:var(--accent)}
 .composer-wrap:has(#attachments[hidden]) .composer:has(#input:placeholder-shown) .composer-action.send{background:color-mix(in srgb,var(--text) 10%,transparent);color:var(--muted)!important;box-shadow:none}
-.composer-action.stop{background:var(--accent);color:var(--accent-contrast);box-shadow:none;animation:busy-ring 1.8s ease-out infinite}
-.composer-action.stop::before{width:12px;height:12px;border-radius:3px;-webkit-mask:none;mask:none}
-.composer-action::before{animation:icon-pop .32s var(--ease-spring)}
+.composer-action.stop{background:var(--accent);color:var(--accent-contrast);box-shadow:none;animation:busy-ring 1.8s var(--ease-out) infinite}
+.composer-action.stop::before{width:12px;height:12px;border-radius:var(--ui-radius-sm);-webkit-mask:none;mask:none}
+.composer-action::before{animation:icon-pop .32s var(--ease-out)}
 .composer-action.send::after{display:none}
 @media(hover:hover){
   .attach:hover:not(:disabled){border-color:color-mix(in srgb,var(--accent) 45%,var(--line));background:var(--surface-hover);color:var(--text)}
   .attach:hover:not(:disabled)::before{transform:rotate(90deg)}
-  .composer-action:is(.send,.queue):hover:not(:disabled){box-shadow:0 6px 20px -2px color-mix(in srgb,var(--accent) 60%,transparent)}
+  .composer-action:is(.send,.queue):hover:not(:disabled){box-shadow:inset 0 1px 0 #ffffff1f}
   .composer-action:is(.send,.queue):hover:not(:disabled)::before{transform:translateY(-2px)}
 }
 .attach:active:not(:disabled),.composer-action:active:not(:disabled){transform:scale(.88)}
@@ -133,7 +133,7 @@ html[data-model-profile="orchestrated"] #modelButton:not(:disabled)::before,html
 @keyframes busy-ring{from{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 50%,transparent)}to{box-shadow:0 0 0 var(--ring,9px) transparent}}
 
 .limits-shell{margin:0 10px 10px;border-color:var(--line);border-radius:var(--ui-radius);background:var(--surface-strong);overflow:hidden}
-.limits-summary{min-height:42px;padding:0 14px 0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--text);font-size:12px;font-weight:650;letter-spacing:0;text-transform:none;list-style:none}
+.limits-summary{min-height:42px;padding:0 14px 0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--text);font-size:12px;font-weight:600;letter-spacing:0;text-transform:none;list-style:none}
 .limits-summary::-webkit-details-marker{display:none}
 .limits-shell[open] .limits-summary{border-bottom:1px solid var(--line)}
 .limits-summary::after{margin-left:auto;transform:rotate(45deg)}
@@ -144,18 +144,23 @@ html[data-model-profile="orchestrated"] #modelButton:not(:disabled)::before,html
 .quota-provider-head,.quota-label,.quota-cap{min-width:0}
 .quota-label span,.quota-cap span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sessions :is(.project-group,.session-mirror){margin:0 0 2px}
-.sessions .project{margin:6px 2px 3px;padding:6px 8px;border-radius:6px;list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none}
+.sessions .project{margin:6px 2px 4px;padding:6px 8px;border-radius:var(--ui-radius-sm);list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none}
 .sessions .project:hover{background:var(--panel2)}
 .sessions .project::-webkit-details-marker{display:none}
-.sessions .project::before{content:'';width:7px;height:7px;flex:0 0 7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);opacity:.72;transition:transform .16s ease}
+.sessions .project::before,.limit-settings>summary::before,.session-agent-folder>summary::before{content:'';width:7px;height:7px;flex:0 0 7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);opacity:.72;transition:transform .16s var(--ease-out)}
 .sessions :is(.project-group,.session-mirror):not([open])>.project::before{transform:rotate(-45deg)}
+.limit-settings:not([open])>summary::before,.session-agent-folder:not([open])>summary::before{transform:rotate(-45deg)}
+.limit-settings>summary,.runtime-section>summary,.runtime-detail-block>summary{display:flex;align-items:center;gap:8px;list-style:none}
+.limit-settings>summary::-webkit-details-marker,.runtime-section>summary::-webkit-details-marker,.runtime-detail-block>summary::-webkit-details-marker{display:none}
+.runtime-section>summary::after,.runtime-detail-block>summary::after{margin-left:auto}
+.runtime-section:not([open])>summary::after,.runtime-detail-block:not([open])>summary::after{transform:rotate(-45deg)}
 .session-mirror .session-meta>span:not(.run-dot){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sessions .project .count{margin-left:auto;font-size:10px;color:var(--muted);padding-right:4px}
+.sessions .project .count{margin-left:auto;font-size:11px;color:var(--muted);padding-right:4px}
 .sessions .session-more{margin-right:2px}
 /* Light theme paints every row as a tile (button background): 4px between
    tiles, taken out of their padding so the list keeps its pitch. */
 .sessions .session{margin-bottom:4px}
-.sessions .session-main{padding-block:7px}
+.sessions .session-main{padding-block:8px}
 .project-sessions{min-width:0}
 .project-group[draggable="true"]{cursor:grab}
 .project-group[draggable="true"]:active,.session[draggable="true"]:active{cursor:grabbing}
@@ -174,8 +179,8 @@ html[data-model-profile="orchestrated"] #modelButton:not(:disabled)::before,html
 .orchestration-trace{flex:0 0 auto;min-height:0}
 .orchestration-trace details{min-height:0}
 @media(prefers-reduced-motion:no-preference){
-  dialog[open]{animation:panel-reveal .14s ease-out}
-  .header-chip{transition:background-color .14s ease,border-color .14s ease,transform .1s ease}
+  dialog[open]{animation:panel-reveal .14s var(--ease-out)}
+  .header-chip{transition:background-color .16s var(--ease-out),border-color .16s var(--ease-out),transform .16s var(--ease-out)}
   .header-chip:active{transform:translateY(1px)}
 }
 @keyframes panel-reveal{from{opacity:.65}to{opacity:1}}
@@ -192,8 +197,8 @@ html[data-model-profile="orchestrated"] #modelButton:not(:disabled)::before,html
 .model-provider-toggle{min-height:44px;padding:0 12px;border-radius:var(--ui-radius);background:var(--surface-input);color:var(--text)}
 .model-provider-toggle[aria-expanded="false"] .model-provider-chevron{transform:rotate(-45deg)}
 .model-provider-chevron{margin-right:2px;transform:rotate(45deg)}
-.model-provider-body{padding:5px}
-.model-provider-body .choice{min-height:58px;padding:10px 48px 10px 11px;border-radius:var(--ui-radius);background:transparent;position:relative}
+.model-provider-body{padding:4px}
+.model-provider-body .choice{min-height:58px;padding:10px 48px 10px 12px;border-radius:var(--ui-radius);background:transparent;position:relative}
 .model-provider-body .choice:hover,.model-provider-body .choice:focus-visible{background:var(--surface-hover)}
 .model-provider-body .choice-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .model-provider-body .choice-meta{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -212,11 +217,11 @@ dialog:has(>.runtime-modal){width:min(980px,calc(100vw - 24px))}
 dialog:has(>.modal.large){width:min(1000px,calc(100vw - 24px))}
 dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
 .modal-head{margin-bottom:16px}
-.modal-head h3{font-size:17px;letter-spacing:-.01em}
+.modal-head h3{font-size:17px}
 .workflow-modal{width:min(760px,calc(100vw - 24px));max-height:calc(100dvh - 24px)!important}
-.workflow-section{gap:9px;padding:16px 0}
+.workflow-section{gap:8px;padding:16px 0}
 .workflow-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-.workflow-rule{grid-template-columns:minmax(0,1fr) minmax(0,1.35fr) 116px 40px;gap:8px;padding:9px}
+.workflow-rule{grid-template-columns:minmax(0,1fr) minmax(0,1.35fr) 116px 40px;gap:8px;padding:8px}
 .workflow-actions{padding-top:16px}
 .appearance-modal{width:min(560px,calc(100vw - 24px))}
 .appearance-section{padding:16px 0}
@@ -239,7 +244,7 @@ dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
 @media(prefers-reduced-motion:reduce){
   dialog[open]{animation:none}
   dialog.sheet-settling,dialog.sheet-settling::backdrop{transition:none}
-  .limits-summary::after,.model-provider-chevron,.permission-details>summary::after,.tool>summary::after,.trace>summary::after,.review-file>summary::after,.runtime-v3-panel>summary::after,.orchestration-trace details>summary::after,.pull-refresh,.pull-refresh-progress,.pull-refresh-arrow{transition:none}
+  .limits-summary::after,.model-provider-chevron,.permission-details>summary::after,.tool>summary::after,.trace>summary::after,.review-file>summary::after,.runtime-v3-panel>summary::after,.orchestration-trace details>summary::after,.runtime-section>summary::after,.runtime-detail-block>summary::after,.pull-refresh,.pull-refresh-progress,.pull-refresh-arrow{transition:none}
 }
 
 /* Touch browsers can keep :hover latched after a tap. Preserve explicit
@@ -255,7 +260,7 @@ dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
   .accent-swatch:hover,.runtime-profile:hover,.runtime-task:hover{transform:none}
   .unified-actions button:hover,.unified-profile:hover{border-color:color-mix(in srgb,currentColor 16%,transparent)}
   .unified-command:hover:not(.selected){background:transparent}
-  .scroll-to-bottom:hover{border-color:color-mix(in srgb,var(--accent) 48%,var(--line));background:color-mix(in srgb,var(--surface-strong) 92%,transparent)}
+  .scroll-to-bottom:hover{border-color:var(--line);background:color-mix(in srgb,var(--surface-strong) 92%,transparent)}
   .modal-head .icon:hover{border-color:transparent;background:transparent;color:var(--muted)}
 }
 
@@ -263,7 +268,7 @@ dialog>.modal{width:100%;min-width:0;padding:20px;overflow:auto}
 dialog{
   margin:auto;
   padding:0;
-  border:1px solid color-mix(in srgb,var(--accent) 18%,var(--line));
+  border:1px solid var(--line);
   border-radius:var(--ui-radius-lg);
   background:var(--surface-strong);
   color:var(--text);
@@ -283,6 +288,8 @@ dialog>.modal{
   overscroll-behavior:contain;
 }
 .modal-head{min-height:40px;align-items:center}
+.modal-head>div:first-child{flex:1;min-width:0}
+#addPermissionRule{white-space:nowrap;flex:0 0 auto}
 .modal-head .icon{
   flex:0 0 40px;
   width:40px;
@@ -309,7 +316,7 @@ dialog>.modal{
     max-width:none!important;
     max-height:min(92dvh,calc(100dvh - 8px))!important;
     margin:auto 0 0;
-    border-radius:18px 18px 0 0;
+    border-radius:var(--ui-radius-xl) var(--ui-radius-xl) 0 0;
     border-bottom:0;
   }
   dialog::before{
@@ -325,7 +332,7 @@ dialog>.modal{
     transform:translateX(-50%);
     pointer-events:none;
   }
-  dialog[open]>.modal{animation:dialog-sheet .2s cubic-bezier(.2,.8,.2,1) both}
+  dialog[open]>.modal{animation:dialog-sheet .2s var(--ease-out) both}
   dialog>.modal{
     max-height:min(92dvh,calc(100dvh - 8px));
     padding:24px 16px calc(18px + env(safe-area-inset-bottom));
@@ -335,9 +342,9 @@ dialog>.modal{
   /* Swipe-down dismissal (modal-ui.js): the sheet follows the finger, then
      settles back or slides out; the backdrop thins with the drag. */
   dialog.sheet-dragging{transition:none;will-change:transform}
-  dialog.sheet-settling{transition:transform .2s cubic-bezier(.2,.8,.2,1)}
+  dialog.sheet-settling{transition:transform .2s var(--ease-out)}
   dialog.sheet-dragging::backdrop,dialog.sheet-settling::backdrop{opacity:calc(1 - var(--sheet-drag,0)*.75)}
-  dialog.sheet-settling::backdrop{transition:opacity .2s ease}
+  dialog.sheet-settling::backdrop{transition:opacity .2s var(--ease-out)}
 }
 
 .check{display:inline-flex;align-items:center;gap:8px;line-height:1}
@@ -359,7 +366,7 @@ dialog>.modal{
 .sidebar-account-copy{flex:1 1 120px}
 .sidebar-account-actions{flex-wrap:wrap}
 /* network-diagnostics.js adds this button unstyled; match its neighbours. */
-#networkButton{min-height:34px;padding:6px 10px;border:1px solid var(--line);background:var(--surface-input);color:var(--muted);border-radius:9px;font-size:11px}
+#networkButton{min-height:34px;padding:6px 10px;border:1px solid var(--line);background:var(--surface-input);color:var(--muted);border-radius:var(--ui-radius);font-size:11px}
 #networkButton:hover{background:var(--surface-hover);color:var(--text)}
 @media(max-width:760px){
   /* A pending decision outranks history: the chat may shrink to one line,
@@ -384,14 +391,14 @@ dialog>.modal{
      session title gets the width. */
   .header .header-chip.project-settings-open:not([hidden]),#notifyButton{display:none!important}
   .sidebar-account-actions{flex:1 1 100%}
-  .sidebar-account-actions>button{flex:1 1 0;min-width:0;min-height:38px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sidebar-account-actions>button{flex:1 1 auto;min-width:0;min-height:38px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 }
 /* Plan and Tools sit side by side as compact chips on a phone; an opened one
    takes the full row. The status dot keeps the state, the pill is dropped. */
 @media(max-width:700px){
   .orchestration-panels{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   .orchestration-panel[open]{grid-column:1/-1}
-  .orchestration-panel>summary{padding:8px 9px;gap:7px}
+  .orchestration-panel>summary{padding:8px 8px;gap:8px}
   .orchestration-summary-status{display:none}
   /* The one-line meta is truncated past use at this width; the open panel shows it all. */
   .orchestration-panel:not([open]) .orchestration-summary-copy>span{display:none}
@@ -415,25 +422,25 @@ dialog>.modal{
   .welcome-session:nth-child(2){animation-delay:.06s}
   .welcome-session:nth-child(3){animation-delay:.12s}
   .welcome-session:nth-child(4){animation-delay:.18s}
-  .scroll-to-bottom:not([hidden]){animation:pop-in .4s var(--ease-spring) backwards}
-  .toast:not([hidden]){animation:pop-in .44s var(--ease-spring) backwards}
+  .scroll-to-bottom:not([hidden]){animation:pop-in .4s var(--ease-out) backwards}
+  .toast:not([hidden]){animation:pop-in .44s var(--ease-out) backwards}
   .permission-banner:not([hidden]),.question-host:not([hidden]),.workflow-status:not([hidden]){animation:rise-in .38s var(--ease-out) backwards}
   dialog[open]{animation:lift-in .38s var(--ease-out) backwards}
   dialog[open]>:is(.modal,.workflow-modal){animation:none}
   dialog[open]::backdrop{animation:fade-in .32s var(--ease-out) backwards}
   .run-dot{--ring:5px;animation:busy-ring 1.6s var(--ease-out) infinite}
-  .composer{transition:border-color .25s var(--ease-out),box-shadow .35s var(--ease-out)}
-  .primary,.header-chip,.welcome-session,.sidebar-account-actions>button,.choice,.theme-choice{transition:background-color .18s var(--ease-out),border-color .18s var(--ease-out),color .18s var(--ease-out),box-shadow .2s var(--ease-out),transform .2s var(--ease-spring)}
+  .composer{transition:border-color .2s var(--ease-out),box-shadow .32s var(--ease-out)}
+  .primary,.header-chip,.welcome-session,.sidebar-account-actions>button,.choice,.theme-choice{transition:background-color .16s var(--ease-out),border-color .16s var(--ease-out),color .16s var(--ease-out),box-shadow .2s var(--ease-out),transform .2s var(--ease-out)}
   :is(.primary,.header-chip,.welcome-session,.sidebar-account-actions>button,.theme-choice):active:not(:disabled){transform:scale(.97)}
   @media(max-width:760px){
     dialog[open]{animation:sheet-up .46s var(--ease-sheet) backwards}
-    dialog.sheet-settling{transition:transform .34s var(--ease-sheet)}
-    .sidebar{transition:transform .42s var(--ease-sheet),box-shadow .42s var(--ease-out)}
+    dialog.sheet-settling{transition:transform .32s var(--ease-sheet)}
+    .sidebar{transition:transform .32s var(--ease-sheet),box-shadow .32s var(--ease-out)}
     .sidebar-scrim:not([hidden]){animation:fade-in .32s var(--ease-out) backwards}
   }
 }
-.composer:has(#input:focus){box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent),0 12px 32px -12px color-mix(in srgb,var(--accent) 45%,transparent)}
-@media(hover:hover){.primary:hover:not(:disabled){box-shadow:0 6px 18px -6px color-mix(in srgb,var(--accent) 70%,transparent)}}
+.composer:has(#input:focus){box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}
+@media(hover:hover){.primary:hover:not(:disabled){box-shadow:inset 0 1px 0 #ffffff1f}}
 dialog::backdrop{background:#0009;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
 @keyframes rise-in{from{opacity:0;transform:translateY(10px)}}
 @keyframes grow-in{from{opacity:0;transform:scale(.96)}}
@@ -441,3 +448,14 @@ dialog::backdrop{background:#0009;-webkit-backdrop-filter:blur(6px);backdrop-fil
 @keyframes lift-in{from{opacity:0;transform:translateY(14px) scale(.96)}}
 @keyframes sheet-up{from{transform:translateY(100%)}}
 @keyframes fade-in{from{opacity:0}}
+/* Chrome icons are drawn the way the composer's are: one stroke, the button's own colour. */
+#refresh{--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6'/%3E%3C/svg%3E")}
+#menu{--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h16M4 12h16M4 17h16'/%3E%3C/svg%3E")}
+#notifyButton{--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0'/%3E%3C/svg%3E")}
+#notifyButton[aria-pressed="true"]{color:var(--accent)}
+#sessionActions{--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h.01M12 12h.01M19 12h.01'/%3E%3C/svg%3E")}
+.icon:is([data-close],[data-workflow-close],[data-runtime-close],[data-appearance-close]){--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E")}
+:is(#refresh,#menu,#notifyButton,#sessionActions,.icon:is([data-close],[data-workflow-close],[data-runtime-close],[data-appearance-close])){position:relative;flex:0 0 auto;width:var(--chip-height);height:var(--chip-height);padding:0;font-size:0}
+:is(#refresh,#menu,#notifyButton,#sessionActions,.icon:is([data-close],[data-workflow-close],[data-runtime-close],[data-appearance-close]))::before{content:'';position:absolute;inset:0;margin:auto;width:18px;height:18px;background:currentColor;-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}
+/* Hierarchy comes from size and colour: native bold elements stop at 600. */
+h1,h2,h3,h4,strong,b,th{font-weight:600}
