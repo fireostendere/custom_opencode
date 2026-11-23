@@ -635,6 +635,11 @@ def measure_scroll_to_bottom(page):
     deadline = time.monotonic() + 5
     while True:
         page.locator("#scrollToBottom").wait_for(state="visible")
+        # The button pops in over 0.4 s from 12px lower; callers click 2px from its edge,
+        # so measure where it settles, not a frame of the entrance.
+        page.locator("#scrollToBottom").evaluate(
+            "el => Promise.all(el.getAnimations().map(animation => animation.finished)).catch(() => {})"
+        )
         box = page.locator("#scrollToBottom").bounding_box()
         frame = page.locator(".messages-frame").bounding_box()
         if box and frame:
