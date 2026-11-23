@@ -1,3 +1,4 @@
+import { toast } from './toast.js'
 import { request as req } from './api.js'
 import { escapeHtml as esc } from './markdown.js'
 const $=(id)=>document.getElementById(id)
@@ -5,7 +6,6 @@ const previousTasks=new Map()
 let enrichBusy=false
 
 function sid(){const match=/^#\/session\/([^/?]+)/.exec(location.hash||'');if(!match)return '';try{return decodeURIComponent(match[1])}catch{return ''}}
-function toast(text){const el=$('toast');if(!el)return;el.textContent=text;el.hidden=false;clearTimeout(el._timer);el._timer=setTimeout(()=>el.hidden=true,3200)}
 
 async function addPermissionRule(rule){
   const sessionID=sid()
@@ -60,10 +60,7 @@ async function enrichRuntime(){
 }
 
 function observeRuntime(){
-  const host=$('unified-runtime')
-  if(!host){setTimeout(observeRuntime,250);return}
-  const observer=new MutationObserver(()=>queueMicrotask(enrichRuntime))
-  observer.observe(host,{childList:true})
+  window.addEventListener('custom-opencode:rendered',({detail})=>{if(detail?.part==='workspace-runtime')queueMicrotask(enrichRuntime)})
   document.addEventListener('click',event=>{if(event.target.closest('[data-unified-tab="runtime"]'))setTimeout(enrichRuntime,60)},true)
   enrichRuntime()
 }

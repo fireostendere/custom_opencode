@@ -5,14 +5,12 @@ import {
   agentFor,
   composerActionState,
   modeFromAgent,
-  permissionSummary,
   profileFromAgent,
 } from './ux-state.js'
 
 const $ = (id) => document.getElementById(id)
 const PROFILE_KEY = 'opencode:web:model-profiles-v1'
 let allowingAgentClick = false
-let lastPermissionRaw = ''
 let desiredProfile = null
 let pendingAgentTarget = ''
 let failedAgentTarget = ''
@@ -214,20 +212,6 @@ function syncComposerAction() {
   if (input) input.placeholder = action.kind === 'queue' ? 'Сообщение в очередь' : 'Сообщение'
 }
 
-function syncPermission() {
-  const detail = $('permissionDetail')
-  const summary = $('permissionSummary')
-  const details = $('permissionDetails')
-  if (!detail || !summary) return
-  const raw = detail.textContent || ''
-  const title = $('permissionTitle')?.textContent?.trim() || 'Разрешение'
-  const compact = permissionSummary(title, raw)
-  if (summary.dataset.serverPreview !== '1' && summary.textContent !== compact) summary.textContent = compact
-  if (raw !== lastPermissionRaw) {
-    lastPermissionRaw = raw
-    if (details) details.open = false
-  }
-}
 
 function setTransitionControls(disabled) {
   for (const id of ['input', 'composerAction', 'modelButton', 'agentSelect', 'variantSelect', 'attachButton']) {
@@ -340,13 +324,12 @@ function installAgentModeProxy() {
     clickNativeAgent(target, true)
   }, true)
 
-  const observer = new MutationObserver(() => {
-    queueMicrotask(() => {
+  window.addEventListener('custom-opencode:rendered', ({ detail }) => {
+    if (detail?.part === 'controls') queueMicrotask(() => {
       syncAgentSurface()
       syncModelSurface()
     })
   })
-  observer.observe(root, { childList:true, subtree:true, attributes:true, attributeFilter:['class'] })
 }
 
 function installModelProfileProxy() {
@@ -373,13 +356,14 @@ function installModelProfileProxy() {
     void chooseModel(profile, model).then((changed) => { if (changed) $('modelDialog')?.close() })
   }, true)
 
-  new MutationObserver(() => queueMicrotask(syncOrchestratedChoiceLabel)).observe(root, { childList:true, subtree:true })
+  window.addEventListener('custom-opencode:rendered', ({ detail }) => {
+    if (detail?.part === 'models' || detail?.part === 'models-decorated') queueMicrotask(syncOrchestratedChoiceLabel)
+  })
   const modelButton = $('modelButton')
   modelButton?.addEventListener('click', () => {
     document.documentElement.dataset.modelProfile = currentProfile()
     queueMicrotask(syncOrchestratedChoiceLabel)
   }, true)
-  if (modelButton) new MutationObserver(() => queueMicrotask(syncModelSurface)).observe(modelButton, { childList:true, characterData:true, subtree:true })
 }
 
 function installComposerAction() {
@@ -394,19 +378,12 @@ function installComposerAction() {
   })
   $('form')?.addEventListener('submit', () => setTimeout(syncComposerAction, 0))
   $('input')?.addEventListener('input', syncComposerAction)
-  const stop = $('stop')
-  if (stop) new MutationObserver(syncComposerAction).observe(stop, { attributes:true, attributeFilter:['hidden'] })
-  const attachments = $('attachments')
-  if (attachments) new MutationObserver(syncComposerAction).observe(attachments, { childList:true, attributes:true, attributeFilter:['hidden'] })
+  window.addEventListener('custom-opencode:rendered', ({ detail }) => {
+    if (detail?.part === 'run' || detail?.part === 'attachments') syncComposerAction()
+  })
   syncComposerAction()
 }
 
-function installPermissionSummary() {
-  const detail = $('permissionDetail')
-  if (!detail) return
-  new MutationObserver(syncPermission).observe(detail, { childList:true, characterData:true, subtree:true })
-  syncPermission()
-}
 function installSessionProfileRestore() {
   const restoreSessionProfile = () => {
     restoreDesiredProfile()
@@ -526,7 +503,6 @@ function init() {
   installAgentModeProxy()
   installModelProfileProxy()
   installComposerAction()
-  installPermissionSummary()
   installSessionProfileRestore()
   installSelectedChatScrollSettle()
   installChipMenus()

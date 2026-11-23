@@ -1,3 +1,4 @@
+import { toast } from './toast.js'
 import { dataOf, request } from './api.js'
 import { escapeHtml } from './markdown.js'
 import { createAdaptivePoller, createRefreshCoalescer } from './refresh-coalescer.js'
@@ -76,14 +77,6 @@ function fmtTime(value) {
 function currentProfile() { return document.documentElement.dataset.modelProfile || 'direct' }
 function currentMode() { return document.documentElement.dataset.executionMode || 'build' }
 function running() { return Boolean($('stop') && !$('stop').hidden) }
-function toast(text, ms = 2800) {
-  const el = $('toast')
-  if (!el) return
-  el.textContent = text
-  el.hidden = false
-  clearTimeout(el._timer)
-  el._timer = setTimeout(() => { el.hidden = true }, ms)
-}
 function sessionFromHash() {
   const match = /^#\/session\/([^/?]+)/.exec(location.hash || '')
   if (!match) return null
@@ -454,7 +447,7 @@ async function interceptSubmit(event) {
     if (state.sessionID !== sessionID || state.orchestrationRevision !== revision) return
     clearComposer(attachments)
     window.CustomOpenCodeControls?.startRun?.(sessionID, 'managed-send')
-    if ($('stop')) $('stop').hidden = false
+    if ($('stop')?.hidden) { $('stop').hidden = false; window.dispatchEvent(new CustomEvent('custom-opencode:rendered',{detail:{part:'run'}})) }
     if (!state.runStartedAt) state.runStartedAt = Date.now()
     renderStatus()
     if (accepted?.queued) {
@@ -492,10 +485,8 @@ async function refreshQueueNow(sessionID = state.sessionID) {
   } catch {}
 }
 function syncQueueBadges() {
-  // ВАЖНО: этот же колбэк повешен на MutationObserver(#sessions, childList+subtree).
-  // Безусловное «удалить все бейджи и вставить заново» даёт мутацию на каждый
-  // вызов и зацикливает observer намертво, как только очередь не пуста.
-  // Поэтому сводим DOM к целевому состоянию минимальными правками.
+  // Вызывается после каждой перерисовки списка сессий и после обновления очереди:
+  // сводим DOM к целевому состоянию минимальными правками, без лишних мутаций.
   const counts = state.queueCounts || {}
   document.querySelectorAll('[data-persistent-queue]').forEach((el) => {
     const sessionID = el.closest('[data-session]')?.dataset.session
@@ -1503,8 +1494,7 @@ async function notifyAdvanced(title, body, tag) {
 }
 
 function observeRuntime() {
-  const stop = $('stop')
-  if (stop) new MutationObserver(() => {
+  const runChanged = () => {
     if (running()) {
       fastPolling.wake()
       mediumPolling.wake()
@@ -1516,15 +1506,15 @@ function observeRuntime() {
     state.observedRunning = running()
     renderStatus()
     renderOrchestration()
-  }).observe(stop, { attributes:true, attributeFilter:['hidden'] })
-  const usageButton = $('usageButton')
-  if (usageButton) new MutationObserver(renderStatus).observe(usageButton, { childList:true, characterData:true, subtree:true })
-  const gitDialog = $('gitDialog')
-  if (gitDialog) new MutationObserver(() => { if (gitDialog.open) setTimeout(loadReview, 120) }).observe(gitDialog, { attributes:true, attributeFilter:['open'] })
-  const sessions = $('sessions')
-  if (sessions) new MutationObserver(syncQueueBadges).observe(sessions, { childList:true, subtree:true })
-  const permission = $('permissionBanner')
-  if (permission) new MutationObserver(syncPermissionProjectButton).observe(permission, { attributes:true, attributeFilter:['hidden'] })
+  }
+  // app.js announces each render; reacting to that keeps this module off the DOM it does not own.
+  window.addEventListener('custom-opencode:rendered', ({ detail }) => {
+    if (detail?.part === 'run') runChanged()
+    else if (detail?.part === 'usage') renderStatus()
+    else if (detail?.part === 'git') setTimeout(loadReview, 120)
+    else if (detail?.part === 'sessions') syncQueueBadges()
+    else if (detail?.part === 'permission') syncPermissionProjectButton()
+  })
 }
 
 function bindEvents() {

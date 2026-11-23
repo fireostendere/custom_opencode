@@ -150,8 +150,8 @@ if (sidebar && menu) {
   })
   // app.js closes the drawer by removing the class directly (session select,
   // fork, hash navigation); without this the scrim stays over the whole page.
-  new MutationObserver(() => {
+  window.addEventListener('custom-opencode:rendered', ({ detail }) => {
     const scrim = document.getElementById('sidebarScrim')
-    if (!sidebarOpen() && scrim && !scrim.hidden) finishSidebarClose()
-  }).observe(sidebar, { attributes:true, attributeFilter:['class'] })
+    if (detail?.part === 'sidebar' && !sidebarOpen() && scrim && !scrim.hidden) finishSidebarClose()
+  })
 }

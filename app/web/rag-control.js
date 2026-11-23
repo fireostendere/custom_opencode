@@ -1,14 +1,6 @@
+import { toast } from './toast.js'
 const $ = (id) => document.getElementById(id)
 let running = false
-
-function toast(text, ms = 4000) {
-  const el = $('toast')
-  if (!el) return
-  el.textContent = text
-  el.hidden = false
-  clearTimeout(el._timer)
-  el._timer = setTimeout(() => { el.hidden = true }, ms)
-}
 
 function sessionIdFromHash() {
   const match = /^#\/session\/([^/?]+)/.exec(location.hash)
@@ -106,8 +98,9 @@ function bind() {
   }, true)
 
   if (palette) {
-    const observer = new MutationObserver(() => queueMicrotask(injectSlashSuggestion))
-    observer.observe(palette, { childList:true, subtree:false })
+    window.addEventListener('custom-opencode:rendered', ({ detail }) => {
+      if (detail?.part === 'slash-palette') queueMicrotask(injectSlashSuggestion)
+    })
     input.addEventListener('input', () => setTimeout(injectSlashSuggestion, 0))
   }
 }

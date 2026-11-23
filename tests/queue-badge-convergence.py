@@ -1,9 +1,10 @@
 """Convergence test for syncQueueBadges in a real browser.
 
-The #sessions container is observed with MutationObserver(childList+subtree)
-whose callback IS syncQueueBadges. If syncQueueBadges unconditionally removes
-and re-adds badges, every run mutates the observed subtree → infinite loop →
-tab freeze.
+syncQueueBadges runs after every re-render of the session list and every queue
+refresh, so it must bring the DOM to the target state with the fewest writes and
+then stop touching it. The test observes #sessions with a MutationObserver whose
+callback calls syncQueueBadges again: an implementation that removes and re-adds
+badges unconditionally mutates on every run and never settles.
 
 To make the test deterministic (no frozen page), the observer callback is
 capped at LIMIT invocations:
@@ -28,7 +29,7 @@ for i, ch in enumerate(SRC[start:], start):
             end = i + 1
             break
 NEW_FN = SRC[start:end]
-assert 'ВАЖНО' in NEW_FN, 'expected the patched implementation'
+assert "forEach((el) => el.remove())" not in NEW_FN, 'expected the converging implementation, not remove-all-and-re-add'
 
 OLD_FN = """function syncQueueBadges() {
   document.querySelectorAll('[data-persistent-queue]').forEach((el) => el.remove())
