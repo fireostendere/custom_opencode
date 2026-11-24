@@ -216,6 +216,7 @@ printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-panels.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/model-selector.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-helper.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/lib/clipboard.js"
+printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/lib/compaction-recovery.js"
 
 # Managed secrets left by an older install must be removed when now empty or
 # placeholders, while unrelated service settings stay intact.

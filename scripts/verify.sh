@@ -114,7 +114,6 @@ done
 "$NODE" --expose-gc "$ROOT/tests/frontend-memory-regression.mjs"
 "$NODE" "$ROOT/tests/web-agent-picker-regression.mjs"
 "$NODE" "$ROOT/tests/project-settings-smoke.mjs"
-"$NODE" "$ROOT/tests/compaction-recovery-regression.mjs"
 "$NODE" "$ROOT/tests/wizard-validation-smoke.mjs"
 "$NODE" "$ROOT/tests/config-manager-regression.mjs"
 "$NODE" "$ROOT/tests/context-lanes-regression.mjs"

@@ -466,7 +466,8 @@ PY
         "$CONFIG_DIR"/plugins/tui/limits-panels.js \
         "$CONFIG_DIR"/plugins/tui/model-selector.js \
         "$CONFIG_DIR"/plugins/tui/limits-helper.js \
-        "$CONFIG_DIR"/plugins/tui/lib/clipboard.js
+        "$CONFIG_DIR"/plugins/tui/lib/clipboard.js \
+        "$CONFIG_DIR"/plugins/tui/lib/compaction-recovery.js
   if compgen -G "$ROOT/config/plugins/tui/*" > /dev/null; then
     while IFS= read -r -d '' rel; do
       install -D -m 0644 "$ROOT/config/plugins/tui/$rel" "$CONFIG_DIR/plugins/tui/$rel"
