@@ -11,7 +11,6 @@ import retiredPanel from "./limits-panels.jsx"
 import workspacePanel from "./workspace-panel.jsx"
 import wslClipboard from "./wsl-clipboard.jsx"
 import { installDialogScrollbars } from "./lib/dialog-scrollbar.js"
-import { installCompactionRecovery } from "./lib/compaction-recovery.js"
 import locationRecovery from "./location-recovery.jsx"
 
 const plugins = [
@@ -85,7 +84,6 @@ export default Plugin.define({
   setup(context) {
     return setupBundle(context, [
       { name: "dialog-scrollbar", setup: () => installDialogScrollbars(context) },
-      { name: "compaction-recovery", setup: () => installCompactionRecovery(context) },
       ...plugins.map((plugin) => ({ name: plugin.id ?? "plugin", setup: (value) => plugin.setup(value) })),
     ])
   },

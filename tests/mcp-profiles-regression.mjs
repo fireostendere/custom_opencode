@@ -19,6 +19,7 @@ const ctx = {
   skill: { transform: async () => {}, reload: async () => {} },
   mcp: { transform: async (f) => { mcpTransform = f }, reload: async () => { reloads++ } },
   command: { transform: async (f) => f({ add: (c) => commands.set(c.name, c) }) },
+  rpc: { register: async () => {} },
   session: { hook: async (n, f) => hooks.set(n, f), synthetic: async ({ text }) => receipts.push(text), get: async () => ({}) },
 }
 await plugin.setup(ctx)

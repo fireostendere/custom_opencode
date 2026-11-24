@@ -66,7 +66,8 @@ const store = {
 
 const serverCommands = new Map()
 const synthetic = []
-const consumed = new Set()
+let rpcHandlers
+const rpcCalls = []
 const reloads = []
 const hooks = new Map()
 let providerTransform
@@ -101,6 +102,8 @@ const serverContext = {
       await callback({ add: (definition) => serverCommands.set(definition.name, definition) })
     },
   },
+  // The host serves the latest registration of an RPC id.
+  rpc: { register: async (definition, handlers) => { assert.equal(definition.id, 'custom.config'); rpcHandlers = handlers } },
 }
 await configManager.default.setup(serverContext)
 for (const kind of expectedKinds) assert.ok(serverCommands.has(addCommand.nativeAddCommand(kind)))
@@ -199,23 +202,21 @@ const context = {
   keymap: {
     layer: (factory) => keymapLayers.push(factory()),
   },
+  data: { session: { get: () => ({ location: { directory: '/work/wizard-session' } }) } },
   client: {
     mcp: { list: async () => ({ data: liveMcp }) },
-    session: {
-      context: async () => [], // Native resume:false does not admit inbox messages.
-      inbox: {
-        list: async () => synthetic.flatMap((text, index) => consumed.has(index) ? [] : [{ id: String(index), type: 'synthetic', payload: { text } }]),
-        cancel: async ({ inboxID }) => { consumed.add(Number(inboxID)) },
+    // The registry read is one RPC call in the session's location; the reply crosses HTTP as JSON.
+    rpc: (definition) => ({
+      managed: async (input, options) => {
+        rpcCalls.push({ id: definition.id, input, options })
+        if (managedDelay) await new Promise((resolve) => setTimeout(resolve, managedDelay))
+        return JSON.parse(JSON.stringify(await rpcHandlers.managed(input)))
       },
+    }),
+    session: {
       command: async ({ sessionID, name: command, text: argumentsText }) => {
         assert.equal(typeof argumentsText, 'string', 'V2 session.command requires text')
-        if (command === 'managed') {
-          if (managedDelay) {
-            setTimeout(() => { void serverCommands.get(command).execute({ sessionID, prompt: { text: argumentsText } }) }, managedDelay)
-            return
-          }
-          return serverCommands.get(command).execute({ sessionID, prompt: { text: argumentsText } })
-        }
+        assert.notEqual(command, 'managed', 'the wizard reads the registry over RPC, not through a session command')
         commandCalls.push({ sessionID, command, arguments: argumentsText })
         const call = commandCalls.at(-1)
         const definition = serverCommands.get(command)
@@ -223,7 +224,9 @@ const context = {
         try {
           await definition.execute({ sessionID, prompt: { text: argumentsText } })
         } catch (error) {
+          // The V2 client rejects with the failed command's message.
           call.error = error
+          throw error
         } finally {
           call.completed = true
         }
@@ -541,83 +544,20 @@ assert.equal(commandCalls.at(-1).error, undefined, 'a server added by another pl
 // A disabled placeholder tells the later plugin the user turned it off here.
 assert.deepEqual(appliedSettings().mcp.get('jlcpcb'), { type: 'local', command: ['true'], disabled: true })
 
-// Receipt reader cost: bounded polling with backoff, the full session context
-// only on a sparse schedule, and immediate wake-up from inbox events.
-{
-  const { readConfigReceipt } = await import(new URL('config/plugins/tui/lib/config-receipt.js', root).href)
-  const marker = (id) => `custom.config.receipt:${id}\n`
-  function fakeClient(appearAfterMs, { admitted = false } = {}) {
-    const started = Date.now()
-    const calls = { list: 0, context: 0, cancel: [] }
-    const ready = () => Date.now() - started >= appearAfterMs
-    return {
-      calls,
-      session: {
-        inbox: {
-          list: async () => {
-            calls.list += 1
-            return !admitted && ready() ? [{ id: 'inb_1', type: 'synthetic', payload: { text: `${marker('slow')}{"ok":1}` } }] : []
-          },
-          cancel: async ({ inboxID }) => { calls.cancel.push(inboxID) },
-        },
-        context: async () => {
-          calls.context += 1
-          return admitted && ready() ? [{ text: `${marker('slow')}{"ok":2}` }] : []
-        },
-      },
-    }
-  }
-  const slow = fakeClient(700)
-  assert.deepEqual(await readConfigReceipt(slow, 'ses_r', 'slow'), { ok: 1 })
-  assert.ok(slow.calls.list <= 7, `inbox polls must back off (${slow.calls.list})`)
-  assert.ok(slow.calls.context <= 2, `full-context reads must stay sparse (${slow.calls.context})`)
-  assert.deepEqual(slow.calls.cancel, ['inb_1'])
+// The registry read never enters the session: one RPC per read, routed to the
+// session's location, and no synthetic message for the model to see later.
+assert.ok(rpcCalls.length > 0)
+for (const call of rpcCalls) assert.deepEqual(call, { id: 'custom.config', input: { sessionID: 'ses_add_wizard_regression' }, options: { location: { directory: '/work/wizard-session' } } })
+assert.equal(synthetic.some((text) => text.startsWith('custom.config.receipt:')), false)
 
-  const admittedClient = fakeClient(300, { admitted: true })
-  assert.deepEqual(await readConfigReceipt(admittedClient, 'ses_r', 'slow'), { ok: 2 }, 'An admitted receipt is still found')
-
-  // The real TUI client answers `{ data: [...] }`; a failing cancel after the
-  // receipt was parsed must not throw the value away.
-  const envelope = {
-    session: {
-      inbox: {
-        list: async () => ({ data: [{ id: 'inb_e', type: 'synthetic', payload: { text: `${marker('env')}{"ok":3}` } }] }),
-        cancel: async () => { const error = new Error('busy'); error.status = 503; throw error },
-      },
-      context: async () => ({ data: [] }),
-    },
-  }
-  assert.deepEqual(await readConfigReceipt(envelope, 'ses_r', 'env'), { ok: 3 }, 'enveloped inbox rows are read')
-  const admittedEnvelope = { session: { inbox: { list: async () => ({ data: [] }), cancel: async () => {} }, context: async () => ({ data: [{ text: `${marker('env2')}{"ok":4}` }] }) } }
-  assert.deepEqual(await readConfigReceipt(admittedEnvelope, 'ses_r', 'env2', { timeoutMs: 300 }), { ok: 4 }, 'enveloped context rows are read')
-
-  const listeners = new Map()
-  const on = (type, handler) => { listeners.set(type, handler); return () => listeners.delete(type) }
-  const evented = fakeClient(60_000)
-  const started = Date.now()
-  const pending = readConfigReceipt(evented, 'ses_r', 'evt', { on })
-  await new Promise((resolve) => setTimeout(resolve, 30))
-  listeners.get('session.inbox.enqueued')({ type: 'session.inbox.enqueued', data: { sessionID: 'ses_other', inboxID: 'x', item: { type: 'synthetic', payload: { text: `${marker('evt')}{}` } } } })
-  listeners.get('session.inbox.enqueued')({ type: 'session.inbox.enqueued', data: { sessionID: 'ses_r', inboxID: 'inb_evt', item: { type: 'synthetic', payload: { text: `${marker('evt')}{"ok":3}` } } } })
-  assert.deepEqual(await pending, { ok: 3 })
-  assert.ok(Date.now() - started < 200, 'An enqueued event must wake the reader at once')
-  assert.equal(evented.calls.context, 0, 'An evented receipt must not read the full context')
-  assert.deepEqual(evented.calls.cancel, ['inb_evt'])
-  assert.equal(listeners.size, 0, 'Event subscriptions must be released')
-
-  const missing = fakeClient(60_000)
-  await assert.rejects(readConfigReceipt(missing, 'ses_r', 'none', { timeoutMs: 400 }), /Configuration response missing/)
-  assert.ok(missing.calls.context <= 3, 'Even a missing receipt reads the full context only a few times')
-}
-
-// A backend validation receipt must not be mistaken for a successful save.
+// A rejected command must not be mistaken for a successful save.
 const beforeInvalidWorkspace = await store.get('registry-v2')
 const successesBeforeInvalid = toasts.filter(item => item.variant === 'success').length
 const invalidCalls = commandCalls.length
 configureDialog(['org_not_a_workspace'], ['anthropic-workspace'])
 rows.find(row => row.id === 'custom.add-wizard.configure').run('')
 await waitFor(() => commandCalls.length === invalidCalls + 1 && commandCalls.at(-1).completed, 'invalid workspace rejection')
-await waitFor(() => toasts.at(-1)?.message.includes('Workspace ID:'), 'workspace error receipt')
+await waitFor(() => toasts.at(-1)?.message.includes('Workspace ID:'), 'workspace error toast')
 assert.deepEqual(await store.get('registry-v2'), beforeInvalidWorkspace)
 assert.equal(toasts.filter(item => item.variant === 'success').length, successesBeforeInvalid)
 

@@ -74,6 +74,7 @@ const ctx = {
     list: noop,
   },
   command: { transform: async (f) => f({ add: () => {} }) },
+  rpc: { register: noop },
   session: { hook: async (n, f) => hooks.set(n, f), synthetic: noop, get: async () => ({}) },
 }
 await plugin.setup(ctx)

@@ -577,7 +577,6 @@ assert.ok(
       "cleanup dnd-watch-panel.jsx",
       "cleanup effort-indicator.jsx",
       "cleanup location-recovery.jsx",
-      "cleanup installCompactionRecovery",
       "cleanup installDialogScrollbars",
     ],
     "Every successful setup must be unwound once, in reverse order, despite a throwing cleanup",

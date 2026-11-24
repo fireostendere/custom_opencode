@@ -210,12 +210,14 @@ chmod +x "$FAKE_BIN/opencode2"
 # Seed files left by older TUI revisions. A fresh install/update must remove
 # renamed top-level copies instead of allowing the loader to discover both.
 mkdir -p "$HOME_DIR/.config/opencode/plugins/tui/lib"
+printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/lib/config-receipt.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-header.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-header.jsx"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-panels.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/model-selector.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/limits-helper.js"
 printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/lib/clipboard.js"
+printf 'stale\n' >"$HOME_DIR/.config/opencode/plugins/tui/lib/compaction-recovery.js"
 
 # Managed secrets left by an older install must be removed when now empty or
 # placeholders, while unrelated service settings stay intact.

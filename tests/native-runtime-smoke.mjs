@@ -5,7 +5,6 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile, access } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { readConfigReceipt } from '../config/plugins/tui/lib/config-receipt.js'
 
 const options = Object.fromEntries(process.argv.slice(2).reduce((pairs, value, index, all) => {
   if (index % 2 === 0) pairs.push([value, all[index + 1]])
@@ -22,15 +21,9 @@ async function request(method, path, body) {
   const response = await fetch(new URL(path, url), { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(15000) })
   const text = await response.text()
   if (!response.ok) { const error = new Error(`Native API ${method} ${path}: HTTP ${response.status}`); error.status = response.status; throw error }
-  return text ? JSON.parse(text).data : undefined
+  const value = text ? JSON.parse(text) : undefined
+  return value?.data ?? value
 }
-const client = { session: {
-  inbox: {
-    list: ({ sessionID }) => request('GET', `/api/session/${sessionID}/inbox`),
-    cancel: ({ sessionID, inboxID }) => request('DELETE', `/api/session/${sessionID}/inbox/${inboxID}`),
-  },
-  context: ({ sessionID }) => request('GET', `/api/session/${sessionID}/context`),
-} }
 const session = await request('POST', '/api/session', {
   title: 'Native configuration acceptance (zero inference)',
   model: { providerID: 'bailian-cli', id: 'qwen3.8-max' },
@@ -45,12 +38,10 @@ const originalMode = (await readFile(statePath, 'utf8')).trim()
 async function command(name, value = '') {
   await request('POST', `/api/session/${id}/command`, { name, text: typeof value === 'string' ? value : JSON.stringify(value) })
 }
+// The same read the TUI wizards make: one RPC to config-manager in the session's location.
 async function registry() {
-  const requestID = randomUUID()
-  await command('managed', { requestID })
-  const reply = await readConfigReceipt(client, id, requestID)
-  assert.equal((await client.session.inbox.list({ sessionID: id })).some((item) => item.payload?.text?.startsWith(`custom.config.receipt:${requestID}\n`)), false)
-  return reply.registry
+  const reply = await request('POST', `/api/rpc/custom.config/managed?location[directory]=${encodeURIComponent(join(home, 'scratch'))}`, { input: { sessionID: id } })
+  return reply.output.registry
 }
 function pass(name) { rows.push({ name, status: 'PASS' }); console.log(`PASS native ${name}`) }
 let error
@@ -60,7 +51,9 @@ try {
   pass('native command registration')
   assert.equal((await request('GET', `/api/session/${id}/context`)).length, 0)
   await registry()
-  pass('empty context reads managed receipt from inbox and consumes it without inference')
+  assert.equal((await request('GET', `/api/session/${id}/context`)).length, 0)
+  assert.equal((await request('GET', `/api/session/${id}/inbox`)).some((item) => item.payload?.text?.startsWith('custom.config.receipt:')), false)
+  pass('managed registry is read over RPC without touching the session')
   const cases = [
     ['addprovider', 'providers', prefix, { id: prefix, name: 'Audit provider', settings: { baseURL: 'http://127.0.0.1:1/v1', apiKey: '{env:AUDIT_API_KEY}' } }],
     ['addmodel', 'models', `${prefix}/coder`, { providerID: prefix, id: 'coder', name: 'Audit model', capabilities: { tools: true, input: ['text'], output: ['text'] } }],
@@ -70,12 +63,10 @@ try {
     ['addorchestration', 'orchestrations', `${prefix}/orchestrated`, { providerID: prefix, id: 'orchestrated', baseModelID: 'coder', name: 'Audit orchestration', prompt: 'Verify before completion.' }],
   ]
   for (const [name, type, key, value] of cases) {
-    const requestID = randomUUID()
-    await command(name, { ...value, requestID })
+    await command(name, value)
     created.push([type, key])
-    assert.equal((await readConfigReceipt(client, id, requestID)).saved, true)
     assert.ok(Object.hasOwn((await registry())[type], key), `${type}/${key}`)
-    pass(`${name}: real mutation, reload, receipt and durable read`)
+    pass(`${name}: real mutation, reload and durable read`)
   }
   await command('addmodel', { providerID: prefix, id: 'coder', name: 'Updated audit model' })
   assert.equal((await registry()).models[`${prefix}/coder`].name, 'Updated audit model')

@@ -470,7 +470,7 @@ PONYTAIL_DEFAULT_MODE=full
 
 ## Планирование задач
 
-Установленный `AGENTS.md` и plugin `visible-plan.js` требуют явный план для любой работы primary-agent с инструментами. `todowrite` относится к V1 и отсутствует в OpenCode V2; вместо него Build и Plan используют закреплённый tool `plan_update`.
+Установленный `AGENTS.md` и plugin `visible-plan.js` требуют явный план для любой работы primary-agent с инструментами. Native `todowrite` в OpenCode V2 выключен по умолчанию: это экспериментальный tool за флагом (`OPENCODE_FLAGS=todo` или `experimental.todo: true`). Шаблон его не включает; Build и Plan используют закреплённый tool `plan_update`.
 
 Для чисто разговорного одношагового ответа без инструментов формальный план не создаётся. Во всех остальных случаях модель может сначала изучить контекст read-only инструментами, затем обязана вызвать `plan_update` до первой изменяющей операции. Tool атомарно записывает 1-7 пунктов в `~/.opencode/plan/<sessionID>-plan.md`; повторные вызовы обновляют статусы. Harness отклоняет shell/edit/write/patch/subagent и неизвестные потенциально изменяющие tools, пока план текущего пользовательского хода не опубликован.
 

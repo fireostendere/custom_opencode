@@ -100,7 +100,7 @@ node tests/tui-accounts-regression.mjs
 они не добавлены в шаблон конфигурации для новых установок.
 Параметры базовой Astra сверены с [официальной карточкой модели](https://developers.openai.com/api/docs/models/gpt-6.2-astra).
 Для явно включаемой скрытой модели JSON-путь `/addmodel` принимает `enabled: true`.
-Служебные квитанции визарда сохраняются с `resume: false`.
+Реестр визард читает через plugin RPC `custom.config` (`managed`) в папке сессии: в историю сессии и к модели этот запрос не попадает.
 
 ## Regression
 
@@ -123,7 +123,7 @@ Regression вызывает зарегистрированные TUI command row
 - local MCP с отдельным рабочим каталогом, включая WSL launcher `scripts/rag-mcp.sh` для отдельного checkout `mcp-rag`;
 - отмена wizard без mutation;
 - ID/content/URL secret validation;
-- итоговая file-backed persistence и synthetic receipts;
+- итоговая file-backed persistence и чтение реестра через RPC;
 - фактическое применение provider/model/MCP/skill settings и orchestration policy;
 - повторное применение сохранённых настроек после нового config-manager setup.
 
