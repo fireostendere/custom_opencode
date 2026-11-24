@@ -3,8 +3,7 @@ import { readFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, join } from "node:path"
 import { installPanelSubmitRouter } from "./lib/panel-submit-router.js"
-import { ADD_KINDS, nativeAddCommand, parseAddCommand } from "./lib/add-command.js"
-import { readConfigReceipt } from "./lib/config-receipt.js"
+import { ADD_KINDS, ConfigRpc, nativeAddCommand, parseAddCommand } from "./lib/add-command.js"
 import { profileTemplates } from "./lib/mcp-profiles.js"
 import { parseSkill } from "./lib/skill-frontmatter.js"
 
@@ -105,17 +104,13 @@ async function choose(context, title, options) {
     : (result ?? null)
 }
 
-// Read via the native command/receipt API; no TUI copy of the durable registry.
+// Read via the config-manager RPC in the session's location; no TUI copy of the durable registry.
 async function managed(context) {
   const current = sessionID(context)
-  const requestID = globalThis.crypto.randomUUID()
-  await context.client.session.command({
-    sessionID: current,
-    name: "managed",
-    text: JSON.stringify({ requestID }),
-  })
-  const on = typeof context.data?.on === "function" ? (type, handler) => context.data.on(type, handler) : undefined
-  return readConfigReceipt(context.client, current, requestID, { on })
+  if (!current) throw new Error("Сначала откройте сессию.")
+  let directory
+  try { directory = context.data.session.get(current)?.location?.directory } catch {}
+  return context.client.rpc(ConfigRpc).managed({ sessionID: current }, directory ? { location: { directory } } : undefined)
 }
 
 async function multiple(context, title, options, initial = []) {
@@ -320,17 +315,12 @@ async function configure(context) {
       title: workspaceID.trim() ? "Сохранить Workspace ID?" : "Убрать Workspace ID?",
       message: "Для всех аккаунтов Anthropic. Ключи не меняются. Пустое поле возвращает заголовок из конфигурации.",
     }))) return
-    const current = sessionID(context)
-    const requestID = globalThis.crypto.randomUUID()
+    // A rejected command carries the validation message; resolving means it was saved.
     await context.client.session.command({
-      sessionID: current,
+      sessionID: sessionID(context),
       name: "anthropic-workspace",
-      text: JSON.stringify({ workspaceID, requestID }),
+      text: JSON.stringify({ workspaceID }),
     })
-    const on = typeof context.data?.on === "function" ? (type, handler) => context.data.on(type, handler) : undefined
-    const receipt = await readConfigReceipt(context.client, current, requestID, { on })
-    if (receipt.error) throw new Error(receipt.error)
-    if (!receipt.saved) throw new Error("Workspace ID: сохранение не подтверждено.")
     toast(context, "Workspace ID сохранён", "success")
     return
   }

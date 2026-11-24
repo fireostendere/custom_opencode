@@ -129,7 +129,9 @@ const ctx = {
       await callback({ add: (definition) => commands.set(definition.name, definition) })
     },
   },
+  rpc: { register: async (definition, handlers) => { rpc = { id: definition.id, ...handlers } } },
 }
+let rpc
 
 // Capture the /mcp toggle sync timer instead of waiting for it.
 const intervals = []
@@ -393,6 +395,13 @@ assert.deepEqual(state.skills, ['review'])
 await exec('managed')
 assert.ok(synthetics.at(-1).includes('"acme"'), synthetics.at(-1))
 const receiptCount = synthetics.length
+// The wizards read the same state over RPC: full registry back, nothing enqueued for the model.
+assert.equal(rpc.id, 'custom.config')
+const managedReply = await rpc.managed({ sessionID: 'wizard-session' })
+assert.deepEqual(Object.keys(managedReply).sort(), ['directory', 'exposure', 'installed', 'mode', 'registry'])
+assert.deepEqual(managedReply.registry, store.get(STORAGE_KEY))
+assert.equal(managedReply.mode, 'auto')
+assert.equal(synthetics.length, receiptCount, 'An RPC read must not enqueue any model input')
 const external = structuredClone(store.get(STORAGE_KEY))
 external.models['acme/from-another-workspace'] = { modelID: 'coder', name: 'External' }
 store.set(STORAGE_KEY, external)

@@ -14,6 +14,22 @@ const ALIASES = new Map(Object.entries(ADD_TYPES).flatMap(([kind, command]) => [
 
 export const ADD_KINDS = Object.freeze(Object.keys(ADD_TYPES))
 
+// Portable RPC definition (JSON Schema): the wizards read the managed registry
+// from config-manager.js in the session's location, with no model round-trip.
+export const ConfigRpc = {
+  id: "custom.config",
+  methods: {
+    managed: {
+      input: {
+        type: "object", additionalProperties: false, required: ["sessionID"],
+        properties: { sessionID: { type: "string", minLength: 1, maxLength: 128 } },
+      },
+      output: { type: "object" },
+    },
+  },
+  events: {},
+}
+
 export function nativeAddCommand(kind) {
   return ADD_TYPES[kind] ?? null
 }

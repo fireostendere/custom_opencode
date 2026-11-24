@@ -9,6 +9,7 @@ import {
   assertMcpNamespaces,
 } from "./tui/lib/mcp-profiles.js"
 import { McpDiscovery } from "./tui/lib/mcp-discovery.js"
+import { ConfigRpc } from "./tui/lib/add-command.js"
 import { toolFabricConfig } from "./tui/lib/tool-fabric.js"
 import { syncManagedOrchestrations } from "./tui/lib/context-policy.js"
 import { filterDndTools, isDndContext } from "./orchestrated-qwen.js"
@@ -433,15 +434,6 @@ export default {
             await enqueueMutation(() => forgetSessionProfiles(event.data?.sessionID))
         })
       : () => {}
-    const receipt = async (sessionID, input, data) => {
-      if (typeof input?.requestID === "string")
-        await synthetic(
-          ctx,
-          sessionID,
-          `custom.config.receipt:${input.requestID}\n${JSON.stringify(data)}`,
-        )
-    }
-
     const save = async () => {
       syncManagedOrchestrations(registry.orchestrations)
       await ctx.storage.set(STORAGE_KEY, registry)
@@ -679,8 +671,9 @@ export default {
       if (tools && Object.hasOwn(tools, "mcp_discover")) delete tools.mcp_discover
     }
     await ctx.session.hook("context", async (event) => {
-      // Config receipts are machine replies for the TUI wizard (full registry
-      // and MCP definitions); they must never reach the model.
+      // Wizards read the registry over RPC now. Sessions that used the earlier
+      // synthetic receipts (full registry and MCP definitions) still hold them
+      // in history; they must never reach the model.
       if (Array.isArray(event.messages)) {
         for (let index = event.messages.length - 1; index >= 0; index--)
           if (isConfigReceipt(event.messages[index])) event.messages.splice(index, 1)
@@ -748,6 +741,20 @@ export default {
         )
       })
 
+    await ctx.rpc.register(ConfigRpc, {
+      managed: ({ sessionID }) =>
+        enqueueMutation(async () => {
+          await ctx.mcp.list?.()
+          return {
+            registry,
+            installed,
+            directory: ctx.location?.directory,
+            mode: await modeFor(sessionID),
+            exposure: exposure.get(sessionID) || null,
+          }
+        }),
+    })
+
     await ctx.command.transform((commands) => {
       const add = (name, description, handler, help, quiet = false) =>
         commands.add({
@@ -756,10 +763,8 @@ export default {
           execute: ({ sessionID, prompt }) =>
             enqueueMutation(async () => {
               const previous = registry
-              let input
               try {
-                input = extractJson(prompt)
-                await handler(input, sessionID)
+                await handler(extractJson(prompt), sessionID)
                 await save()
                 await reloadAll()
               } catch (error) {
@@ -767,13 +772,11 @@ export default {
                   error,
                   registry === previous ? [] : await rollback(previous),
                 )
-                await receipt(sessionID, input, { error: failure.message })
                 try {
                   await synthetic(ctx, sessionID, `${name}: ${failure.message}\n\n${help}`)
                 } catch {}
                 throw failure
               }
-              await receipt(sessionID, input, { saved: true })
               if (quiet) return
               try {
                 await synthetic(
@@ -977,18 +980,9 @@ export default {
       commands.add({
         name: "managed",
         description: "List managed providers, models, MCP servers, skills and orchestrations",
-        execute: ({ sessionID, prompt }) =>
+        execute: ({ sessionID }) =>
           enqueueMutation(async () => {
-            const input = prompt?.text?.includes("{") ? extractJson(prompt) : {}
             await ctx.mcp.list?.()
-            if (input.requestID)
-              return receipt(sessionID, input, {
-                registry,
-                installed,
-                directory: ctx.location?.directory,
-                mode: await modeFor(sessionID),
-                exposure: exposure.get(sessionID) || null,
-              })
             await synthetic(
               ctx,
               sessionID,

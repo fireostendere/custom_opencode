@@ -78,9 +78,11 @@ user can repair them deliberately. `auto` and `all` are reserved, case-insensiti
   (what the sidebar shows), including servers a later plugin adds for a folder;
   turning such a server off leaves a disabled placeholder that the plugin keeps off.
 
-The server command is awaited using V2's `text` field. Read-only registry queries
-use correlated native synthetic receipts; these receipts are removed from outgoing
-model context. The TUI does not maintain another durable registry. Compatibility
+The server command is awaited using V2's `text` field; a rejected command carries
+the validation message. Read-only registry queries are one plugin RPC call
+(`custom.config` → `managed`) in the session's location and never enter the
+session. Receipts that older builds left in a session's history are still removed
+from outgoing model context. The TUI does not maintain another durable registry. Compatibility
 panel command IDs remain callable, but their duplicate palette rows are hidden.
 
 ## Routing and worker isolation

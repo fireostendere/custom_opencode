@@ -462,6 +462,7 @@ PY
   # limits-header.jsx was removed entirely (top status bar dropped), so it
   # must be cleaned from existing installs as well.
   rm -f "$CONFIG_DIR"/plugins/tui/limits-header.js \
+        "$CONFIG_DIR"/plugins/tui/lib/config-receipt.js \
         "$CONFIG_DIR"/plugins/tui/limits-header.jsx \
         "$CONFIG_DIR"/plugins/tui/limits-panels.js \
         "$CONFIG_DIR"/plugins/tui/model-selector.js \
